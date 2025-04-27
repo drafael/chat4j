@@ -1,71 +1,125 @@
-# Chat4j
+# Chat4J
 
-A Java desktop application that provides a chat interface for interacting with Ollama language models.
+A lightweight desktop AI chat client built with **Java 21**, **Swing**, and **Maven**.
 
-## Overview
+Chat4J supports multiple LLM providers (OpenAI-compatible + Anthropic), streams responses token-by-token, and stores conversation history locally using H2.
 
-Chat4j is a simple, elegant desktop application built with Java Swing that allows you to chat with local language models running on Ollama. It features:
+## Features
 
-- Modern dark-themed UI with Material Design elements
-- Markdown rendering support
-- Streaming responses for a natural chat experience
-- Support for both Ollama's `/api/chat` and `/api/generate` endpoints
+- Native desktop UI (Swing + FlatLaf)
+- Streaming assistant responses
+- Multi-provider model selector
+- Conversation sidebar with:
+  - grouped history (Today, Yesterday, This Week, This Month, Older)
+  - favorites
+  - rename / delete
+- Settings dialog:
+  - appearance (themes + accent colors)
+  - provider status and base URLs
+  - general preferences
+- Local persistence (H2) for:
+  - conversations + messages
+  - app settings
+- Flyway SQL migrations (`src/main/resources/db/migration`)
+
+## Supported providers
+
+Enable one or more providers by setting API keys in your environment:
+
+- `ANTHROPIC_API_KEY`
+- `OPENAI_API_KEY`
+- `OPENROUTER_API_KEY`
+- `GROQ_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `MISTRAL_API_KEY`
+- `XAI_API_KEY`
+- **LM Studio** — local OpenAI-compatible server at `localhost:1234`, no API key needed
+- **Ollama** — local models at `localhost:11434`, no API key needed
+
+If no provider key is available and no local provider (LM Studio/Ollama) is running, the model list will be empty and chat requests cannot be sent.
 
 ## Requirements
 
-- Java 21 or newer
-- Maven 3.6+ (for building)
-- [Ollama](https://ollama.ai/) running locally on the default port (11434)
-- A language model loaded in Ollama (the default is "cogito:8b" but you can modify this in the code)
+- Java 21+
+- Maven 3.9+
 
-## Building the Application
-
-To build the application, run the following Maven command from the project root directory:
+## Run locally
 
 ```bash
+# from project root
+mvn clean compile
+mvn exec:java
+```
+
+## Build
+
+```bash
+# build fat jar
 mvn clean package
 ```
 
-This will create two JAR files in the `target` directory:
-- `chat4j-1.0-SNAPSHOT.jar` - The application JAR without dependencies
-- `chat4j-1.0-SNAPSHOT-jar-with-dependencies.jar` - The application JAR with all dependencies included
-
-## Running the Application
-
-After building, you can run the application using:
+Then run:
 
 ```bash
-java -jar target/chat4j-1.0-SNAPSHOT-jar-with-dependencies.jar
+java --enable-preview -jar target/chat4j-1.0-SNAPSHOT.jar
 ```
 
-Alternatively, if you have the project open in an IDE like IntelliJ IDEA or Eclipse, you can run the `ChatApp` class directly.
+> Note: `--enable-preview` is kept for consistency with project build config.
 
-## Usage
+## Tests
 
-1. Make sure Ollama is running on your local machine at http://localhost:11434
-2. Launch the Chat4j application
-3. Type your message in the text field at the bottom
-4. Press Enter or click the Send button
-5. The AI response will stream back in real-time
+```bash
+mvn test
+```
 
-## Troubleshooting
+## Configuration and data storage
 
-If you encounter issues:
+Chat4J stores its local database in:
 
-1. Verify Ollama is running with `curl http://localhost:11434/api/version`
-2. Ensure you have at least one model downloaded in Ollama (`ollama list`)
-3. Check that port 11434 is accessible and not blocked by a firewall
+- `$XDG_CONFIG_HOME/chat4j/data/chat4j.mv.db`
+- fallback when `XDG_CONFIG_HOME` is not set: `~/.config/chat4j/data/chat4j.mv.db`
 
-## Development
+Chat4J uses this location directly and does not perform automatic migration from older paths.
 
-The project is structured as follows:
+Schema creation and upgrades are managed by Flyway on startup.
 
-- `com.chat4j.ChatApp` - Main entry point
-- `com.chat4j.ui.ChatMainFrame` - Main UI component
-- `com.chat4j.client.OllamaClient` - Client for communicating with Ollama API
-- `com.chat4j.markdown.MarkdownRenderer` - Utility for rendering markdown responses
-- `com.chat4j.model.*` - Data models for the application
+## Keyboard shortcuts
+
+- **New chat**: `Cmd+N` (macOS) / `Ctrl+N`
+- **Settings**: `Cmd+,` / `Ctrl+,`
+- **Toggle sidebar**: `Cmd+B` / `Ctrl+B`
+
+## Packaging
+
+Native installers are built with `jpackage` via Maven profiles. Each profile must be run **on the target OS** — cross-packaging is not supported by `jpackage`.
+
+```bash
+# macOS (.dmg)
+mvn -Pjpackage-mac package
+
+# Windows (.msi) — requires WiX Toolset 3.x
+mvn -Pjpackage-win package
+
+# Linux (.deb) — requires dpkg; use --type rpm in pom.xml for RPM
+mvn -Pjpackage-linux package
+```
+
+Output goes to `target/dist/`.
+
+## Project structure
+
+```text
+src/main/java/com/github/drafael/chat4j
+├── App.java
+├── MainFrame.java
+├── chat/
+├── provider/
+├── settings/
+├── sidebar/
+└── storage/
+```
 
 ## License
 
-This project is open source.
+This project is licensed under the **Apache License 2.0**.
+See [LICENSE](LICENSE).

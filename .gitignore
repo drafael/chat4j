@@ -1,55 +1,15 @@
-# Compiled class files
-*.class
-
-# Log files
-*.log
-
-# BlueJ files
-*.ctxt
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
-
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
-
-# Maven
+.claude
+!.claude/skills/update-app-icon/SKILL.md
 target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
+*.class
+*.jar
 dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
-
-# IDE files
+icon-*.png
+icon_*.png
+*.log
 .idea/
 *.iml
-*.iws
-*.ipr
-.settings/
-.classpath
-.project
-.vscode/
-
-# macOS
 .DS_Store
 
-# User-specific files
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
+# Generated brainstorm/refactor plans
+/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
