@@ -5,10 +5,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Field;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.github.drafael.chat4j.chat.TestReflection.readField;
+import static com.github.drafael.chat4j.chat.TestReflection.setField;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ChatPanelTest {
@@ -78,40 +78,17 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Switching render mode rerenders loaded assistant bubbles")
-    void setAssistantRenderMode_whenHistoryLoaded_updatesAssistantBubbleModes() throws Exception {
-        subject.loadHistory(List.of(
-                com.github.drafael.chat4j.provider.api.Message.user("hello"),
-                com.github.drafael.chat4j.provider.api.Message.assistant("**bold**")
-        ));
-
+    @DisplayName("Switching render mode updates panel state")
+    void setAssistantRenderMode_whenChanged_updatesInternalState() {
         subject.setAssistantRenderMode(AssistantRenderMode.MARKDOWN, true);
+        assertThat(subject.getAssistantRenderMode()).isEqualTo(AssistantRenderMode.MARKDOWN);
 
-        @SuppressWarnings("unchecked")
-        List<MessageBubble> assistantBubbles = (List<MessageBubble>) readField(subject, "assistantBubbles");
-        assertThat(assistantBubbles).hasSize(1);
-        assertThat(readBubbleRenderMode(assistantBubbles.getFirst())).isEqualTo(AssistantRenderMode.MARKDOWN);
+        subject.setAssistantRenderMode(AssistantRenderMode.PREVIEW, true);
+        assertThat(subject.getAssistantRenderMode()).isEqualTo(AssistantRenderMode.PREVIEW);
     }
 
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
         return readField(chatPanel, "currentProvider");
     }
 
-    private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
-        Field field = ChatPanel.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        return field.get(chatPanel);
-    }
-
-    private static void setField(ChatPanel chatPanel, String fieldName, Object value) throws Exception {
-        Field field = ChatPanel.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(chatPanel, value);
-    }
-
-    private static AssistantRenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {
-        Field field = MessageBubble.class.getDeclaredField("assistantRenderMode");
-        field.setAccessible(true);
-        return (AssistantRenderMode) field.get(bubble);
-    }
 }

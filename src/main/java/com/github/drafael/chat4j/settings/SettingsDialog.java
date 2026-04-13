@@ -89,7 +89,8 @@ public class SettingsDialog extends JDialog {
         return List.of(
             new TabSpec("General", new GeneralPanel(settingsRepo)),
             new TabSpec("Appearance", new AppearancePanel(settingsRepo)),
-            new TabSpec("Providers", new ProvidersPanel(settingsRepo)));
+            new TabSpec("Providers", new ProvidersPanel(settingsRepo)),
+            new TabSpec("Advanced", new AdvancedPanel(settingsRepo)));
     }
 
     private void installEscapeCloseAction() {

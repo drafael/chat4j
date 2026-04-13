@@ -20,6 +20,8 @@
         <lombok.version>1.18.38</lombok.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <flyway.version>11.8.2</flyway.version>
+        <jcef.version>143.0.14</jcef.version>
+        <jcef.native.version>jcef-cffac27+cef-143.0.14+gdd46a37+chromium-143.0.7499.193</jcef.native.version>
         <junit.version>5.12.2</junit.version>
         <assertj.version>3.27.6</assertj.version>
     </properties>
@@ -68,6 +70,21 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>${commons-lang3.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>me.friwi</groupId>
+            <artifactId>jcefmaven</artifactId>
+            <version>${jcef.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>markdown-it</artifactId>
+            <version>14.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.webjars.npm</groupId>
+            <artifactId>katex</artifactId>
+            <version>0.16.11</version>
         </dependency>
 
         <dependency>
@@ -193,6 +210,20 @@
         -->
         <profile>
             <id>jpackage-mac</id>
+            <dependencies>
+                <dependency>
+                    <groupId>me.friwi</groupId>
+                    <artifactId>jcef-natives-macosx-arm64</artifactId>
+                    <version>${jcef.native.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+                <dependency>
+                    <groupId>me.friwi</groupId>
+                    <artifactId>jcef-natives-macosx-amd64</artifactId>
+                    <version>${jcef.native.version}</version>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
             <build>
                 <plugins>
                     <plugin>
@@ -221,6 +252,16 @@
                                         <argument>dmg</argument>
                                         <argument>--java-options</argument>
                                         <argument>--enable-preview</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED</argument>
                                         <argument>--java-options</argument>
                                         <argument>-Dapple.awt.application.name=Chat4J</argument>
                                         <argument>--icon</argument>
@@ -270,6 +311,12 @@
                                         <argument>msi</argument>
                                         <argument>--java-options</argument>
                                         <argument>--enable-preview</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED</argument>
                                         <argument>--icon</argument>
                                         <argument>${project.basedir}/src/main/resources/icons/icon.ico</argument>
                                         <argument>--win-dir-chooser</argument>
@@ -318,6 +365,12 @@
                                         <argument>deb</argument>
                                         <argument>--java-options</argument>
                                         <argument>--enable-preview</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED</argument>
                                         <argument>--icon</argument>
                                         <argument>${project.basedir}/src/main/resources/icons/icon.png</argument>
                                         <argument>--linux-shortcut</argument>

@@ -9,8 +9,6 @@ import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,16 +21,15 @@ import java.util.stream.Collectors;
 
 public class ChatPanel extends JPanel {
 
-    private final JPanel messagesPanel;
-    private final JScrollPane scrollPane;
+    private final JcefChatView chatView;
     private final InputBar inputBar;
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
-    private final List<MessageBubble> assistantBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
+    private MarkdownRenderOptions markdownRenderOptions = MarkdownRenderOptions.defaults();
     private Consumer<AssistantRenderMode> assistantRenderModeChangedListener;
     private Consumer<String> selectedModelChangedListener;
     private Runnable modelFavoritesChangedListener;
@@ -44,7 +41,6 @@ public class ChatPanel extends JPanel {
     private String selectedProviderName;
     private String selectedModelId;
     private ProviderService currentProvider;
-    private MessageBubble currentAssistantBubble;
     private final AtomicLong streamSessionCounter = new AtomicLong();
     private volatile long activeStreamSessionId = -1L;
     private volatile boolean streaming = false;
@@ -52,8 +48,10 @@ public class ChatPanel extends JPanel {
     private volatile AtomicBoolean activeStreamCancelled = new AtomicBoolean(false);
     private volatile ProviderService activeStreamingProvider;
     private volatile Thread activeStreamWorker;
-    private boolean autoScrollQueued = false;
-    private int messageRow = 0;
+
+    private long messageIdCounter = 0;
+    private String currentAssistantMessageId;
+    private final StringBuilder currentAssistantText = new StringBuilder();
 
     public ChatPanel() {
         this(ProviderModelCacheService.createDefault(), ModelFavoritesService.createInMemory());
@@ -79,25 +77,9 @@ public class ChatPanel extends JPanel {
         chatHeader.add(renderTogglePanel, BorderLayout.EAST);
         add(chatHeader, BorderLayout.NORTH);
 
-        // Messages area — uses ScrollablePanel + GridBagLayout for proper width tracking
-        messagesPanel = new ScrollablePanel();
-        messagesPanel.setLayout(new GridBagLayout());
-        messagesPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        messagesPanel.addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentResized(ComponentEvent e) {
-                if (autoScrollEnabled) {
-                    scheduleAutoScroll();
-                }
-            }
-        });
+        chatView = new JcefChatView();
+        add(chatView, BorderLayout.CENTER);
 
-        scrollPane = new JScrollPane(messagesPanel);
-        scrollPane.addPropertyChangeListener("UI", e -> SwingUtilities.invokeLater(this::applyScrollPaneStyles));
-        applyScrollPaneStyles();
-        add(scrollPane, BorderLayout.CENTER);
-
-        // Input bar at bottom
         inputBar = new InputBar();
         inputBar.addSendListener(e -> onSend());
         inputBar.addJumpToLatestListener(e -> onJumpToLatestRequested());
@@ -110,13 +92,20 @@ public class ChatPanel extends JPanel {
     @Override
     public void updateUI() {
         super.updateUI();
-        applyScrollPaneStyles();
+        if (chatView != null) {
+            chatView.setTheme(ChatTheme.fromCurrentLookAndFeel());
+        }
     }
 
     @Override
     public void addNotify() {
         super.addNotify();
-        SwingUtilities.invokeLater(this::preloadModelPopup);
+        SwingUtilities.invokeLater(() -> {
+            preloadModelPopup();
+            chatView.setTheme(ChatTheme.fromCurrentLookAndFeel());
+            chatView.setRenderMode(assistantRenderMode);
+            chatView.setMathOptions(markdownRenderOptions);
+        });
     }
 
     @Override
@@ -126,18 +115,6 @@ public class ChatPanel extends JPanel {
             modelPopup = null;
         }
         super.removeNotify();
-    }
-
-    private void applyScrollPaneStyles() {
-        if (scrollPane == null) {
-            return;
-        }
-
-        scrollPane.setBorder(null);
-        scrollPane.setViewportBorder(null);
-        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        scrollPane.putClientProperty("JScrollPane.smoothScrolling", false);
     }
 
     private JPanel createRenderTogglePanel() {
@@ -210,7 +187,6 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        // Prefer cached models fetched in previous sessions.
         if (!providerMap.isEmpty()) {
             providerMap.values().stream()
                     .map(providerDef -> new ProviderModelSelection(
@@ -226,7 +202,6 @@ public class ChatPanel extends JPanel {
                 return;
             }
 
-            // Fallback to first provider that has seeded models.
             providerMap.values().stream()
                     .map(providerDef -> new ProviderModelSelection(
                         providerDef.name(),
@@ -300,22 +275,38 @@ public class ChatPanel extends JPanel {
         }
     }
 
+    private String nextMessageId() {
+        return "msg-" + (++messageIdCounter);
+    }
+
     private void onSend() {
         String text = inputBar.getText();
         if (text.isEmpty() || streaming) return;
 
         Message userMsg = Message.user(text);
         history.add(userMsg);
-        addBubble(new MessageBubble(Role.USER), text, Role.USER);
+
+        String userMsgId = nextMessageId();
+        chatView.addMessage(userMsgId, "user", text, false);
+        if (autoScrollEnabled) {
+            chatView.scrollToBottom();
+        }
+
         inputBar.clear();
 
         if (currentProvider == null) {
-            addErrorBubble("No provider selected or configured. Set API key environment variables.");
+            String errorId = nextMessageId();
+            chatView.addMessage(errorId, "assistant",
+                    "No provider selected or configured. Set API key environment variables.", false);
+            if (autoScrollEnabled) {
+                chatView.scrollToBottom();
+            }
             return;
         }
 
-        currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
-        addBubble(currentAssistantBubble, null, Role.ASSISTANT);
+        currentAssistantMessageId = nextMessageId();
+        currentAssistantText.setLength(0);
+        chatView.addMessage(currentAssistantMessageId, "assistant", "", true);
 
         long streamSessionId = beginStreamingSession();
 
@@ -331,11 +322,14 @@ public class ChatPanel extends JPanel {
                             return;
                         }
                         SwingUtilities.invokeLater(() -> {
-                            if (!isActiveStreamingSession(streamSessionId) || currentAssistantBubble == null) {
+                            if (!isActiveStreamingSession(streamSessionId) || currentAssistantMessageId == null) {
                                 return;
                             }
-                            currentAssistantBubble.appendText(token);
-                            scrollToBottom();
+                            currentAssistantText.append(token);
+                            chatView.updateMessage(currentAssistantMessageId, currentAssistantText.toString());
+                            if (autoScrollEnabled) {
+                                chatView.scrollToBottom();
+                            }
                         });
                     },
                 () -> {
@@ -346,10 +340,12 @@ public class ChatPanel extends JPanel {
                             if (!isActiveStreamingSession(streamSessionId)) {
                                 return;
                             }
-                            if (currentAssistantBubble != null) {
-                                history.add(Message.assistant(currentAssistantBubble.getFullText()));
+                            if (currentAssistantMessageId != null) {
+                                chatView.finishMessage(currentAssistantMessageId);
+                                history.add(Message.assistant(currentAssistantText.toString()));
                             }
-                            currentAssistantBubble = null;
+                            currentAssistantMessageId = null;
+                            currentAssistantText.setLength(0);
                             finishStreamingSession(streamSessionId);
                         });
                     },
@@ -361,10 +357,13 @@ public class ChatPanel extends JPanel {
                             if (!isActiveStreamingSession(streamSessionId)) {
                                 return;
                             }
-                            if (currentAssistantBubble != null) {
-                                currentAssistantBubble.appendText("\n\n[Error: " + error.getMessage() + "]");
+                            if (currentAssistantMessageId != null) {
+                                currentAssistantText.append("\n\n[Error: ").append(error.getMessage()).append("]");
+                                chatView.updateMessage(currentAssistantMessageId, currentAssistantText.toString());
+                                chatView.finishMessage(currentAssistantMessageId);
                             }
-                            currentAssistantBubble = null;
+                            currentAssistantMessageId = null;
+                            currentAssistantText.setLength(0);
                             finishStreamingSession(streamSessionId);
                         });
                     },
@@ -373,123 +372,17 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private void addBubble(MessageBubble bubble, String text, Role role) {
-        if (role == Role.ASSISTANT) {
-            bubble.setAssistantRenderMode(assistantRenderMode);
-            assistantBubbles.add(bubble);
-        }
-
-        if (text != null) {
-            bubble.setText(text);
-        }
-
-        JPanel wrapper = new JPanel(new BorderLayout());
-        wrapper.setOpaque(false);
-
-        if (role == Role.USER) {
-            wrapper.setBorder(BorderFactory.createEmptyBorder(2, 120, 2, 0));
-        } else {
-            wrapper.setBorder(BorderFactory.createEmptyBorder(8, 0, 8, 40));
-        }
-        wrapper.add(bubble, BorderLayout.CENTER);
-
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 0;
-        gbc.gridy = messageRow++;
-        gbc.weightx = 1.0;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.anchor = GridBagConstraints.NORTH;
-
-        messagesPanel.add(wrapper, gbc);
-        addBottomFiller();
-        messagesPanel.revalidate();
-        scrollToBottom();
-    }
-
-    private void addBottomFiller() {
-        for (Component c : messagesPanel.getComponents()) {
-            if ("filler".equals(c.getName())) {
-                messagesPanel.remove(c);
-                break;
-            }
-        }
-        JPanel filler = new JPanel();
-        filler.setName("filler");
-        filler.setOpaque(false);
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 0;
-        gbc.gridy = messageRow;
-        gbc.weighty = 1.0;
-        gbc.fill = GridBagConstraints.VERTICAL;
-        messagesPanel.add(filler, gbc);
-    }
-
-    private void addErrorBubble(String message) {
-        MessageBubble errorBubble = new MessageBubble(Role.ASSISTANT);
-        errorBubble.setText(message);
-        errorBubble.setBackground(new Color(200, 50, 50));
-        addBubble(errorBubble, null, Role.ASSISTANT);
-    }
-
-    private void scrollToBottom() {
-        if (!autoScrollEnabled) {
-            return;
-        }
-        scheduleAutoScroll();
-    }
-
-    private void forceScrollToBottom() {
-        runOnEdt(() -> {
-            scrollToBottomNow();
-            SwingUtilities.invokeLater(this::scrollToBottomNow);
-        });
-    }
-
     private void onJumpToLatestRequested() {
-        forceScrollToBottom();
-    }
-
-    private void scheduleAutoScroll() {
-        runOnEdt(() -> {
-            if (!autoScrollEnabled || autoScrollQueued) {
-                return;
-            }
-
-            autoScrollQueued = true;
-            SwingUtilities.invokeLater(() -> {
-                autoScrollQueued = false;
-                if (!autoScrollEnabled) {
-                    return;
-                }
-                scrollToBottomNow();
-            });
-        });
-    }
-
-    private void scrollToBottomNow() {
-        JScrollBar vertical = scrollPane.getVerticalScrollBar();
-        int target = Math.max(0, vertical.getMaximum() - vertical.getVisibleAmount());
-        if (vertical.getValue() != target) {
-            vertical.setValue(target);
-        }
-    }
-
-    private void runOnEdt(Runnable action) {
-        if (SwingUtilities.isEventDispatchThread()) {
-            action.run();
-        } else {
-            SwingUtilities.invokeLater(action);
-        }
+        chatView.scrollToBottom();
     }
 
     public void clearChat() {
         cancelStreaming();
         history.clear();
-        assistantBubbles.clear();
-        messagesPanel.removeAll();
-        messageRow = 0;
-        messagesPanel.revalidate();
-        messagesPanel.repaint();
+        messageIdCounter = 0;
+        currentAssistantMessageId = null;
+        currentAssistantText.setLength(0);
+        chatView.clearAll();
     }
 
     public List<Message> getHistory() {
@@ -500,9 +393,13 @@ public class ChatPanel extends JPanel {
         clearChat();
         for (Message msg : messages) {
             history.add(msg);
-            MessageBubble bubble = new MessageBubble(msg.role());
-            addBubble(bubble, msg.content(), msg.role());
+            String id = nextMessageId();
+            chatView.addMessage(id, msg.role().name().toLowerCase(), msg.content(), false);
         }
+        if (autoScrollEnabled) {
+            chatView.scrollToBottom();
+        }
+        chatView.invalidateLayout();
     }
 
     public String getSelectedModel() {
@@ -551,7 +448,7 @@ public class ChatPanel extends JPanel {
         return assistantRenderMode;
     }
 
-    public void setAssistantRenderMode(AssistantRenderMode mode, boolean rerenderAssistantBubbles) {
+    public void setAssistantRenderMode(AssistantRenderMode mode, boolean rerender) {
         if (mode == null || assistantRenderMode == mode) {
             updateRenderModeToggleSelection();
             return;
@@ -560,14 +457,27 @@ public class ChatPanel extends JPanel {
         assistantRenderMode = mode;
         updateRenderModeToggleSelection();
 
-        if (rerenderAssistantBubbles) {
-            assistantBubbles.forEach(bubble -> bubble.setAssistantRenderMode(mode));
-            messagesPanel.revalidate();
-            messagesPanel.repaint();
+        if (rerender) {
+            chatView.setRenderMode(mode);
         }
 
         if (assistantRenderModeChangedListener != null) {
             assistantRenderModeChangedListener.accept(mode);
+        }
+    }
+
+    public MarkdownRenderOptions getMarkdownRenderOptions() {
+        return markdownRenderOptions;
+    }
+
+    public void setMarkdownRenderOptions(MarkdownRenderOptions options, boolean rerender) {
+        if (options == null || markdownRenderOptions.equals(options)) {
+            return;
+        }
+
+        markdownRenderOptions = options;
+        if (rerender) {
+            chatView.setMathOptions(options);
         }
     }
 
@@ -617,9 +527,6 @@ public class ChatPanel extends JPanel {
 
     public void setAutoScrollEnabled(boolean autoScrollEnabled) {
         this.autoScrollEnabled = autoScrollEnabled;
-        if (!autoScrollEnabled) {
-            autoScrollQueued = false;
-        }
         updateGenerationIndicator();
     }
 
@@ -638,8 +545,10 @@ public class ChatPanel extends JPanel {
     private void cancelStreaming(boolean markAsCancelled) {
         activeStreamCancelled.set(true);
 
-        if (markAsCancelled && streaming && currentAssistantBubble != null) {
-            currentAssistantBubble.appendText("\n\n[Cancelled]");
+        if (markAsCancelled && streaming && currentAssistantMessageId != null) {
+            currentAssistantText.append("\n\n[Cancelled]");
+            chatView.updateMessage(currentAssistantMessageId, currentAssistantText.toString());
+            chatView.finishMessage(currentAssistantMessageId);
         }
 
         ProviderService provider = activeStreamingProvider;
@@ -654,10 +563,10 @@ public class ChatPanel extends JPanel {
 
         activeStreamingProvider = null;
         activeStreamWorker = null;
-        autoScrollQueued = false;
         activeStreamSessionId = -1L;
         streaming = false;
-        currentAssistantBubble = null;
+        currentAssistantMessageId = null;
+        currentAssistantText.setLength(0);
         updateGenerationIndicator();
         SwingUtilities.invokeLater(() -> {
             inputBar.setEnabled(true);
@@ -682,7 +591,6 @@ public class ChatPanel extends JPanel {
         }
         activeStreamingProvider = null;
         activeStreamWorker = null;
-        autoScrollQueued = false;
         activeStreamSessionId = -1L;
         streaming = false;
         updateGenerationIndicator();
@@ -703,32 +611,5 @@ public class ChatPanel extends JPanel {
     }
 
     private record ProviderModelSelection(String providerName, List<String> models) {
-    }
-
-    private static class ScrollablePanel extends JPanel implements Scrollable {
-        @Override
-        public Dimension getPreferredScrollableViewportSize() {
-            return getPreferredSize();
-        }
-
-        @Override
-        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
-            return 16;
-        }
-
-        @Override
-        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
-            return orientation == SwingConstants.VERTICAL ? visibleRect.height : visibleRect.width;
-        }
-
-        @Override
-        public boolean getScrollableTracksViewportWidth() {
-            return true;
-        }
-
-        @Override
-        public boolean getScrollableTracksViewportHeight() {
-            return false;
-        }
     }
 }

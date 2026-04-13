@@ -3,6 +3,8 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
+import com.github.drafael.chat4j.chat.JcefRuntimeManager;
+import com.github.drafael.chat4j.chat.MarkdownRenderOptions;
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
@@ -50,6 +52,9 @@ public class MainFrame extends JFrame {
     private static final String KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX = "chat.markdown.conv.";
     private static final String KEY_MENU_BAR_ENABLED = "menu.bar.enabled";
     private static final String KEY_THEME = "theme";
+    private static final String KEY_LATEX_ENABLED = "markdown.latex.enabled";
+    private static final String KEY_LATEX_SINGLE_DOLLAR = "markdown.latex.singleDollar";
+    private static final String KEY_LATEX_BRACKET_DELIMITERS = "markdown.latex.bracketDelimiters";
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
@@ -208,6 +213,7 @@ public class MainFrame extends JFrame {
                 chatPanel.cancelStreaming();
                 saveCurrentConversation();
                 saveWindowState();
+                JcefRuntimeManager.shutdown();
             }
         });
 
@@ -220,6 +226,7 @@ public class MainFrame extends JFrame {
                 chatPanel.cancelStreaming();
                 saveCurrentConversation();
                 saveWindowState();
+                JcefRuntimeManager.shutdown();
                 response.performQuit();
             });
         }
@@ -504,6 +511,7 @@ public class MainFrame extends JFrame {
 
     private void applyGeneralSettings() {
         boolean menuBarEnabled = SystemInfo.isMacOS;
+        MarkdownRenderOptions markdownRenderOptions = MarkdownRenderOptions.defaults();
 
         try {
             String sendKey = settingsRepo.get("send.key", "Enter");
@@ -517,12 +525,25 @@ public class MainFrame extends JFrame {
 
             menuBarEnabled = Boolean.parseBoolean(
                     settingsRepo.get(KEY_MENU_BAR_ENABLED, String.valueOf(SystemInfo.isMacOS)));
+
+            boolean latexEnabled = Boolean.parseBoolean(settingsRepo.get(KEY_LATEX_ENABLED, "true"));
+            boolean singleDollarEnabled = Boolean.parseBoolean(settingsRepo.get(KEY_LATEX_SINGLE_DOLLAR, "true"));
+            boolean bracketDelimitersEnabled = Boolean.parseBoolean(
+                    settingsRepo.get(KEY_LATEX_BRACKET_DELIMITERS, "true"));
+            markdownRenderOptions = new MarkdownRenderOptions(
+                    latexEnabled,
+                    singleDollarEnabled,
+                    bracketDelimitersEnabled
+            );
         } catch (Exception e) {
             chatPanel.getInputBar().setSendOnEnter(true);
             chatPanel.setAutoScrollEnabled(true);
             assistantMarkdownDefaultMode = AssistantRenderMode.PREVIEW;
             menuBarEnabled = SystemInfo.isMacOS;
+            markdownRenderOptions = MarkdownRenderOptions.defaults();
         }
+
+        chatPanel.setMarkdownRenderOptions(markdownRenderOptions, true);
 
         AssistantRenderMode modeToApply = currentConversationId != null
                 ? resolveConversationRenderMode(currentConversationId)

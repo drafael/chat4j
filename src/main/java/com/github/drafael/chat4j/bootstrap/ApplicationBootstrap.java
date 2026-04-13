@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.bootstrap;
 
 import com.github.drafael.chat4j.MainFrame;
+import com.github.drafael.chat4j.chat.JcefRuntimeManager;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.storage.ConversationRepo;
@@ -43,6 +44,7 @@ public final class ApplicationBootstrap {
         AppServices services = initializeStorage();
 
         applySavedAppearance(services.settingsRepo());
+        initializeRendererRuntime();
         showMainWindow(services);
         showEnvironmentWarningIfNeeded(environment);
     }
@@ -112,6 +114,14 @@ public final class ApplicationBootstrap {
                 services.modelFavoritesService());
             frame.setVisible(true);
         });
+    }
+
+    private void initializeRendererRuntime() {
+        try {
+            JcefRuntimeManager.initializeOrThrow();
+        } catch (Exception e) {
+            showStartupErrorAndExit("Failed to initialize embedded web renderer: " + e.getMessage());
+        }
     }
 
     private void showStartupErrorAndExit(String message) {

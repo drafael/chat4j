@@ -48,7 +48,9 @@ If no provider key is available and no local provider (LM Studio/Ollama) is runn
 ```bash
 # from project root
 mvn clean compile
-mvn exec:java
+
+# macOS (required for JCEF module access)
+MAVEN_OPTS="--add-exports=java.desktop/sun.awt=ALL-UNNAMED --add-opens=java.desktop/sun.awt=ALL-UNNAMED --add-opens=java.desktop/java.awt.peer=ALL-UNNAMED --add-opens=java.desktop/sun.lwawt=ALL-UNNAMED --add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED" mvn exec:java
 ```
 
 ## Build
@@ -61,10 +63,19 @@ mvn clean package
 Then run:
 
 ```bash
-java --enable-preview -jar target/chat4j-1.0-SNAPSHOT.jar
+# macOS
+java \
+  --enable-preview \
+  --add-exports=java.desktop/sun.awt=ALL-UNNAMED \
+  --add-opens=java.desktop/sun.awt=ALL-UNNAMED \
+  --add-opens=java.desktop/java.awt.peer=ALL-UNNAMED \
+  --add-opens=java.desktop/sun.lwawt=ALL-UNNAMED \
+  --add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED \
+  -jar target/chat4j-1.0-SNAPSHOT.jar
 ```
 
 > Note: `--enable-preview` is kept for consistency with project build config.
+> For packaged installers generated via `jpackage`, these JVM options are embedded automatically.
 
 ## Tests
 
