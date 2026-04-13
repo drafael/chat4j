@@ -1,16 +1,26 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.FilePart;
+import com.github.drafael.chat4j.provider.api.content.ImagePart;
+import com.github.drafael.chat4j.provider.api.content.MessageMeta;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,6 +39,7 @@ public class ChatPanel extends JPanel {
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final AttachmentStager attachmentStager = new AttachmentStager();
     private final List<MessageBubble> assistantBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
@@ -37,6 +48,7 @@ public class ChatPanel extends JPanel {
     private Consumer<String> selectedModelChangedListener;
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
+    private Runnable messageSubmittedListener;
     private ModelSelectorPopup modelPopup;
 
     private final List<Message> history = new ArrayList<>();
@@ -301,18 +313,32 @@ public class ChatPanel extends JPanel {
     }
 
     private void onSend() {
-        String text = inputBar.getText();
-        if (text.isEmpty() || streaming) return;
-
-        Message userMsg = Message.user(text);
-        history.add(userMsg);
-        addBubble(new MessageBubble(Role.USER), text, Role.USER);
-        inputBar.clear();
-
-        if (currentProvider == null) {
-            addErrorBubble("No provider selected or configured. Set API key environment variables.");
+        if (streaming) {
             return;
         }
+
+        ComposerState composerState = inputBar.getComposerState();
+        if (composerState.isEmpty()) {
+            return;
+        }
+
+        if (currentProvider == null) {
+            inputBar.showValidationMessage("Select a model/provider before sending.");
+            return;
+        }
+
+        Message userMsg;
+        try {
+            userMsg = toUserMessage(composerState);
+        } catch (IOException e) {
+            inputBar.showValidationMessage("Failed to stage attachment: " + e.getMessage());
+            return;
+        }
+
+        inputBar.clear();
+        history.add(userMsg);
+        addBubble(new MessageBubble(Role.USER), formatUserBubbleText(userMsg), Role.USER);
+        notifyMessageSubmitted();
 
         currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
@@ -371,6 +397,131 @@ public class ChatPanel extends JPanel {
                 cancellationFlag::get
             );
         });
+    }
+
+    private Message toUserMessage(ComposerState composerState) throws IOException {
+        List<ContentPart> parts = new ArrayList<>();
+
+        if (!composerState.activeSkills().isEmpty()) {
+            String skillDirective = "Activated skills: " + String.join(", ", composerState.activeSkills());
+            parts.add(new TextPart(skillDirective));
+        }
+
+        String text = composerState.text().trim();
+        if (!text.isEmpty()) {
+            parts.add(new TextPart(text));
+        }
+
+        for (ComposerAttachment attachment : composerState.attachments()) {
+            parts.add(toAttachmentPart(attachment));
+        }
+
+        List<String> fallbackNotices = buildFallbackNotices(composerState.attachments());
+        MessageMeta meta = new MessageMeta(composerState.activeSkills(), fallbackNotices, false, "");
+        return new Message(Role.USER, parts, Instant.now(), meta);
+    }
+
+    private ContentPart toAttachmentPart(ComposerAttachment attachment) throws IOException {
+        AttachmentRef attachmentRef = attachmentStager.stage(attachment);
+        return attachment.image()
+                ? new ImagePart(attachmentRef, null, null)
+                : new FilePart(attachmentRef);
+    }
+
+    private List<String> buildFallbackNotices(List<ComposerAttachment> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> notices = new ArrayList<>();
+        boolean hasImage = attachments.stream().anyMatch(ComposerAttachment::image);
+        boolean hasFile = attachments.stream().anyMatch(attachment -> !attachment.image());
+
+        ProviderCapabilities capabilities = selectedProviderCapabilities();
+        boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
+                capabilities,
+                selectedProviderName,
+                selectedModelId
+        );
+        boolean supportsFileInput = ProviderCapabilityResolver.supportsFileInput(
+                capabilities,
+                selectedProviderName,
+                selectedModelId
+        );
+
+        if (hasImage && !supportsImageInput) {
+            notices.add(buildImageFallbackNotice());
+        }
+
+        if (hasFile && !supportsFileInput) {
+            notices.add(buildFileFallbackNotice(supportsImageInput));
+        }
+
+        return notices;
+    }
+
+    private String buildImageFallbackNotice() {
+        String providerLabel = selectedProviderName == null || selectedProviderName.isBlank()
+                ? "Selected provider"
+                : selectedProviderName;
+        String modelLabel = selectedModelId == null || selectedModelId.isBlank()
+                ? "current model"
+                : selectedModelId;
+
+        return "%s (%s) is currently mapped to text-only image references.".formatted(providerLabel, modelLabel);
+    }
+
+    private String buildFileFallbackNotice(boolean supportsImageInput) {
+        String providerLabel = selectedProviderName == null || selectedProviderName.isBlank()
+                ? "Selected provider"
+                : selectedProviderName;
+        String modelLabel = selectedModelId == null || selectedModelId.isBlank()
+                ? "current model"
+                : selectedModelId;
+
+        if (supportsImageInput) {
+            return "%s (%s) supports rich input, but file upload mapping is not enabled yet in Chat4J; sending file references.".formatted(
+                    providerLabel,
+                    modelLabel
+            );
+        }
+
+        return "%s (%s) uses text-only fallback for file attachments.".formatted(providerLabel, modelLabel);
+    }
+
+    private ProviderCapabilities selectedProviderCapabilities() {
+        if (selectedProviderName == null || selectedProviderName.isBlank()) {
+            return null;
+        }
+
+        ProviderRegistry.ProviderDef providerDef = providerMap.get(selectedProviderName);
+        return providerDef == null ? null : providerDef.capabilities();
+    }
+
+    private String formatUserBubbleText(Message message) {
+        if (message.meta() == null) {
+            return message.content();
+        }
+
+        List<String> lines = new ArrayList<>();
+        if (!message.meta().activeSkills().isEmpty()) {
+            lines.add("[SKILL] " + String.join(", ", message.meta().activeSkills()));
+        }
+
+        message.meta().fallbackNotices().stream()
+                .map(notice -> "[FALLBACK] " + notice)
+                .forEach(lines::add);
+
+        String content = message.content();
+        if (!content.isBlank()) {
+            content.lines()
+                    .map(String::trim)
+                    .filter(line -> !line.isBlank())
+                    .filter(line -> message.meta().activeSkills().isEmpty() || !line.startsWith("Activated skills:"))
+                    .forEach(lines::add);
+        }
+
+        return lines.isEmpty() ? message.content() : String.join("\n", lines);
     }
 
     private void addBubble(MessageBubble bubble, String text, Role role) {
@@ -501,7 +652,8 @@ public class ChatPanel extends JPanel {
         for (Message msg : messages) {
             history.add(msg);
             MessageBubble bubble = new MessageBubble(msg.role());
-            addBubble(bubble, msg.content(), msg.role());
+            String bubbleText = msg.role() == Role.USER ? formatUserBubbleText(msg) : msg.content();
+            addBubble(bubble, bubbleText, msg.role());
         }
     }
 
@@ -587,6 +739,10 @@ public class ChatPanel extends JPanel {
         this.modelCatalogChangedListener = listener;
     }
 
+    public void setOnMessageSubmitted(Runnable listener) {
+        this.messageSubmittedListener = listener;
+    }
+
     private void notifyModelFavoritesChanged() {
         if (modelFavoritesChangedListener != null) {
             modelFavoritesChangedListener.run();
@@ -596,6 +752,12 @@ public class ChatPanel extends JPanel {
     private void notifyModelCatalogChanged() {
         if (modelCatalogChangedListener != null) {
             modelCatalogChangedListener.run();
+        }
+    }
+
+    private void notifyMessageSubmitted() {
+        if (messageSubmittedListener != null) {
+            messageSubmittedListener.run();
         }
     }
 

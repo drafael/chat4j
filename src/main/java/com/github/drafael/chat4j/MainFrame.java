@@ -5,7 +5,7 @@ import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
 import com.github.drafael.chat4j.provider.api.Message;
-import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
@@ -32,7 +32,6 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.net.URL;
-import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -146,7 +145,7 @@ public class MainFrame extends JFrame {
         chatPanel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
-        chatPanel.getInputBar().addSendListener(e -> SwingUtilities.invokeLater(this::saveCurrentConversation));
+        chatPanel.setOnMessageSubmitted(() -> SwingUtilities.invokeLater(this::saveCurrentConversation));
         applyProviderSettings();
         applyGeneralSettings();
         UIManager.addPropertyChangeListener(lookAndFeelListener);
@@ -261,12 +260,7 @@ public class MainFrame extends JFrame {
         try {
             List<MessageRecord> records = conversationRepo.getMessages(id);
             List<Message> messages = records.stream()
-                    .map(r -> new Message(
-                        Role.valueOf(r.role()),
-                        r.content(),
-                        r.createdAt().atZone(ZoneId.systemDefault()).toInstant()
-                    )
-                    )
+                    .map(MessageRecord::message)
                     .toList();
             chatPanel.loadHistory(messages);
             chatPanel.setAssistantRenderMode(resolveConversationRenderMode(id), true);
@@ -292,8 +286,7 @@ public class MainFrame extends JFrame {
 
         try {
             if (currentConversationId == null) {
-                String title = history.getFirst().content();
-                if (title.length() > 50) title = title.substring(0, 50) + "...";
+                String title = deriveConversationTitle(history.getFirst());
                 ModelSelection modelSelection = parseModelSelection(chatPanel.getSelectedModel())
                         .orElse(new ModelSelection("Unknown", "unknown"));
                 currentConversationId = conversationRepo.createConversation(
@@ -311,7 +304,7 @@ public class MainFrame extends JFrame {
             List<MessageRecord> existing = conversationRepo.getMessages(currentConversationId);
             for (int i = existing.size(); i < history.size(); i++) {
                 Message msg = history.get(i);
-                conversationRepo.addMessage(currentConversationId, msg.role().name(), msg.content());
+                conversationRepo.addMessage(currentConversationId, msg);
             }
 
             sidebarPanel.refresh();
@@ -321,6 +314,28 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             // Silent fail for save
         }
+    }
+
+    private String deriveConversationTitle(Message firstMessage) {
+        String fallbackTitle = "New chat";
+        if (firstMessage == null) {
+            return fallbackTitle;
+        }
+
+        String titleCandidate = firstMessage.parts().stream()
+                .filter(part -> part instanceof TextPart)
+                .map(part -> ((TextPart) part).text())
+                .map(String::trim)
+                .filter(text -> !text.isBlank())
+                .filter(text -> !text.startsWith("Activated skills:"))
+                .findFirst()
+                .orElse(firstMessage.content().trim());
+
+        if (titleCandidate.isBlank()) {
+            return fallbackTitle;
+        }
+
+        return titleCandidate.length() > 50 ? titleCandidate.substring(0, 50) + "..." : titleCandidate;
     }
 
     private void saveWindowState() {

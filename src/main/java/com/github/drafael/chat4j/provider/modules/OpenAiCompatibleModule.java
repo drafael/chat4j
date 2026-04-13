@@ -45,7 +45,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
             oauthCliSpec,
             defaultBaseUrl,
             emptyList(),
-            ProviderCapabilities.chatAndModels(),
+            declaredCapabilities(providerName),
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
         this.chatCompletionClient = selectChatClient(providerName, authType);
     }
@@ -69,5 +69,12 @@ public class OpenAiCompatibleModule implements ProviderModule {
     @Override
     public ModelCatalogClient modelCatalogClient() {
         return modelCatalogClient;
+    }
+
+    private ProviderCapabilities declaredCapabilities(String providerName) {
+        return switch (providerName) {
+            case "OpenAI", "Google AI", "OpenRouter" -> ProviderCapabilities.chatModelsAndImages();
+            default -> ProviderCapabilities.chatAndModels();
+        };
     }
 }

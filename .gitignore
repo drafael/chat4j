@@ -1,15 +1,18 @@
 .claude
 !.claude/skills/update-app-icon/SKILL.md
+# Generated brainstorm/refactor plans
+/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+
+icon-*.png
+icon_*.png
+
 target/
 *.class
 *.jar
-dependency-reduced-pom.xml
-icon-*.png
-icon_*.png
-*.log
 .idea/
 *.iml
-.DS_Store
+dependency-reduced-pom.xml
 
-# Generated brainstorm/refactor plans
-/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+tmp/
+*.log
+.DS_Store

@@ -157,7 +157,7 @@ public class MessageBubble extends JPanel {
         Palette palette = MarkdownPaletteResolver.resolve(isDark);
 
         if (role == Role.USER) {
-            editorPane.setText(toEscapedHtml(text, palette, false));
+            editorPane.setText(toUserHtml(text, palette, isDark));
         } else if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
             editorPane.setText(toEscapedHtml(text, palette, true));
         } else {
@@ -169,17 +169,63 @@ public class MessageBubble extends JPanel {
     }
 
     private String toEscapedHtml(String text, Palette palette, boolean monospaced) {
-        String escaped = text
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\n", "<br>");
+        String escaped = escapeHtml(text).replace("\n", "<br>");
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
         return "<html><head><style>"
                 + "body { font-family: " + fontFamily + "; "
                 + "font-size: 11px; line-height: 1.4; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
                 + "</style></head><body>" + escaped + "</body></html>";
+    }
+
+    private String toUserHtml(String text, Palette palette, boolean isDark) {
+        String badgeBackground = isDark ? "#2d4f8f" : "#dbeafe";
+        String badgeText = isDark ? "#dbeafe" : "#1e3a8a";
+        String fallbackBackground = isDark ? "#5c3a16" : "#ffedd5";
+        String fallbackText = isDark ? "#fed7aa" : "#9a3412";
+
+        String body = text.lines()
+                .map(line -> toUserLineHtml(line, badgeBackground, badgeText, fallbackBackground, fallbackText))
+                .reduce((left, right) -> left + right)
+                .orElse("");
+
+        return "<html><head><style>"
+                + "body { font-family: " + palette.baseFontFamily() + "; font-size: 11px; line-height: 1.45; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
+                + ".line { margin: 0 0 3px 0; }"
+                + ".badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }"
+                + ".skill { background: " + badgeBackground + "; color: " + badgeText + "; }"
+                + ".fallback { background: " + fallbackBackground + "; color: " + fallbackText + "; }"
+                + "</style></head><body>" + body + "</body></html>";
+    }
+
+    private String toUserLineHtml(String line,
+                                  String skillBadgeBackground,
+                                  String skillBadgeText,
+                                  String fallbackBadgeBackground,
+                                  String fallbackBadgeText
+    ) {
+        if (line == null || line.isBlank()) {
+            return "<div class='line'>&nbsp;</div>";
+        }
+
+        if (line.startsWith("[SKILL] ")) {
+            return "<div class='line'><span class='badge skill' style='background: " + skillBadgeBackground + "; color: " + skillBadgeText + ";'>SKILL</span>"
+                    + escapeHtml(line.substring(8).trim()) + "</div>";
+        }
+
+        if (line.startsWith("[FALLBACK] ")) {
+            return "<div class='line'><span class='badge fallback' style='background: " + fallbackBadgeBackground + "; color: " + fallbackBadgeText + ";'>FALLBACK</span>"
+                    + escapeHtml(line.substring(11).trim()) + "</div>";
+        }
+
+        return "<div class='line'>" + escapeHtml(line) + "</div>";
+    }
+
+    private String escapeHtml(String text) {
+        return text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 
     public String getFullText() {

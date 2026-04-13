@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.ModelFetcher;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
 
 import java.util.List;
@@ -14,6 +15,7 @@ public class ProviderRegistry {
         String envVar,
         String baseUrl,
         List<String> seedModels,
+        ProviderCapabilities capabilities,
         ProviderFactory factory,
         ModelFetcher fetcher
     ) {
@@ -64,6 +66,7 @@ public class ProviderRegistry {
             providerDefinition.envVar(),
             effectiveBaseUrl,
             providerDefinition.seedModels(),
+            providerDefinition.descriptor().capabilities(),
             CATALOG.createFactory(providerDefinition.name(), providerDefinition.envVar(), effectiveBaseUrl),
             CATALOG.createFetcher(
                 providerDefinition.name(),
@@ -79,6 +82,7 @@ public class ProviderRegistry {
             providerDefinition.envVar(),
             providerDefinition.baseUrl(),
             providerDefinition.seedModels(),
+            providerDefinition.descriptor().capabilities(),
             CATALOG.createFactory(
                 providerDefinition.name(),
                 providerDefinition.envVar(),
