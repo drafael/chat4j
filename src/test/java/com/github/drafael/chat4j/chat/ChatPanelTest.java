@@ -100,8 +100,7 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(subject.getInputBar().isEnabled()).isFalse();
-        assertThat(subject.getInputBar().isGenerationIndicatorVisible()).isTrue();
-        assertThat(readGenerationLabel(subject.getInputBar()).getText()).isEqualTo("Preparing…");
+        assertThat(subject.getInputBar().isCancelGenerationVisible()).isTrue();
         assertThat(subject.getHistory()).isEmpty();
 
         releasePreparation.countDown();
@@ -137,7 +136,7 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isGenerationIndicatorVisible()).isFalse();
+        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
         assertThat(subject.getHistory()).isEmpty();
         assertThat(textArea.getText()).isEqualTo("ping");
 
@@ -161,7 +160,7 @@ class ChatPanelTest {
         awaitCondition(2, TimeUnit.SECONDS, () -> {
             flushEdt();
             return subject.getInputBar().isEnabled()
-                    && !subject.getInputBar().isGenerationIndicatorVisible()
+                    && !subject.getInputBar().isCancelGenerationVisible()
                     && readValidationLabel(subject.getInputBar()).getText().contains("Failed to stage attachment");
         });
 
@@ -327,7 +326,7 @@ class ChatPanelTest {
         assertThat(subject.getHistory().get(0).content()).isEqualTo("ping");
         assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
         assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isGenerationIndicatorVisible()).isFalse();
+        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
     }
 
     @Test
@@ -372,7 +371,7 @@ class ChatPanelTest {
         });
 
         assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isGenerationIndicatorVisible()).isFalse();
+        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
 
         releasePreparation.countDown();
         assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
@@ -481,12 +480,6 @@ class ChatPanelTest {
                 return "TEST_KEY";
             }
         };
-    }
-
-    private static JLabel readGenerationLabel(InputBar inputBar) throws Exception {
-        Field field = InputBar.class.getDeclaredField("generationLabel");
-        field.setAccessible(true);
-        return (JLabel) field.get(inputBar);
     }
 
     private static JLabel readValidationLabel(InputBar inputBar) throws Exception {

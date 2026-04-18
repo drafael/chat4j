@@ -35,6 +35,7 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URL;
@@ -62,6 +63,9 @@ public class ChatPanel extends JPanel {
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
     private static final int CHAT_MENU_ICON_SIZE = 14;
+    private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
+    private static final int COMPOSER_FADE_HEIGHT = 48;
+    private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
@@ -69,6 +73,11 @@ public class ChatPanel extends JPanel {
     private final CardLayout messagesCardLayout = new CardLayout();
     private final JPanel messagesContainer;
     private final InputBar inputBar;
+    private final JLayeredPane bodyLayered;
+    private final JPanel bodyContent;
+    private final JumpToLatestButton jumpToLatestOverlay;
+    private final ComposerFadeOverlay composerFadeOverlay;
+    private boolean atBottom = true;
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
@@ -153,14 +162,95 @@ public class ChatPanel extends JPanel {
         messagesContainer.add(buildEmptyStatePanel(), CARD_EMPTY);
         messagesContainer.add(scrollPane, CARD_CHAT);
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
-        add(messagesContainer, BorderLayout.CENTER);
 
         // Input bar at bottom
         inputBar = new InputBar();
         inputBar.addSendListener(e -> onSend());
-        inputBar.addJumpToLatestListener(e -> onJumpToLatestRequested());
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());
-        add(inputBar, BorderLayout.SOUTH);
+
+        bodyContent = new JPanel(new BorderLayout());
+        bodyContent.setOpaque(false);
+        bodyContent.add(messagesContainer, BorderLayout.CENTER);
+        bodyContent.add(inputBar, BorderLayout.SOUTH);
+
+        jumpToLatestOverlay = new JumpToLatestButton();
+        jumpToLatestOverlay.setVisible(false);
+        jumpToLatestOverlay.addActionListener(e -> onJumpToLatestRequested());
+
+        composerFadeOverlay = new ComposerFadeOverlay();
+
+        bodyLayered = new JLayeredPane() {
+            @Override
+            public Dimension getPreferredSize() {
+                return bodyContent.getPreferredSize();
+            }
+
+            @Override
+            public void doLayout() {
+                bodyContent.setBounds(0, 0, getWidth(), getHeight());
+                layoutJumpOverlay();
+            }
+        };
+        bodyLayered.add(bodyContent, JLayeredPane.DEFAULT_LAYER);
+        bodyLayered.add(composerFadeOverlay, COMPOSER_FADE_LAYER);
+        bodyLayered.add(jumpToLatestOverlay, JLayeredPane.PALETTE_LAYER);
+        add(bodyLayered, BorderLayout.CENTER);
+
+        inputBar.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                layoutJumpOverlay();
+            }
+
+            @Override
+            public void componentMoved(ComponentEvent e) {
+                layoutJumpOverlay();
+            }
+        });
+
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> updateAtBottom());
+        refreshJumpOverlay();
+    }
+
+    private void layoutJumpOverlay() {
+        if (jumpToLatestOverlay == null || inputBar == null || bodyLayered == null) {
+            return;
+        }
+
+        Dimension size = jumpToLatestOverlay.getPreferredSize();
+        int x = (bodyLayered.getWidth() - size.width) / 2;
+        int y = inputBar.getY() - size.height - JUMP_OVERLAY_BOTTOM_GAP;
+        jumpToLatestOverlay.setBounds(x, y, size.width, size.height);
+
+        if (composerFadeOverlay != null) {
+            int fadeTop = Math.max(0, inputBar.getY() - COMPOSER_FADE_HEIGHT);
+            composerFadeOverlay.setBounds(0, fadeTop, bodyLayered.getWidth(), inputBar.getY() - fadeTop);
+        }
+    }
+
+    private void updateAtBottom() {
+        JScrollBar vertical = scrollPane.getVerticalScrollBar();
+        int bottomEdge = vertical.getValue() + vertical.getVisibleAmount();
+        boolean nextAtBottom = bottomEdge >= vertical.getMaximum() - 4;
+        if (nextAtBottom != atBottom) {
+            atBottom = nextAtBottom;
+            refreshJumpOverlay();
+        }
+    }
+
+    private void refreshJumpOverlay() {
+        if (jumpToLatestOverlay == null) {
+            return;
+        }
+
+        boolean shouldShow = !autoScrollEnabled && (streaming || !atBottom);
+        if (jumpToLatestOverlay.isVisible() != shouldShow) {
+            jumpToLatestOverlay.setVisible(shouldShow);
+            if (bodyLayered != null) {
+                bodyLayered.revalidate();
+                bodyLayered.repaint();
+            }
+        }
     }
 
     @Override
@@ -1657,6 +1747,7 @@ public class ChatPanel extends JPanel {
             autoScrollQueued = false;
         }
         updateGenerationIndicator();
+        refreshJumpOverlay();
     }
 
     public boolean isAutoScrollEnabled() {
@@ -1820,8 +1911,9 @@ public class ChatPanel extends JPanel {
         boolean indicatorVisible = showingPreparing || showingStreaming;
 
         streaming = indicatorVisible;
-        inputBar.setGenerationStatusText(showingPreparing ? "Preparing…" : "Generating response…");
-        inputBar.setGenerationIndicatorVisible(indicatorVisible);
+        inputBar.setCancelGenerationVisible(indicatorVisible);
+        jumpToLatestOverlay.setStreaming(indicatorVisible);
+        refreshJumpOverlay();
     }
 
     private static List<String> sanitizeModelIds(String providerName, List<String> modelIds) {
@@ -1930,6 +2022,46 @@ public class ChatPanel extends JPanel {
         @Override
         public boolean getScrollableTracksViewportHeight() {
             return false;
+        }
+    }
+
+    private static final class ComposerFadeOverlay extends JComponent {
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            int w = getWidth();
+            int h = getHeight();
+            if (w <= 0 || h <= 0) {
+                return;
+            }
+
+            Color background = resolveChatBackground();
+            Color transparent = new Color(background.getRed(), background.getGreen(), background.getBlue(), 0);
+
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            LinearGradientPaint fade = new LinearGradientPaint(
+                    new Point2D.Float(0, 0),
+                    new Point2D.Float(0, h),
+                    new float[] { 0f, 1f },
+                    new Color[] { transparent, background }
+            );
+            g2.setPaint(fade);
+            g2.fillRect(0, 0, w, h);
+            g2.dispose();
+        }
+
+        @Override
+        public boolean contains(int x, int y) {
+            return false;
+        }
+
+        private Color resolveChatBackground() {
+            Color color = UIManager.getColor("Panel.background");
+            if (color == null) {
+                color = getBackground();
+            }
+            return color != null ? color : new Color(245, 245, 245);
         }
     }
 }

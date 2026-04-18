@@ -54,11 +54,6 @@ public class InputBar extends JPanel {
     private final JPanel composerShell;
     private final JButton attachButton;
     private final JLabel validationLabel;
-    private JPanel generationIndicatorPanel;
-    private JPanel generationInfoPanel;
-    private JProgressBar generationProgressBar;
-    private JLabel generationLabel;
-    private JButton jumpToLatestButton;
     private JButton cancelGenerationButton;
     private final JPopupMenu slashPopup = new JPopupMenu();
     private final DefaultListModel<SkillCommand> slashSuggestions = new DefaultListModel<>();
@@ -68,7 +63,6 @@ public class InputBar extends JPanel {
     private final List<SkillCommand> availableSkills = new ArrayList<>();
     private final AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
     private final List<ActionListener> sendListeners = new ArrayList<>();
-    private final List<ActionListener> jumpToLatestListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
     private int slashTokenStart = -1;
@@ -167,28 +161,6 @@ public class InputBar extends JPanel {
         composerShell.add(scrollPane, BorderLayout.CENTER);
         composerShell.add(composerBottomPanel, BorderLayout.SOUTH);
 
-        generationIndicatorPanel = new JPanel(new BorderLayout());
-        generationIndicatorPanel.setVisible(false);
-
-        generationInfoPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-
-        generationProgressBar = new JProgressBar();
-        generationProgressBar.setIndeterminate(true);
-        generationProgressBar.setPreferredSize(new Dimension(64, 8));
-        generationProgressBar.setBorderPainted(false);
-        generationInfoPanel.add(generationProgressBar);
-
-        generationLabel = new JLabel("Generating response…");
-        Fonts.apply(generationLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
-        generationInfoPanel.add(generationLabel);
-
-        jumpToLatestButton = new JButton("Jump to latest");
-        jumpToLatestButton.putClientProperty("JButton.buttonType", "borderless");
-        Fonts.apply(jumpToLatestButton, Font.PLAIN, Fonts.SIZE_COMPACT);
-        jumpToLatestButton.setFocusable(false);
-        jumpToLatestButton.addActionListener(e -> fireJumpToLatest());
-        generationInfoPanel.add(jumpToLatestButton);
-
         cancelGenerationButton = new JButton();
         cancelGenerationButton.putClientProperty("JButton.buttonType", "toolBarButton");
         cancelGenerationButton.putClientProperty(
@@ -211,13 +183,10 @@ public class InputBar extends JPanel {
         cancelPanel.add(cancelGenerationButton);
         composerBottomPanel.add(cancelPanel, BorderLayout.EAST);
 
-        generationIndicatorPanel.add(generationInfoPanel, BorderLayout.WEST);
-
         configureSlashPopup();
         refreshSkills();
 
         applyThemeStyles();
-        add(generationIndicatorPanel, BorderLayout.NORTH);
         add(composerShell, BorderLayout.CENTER);
     }
 
@@ -285,10 +254,6 @@ public class InputBar extends JPanel {
         this.sendOnEnter = sendOnEnter;
     }
 
-    public void addJumpToLatestListener(ActionListener listener) {
-        jumpToLatestListeners.add(listener);
-    }
-
     public void addCancelGenerationListener(ActionListener listener) {
         cancelGenerationListeners.add(listener);
     }
@@ -297,10 +262,8 @@ public class InputBar extends JPanel {
         textArea.requestFocusInWindow();
     }
 
-    public void setGenerationIndicatorVisible(boolean visible) {
+    public void setCancelGenerationVisible(boolean visible) {
         Runnable update = () -> {
-            generationIndicatorPanel.setVisible(visible);
-            generationProgressBar.setIndeterminate(visible);
             cancelGenerationButton.setVisible(visible);
             revalidate();
             repaint();
@@ -313,30 +276,13 @@ public class InputBar extends JPanel {
         }
     }
 
-    public boolean isGenerationIndicatorVisible() {
-        return generationIndicatorPanel.isVisible();
-    }
-
-    public void setGenerationStatusText(String text) {
-        Runnable update = () -> generationLabel.setText(StringUtils.defaultIfBlank(text, "Generating response…"));
-
-        if (SwingUtilities.isEventDispatchThread()) {
-            update.run();
-        } else {
-            SwingUtilities.invokeLater(update);
-        }
+    public boolean isCancelGenerationVisible() {
+        return cancelGenerationButton.isVisible();
     }
 
     private void fireSend() {
         var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "send");
         for (ActionListener l : sendListeners) {
-            l.actionPerformed(event);
-        }
-    }
-
-    private void fireJumpToLatest() {
-        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "jumpToLatest");
-        for (ActionListener l : jumpToLatestListeners) {
             l.actionPerformed(event);
         }
     }
@@ -956,12 +902,7 @@ public class InputBar extends JPanel {
     }
 
     private void applyThemeStyles() {
-        setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(1, 0, 0, 0,
-                        UIManager.getColor("Separator.foreground")
-                ),
-                BorderFactory.createEmptyBorder(8, 16, 12, 16)
-        ));
+        setBorder(BorderFactory.createEmptyBorder(8, 16, 12, 16));
 
         if (scrollPane != null) {
             scrollPane.setBorder(null);
@@ -984,30 +925,6 @@ public class InputBar extends JPanel {
             textArea.setOpaque(false);
             textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
             textArea.putClientProperty("JComponent.outline", null);
-        }
-
-        if (generationIndicatorPanel != null) {
-            generationIndicatorPanel.setOpaque(false);
-        }
-
-        if (generationInfoPanel != null) {
-            generationInfoPanel.setOpaque(false);
-        }
-
-        if (generationLabel != null) {
-            generationLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        }
-
-        Color linkColor = UIManager.getColor("Component.linkColor");
-        if (linkColor == null) {
-            linkColor = UIManager.getColor("Component.accentColor");
-        }
-        if (linkColor == null) {
-            linkColor = UIManager.getColor("Label.foreground");
-        }
-
-        if (jumpToLatestButton != null) {
-            jumpToLatestButton.setForeground(linkColor);
         }
 
         Color attachColor = UIManager.getColor("Label.foreground");
