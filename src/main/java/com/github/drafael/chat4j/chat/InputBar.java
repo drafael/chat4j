@@ -72,7 +72,7 @@ public class InputBar extends JPanel {
         textArea.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         textArea.setFont(Fonts.of(Font.PLAIN, 14));
         textArea.putClientProperty("JTextField.placeholderText", "Message, / for skills, ⇧↵ for newline");
-        textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;focusWidth:0;innerFocusWidth:0;background:null");
+        textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
         textArea.putClientProperty("JComponent.outline", null);
         textArea.setTransferHandler(new FileDropTransferHandler());
         textArea.addKeyListener(new KeyAdapter() {
@@ -112,7 +112,7 @@ public class InputBar extends JPanel {
         scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.setBorder(null);
-        scrollPane.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;focusWidth:0;innerFocusWidth:0;arc:0");
+        scrollPane.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0");
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);
         scrollPane.getViewport().setBorder(null);
@@ -762,7 +762,7 @@ public class InputBar extends JPanel {
         if (scrollPane != null) {
             scrollPane.setBorder(null);
             scrollPane.setViewportBorder(null);
-            scrollPane.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;focusWidth:0;innerFocusWidth:0;arc:0");
+            scrollPane.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0");
             if (scrollPane.getViewport() != null) {
                 scrollPane.getViewport().setBorder(null);
                 scrollPane.getViewport().setOpaque(false);
@@ -778,7 +778,7 @@ public class InputBar extends JPanel {
             textArea.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
             textArea.setMargin(new Insets(0, 0, 0, 0));
             textArea.setOpaque(false);
-            textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;focusWidth:0;innerFocusWidth:0;background:null");
+            textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
             textArea.putClientProperty("JComponent.outline", null);
         }
 

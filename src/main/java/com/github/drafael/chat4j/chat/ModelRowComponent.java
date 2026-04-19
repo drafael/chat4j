@@ -13,6 +13,8 @@ final class ModelRowComponent {
         void onSelect(String providerName, String modelId);
 
         void onToggleFavorite(String providerName, String modelId);
+
+        void onMouseEnter(String providerName, String modelId);
     }
 
     private static final int FAVORITE_HOTSPOT_WIDTH = 220;
@@ -67,6 +69,22 @@ final class ModelRowComponent {
 
     void setSelected(boolean selected) {
         checkLabel.setVisible(selected);
+    }
+
+    void setHighlighted(boolean highlighted) {
+        if (!selectable) {
+            return;
+        }
+
+        if (highlighted) {
+            panel.setBackground(colorOrDefault(UIManager.getColor("List.selectionBackground"), new Color(220, 220, 220)));
+            panel.setOpaque(true);
+            nameLabel.setForeground(colorOrDefault(UIManager.getColor("List.selectionForeground"), Color.BLACK));
+        } else {
+            panel.setOpaque(false);
+            panel.setBackground(panel.getParent() != null ? panel.getParent().getBackground() : Color.WHITE);
+            nameLabel.setForeground(colorOrDefault(UIManager.getColor("Label.foreground"), Color.BLACK));
+        }
     }
 
     void updateFavoriteState(boolean favorite) {
@@ -150,11 +168,6 @@ final class ModelRowComponent {
     }
 
     private void wireRow(Listener listener) {
-        Color defaultBackground = panel.getBackground();
-        Color hoverBackground = colorOrDefault(UIManager.getColor("List.selectionBackground"), new Color(220, 220, 220));
-        Color hoverForeground = colorOrDefault(UIManager.getColor("List.selectionForeground"), Color.BLACK);
-        Color defaultForeground = nameLabel.getForeground();
-
         panel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
@@ -162,20 +175,7 @@ final class ModelRowComponent {
                     return;
                 }
 
-                panel.setBackground(hoverBackground);
-                panel.setOpaque(true);
-                nameLabel.setForeground(hoverForeground);
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                if (!selectable) {
-                    return;
-                }
-
-                panel.setOpaque(false);
-                panel.setBackground(defaultBackground);
-                nameLabel.setForeground(defaultForeground);
+                listener.onMouseEnter(providerName, modelId);
             }
 
             @Override

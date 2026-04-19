@@ -53,6 +53,7 @@ public class ModelSelectorPopup extends JDialog {
 
     private final JTextField searchField;
     private final JPanel listPanel;
+    private final JScrollPane scrollPane;
     private final JToggleButton allToggle;
     private final JToggleButton favoritesToggle;
     private final BiConsumer<String, String> onSelect;
@@ -71,6 +72,8 @@ public class ModelSelectorPopup extends JDialog {
     private Component triggerComponent;
     private final AWTEventListener outsideClickListener;
     private boolean outsideClickListenerInstalled;
+    private int highlightedIndex = -1;
+    private boolean scrolling;
 
     private enum ViewMode {
         ALL,
@@ -125,10 +128,12 @@ public class ModelSelectorPopup extends JDialog {
         this.favoritesToggle = createViewToggle("Favorites", "last", ViewMode.FAVORITES);
         groupToggles(allToggle, favoritesToggle);
         this.listPanel = buildListPanel();
+        this.scrollPane = new JScrollPane(listPanel);
 
-        setContentPane(buildContent(searchField, allToggle, favoritesToggle, listPanel));
+        setContentPane(buildContent(searchField, allToggle, favoritesToggle, scrollPane));
 
         registerEscapeKey();
+        registerKeyboardNavigation();
         registerWindowFocusListener();
         this.outsideClickListener = createOutsideClickListener();
     }
@@ -157,6 +162,7 @@ public class ModelSelectorPopup extends JDialog {
         ensureListBuilt();
         refreshProviderSelectableState();
         updateSelectionMarkers();
+        highlightedIndex = -1;
         searchField.setText("");
         filterModels();
         setSize(POPUP_SIZE);
@@ -239,7 +245,7 @@ public class ModelSelectorPopup extends JDialog {
             JTextField searchField,
             JToggleButton allToggle,
             JToggleButton favoritesToggle,
-            JPanel listPanel
+            JScrollPane scrollPane
     ) {
         JPanel content = new JPanel(new BorderLayout());
         content.setBorder(BorderFactory.createCompoundBorder(
@@ -272,10 +278,10 @@ public class ModelSelectorPopup extends JDialog {
 
         content.add(headerPanel, BorderLayout.NORTH);
 
-        JScrollPane scrollPane = new JScrollPane(listPanel);
         scrollPane.setBorder(null);
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
         content.add(scrollPane, BorderLayout.CENTER);
 
         return content;
@@ -297,6 +303,176 @@ public class ModelSelectorPopup extends JDialog {
                 KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
                 JComponent.WHEN_IN_FOCUSED_WINDOW
         );
+    }
+
+    private void registerKeyboardNavigation() {
+        searchField.addKeyListener(new java.awt.event.KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                switch (e.getKeyCode()) {
+                    case KeyEvent.VK_DOWN -> {
+                        e.consume();
+                        moveHighlight(1);
+                    }
+                    case KeyEvent.VK_UP -> {
+                        e.consume();
+                        moveHighlight(-1);
+                    }
+                    case KeyEvent.VK_PAGE_DOWN -> {
+                        e.consume();
+                        moveHighlight(pageStep());
+                    }
+                    case KeyEvent.VK_PAGE_UP -> {
+                        e.consume();
+                        moveHighlight(-pageStep());
+                    }
+                    case KeyEvent.VK_HOME -> {
+                        e.consume();
+                        moveHighlightTo(0);
+                    }
+                    case KeyEvent.VK_END -> {
+                        e.consume();
+                        moveHighlightTo(visibleSelectableRows().size() - 1);
+                    }
+                    case KeyEvent.VK_ENTER -> {
+                        e.consume();
+                        selectHighlighted();
+                    }
+                }
+            }
+        });
+    }
+
+    private List<ModelRowComponent> visibleSelectableRows() {
+        List<ModelRowComponent> visible = new ArrayList<>();
+        for (ProviderGroup group : groups) {
+            for (ModelRowComponent row : group.rows()) {
+                if (row.panel().isVisible() && row.panel().getParent() != null) {
+                    visible.add(row);
+                }
+            }
+        }
+        return visible;
+    }
+
+    private void setHighlightedIndex(int newIndex, List<ModelRowComponent> visible) {
+        if (newIndex == highlightedIndex) {
+            return;
+        }
+
+        if (highlightedIndex >= 0 && highlightedIndex < visible.size()) {
+            visible.get(highlightedIndex).setHighlighted(false);
+        }
+
+        highlightedIndex = newIndex;
+
+        if (highlightedIndex >= 0 && highlightedIndex < visible.size()) {
+            visible.get(highlightedIndex).setHighlighted(true);
+        }
+    }
+
+    private void moveHighlightTo(int index) {
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        if (visible.isEmpty()) {
+            return;
+        }
+
+        setHighlightedIndex(Math.max(0, Math.min(visible.size() - 1, index)), visible);
+        scrollToHighlighted(visible);
+    }
+
+    private void moveHighlight(int direction) {
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        if (visible.isEmpty()) {
+            return;
+        }
+
+        int newIndex;
+        if (highlightedIndex < 0) {
+            newIndex = direction > 0 ? 0 : visible.size() - 1;
+        } else {
+            newIndex = Math.max(0, Math.min(visible.size() - 1, highlightedIndex + direction));
+        }
+
+        setHighlightedIndex(newIndex, visible);
+        scrollToHighlighted(visible);
+    }
+
+    private int pageStep() {
+        int viewportHeight = scrollPane.getViewport().getExtentSize().height;
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        int rowHeight = visible.isEmpty() ? 40 : visible.getFirst().panel().getHeight();
+        if (rowHeight <= 0) {
+            rowHeight = 40;
+        }
+        return Math.max(1, viewportHeight / rowHeight);
+    }
+
+    private void selectHighlighted() {
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        if (highlightedIndex >= 0 && highlightedIndex < visible.size()) {
+            ModelRowComponent row = visible.get(highlightedIndex);
+            currentProvider = row.providerName();
+            currentModel = row.modelId();
+            updateSelectionMarkers();
+            onSelect.accept(row.providerName(), row.modelId());
+            hidePopup();
+        }
+    }
+
+    private void resetHighlight() {
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        setHighlightedIndex(-1, visible);
+    }
+
+    private void scrollToHighlighted(List<ModelRowComponent> visible) {
+        if (highlightedIndex < 0 || highlightedIndex >= visible.size()) {
+            return;
+        }
+
+        JPanel rowPanel = visible.get(highlightedIndex).panel();
+        Rectangle rowBounds = rowPanel.getBounds();
+        Rectangle viewRect = scrollPane.getViewport().getViewRect();
+
+        if (viewRect.contains(rowBounds)) {
+            return;
+        }
+
+        // When scrolling up, include the preceding group header so it stays visible
+        Rectangle scrollTarget = new Rectangle(rowBounds);
+        int zOrder = listPanel.getComponentZOrder(rowPanel);
+        if (zOrder > 0 && rowBounds.y < viewRect.y) {
+            Component prev = listPanel.getComponent(zOrder - 1);
+            if (prev instanceof JLabel) {
+                scrollTarget = scrollTarget.union(prev.getBounds());
+            }
+        }
+
+        listPanel.scrollRectToVisible(scrollTarget);
+    }
+
+    private void ensureHighlightVisible() {
+        if (scrolling || highlightedIndex < 0) {
+            return;
+        }
+
+        List<ModelRowComponent> visible = visibleSelectableRows();
+        if (highlightedIndex >= visible.size()) {
+            return;
+        }
+
+        JPanel rowPanel = visible.get(highlightedIndex).panel();
+        Rectangle viewRect = scrollPane.getViewport().getViewRect();
+        Rectangle rowBounds = SwingUtilities.convertRectangle(rowPanel.getParent(), rowPanel.getBounds(), listPanel);
+
+        if (!viewRect.intersects(rowBounds)) {
+            scrolling = true;
+            try {
+                listPanel.scrollRectToVisible(rowBounds);
+            } finally {
+                scrolling = false;
+            }
+        }
     }
 
     private void registerWindowFocusListener() {
@@ -521,6 +697,18 @@ public class ModelSelectorPopup extends JDialog {
                     public void onToggleFavorite(String p, String m) {
                         toggleFavorite(p, m);
                     }
+
+                    @Override
+                    public void onMouseEnter(String p, String m) {
+                        List<ModelRowComponent> visible = visibleSelectableRows();
+                        for (int i = 0; i < visible.size(); i++) {
+                            ModelRowComponent row = visible.get(i);
+                            if (row.providerName().equals(p) && row.modelId().equals(m)) {
+                                setHighlightedIndex(i, visible);
+                                return;
+                            }
+                        }
+                    }
                 });
     }
 
@@ -551,6 +739,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void filterModels() {
+        resetHighlight();
         String query = searchField.getText().trim().toLowerCase();
 
         for (ProviderGroup group : groups) {

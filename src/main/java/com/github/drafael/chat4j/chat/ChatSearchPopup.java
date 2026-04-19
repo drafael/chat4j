@@ -20,10 +20,14 @@ public class ChatSearchPopup extends JDialog {
 
     private final JTextField searchField;
     private final JPanel listPanel;
+    private final JScrollPane scrollPane;
     private final ConversationRepo conversationRepo;
     private final Consumer<UUID> onSelect;
     private final List<JPanel> resultRows = new ArrayList<>();
+    private final List<UUID> resultIds = new ArrayList<>();
     private Timer debounceTimer;
+    private int highlightedIndex = -1;
+    private boolean scrolling;
 
     public ChatSearchPopup(Window owner, ConversationRepo conversationRepo, Consumer<UUID> onSelect) {
         super(owner);
@@ -58,13 +62,51 @@ public class ChatSearchPopup extends JDialog {
         listPanel = new JPanel();
         listPanel.setLayout(new BoxLayout(listPanel, BoxLayout.Y_AXIS));
 
-        JScrollPane scrollPane = new JScrollPane(listPanel);
+        scrollPane = new JScrollPane(listPanel);
         scrollPane.setBorder(null);
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
         content.add(scrollPane, BorderLayout.CENTER);
 
         setContentPane(content);
+
+        // Keyboard navigation
+        searchField.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                switch (e.getKeyCode()) {
+                    case KeyEvent.VK_DOWN -> {
+                        e.consume();
+                        moveHighlight(1);
+                    }
+                    case KeyEvent.VK_UP -> {
+                        e.consume();
+                        moveHighlight(-1);
+                    }
+                    case KeyEvent.VK_PAGE_DOWN -> {
+                        e.consume();
+                        moveHighlight(pageStep());
+                    }
+                    case KeyEvent.VK_PAGE_UP -> {
+                        e.consume();
+                        moveHighlight(-pageStep());
+                    }
+                    case KeyEvent.VK_HOME -> {
+                        e.consume();
+                        moveHighlightTo(0);
+                    }
+                    case KeyEvent.VK_END -> {
+                        e.consume();
+                        moveHighlightTo(resultRows.size() - 1);
+                    }
+                    case KeyEvent.VK_ENTER -> {
+                        e.consume();
+                        selectHighlighted();
+                    }
+                }
+            }
+        });
 
         // Escape key dismisses
         getRootPane().registerKeyboardAction(
@@ -116,11 +158,135 @@ public class ChatSearchPopup extends JDialog {
         setLocation(x, y);
     }
 
+    private void setHighlightedIndex(int newIndex) {
+        if (newIndex == highlightedIndex) {
+            return;
+        }
+
+        applyRowHighlight(highlightedIndex, false);
+        highlightedIndex = newIndex;
+        applyRowHighlight(highlightedIndex, true);
+    }
+
+    private void moveHighlightTo(int index) {
+        if (resultRows.isEmpty()) {
+            return;
+        }
+
+        setHighlightedIndex(Math.max(0, Math.min(resultRows.size() - 1, index)));
+        scrollToHighlighted();
+    }
+
+    private void moveHighlight(int direction) {
+        if (resultRows.isEmpty()) {
+            return;
+        }
+
+        int newIndex;
+        if (highlightedIndex < 0) {
+            newIndex = direction > 0 ? 0 : resultRows.size() - 1;
+        } else {
+            newIndex = Math.max(0, Math.min(resultRows.size() - 1, highlightedIndex + direction));
+        }
+
+        setHighlightedIndex(newIndex);
+        scrollToHighlighted();
+    }
+
+    private void applyRowHighlight(int index, boolean highlighted) {
+        if (index < 0 || index >= resultRows.size()) {
+            return;
+        }
+
+        JPanel row = resultRows.get(index);
+
+        if (highlighted) {
+            row.setOpaque(true);
+            row.setBackground(UIManager.getColor("List.selectionBackground"));
+            Component textPanel = row.getComponent(0);
+            if (textPanel instanceof JPanel tp && tp.getComponentCount() > 0
+                    && tp.getComponent(0) instanceof JLabel titleLabel) {
+                titleLabel.setForeground(UIManager.getColor("List.selectionForeground"));
+            }
+        } else {
+            row.setOpaque(false);
+            row.setBackground(UIManager.getColor("Panel.background"));
+            Component textPanel = row.getComponent(0);
+            if (textPanel instanceof JPanel tp && tp.getComponentCount() > 0
+                    && tp.getComponent(0) instanceof JLabel titleLabel) {
+                titleLabel.setForeground(UIManager.getColor("Label.foreground"));
+            }
+        }
+    }
+
+    private void scrollToHighlighted() {
+        if (highlightedIndex < 0 || highlightedIndex >= resultRows.size()) {
+            return;
+        }
+
+        JPanel row = resultRows.get(highlightedIndex);
+        Rectangle rowBounds = row.getBounds();
+        Rectangle viewRect = scrollPane.getViewport().getViewRect();
+
+        if (viewRect.contains(rowBounds)) {
+            return;
+        }
+
+        // When scrolling up, include the preceding group header so it stays visible
+        Rectangle scrollTarget = new Rectangle(rowBounds);
+        int zOrder = listPanel.getComponentZOrder(row);
+        if (zOrder > 0 && rowBounds.y < viewRect.y) {
+            Component prev = listPanel.getComponent(zOrder - 1);
+            if (prev instanceof JLabel) {
+                scrollTarget = scrollTarget.union(prev.getBounds());
+            }
+        }
+
+        listPanel.scrollRectToVisible(scrollTarget);
+    }
+
+    private void ensureHighlightVisible() {
+        if (scrolling || highlightedIndex < 0 || highlightedIndex >= resultRows.size()) {
+            return;
+        }
+
+        JPanel row = resultRows.get(highlightedIndex);
+        Rectangle viewRect = scrollPane.getViewport().getViewRect();
+        Rectangle rowBounds = SwingUtilities.convertRectangle(row.getParent(), row.getBounds(), listPanel);
+
+        if (!viewRect.intersects(rowBounds)) {
+            scrolling = true;
+            try {
+                listPanel.scrollRectToVisible(rowBounds);
+            } finally {
+                scrolling = false;
+            }
+        }
+    }
+
+    private int pageStep() {
+        int viewportHeight = scrollPane.getViewport().getExtentSize().height;
+        int rowHeight = resultRows.isEmpty() ? 36 : resultRows.getFirst().getHeight();
+        if (rowHeight <= 0) {
+            rowHeight = 36;
+        }
+        return Math.max(1, viewportHeight / rowHeight);
+    }
+
+    private void selectHighlighted() {
+        if (highlightedIndex >= 0 && highlightedIndex < resultIds.size()) {
+            onSelect.accept(resultIds.get(highlightedIndex));
+            dispose();
+        }
+    }
+
     private void showRecentChats() {
         try {
             Map<String, List<ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
             listPanel.removeAll();
             resultRows.clear();
+            resultIds.clear();
+            highlightedIndex = -1;
 
             for (Map.Entry<String, List<ConversationRecord>> entry : grouped.entrySet()) {
                 addHeader(entry.getKey());
@@ -156,6 +322,8 @@ public class ChatSearchPopup extends JDialog {
                 SwingUtilities.invokeLater(() -> {
                     listPanel.removeAll();
                     resultRows.clear();
+                    resultIds.clear();
+                    highlightedIndex = -1;
 
                     if (results.isEmpty()) {
                         JLabel noResults = new JLabel("No results found");
@@ -222,24 +390,13 @@ public class ChatSearchPopup extends JDialog {
 
         row.add(textPanel, BorderLayout.CENTER);
 
-        Color defaultBg = row.getBackground();
-        Color hoverBg = UIManager.getColor("List.selectionBackground");
-        Color hoverFg = UIManager.getColor("List.selectionForeground");
-        Color defaultFg = titleLabel.getForeground();
-
         row.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
-                row.setBackground(hoverBg);
-                titleLabel.setForeground(hoverFg);
-                row.setOpaque(true);
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                row.setOpaque(false);
-                row.setBackground(defaultBg);
-                titleLabel.setForeground(defaultFg);
+                int index = resultRows.indexOf(row);
+                if (index >= 0) {
+                    setHighlightedIndex(index);
+                }
             }
 
             @Override
@@ -250,6 +407,7 @@ public class ChatSearchPopup extends JDialog {
         });
 
         resultRows.add(row);
+        resultIds.add(id);
         listPanel.add(row);
     }
 }

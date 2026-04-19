@@ -63,6 +63,8 @@ public class SidebarPanel extends JPanel {
     private static final String RENAME_CONVERSATION_ERROR = "Failed to rename conversation";
     private static final String FAVORITES_ERROR = "Failed to update favorites";
     private static final String DELETE_CONVERSATION_ERROR = "Failed to delete conversation";
+    private static final String DELETE_GROUP_ERROR = "Failed to delete group";
+    private static final String DELETE_ALL_ERROR = "Failed to delete all chats";
 
     private static final int SIDEBAR_WIDTH = 250;
     private static final int HOVER_ICON_SIZE = 14;
@@ -365,6 +367,42 @@ public class SidebarPanel extends JPanel {
         });
     }
 
+    private void handleDeleteGroup(String groupName) {
+        int confirmation = showThemedConfirmDialog(
+                "Delete all chats in \"%s\"?".formatted(groupName), "Confirm");
+        if (confirmation != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        runRepositoryAction(DELETE_GROUP_ERROR, CONVERSATIONS_TITLE, () -> {
+            Map<String, List<ConversationRepo.ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
+            List<ConversationRepo.ConversationRecord> groupRecords = grouped.get(groupName);
+            if (groupRecords != null && !groupRecords.isEmpty()) {
+                List<UUID> ids = groupRecords.stream().map(ConversationRepo.ConversationRecord::id).toList();
+                conversationRepo.deleteConversations(ids);
+                refresh();
+                if (onNewChat != null) {
+                    onNewChat.run();
+                }
+            }
+        });
+    }
+
+    private void handleDeleteAll() {
+        int confirmation = showThemedConfirmDialog("Delete all chats?", "Confirm");
+        if (confirmation != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        runRepositoryAction(DELETE_ALL_ERROR, CONVERSATIONS_TITLE, () -> {
+            conversationRepo.deleteAllConversations();
+            refresh();
+            if (onNewChat != null) {
+                onNewChat.run();
+            }
+        });
+    }
+
     private void handleToggleFavorite(ConversationItem conversation) {
         runRepositoryAction(FAVORITES_ERROR, CONVERSATIONS_TITLE, () -> {
             conversationRepo.toggleFavorite(conversation.id());
@@ -387,17 +425,32 @@ public class SidebarPanel extends JPanel {
 
         conversationItemAt(index).ifPresent(conversation -> {
             conversationList.setSelectedIndex(index);
-            JPopupMenu menu = createContextMenu(conversation);
+            String groupName = findGroupForIndex(index);
+            JPopupMenu menu = createContextMenu(conversation, groupName);
             menu.show(conversationList, event.getX(), event.getY());
         });
     }
 
-    private JPopupMenu createContextMenu(ConversationItem conversation) {
+    private String findGroupForIndex(int index) {
+        for (int i = index - 1; i >= 0; i--) {
+            Object entry = listModel.get(i);
+            if (entry instanceof GroupHeader header) {
+                return header.name();
+            }
+        }
+        return null;
+    }
+
+    private JPopupMenu createContextMenu(ConversationItem conversation, String groupName) {
         var menu = new JPopupMenu();
         menu.add(createRenameMenuItem(conversation));
         menu.add(createFavoriteMenuItem(conversation));
         menu.addSeparator();
         menu.add(createDeleteMenuItem(conversation));
+        if (groupName != null) {
+            menu.add(createDeleteGroupMenuItem(groupName));
+        }
+        menu.add(createDeleteAllMenuItem());
         return menu;
     }
 
@@ -417,6 +470,18 @@ public class SidebarPanel extends JPanel {
         var deleteMenuItem = new JMenuItem("Delete");
         deleteMenuItem.addActionListener(event -> handleDelete(conversation, false));
         return deleteMenuItem;
+    }
+
+    private JMenuItem createDeleteGroupMenuItem(String groupName) {
+        var menuItem = new JMenuItem("Delete \"%s\"".formatted(groupName));
+        menuItem.addActionListener(event -> handleDeleteGroup(groupName));
+        return menuItem;
+    }
+
+    private JMenuItem createDeleteAllMenuItem() {
+        var menuItem = new JMenuItem("Delete All Chats");
+        menuItem.addActionListener(event -> handleDeleteAll());
+        return menuItem;
     }
 
     private void promptRename(ConversationItem conversation) {

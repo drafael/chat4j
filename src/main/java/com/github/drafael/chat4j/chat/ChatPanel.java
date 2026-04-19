@@ -337,7 +337,7 @@ public class ChatPanel extends JPanel {
 
         inputBar.clear();
         history.add(userMsg);
-        addBubble(new MessageBubble(Role.USER), formatUserBubbleText(userMsg), Role.USER);
+        addUserBubble(userMsg);
         notifyMessageSubmitted();
 
         currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
@@ -499,29 +499,117 @@ public class ChatPanel extends JPanel {
     }
 
     private String formatUserBubbleText(Message message) {
-        if (message.meta() == null) {
-            return message.content();
-        }
-
         List<String> lines = new ArrayList<>();
-        if (!message.meta().activeSkills().isEmpty()) {
+        if (message.meta() != null && !message.meta().activeSkills().isEmpty()) {
             lines.add("[SKILL] " + String.join(", ", message.meta().activeSkills()));
         }
 
-        message.meta().fallbackNotices().stream()
-                .map(notice -> "[FALLBACK] " + notice)
-                .forEach(lines::add);
-
-        String content = message.content();
-        if (!content.isBlank()) {
-            content.lines()
-                    .map(String::trim)
-                    .filter(line -> !line.isBlank())
-                    .filter(line -> message.meta().activeSkills().isEmpty() || !line.startsWith("Activated skills:"))
+        if (message.meta() != null) {
+            message.meta().fallbackNotices().stream()
+                    .map(notice -> "[FALLBACK] " + notice)
                     .forEach(lines::add);
         }
 
-        return lines.isEmpty() ? message.content() : String.join("\n", lines);
+        userTextLines(message).forEach(lines::add);
+        return lines.isEmpty() ? "" : String.join("\n", lines);
+    }
+
+    private List<String> userTextLines(Message message) {
+        boolean suppressSkillDirective = message.meta() != null && !message.meta().activeSkills().isEmpty();
+
+        List<String> lines = message.parts().stream()
+                .filter(TextPart.class::isInstance)
+                .map(TextPart.class::cast)
+                .map(TextPart::text)
+                .filter(text -> text != null && !text.isBlank())
+                .flatMap(text -> text.lines())
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .filter(line -> !suppressSkillDirective || !line.startsWith("Activated skills:"))
+                .toList();
+        if (!lines.isEmpty()) {
+            return lines;
+        }
+
+        if (!message.parts().isEmpty() || message.content().isBlank()) {
+            return List.of();
+        }
+
+        return message.content().lines()
+                .map(String::trim)
+                .filter(line -> !line.isBlank())
+                .filter(line -> !suppressSkillDirective || !line.startsWith("Activated skills:"))
+                .collect(Collectors.joining("\n"))
+                .lines()
+                .toList();
+    }
+
+    private void addUserBubble(Message message) {
+        MessageBubble bubble = new MessageBubble(Role.USER);
+        bubble.setText(formatUserBubbleText(message));
+        addMessageComponent(Role.USER, bubble, createAttachmentChipsPanel(userAttachmentRefs(message)));
+    }
+
+    private List<AttachmentRef> userAttachmentRefs(Message message) {
+        return message.parts().stream()
+                .map(this::attachmentRef)
+                .filter(ref -> ref != null && (!ref.originalName().isBlank() || !ref.storagePath().isBlank()))
+                .toList();
+    }
+
+    private AttachmentRef attachmentRef(ContentPart part) {
+        if (part instanceof FilePart filePart) {
+            return filePart.attachmentRef();
+        }
+        if (part instanceof ImagePart imagePart) {
+            return imagePart.attachmentRef();
+        }
+        return null;
+    }
+
+    private JComponent createAttachmentChipsPanel(List<AttachmentRef> attachmentRefs) {
+        if (attachmentRefs.isEmpty()) {
+            return null;
+        }
+
+        JPanel chipsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+        chipsPanel.setOpaque(false);
+        attachmentRefs.stream()
+                .map(FileAttachmentChip::new)
+                .forEach(chipsPanel::add);
+        return chipsPanel;
+    }
+
+    private void addMessageComponent(Role role, JComponent primaryContent, JComponent topContent) {
+        JPanel wrapper = createMessageWrapper(role, primaryContent, topContent);
+        addMessageWrapper(wrapper);
+    }
+
+    private JPanel createMessageWrapper(Role role, JComponent primaryContent, JComponent topContent) {
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setOpaque(false);
+        wrapper.setBorder(role == Role.USER
+                ? BorderFactory.createEmptyBorder(2, 120, 2, 0)
+                : BorderFactory.createEmptyBorder(8, 0, 8, 40));
+        if (topContent != null) {
+            wrapper.add(topContent, BorderLayout.NORTH);
+        }
+        wrapper.add(primaryContent, BorderLayout.CENTER);
+        return wrapper;
+    }
+
+    private void addMessageWrapper(JPanel wrapper) {
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = messageRow++;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTH;
+
+        messagesPanel.add(wrapper, gbc);
+        addBottomFiller();
+        messagesPanel.revalidate();
+        scrollToBottom();
     }
 
     private void addBubble(MessageBubble bubble, String text, Role role) {
@@ -534,27 +622,7 @@ public class ChatPanel extends JPanel {
             bubble.setText(text);
         }
 
-        JPanel wrapper = new JPanel(new BorderLayout());
-        wrapper.setOpaque(false);
-
-        if (role == Role.USER) {
-            wrapper.setBorder(BorderFactory.createEmptyBorder(2, 120, 2, 0));
-        } else {
-            wrapper.setBorder(BorderFactory.createEmptyBorder(8, 0, 8, 40));
-        }
-        wrapper.add(bubble, BorderLayout.CENTER);
-
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridx = 0;
-        gbc.gridy = messageRow++;
-        gbc.weightx = 1.0;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.anchor = GridBagConstraints.NORTH;
-
-        messagesPanel.add(wrapper, gbc);
-        addBottomFiller();
-        messagesPanel.revalidate();
-        scrollToBottom();
+        addMessageComponent(role, bubble, null);
     }
 
     private void addBottomFiller() {
@@ -651,9 +719,11 @@ public class ChatPanel extends JPanel {
         clearChat();
         for (Message msg : messages) {
             history.add(msg);
-            MessageBubble bubble = new MessageBubble(msg.role());
-            String bubbleText = msg.role() == Role.USER ? formatUserBubbleText(msg) : msg.content();
-            addBubble(bubble, bubbleText, msg.role());
+            if (msg.role() == Role.USER) {
+                addUserBubble(msg);
+            } else {
+                addBubble(new MessageBubble(msg.role()), msg.content(), msg.role());
+            }
         }
     }
 

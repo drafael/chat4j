@@ -95,6 +95,32 @@ public class ConversationRepo {
         }
     }
 
+    public void deleteConversations(List<UUID> ids) throws SQLException {
+        if (ids.isEmpty()) {
+            return;
+        }
+
+        String placeholders = String.join(",", ids.stream().map(id -> "?").toList());
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "DELETE FROM conversations WHERE id IN (" + placeholders + ")"
+             )
+        ) {
+            for (int i = 0; i < ids.size(); i++) {
+                ps.setObject(i + 1, ids.get(i));
+            }
+            ps.executeUpdate();
+        }
+    }
+
+    public void deleteAllConversations() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement("DELETE FROM conversations")
+        ) {
+            ps.executeUpdate();
+        }
+    }
+
     public void addMessage(UUID conversationId, Message message) throws SQLException {
         try (Connection connection = dataSource.getConnection()) {
             UUID messageId = UUID.randomUUID();
