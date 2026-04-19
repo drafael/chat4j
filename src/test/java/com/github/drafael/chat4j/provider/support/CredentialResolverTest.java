@@ -44,6 +44,18 @@ class CredentialResolverTest {
     }
 
     @Test
+    @DisplayName("Merged environment gives precedence to loaded shell variables for subprocesses")
+    void mergedEnvironment_whenShellProvidesOverrides_prefersShellValues() {
+        CredentialResolver.init(Map.of("PATH", "/tmp/chat4j-path", "CHAT4J_FLAG", "yes"));
+
+        Map<String, String> merged = CredentialResolver.mergedEnvironment();
+
+        assertThat(merged)
+                .containsEntry("PATH", "/tmp/chat4j-path")
+                .containsEntry("CHAT4J_FLAG", "yes");
+    }
+
+    @Test
     @DisplayName("Provider credential presence check returns true when a known API key exists in loaded shell environment")
     void hasAnyProviderCredentials_whenKnownProviderKeyExistsInShellEnv_returnsTrue() {
         CredentialResolver.init(Map.of("OPENAI_API_KEY", "sk-test"));

@@ -72,20 +72,9 @@ public final class EnvironmentBootstrapper {
                 dialog.setSize(300, dialog.getHeight());
                 dialog.setLocationRelativeTo(null);
 
-                long showTime = System.currentTimeMillis();
                 Thread.ofVirtual().start(() -> {
-                    try {
-                        envResult.set(ShellEnvironmentLoader.loadFromLoginShell());
-                        long elapsed = System.currentTimeMillis() - showTime;
-                        long remaining = 500 - elapsed;
-                        if (remaining > 0) {
-                            Thread.sleep(remaining);
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    } finally {
-                        SwingUtilities.invokeLater(dialog::dispose);
-                    }
+                    envResult.set(ShellEnvironmentLoader.loadFromLoginShell());
+                    SwingUtilities.invokeLater(dialog::dispose);
                 });
 
                 dialog.setVisible(true);

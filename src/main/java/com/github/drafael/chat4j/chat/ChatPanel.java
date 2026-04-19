@@ -69,10 +69,12 @@ public class ChatPanel extends JPanel {
 
     public ChatPanel() {
         this(ProviderModelCacheService.createDefault(), ModelFavoritesService.createInMemory());
+        populateModels();
     }
 
     public ChatPanel(ProviderModelCacheService modelCacheService) {
         this(modelCacheService, ModelFavoritesService.createInMemory());
+        populateModels();
     }
 
     public ChatPanel(ProviderModelCacheService modelCacheService, ModelFavoritesService modelFavoritesService) {
@@ -115,8 +117,6 @@ public class ChatPanel extends JPanel {
         inputBar.addJumpToLatestListener(e -> onJumpToLatestRequested());
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());
         add(inputBar, BorderLayout.SOUTH);
-
-        populateModels();
     }
 
     @Override

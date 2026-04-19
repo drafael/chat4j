@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -114,6 +115,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     ) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder("codex", "app-server", "--listen", "stdio://");
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         Process process = processBuilder.start();
         registerActiveStream.accept(() -> process.destroyForcibly());
@@ -164,6 +166,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 prompt
         );
         processBuilder.redirectErrorStream(true);
+        ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         Process process = processBuilder.start();
         process.getOutputStream().close();

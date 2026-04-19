@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.Collections.emptyList;
 
@@ -101,8 +102,13 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final int PROVIDER_ICON_PADDING = 2;
     private static final int PROVIDER_ICON_SIZE = PROVIDER_ICON_GLYPH_SIZE + PROVIDER_ICON_PADDING * 2;
     private static final int STATUS_DOT_SIZE = 5;
+    private static final Duration CLI_OAUTH_AVAILABILITY_TTL = Duration.ofSeconds(15);
     private static final Map<String, Icon> PROVIDER_BASE_ICON_CACHE = new ConcurrentHashMap<>();
     private static final Map<ProviderStatusIconKey, Icon> PROVIDER_STATUS_ICON_CACHE = new ConcurrentHashMap<>();
+
+    private final Map<String, CliOauthAvailabilitySnapshot> cliOauthAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final Map<String, AtomicBoolean> cliOauthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
+    private final JList<String> providerList;
 
     static {
         PROVIDERS.put("Anthropic", ProviderInfo.envVar("ANTHROPIC_API_KEY", "https://api.anthropic.com"));
@@ -137,7 +143,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         DefaultListModel<String> providerModel = new DefaultListModel<>();
         PROVIDERS.keySet().forEach(providerModel::addElement);
 
-        JList<String> providerList = new JList<>(providerModel);
+        providerList = new JList<>(providerModel);
         providerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         providerList.setFixedCellHeight(38);
         providerList.setCellRenderer(new ProviderCellRenderer());
@@ -209,7 +215,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         gbc.gridx = 1;
         gbc.weightx = 1;
-        JLabel statusLabel = createStatusLabel(info, configuredBaseUrl, localReachable);
+        JLabel statusLabel = createStatusLabel(name, info, configuredBaseUrl, localReachable);
         panel.add(statusLabel, gbc);
         if (shouldShowMissingApiKeyInfo(info)) {
             row++;
@@ -242,7 +248,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             gbc.weightx = 1;
             JButton authButton = new JButton("Login");
             panel.add(authButton, gbc);
-            configureOAuthAction(info, statusLabel, authButton);
+            configureOAuthAction(name, info, statusLabel, authButton);
         }
 
         row++;
@@ -259,7 +265,13 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             providerBaseUrlKey(name),
             info.defaultBaseUrl(),
             Validators.httpUrl("Invalid base URL. Use http(s)://host"),
-            null
+            updatedBaseUrl -> {
+                if (info.envVar() == null && info.authType() == AuthType.ENV_VAR) {
+                    boolean reachable = LocalServiceHealth.isReachable(updatedBaseUrl);
+                    applyLocalStatus(statusLabel, updatedBaseUrl, reachable);
+                }
+                providerList.repaint();
+            }
         );
         panel.add(baseUrl, gbc);
 
@@ -297,24 +309,19 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return panel;
     }
 
-    private JLabel createStatusLabel(ProviderInfo info, String configuredBaseUrl, boolean localReachable) {
+    private JLabel createStatusLabel(String providerName, ProviderInfo info, String configuredBaseUrl, boolean localReachable) {
         JLabel status = new JLabel();
         status.setFont(Fonts.of(Font.PLAIN, 13));
 
         if (info.authType() == AuthType.CLI_OAUTH) {
             CliOAuthRunner.OAuthStatus oauthStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
+            cacheCliOauthAvailability(providerName, oauthStatus.authorized());
             applyOAuthStatus(status, oauthStatus);
             return status;
         }
 
         if (info.envVar() == null) {
-            if (localReachable) {
-                status.setText("\u2713 Running at " + configuredBaseUrl);
-                status.setForeground(new Color(0, 150, 0));
-            } else {
-                status.setText("\u2717 Not running at " + configuredBaseUrl);
-                status.setForeground(new Color(200, 50, 50));
-            }
+            applyLocalStatus(status, configuredBaseUrl, localReachable);
             return status;
         }
 
@@ -327,6 +334,16 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             status.setForeground(new Color(200, 50, 50));
         }
         return status;
+    }
+
+    private void applyLocalStatus(JLabel status, String configuredBaseUrl, boolean reachable) {
+        if (reachable) {
+            status.setText("\u2713 Running at " + configuredBaseUrl);
+            status.setForeground(new Color(0, 150, 0));
+        } else {
+            status.setText("\u2717 Not running at " + configuredBaseUrl);
+            status.setForeground(new Color(200, 50, 50));
+        }
     }
 
     private boolean shouldShowMissingApiKeyInfo(ProviderInfo info) {
@@ -479,9 +496,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
     }
 
-    private void configureOAuthAction(ProviderInfo info, JLabel statusLabel, JButton authButton) {
+    private void configureOAuthAction(String providerName, ProviderInfo info, JLabel statusLabel, JButton authButton) {
         CliOAuthRunner.OAuthStatus status = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-        applyOAuthControls(statusLabel, authButton, status, null);
+        applyOAuthControls(providerName, statusLabel, authButton, status, null);
 
         authButton.addActionListener(e -> {
             authButton.setEnabled(false);
@@ -489,12 +506,15 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             Thread.startVirtualThread(() -> {
                 CliOAuthRunner.OAuthStatus initialStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-                CliOAuthRunner.OAuthActionResult actionResult = initialStatus.authorized()
-                        ? CLI_OAUTH_RUNNER.logout(info.oauthCliSpec())
-                        : CLI_OAUTH_RUNNER.login(info.oauthCliSpec());
+                CliOAuthRunner.OAuthActionResult actionResult = !initialStatus.cliAvailable()
+                        ? CliOAuthRunner.OAuthActionResult.failure(initialStatus.message())
+                        : (initialStatus.authorized()
+                            ? CLI_OAUTH_RUNNER.logout(info.oauthCliSpec())
+                            : CLI_OAUTH_RUNNER.login(info.oauthCliSpec()));
                 CliOAuthRunner.OAuthStatus updatedStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
 
                 SwingUtilities.invokeLater(() -> applyOAuthControls(
+                    providerName,
                     statusLabel,
                     authButton,
                     updatedStatus,
@@ -505,24 +525,38 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void applyOAuthControls(
+        String providerName,
         JLabel statusLabel,
         JButton authButton,
         CliOAuthRunner.OAuthStatus status,
         String failureMessage
     ) {
+        cacheCliOauthAvailability(providerName, status.authorized());
         applyOAuthStatus(statusLabel, status);
 
-        boolean authorized = status.authorized();
-        authButton.setText(authorized ? "Log out" : "Login");
-        authButton.setEnabled(true);
-        authButton.setForeground(authorized ? Color.WHITE : UIManager.getColor("Button.foreground"));
-        authButton.setBackground(authorized ? new Color(229, 57, 53) : UIManager.getColor("Button.background"));
-        authButton.setOpaque(true);
+        if (!status.cliAvailable()) {
+            authButton.setText("Install required CLI");
+            authButton.setEnabled(false);
+            authButton.setForeground(UIManager.getColor("Button.foreground"));
+            authButton.setBackground(UIManager.getColor("Button.background"));
+            authButton.setOpaque(true);
+            authButton.setToolTipText(status.message());
+        } else {
+            boolean authorized = status.authorized();
+            authButton.setText(authorized ? "Log out" : "Login");
+            authButton.setEnabled(true);
+            authButton.setForeground(authorized ? Color.WHITE : UIManager.getColor("Button.foreground"));
+            authButton.setBackground(authorized ? new Color(229, 57, 53) : UIManager.getColor("Button.background"));
+            authButton.setOpaque(true);
+            authButton.setToolTipText(null);
+        }
 
         if (failureMessage != null && !failureMessage.isBlank()) {
             statusLabel.setText(failureMessage);
             statusLabel.setForeground(new Color(200, 50, 50));
         }
+
+        providerList.repaint();
     }
 
     private void applyOAuthStatus(JLabel statusLabel, CliOAuthRunner.OAuthStatus status) {
@@ -876,10 +910,54 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return String.join(" / ", CredentialResolver.envVarCandidates(envVarExpression));
     }
 
-    private static boolean isProviderAvailable(ProviderInfo info) {
-        return info.authType() == AuthType.CLI_OAUTH
-                || info.envVar() == null
-                || CredentialResolver.hasRequiredCredentials(info.envVar());
+    private boolean isProviderAvailable(String providerName, ProviderInfo info) {
+        if (info == null) {
+            return false;
+        }
+
+        if (info.authType() == AuthType.CLI_OAUTH) {
+            return isCliOauthAvailable(providerName, info);
+        }
+
+        if (info.envVar() == null) {
+            String configuredBaseUrl = readString(providerBaseUrlKey(providerName), info.defaultBaseUrl());
+            return LocalServiceHealth.isReachable(configuredBaseUrl);
+        }
+
+        return CredentialResolver.hasRequiredCredentials(info.envVar());
+    }
+
+    private boolean isCliOauthAvailable(String providerName, ProviderInfo info) {
+        Instant now = Instant.now();
+        CliOauthAvailabilitySnapshot cached = cliOauthAvailabilityByProvider.get(providerName);
+        if (cached != null && now.isBefore(cached.checkedAt().plus(CLI_OAUTH_AVAILABILITY_TTL))) {
+            return cached.authorized();
+        }
+
+        triggerCliOauthAvailabilityRefresh(providerName, info.oauthCliSpec());
+        return cached != null && cached.authorized();
+    }
+
+    private void cacheCliOauthAvailability(String providerName, boolean authorized) {
+        cliOauthAvailabilityByProvider.put(providerName, new CliOauthAvailabilitySnapshot(authorized, Instant.now()));
+    }
+
+    private void triggerCliOauthAvailabilityRefresh(String providerName, OAuthCliSpec oauthCliSpec) {
+        AtomicBoolean inFlight = cliOauthAvailabilityRefreshInFlightByProvider
+                .computeIfAbsent(providerName, ignored -> new AtomicBoolean());
+        if (!inFlight.compareAndSet(false, true)) {
+            return;
+        }
+
+        Thread.startVirtualThread(() -> {
+            try {
+                CliOAuthRunner.OAuthStatus status = CLI_OAUTH_RUNNER.checkStatus(oauthCliSpec);
+                cacheCliOauthAvailability(providerName, status.authorized());
+                SwingUtilities.invokeLater(providerList::repaint);
+            } finally {
+                inFlight.set(false);
+            }
+        });
     }
 
     private static Icon iconForProvider(String providerName, boolean available) {
@@ -982,6 +1060,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private record ProviderStatusIconKey(String providerName, boolean available) {
+    }
+
+    private record CliOauthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
     }
 
     record ProviderInfo(String envVar, String defaultBaseUrl, AuthType authType, OAuthCliSpec oauthCliSpec) {
@@ -1101,7 +1182,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return available ? new Color(67, 160, 71) : new Color(140, 140, 140);
     }
 
-    private static class ProviderCellRenderer extends DefaultListCellRenderer {
+    private class ProviderCellRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(
             JList<?> list,
@@ -1123,7 +1204,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             String providerName = value instanceof String s ? s : "";
             ProviderInfo info = PROVIDERS.get(providerName);
-            boolean available = info != null && isProviderAvailable(info);
+            boolean available = info != null && isProviderAvailable(providerName, info);
             label.setText(providerName);
             label.setIcon(iconForProvider(providerName, available));
             return label;

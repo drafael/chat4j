@@ -6,8 +6,10 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 
 final class ProviderRuntimePolicy {
 
@@ -46,6 +48,20 @@ final class ProviderRuntimePolicy {
         boolean authorized = CLI_OAUTH_RUNNER.checkStatus(providerDefinition.descriptor().oauthCliSpec()).authorized();
         cliOauthStatusByProvider.put(providerName, new CliOauthStatusSnapshot(authorized, now));
         return authorized;
+    }
+
+    /**
+     * Pre-checks all CLI OAuth providers in parallel so that subsequent
+     * {@link #hasRequiredCredentials} calls hit the warm cache instead of
+     * spawning processes sequentially.
+     */
+    void warmOAuthStatusCache(List<ProviderDefinition> providers) {
+        List<CompletableFuture<Void>> futures = providers.stream()
+                .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH)
+                .filter(this::isEnabled)
+                .map(p -> CompletableFuture.runAsync(() -> hasCliOauthCredentials(p)))
+                .toList();
+        futures.forEach(CompletableFuture::join);
     }
 
     String effectiveBaseUrl(ProviderDefinition providerDefinition) {

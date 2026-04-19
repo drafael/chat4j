@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.auth.impl;
 
 import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
+import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -24,7 +25,7 @@ public class CliOAuthRunner {
 
     public OAuthStatus checkStatus(OAuthCliSpec spec) {
         if (spec == null || spec.statusCommand().isEmpty()) {
-            return OAuthStatus.unauthorized("OAuth status command is not configured");
+            return OAuthStatus.unavailable("OAuth status command is not configured");
         }
 
         CommandResult result = execute(spec.statusCommand(), STATUS_TIMEOUT);
@@ -32,7 +33,10 @@ public class CliOAuthRunner {
             return OAuthStatus.unauthorized("Status check timed out");
         }
         if (result.error() != null) {
-            return OAuthStatus.unauthorized(result.error().getMessage());
+            if (isCommandMissing(result.error())) {
+                return OAuthStatus.unavailable(missingCommandMessage(spec.statusCommand()));
+            }
+            return OAuthStatus.unavailable("Unable to run status command: " + firstLine(result.error().getMessage()));
         }
 
         String output = result.output().toLowerCase(Locale.ROOT);
@@ -92,7 +96,10 @@ public class CliOAuthRunner {
             return OAuthActionResult.failure(actionName + " timed out");
         }
         if (result.error() != null) {
-            return OAuthActionResult.failure(actionName + " failed: " + result.error().getMessage());
+            if (isCommandMissing(result.error())) {
+                return OAuthActionResult.failure(missingCommandMessage(command));
+            }
+            return OAuthActionResult.failure(actionName + " failed: " + firstLine(result.error().getMessage()));
         }
         if (result.exitCode() != 0) {
             String details = result.output().isBlank() ? "" : " - " + firstLine(result.output());
@@ -105,6 +112,7 @@ public class CliOAuthRunner {
     private CommandResult execute(List<String> command, Duration timeout) {
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.redirectErrorStream(true);
+        ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         try {
             Process process = processBuilder.start();
@@ -146,6 +154,44 @@ public class CliOAuthRunner {
                 && "codex".equalsIgnoreCase(spec.statusCommand().getFirst());
     }
 
+    private boolean isCommandMissing(Exception error) {
+        if (!(error instanceof IOException ioException)) {
+            return false;
+        }
+
+        String message = ioException.getMessage();
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+
+        String normalized = message.toLowerCase(Locale.ROOT);
+        return normalized.contains("error=2")
+                || normalized.contains("no such file or directory")
+                || normalized.contains("cannot find the file");
+    }
+
+    private String missingCommandMessage(List<String> command) {
+        String executable = executableName(command);
+        return switch (executable) {
+            case "gh" -> "GitHub CLI ('gh') is not installed or not on PATH. Install it from https://cli.github.com/";
+            case "codex" -> "OpenAI Codex CLI ('codex') is not installed or not on PATH.";
+            default -> "Required CLI command '" + executable + "' is not installed or not on PATH.";
+        };
+    }
+
+    private String executableName(List<String> command) {
+        if (command == null || command.isEmpty()) {
+            return "<command>";
+        }
+
+        String executable = command.getFirst();
+        if (executable == null || executable.isBlank()) {
+            return "<command>";
+        }
+
+        return executable.trim();
+    }
+
     private String readCodexTokenFromAuthJson() {
         try {
             Path authJson = Path.of(System.getProperty("user.home"), ".codex", "auth.json");
@@ -179,6 +225,9 @@ public class CliOAuthRunner {
     }
 
     private String firstLine(String text) {
+        if (text == null || text.isBlank()) {
+            return "Unknown error";
+        }
         int index = text.indexOf('\n');
         return index < 0 ? text.trim() : text.substring(0, index).trim();
     }
@@ -191,14 +240,18 @@ public class CliOAuthRunner {
                 .orElse(null);
     }
 
-    public record OAuthStatus(boolean authorized, String message) {
+    public record OAuthStatus(boolean authorized, boolean cliAvailable, String message) {
 
         public static OAuthStatus authorized(String message) {
-            return new OAuthStatus(true, message);
+            return new OAuthStatus(true, true, message);
         }
 
         public static OAuthStatus unauthorized(String message) {
-            return new OAuthStatus(false, message);
+            return new OAuthStatus(false, true, message);
+        }
+
+        public static OAuthStatus unavailable(String message) {
+            return new OAuthStatus(false, false, message);
         }
     }
 

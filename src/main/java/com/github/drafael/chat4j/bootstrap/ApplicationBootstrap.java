@@ -16,6 +16,7 @@ import com.formdev.flatlaf.util.SystemInfo;
 
 import javax.sql.DataSource;
 import javax.swing.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Coordinates application startup from platform/bootstrap setup through first window display.
@@ -39,8 +40,14 @@ public final class ApplicationBootstrap {
         configurePlatformIntegration();
         configureEarlyLookAndFeel();
 
-        EnvironmentInitResult environment = environmentBootstrapper.initialize();
+        // Run environment loading in parallel with storage initialization.
+        // Environment loading spawns a login shell which is the slowest step.
+        CompletableFuture<EnvironmentInitResult> environmentFuture =
+                CompletableFuture.supplyAsync(() -> environmentBootstrapper.initialize());
         AppServices services = initializeStorage();
+
+        // Environment must be resolved before providers are queried in the main window.
+        EnvironmentInitResult environment = environmentFuture.join();
 
         applySavedAppearance(services.settingsRepo());
         showMainWindow(services);

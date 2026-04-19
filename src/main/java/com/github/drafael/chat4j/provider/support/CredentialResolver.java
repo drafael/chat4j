@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.support;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -76,6 +77,12 @@ public final class CredentialResolver {
                 .filter(candidate -> StringUtils.isNotBlank(getenv(candidate)))
                 .findFirst()
                 .orElse(null);
+    }
+
+    public static Map<String, String> mergedEnvironment() {
+        Map<String, String> merged = new LinkedHashMap<>(System.getenv());
+        merged.putAll(shellEnv);
+        return Map.copyOf(merged);
     }
 
     public static List<String> envVarCandidates(String envVar) {

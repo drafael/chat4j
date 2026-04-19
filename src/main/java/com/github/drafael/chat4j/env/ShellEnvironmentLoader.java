@@ -25,7 +25,7 @@ public final class ShellEnvironmentLoader {
         }
 
         try {
-            var process = new ProcessBuilder(shell, "-l", "-i", "-c", "env").start();
+            var process = new ProcessBuilder(shell, "-l", "-c", "env").start();
 
             boolean finished = process.waitFor(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {

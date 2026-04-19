@@ -52,7 +52,9 @@ public class ProviderRegistry {
     }
 
     public static List<ProviderDef> availableProviders() {
-        return CATALOG.allProviders().stream()
+        List<ProviderDefinition> all = CATALOG.allProviders();
+        RUNTIME_POLICY.warmOAuthStatusCache(all);
+        return all.stream()
                 .filter(RUNTIME_POLICY::isEnabled)
                 .filter(RUNTIME_POLICY::hasRequiredCredentials)
                 .map(ProviderRegistry::toEffectiveProvider)
