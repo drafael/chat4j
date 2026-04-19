@@ -1,11 +1,14 @@
 package com.github.drafael.chat4j.provider.support;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import static java.util.Collections.emptyList;
 
 public final class ProcessCommandSupport {
 
@@ -22,16 +25,16 @@ public final class ProcessCommandSupport {
 
     static List<String> resolveCommand(List<String> command, Map<String, String> environment) {
         if (command == null || command.isEmpty()) {
-            return command == null ? List.of() : command;
+            return command == null ? emptyList() : command;
         }
 
         String executable = command.getFirst();
-        if (executable == null || executable.isBlank() || hasPathComponent(executable)) {
+        if (StringUtils.isBlank(executable) || hasPathComponent(executable)) {
             return command;
         }
 
         String resolvedExecutable = resolveExecutable(executable.trim(), environment);
-        if (resolvedExecutable == null || resolvedExecutable.isBlank()) {
+        if (StringUtils.isBlank(resolvedExecutable)) {
             return command;
         }
 
@@ -46,7 +49,7 @@ public final class ProcessCommandSupport {
 
     private static String resolveExecutable(String executable, Map<String, String> environment) {
         String pathValue = environment.get("PATH");
-        if (pathValue == null || pathValue.isBlank()) {
+        if (StringUtils.isBlank(pathValue)) {
             return null;
         }
 

@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import org.apache.commons.lang3.StringUtils;
 
 public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
@@ -96,8 +97,8 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 String fallbackFailure = firstLine(execError.getMessage());
                 updateDiagnostics("exec-fallback-failed", false, true, fallbackFailure, appServerFailure);
                 throw new IllegalStateException(
-                        "codex app-server failed: " + appServerFailure
-                                + " | codex exec fallback failed: " + fallbackFailure,
+                        "codex app-server failed: %s | codex exec fallback failed: %s"
+                                .formatted(appServerFailure, fallbackFailure),
                         execError
                 );
             }
@@ -129,7 +130,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             sendJson(writer, threadStartRequest(runtime.selectedModel()));
 
             String threadId = awaitThreadId(reader, process, isCancelled);
-            if (threadId == null || threadId.isBlank()) {
+            if (StringUtils.isBlank(threadId)) {
                 return;
             }
 
@@ -186,7 +187,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             int exitCode = process.exitValue();
             String commandOutput = outputFuture.join();
             if (exitCode != 0) {
-                throw new IllegalStateException("codex exec failed (exit " + exitCode + "): " + firstLine(commandOutput));
+                throw new IllegalStateException("codex exec failed (exit %d): %s".formatted(exitCode, firstLine(commandOutput)));
             }
 
             String responseText = Files.exists(outputFile)
@@ -277,14 +278,14 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 String status = message.path("params").path("turn").path("status").asText("completed");
                 if ("failed".equalsIgnoreCase(status)) {
                     String error = message.path("params").path("turn").path("error").path("message").asText("Unknown error");
-                    throw new IllegalStateException("codex app-server turn failed: " + error);
+                    throw new IllegalStateException("codex app-server turn failed: %s".formatted(error));
                 }
                 return;
             }
 
             if ("error".equals(method)) {
                 String error = message.path("params").path("error").path("message").asText("Unknown error");
-                throw new IllegalStateException("codex app-server error: " + error);
+                throw new IllegalStateException("codex app-server error: %s".formatted(error));
             }
 
             int id = message.path("id").asInt(-1);
@@ -306,7 +307,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
             if (reader.ready()) {
                 String line = reader.readLine();
-                if (line == null || line.isBlank()) {
+                if (StringUtils.isBlank(line)) {
                     continue;
                 }
                 try {
@@ -330,7 +331,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         }
 
         String error = message.path("error").path("message").asText("Unknown error");
-        throw new IllegalStateException("codex app-server RPC error: " + error);
+        throw new IllegalStateException("codex app-server RPC error: %s".formatted(error));
     }
 
     private Map<String, Object> initializeRequest() {
@@ -354,7 +355,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
     private Map<String, Object> threadStartRequest(String model) {
         Map<String, Object> params = new LinkedHashMap<>();
-        if (model != null && !model.isBlank()) {
+        if (StringUtils.isNotBlank(model)) {
             params.put("model", model);
         }
 
@@ -399,13 +400,12 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
     private String buildPrompt(List<Message> history) {
         String transcript = history.stream()
-                .map(message -> roleLabel(message.role()) + ":\n" + message.content())
-                .reduce((left, right) -> left + "\n\n" + right)
+                .map(message -> "%s:\n%s".formatted(roleLabel(message.role()), message.content()))
+                .reduce((left, right) -> "%s\n\n%s".formatted(left, right))
                 .orElse("");
 
-        return "You are a coding assistant. Answer directly in plain text. "
-                + "Do not execute commands or modify files.\n\nConversation:\n\n"
-                + transcript;
+        return "You are a coding assistant. Answer directly in plain text. Do not execute commands or modify files.\n\nConversation:\n\n%s"
+                .formatted(transcript);
     }
 
     private String roleLabel(Role role) {
@@ -418,7 +418,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
     private String readAll(Process process) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            return reader.lines().reduce("", (left, right) -> left.isEmpty() ? right : left + "\n" + right);
+            return reader.lines().reduce("", (left, right) -> left.isEmpty() ? right : "%s\n%s".formatted(left, right));
         } catch (IOException e) {
             return "";
         }
@@ -429,7 +429,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     }
 
     private String firstLine(String text) {
-        if (text == null || text.isBlank()) {
+        if (StringUtils.isBlank(text)) {
             return "No output";
         }
         int newline = text.indexOf('\n');

@@ -213,7 +213,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
             String value = settingsRepo.get(key, defaultValue);
             return value != null ? value : defaultValue;
         } catch (Exception e) {
-            setStatusError("Failed to read setting: " + key);
+            setStatusError("Failed to read setting: %s".formatted(key));
             return defaultValue;
         }
     }
@@ -226,7 +226,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         try {
             settingsRepo.put(key, value);
         } catch (Exception e) {
-            setStatusError("Failed to save setting: " + key);
+            setStatusError("Failed to save setting: %s".formatted(key));
         }
     }
 
@@ -234,7 +234,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         try {
             settingsRepo.remove(key);
         } catch (Exception e) {
-            setStatusError("Failed to remove setting: " + key);
+            setStatusError("Failed to remove setting: %s".formatted(key));
         }
     }
 
@@ -325,7 +325,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
                     URI uri = URI.create(normalized);
                     String scheme = uri.getScheme();
                     boolean hasHttpScheme = "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
-                    if (!hasHttpScheme || uri.getHost() == null || uri.getHost().isBlank()) {
+                    if (!hasHttpScheme || StringUtils.isBlank(uri.getHost())) {
                         return ValidationResult.invalid(message, value);
                     }
                     return ValidationResult.valid(normalized);

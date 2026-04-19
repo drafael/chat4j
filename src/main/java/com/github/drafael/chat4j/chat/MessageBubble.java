@@ -10,6 +10,7 @@ import javax.swing.text.html.HTMLEditorKit;
 import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
 import java.net.URI;
+import org.apache.commons.lang3.StringUtils;
 
 public class MessageBubble extends JPanel {
 
@@ -19,6 +20,7 @@ public class MessageBubble extends JPanel {
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
     private final StringBuilder fullText = new StringBuilder();
     private final JEditorPane editorPane;
+    private int maxContentWidth = Integer.MAX_VALUE;
 
     public MessageBubble(Role role) {
         this.role = role;
@@ -40,6 +42,10 @@ public class MessageBubble extends JPanel {
 
             @Override
             public Dimension getPreferredSize() {
+                if (role == Role.USER && maxContentWidth > 0 && maxContentWidth != Integer.MAX_VALUE) {
+                    setSize(maxContentWidth, Short.MAX_VALUE);
+                    return super.getPreferredSize();
+                }
                 // Force the editor to lay out at the parent's current width
                 // so that HTML content wraps correctly inside BoxLayout
                 Container parent = getParent();
@@ -72,7 +78,7 @@ public class MessageBubble extends JPanel {
             }
 
             String link = event.getURL() != null ? event.getURL().toExternalForm() : event.getDescription();
-            if (link == null || link.isBlank()) {
+            if (StringUtils.isBlank(link)) {
                 return;
             }
 
@@ -141,6 +147,17 @@ public class MessageBubble extends JPanel {
         renderContent();
     }
 
+    public void setMaxContentWidth(int maxContentWidth) {
+        int normalized = maxContentWidth <= 0 ? Integer.MAX_VALUE : maxContentWidth;
+        if (this.maxContentWidth == normalized) {
+            return;
+        }
+        this.maxContentWidth = normalized;
+        editorPane.invalidate();
+        revalidate();
+        repaint();
+    }
+
     public void setAssistantRenderMode(AssistantRenderMode assistantRenderMode) {
         if (assistantRenderMode == null || role != Role.ASSISTANT) {
             return;
@@ -174,10 +191,8 @@ public class MessageBubble extends JPanel {
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
         int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
-        return "<html><head><style>"
-                + "body { font-family: " + fontFamily + "; "
-                + "font-size: " + bodyFontSize + "px; line-height: 1.4; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
-                + "</style></head><body>" + escaped + "</body></html>";
+        return "<html><head><style>body { font-family: %s; font-size: %dpx; line-height: 1.4; color: %s; margin: 0; padding: 0; }</style></head><body>%s</body></html>"
+                .formatted(fontFamily, bodyFontSize, palette.textColor(), escaped);
     }
 
     private String toUserHtml(String text, Palette palette, boolean isDark) {
@@ -188,18 +203,22 @@ public class MessageBubble extends JPanel {
 
         String body = text.lines()
                 .map(line -> toUserLineHtml(line, badgeBackground, badgeText, fallbackBackground, fallbackText))
-                .reduce((left, right) -> left + right)
-                .orElse("");
+                .collect(java.util.stream.Collectors.joining());
 
         int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
         int badgeFontSize = Fonts.scale(Fonts.SIZE_BADGE);
-        return "<html><head><style>"
-                + "body { font-family: " + palette.baseFontFamily() + "; font-size: " + bodyFontSize + "px; line-height: 1.45; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
-                + ".line { margin: 0 0 3px 0; }"
-                + ".badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: " + badgeFontSize + "px; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }"
-                + ".skill { background: " + badgeBackground + "; color: " + badgeText + "; }"
-                + ".fallback { background: " + fallbackBackground + "; color: " + fallbackText + "; }"
-                + "</style></head><body>" + body + "</body></html>";
+        return "<html><head><style>body { font-family: %s; font-size: %dpx; line-height: 1.45; color: %s; margin: 0; padding: 0; }.line { margin: 0 0 3px 0; }.badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: %dpx; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }.skill { background: %s; color: %s; }.fallback { background: %s; color: %s; }</style></head><body>%s</body></html>"
+                .formatted(
+                        palette.baseFontFamily(),
+                        bodyFontSize,
+                        palette.textColor(),
+                        badgeFontSize,
+                        badgeBackground,
+                        badgeText,
+                        fallbackBackground,
+                        fallbackText,
+                        body
+                );
     }
 
     private String toUserLineHtml(String line,
@@ -208,21 +227,21 @@ public class MessageBubble extends JPanel {
                                   String fallbackBadgeBackground,
                                   String fallbackBadgeText
     ) {
-        if (line == null || line.isBlank()) {
+        if (StringUtils.isBlank(line)) {
             return "<div class='line'>&nbsp;</div>";
         }
 
         if (line.startsWith("[SKILL] ")) {
-            return "<div class='line'><span class='badge skill' style='background: " + skillBadgeBackground + "; color: " + skillBadgeText + ";'>SKILL</span>"
-                    + escapeHtml(line.substring(8).trim()) + "</div>";
+            return "<div class='line'><span class='badge skill' style='background: %s; color: %s;'>SKILL</span>%s</div>"
+                    .formatted(skillBadgeBackground, skillBadgeText, escapeHtml(line.substring(8).trim()));
         }
 
         if (line.startsWith("[FALLBACK] ")) {
-            return "<div class='line'><span class='badge fallback' style='background: " + fallbackBadgeBackground + "; color: " + fallbackBadgeText + ";'>FALLBACK</span>"
-                    + escapeHtml(line.substring(11).trim()) + "</div>";
+            return "<div class='line'><span class='badge fallback' style='background: %s; color: %s;'>FALLBACK</span>%s</div>"
+                    .formatted(fallbackBadgeBackground, fallbackBadgeText, escapeHtml(line.substring(11).trim()));
         }
 
-        return "<div class='line'>" + escapeHtml(line) + "</div>";
+        return "<div class='line'>%s</div>".formatted(escapeHtml(line));
     }
 
     private String escapeHtml(String text) {
@@ -234,6 +253,14 @@ public class MessageBubble extends JPanel {
 
     public String getFullText() {
         return fullText.toString();
+    }
+
+    public JEditorPane getEditorPane() {
+        return editorPane;
+    }
+
+    public Role getRole() {
+        return role;
     }
 
     @Override

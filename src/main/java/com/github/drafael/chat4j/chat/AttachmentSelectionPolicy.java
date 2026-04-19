@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Set;
+import org.apache.commons.lang3.StringUtils;
 
 final class AttachmentSelectionPolicy {
 
@@ -41,7 +42,7 @@ final class AttachmentSelectionPolicy {
         }
 
         String mimeType = Files.probeContentType(path);
-        if (mimeType == null || mimeType.isBlank()) {
+        if (StringUtils.isBlank(mimeType)) {
             mimeType = "application/octet-stream";
         }
 
@@ -56,33 +57,33 @@ final class AttachmentSelectionPolicy {
 
     private String validate(Path path, String mimeType, long sizeBytes) {
         if (sizeBytes > MAX_ATTACHMENT_BYTES) {
-            return "File is too large (max 20MB): " + path.getFileName();
+            return "File is too large (max 20MB): %s".formatted(path.getFileName());
         }
 
         String extension = fileExtension(path);
         if (!extension.isBlank() && BLOCKED_EXTENSIONS.contains(extension.toLowerCase(Locale.ROOT))) {
-            return "Unsupported file type: ." + extension;
+            return "Unsupported file type: .%s".formatted(extension);
         }
 
         if (mimeType.startsWith("application/x-msdownload")
                 || mimeType.startsWith("application/x-mach-binary")
                 || mimeType.startsWith("application/x-dosexec")) {
-            return "Unsupported executable file type: " + mimeType;
+            return "Unsupported executable file type: %s".formatted(mimeType);
         }
 
         if (!isMimeAllowed(mimeType) && !"application/octet-stream".equals(mimeType)) {
-            return "Unsupported file MIME type: " + mimeType;
+            return "Unsupported file MIME type: %s".formatted(mimeType);
         }
 
         if (!isExtensionAllowed(path, extension)) {
-            return "Unsupported file extension: " + (extension.isBlank() ? path.getFileName() : "." + extension);
+            return "Unsupported file extension: %s".formatted(extension.isBlank() ? path.getFileName() : ".%s".formatted(extension));
         }
 
         return null;
     }
 
     private boolean isMimeAllowed(String mimeType) {
-        if (mimeType == null || mimeType.isBlank()) {
+        if (StringUtils.isBlank(mimeType)) {
             return false;
         }
 

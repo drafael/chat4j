@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyList;
 
 class ProviderCatalogTest {
 
@@ -22,7 +23,7 @@ class ProviderCatalogTest {
 
     @Test
     @DisplayName("Provider catalog uses dynamic model loading with no hardcoded seed models")
-    void allProviders_whenCatalogInitialized_hasNoSeedModels() {
+    void allProviders_whenCatalogInitialized_returnsProvidersWithoutSeedModels() {
         var subject = new ProviderCatalog();
 
         assertThat(subject.allProviders())
@@ -31,7 +32,7 @@ class ProviderCatalogTest {
 
     @Test
     @DisplayName("Provider catalog includes OAuth CLI providers for Codex and Copilot")
-    void allProviders_whenCatalogInitialized_includesCliOauthProviders() {
+    void allProviders_whenCatalogInitialized_returnsProvidersIncludingCliOauth() {
         var subject = new ProviderCatalog();
 
         assertThat(subject.allProviders())
@@ -41,7 +42,7 @@ class ProviderCatalogTest {
 
     @Test
     @DisplayName("Provider catalog includes local providers for LM Studio and Ollama")
-    void allProviders_whenCatalogInitialized_includesLocalProviders() {
+    void allProviders_whenCatalogInitialized_returnsProvidersIncludingLocalProviders() {
         var subject = new ProviderCatalog();
 
         assertThat(subject.allProviders())
@@ -51,7 +52,7 @@ class ProviderCatalogTest {
 
     @Test
     @DisplayName("Anthropic fetcher loads model names dynamically from API and normalizes /v1 base URLs")
-    void createFetcher_whenAnthropicProvider_fetchesModelNamesFromApi() throws Exception {
+    void createFetcher_whenAnthropicProvider_returnsModelNamesFromApi() throws Exception {
         var responseJson = """
                 {
                   "data": [
@@ -92,8 +93,8 @@ class ProviderCatalogTest {
             var fetcher = subject.createFetcher(
                     "Anthropic",
                     "ANTHROPIC_API_KEY",
-                    "http://127.0.0.1:" + port + "/v1",
-                    List.of());
+                    "http://127.0.0.1:%d/v1".formatted(port),
+                    emptyList());
 
             List<String> models = fetcher.fetchModels();
 

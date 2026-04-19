@@ -10,6 +10,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
+import org.apache.commons.lang3.StringUtils;
 
 final class FileAttachmentChip extends JPanel {
 
@@ -42,7 +43,7 @@ final class FileAttachmentChip extends JPanel {
 
         String label = ellipsize(displayName(attachmentRef), 22);
         if (attachmentRef.sizeBytes() > 0) {
-            label += "  " + formatSize(attachmentRef.sizeBytes());
+            label = "%s  %s".formatted(label, formatSize(attachmentRef.sizeBytes()));
         }
 
         JLabel nameLabel = new JLabel(label, fileIcon, SwingConstants.LEADING);
@@ -73,14 +74,20 @@ final class FileAttachmentChip extends JPanel {
 
     private static Color resolveBackground() {
         Color bg = UIManager.getColor("TextField.background");
-        if (bg == null) bg = UIManager.getColor("Panel.background");
+        if (bg == null) {
+            bg = UIManager.getColor("Panel.background");
+        }
         return bg != null ? bg : new Color(90, 90, 90);
     }
 
     private static Color resolveBorderColor() {
         Color border = UIManager.getColor("TextField.borderColor");
-        if (border == null) border = UIManager.getColor("Component.borderColor");
-        if (border == null) border = UIManager.getColor("Separator.foreground");
+        if (border == null) {
+            border = UIManager.getColor("Component.borderColor");
+        }
+        if (border == null) {
+            border = UIManager.getColor("Separator.foreground");
+        }
         return border != null ? border : new Color(150, 150, 150);
     }
 
@@ -97,7 +104,7 @@ final class FileAttachmentChip extends JPanel {
     }
 
     private static File toFile(AttachmentRef attachmentRef) {
-        if (attachmentRef == null || attachmentRef.storagePath().isBlank()) {
+        if (attachmentRef == null || StringUtils.isBlank(attachmentRef.storagePath())) {
             return null;
         }
 
@@ -105,15 +112,23 @@ final class FileAttachmentChip extends JPanel {
     }
 
     private static String ellipsize(String value, int maxLength) {
-        if (value == null) return "";
+        if (value == null) {
+            return "";
+        }
         String trimmed = value.trim();
-        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength - 1) + "\u2026";
+        return trimmed.length() <= maxLength ? trimmed : "%s\u2026".formatted(trimmed.substring(0, maxLength - 1));
     }
 
     private static String formatSize(long bytes) {
-        if (bytes < 1_000) return bytes + " B";
-        if (bytes < 1_000_000) return "%.1f kB".formatted(bytes / 1_000.0);
-        if (bytes < 1_000_000_000) return "%.1f MB".formatted(bytes / 1_000_000.0);
+        if (bytes < 1_000) {
+            return "%d B".formatted(bytes);
+        }
+        if (bytes < 1_000_000) {
+            return "%.1f kB".formatted(bytes / 1_000.0);
+        }
+        if (bytes < 1_000_000_000) {
+            return "%.1f MB".formatted(bytes / 1_000_000.0);
+        }
         return "%.1f GB".formatted(bytes / 1_000_000_000.0);
     }
 
@@ -131,7 +146,7 @@ final class FileAttachmentChip extends JPanel {
         try {
             Desktop.getDesktop().open(file);
         } catch (IOException e) {
-            showOpenError("Unable to open attachment: " + file.getName());
+            showOpenError("Unable to open attachment: %s".formatted(file.getName()));
         }
     }
 

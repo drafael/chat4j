@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import org.apache.commons.lang3.StringUtils;
 
 public class ConversationRepo {
 
@@ -103,7 +104,7 @@ public class ConversationRepo {
         String placeholders = String.join(",", ids.stream().map(id -> "?").toList());
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "DELETE FROM conversations WHERE id IN (" + placeholders + ")"
+                     "DELETE FROM conversations WHERE id IN (%s)".formatted(placeholders)
              )
         ) {
             for (int i = 0; i < ids.size(); i++) {
@@ -184,8 +185,7 @@ public class ConversationRepo {
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, role, content, content_json, meta_json, created_at "
-                             + "FROM messages WHERE conversation_id = ? ORDER BY created_at"
+                     "SELECT id, role, content, content_json, meta_json, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at"
              )
         ) {
             ps.setObject(1, conversationId);
@@ -216,8 +216,7 @@ public class ConversationRepo {
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, title, provider, model, is_favorite, created_at, updated_at "
-                             + "FROM conversations ORDER BY updated_at DESC"
+                     "SELECT id, title, provider, model, is_favorite, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
              );
              ResultSet rs = ps.executeQuery()
         ) {
@@ -249,19 +248,21 @@ public class ConversationRepo {
 
     public List<SearchResult> search(String query) throws SQLException {
         List<SearchResult> results = new ArrayList<>();
-        String like = "%" + query.toLowerCase() + "%";
+        String like = "%%%s%%".formatted(query.toLowerCase());
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT c.id, c.title, c.provider, c.model, c.updated_at, "
-                     + "NULL AS snippet FROM conversations c "
-                     + "WHERE LOWER(c.title) LIKE ? "
-                     + "UNION ALL "
-                     + "SELECT c.id, c.title, c.provider, c.model, c.updated_at, "
-                     + "SUBSTRING(m.content, 1, 120) AS snippet FROM messages m "
-                     + "JOIN conversations c ON c.id = m.conversation_id "
-                     + "WHERE LOWER(m.content) LIKE ? "
-                     + "ORDER BY updated_at DESC"
+                     """
+                     SELECT c.id, c.title, c.provider, c.model, c.updated_at,
+                            NULL AS snippet FROM conversations c
+                     WHERE LOWER(c.title) LIKE ?
+                     UNION ALL
+                     SELECT c.id, c.title, c.provider, c.model, c.updated_at,
+                            SUBSTRING(m.content, 1, 120) AS snippet FROM messages m
+                     JOIN conversations c ON c.id = m.conversation_id
+                     WHERE LOWER(m.content) LIKE ?
+                     ORDER BY updated_at DESC
+                     """
              )
         ) {
             ps.setString(1, like);
@@ -306,13 +307,12 @@ public class ConversationRepo {
 
     private void persistAttachmentLink(Connection connection, UUID messageId, ContentPart part, int partIndex) {
         AttachmentRef attachmentRef = extractAttachmentRef(part);
-        if (attachmentRef == null || attachmentRef.id() == null || attachmentRef.storagePath().isBlank()) {
+        if (attachmentRef == null || attachmentRef.id() == null || StringUtils.isBlank(attachmentRef.storagePath())) {
             return;
         }
 
         try (PreparedStatement ps = connection.prepareStatement(
-                "MERGE INTO attachments (id, storage_path, original_name, mime_type, size_bytes, sha256) "
-                        + "KEY (id) VALUES (?, ?, ?, ?, ?, ?)"
+                "MERGE INTO attachments (id, storage_path, original_name, mime_type, size_bytes, sha256) KEY (id) VALUES (?, ?, ?, ?, ?, ?)"
         )) {
             ps.setObject(1, attachmentRef.id());
             ps.setString(2, attachmentRef.storagePath());
@@ -445,7 +445,7 @@ public class ConversationRepo {
     }
 
     private List<ContentPart> deserializeParts(String contentJson, String fallbackContent) {
-        if (contentJson == null || contentJson.isBlank()) {
+        if (StringUtils.isBlank(contentJson)) {
             return ContentParts.ofText(fallbackContent);
         }
 
@@ -481,7 +481,7 @@ public class ConversationRepo {
     }
 
     private MessageMeta deserializeMeta(String metaJson) {
-        if (metaJson == null || metaJson.isBlank()) {
+        if (StringUtils.isBlank(metaJson)) {
             return MessageMeta.empty();
         }
 
@@ -536,7 +536,7 @@ public class ConversationRepo {
     }
 
     private UUID parseUuid(String value) {
-        if (value == null || value.isBlank()) {
+        if (StringUtils.isBlank(value)) {
             return null;
         }
 
@@ -553,7 +553,7 @@ public class ConversationRepo {
     }
 
     private Role parseRole(String role) {
-        if (role == null || role.isBlank()) {
+        if (StringUtils.isBlank(role)) {
             return Role.USER;
         }
 

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.api;
 
 import java.util.List;
+import static java.util.Collections.emptyList;
 
 public record OAuthCliSpec(
     List<String> statusCommand,
@@ -17,6 +18,6 @@ public record OAuthCliSpec(
     }
 
     private static List<String> sanitize(List<String> command) {
-        return command == null ? List.of() : command.stream().map(String::trim).filter(part -> !part.isBlank()).toList();
+        return command == null ? emptyList() : command.stream().map(String::trim).filter(part -> !part.isBlank()).toList();
     }
 }

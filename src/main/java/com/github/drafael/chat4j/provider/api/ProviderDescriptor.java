@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.api;
 
 import java.util.List;
 import java.util.function.UnaryOperator;
+import static java.util.Collections.emptyList;
 
 public record ProviderDescriptor(
     String name,
@@ -17,7 +18,7 @@ public record ProviderDescriptor(
 
     public ProviderDescriptor {
         authType = authType == null ? AuthType.ENV_VAR : authType;
-        seedModels = seedModels == null ? List.of() : List.copyOf(seedModels);
+        seedModels = seedModels == null ? emptyList() : List.copyOf(seedModels);
         capabilities = capabilities == null ? ProviderCapabilities.chatAndModels() : capabilities;
         baseUrlNormalizer = baseUrlNormalizer == null ? UnaryOperator.identity() : baseUrlNormalizer;
     }

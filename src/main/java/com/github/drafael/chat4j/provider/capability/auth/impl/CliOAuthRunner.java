@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.capability.auth.impl;
 
 import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -16,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import static java.util.Collections.emptyList;
 
 public class CliOAuthRunner {
 
@@ -36,12 +38,12 @@ public class CliOAuthRunner {
             if (isCommandMissing(result.error())) {
                 return OAuthStatus.unavailable(missingCommandMessage(spec.statusCommand()));
             }
-            return OAuthStatus.unavailable("Unable to run status command: " + firstLine(result.error().getMessage()));
+            return OAuthStatus.unavailable("Unable to run status command: %s".formatted(firstLine(result.error().getMessage())));
         }
 
         String output = result.output().toLowerCase(Locale.ROOT);
         if (result.exitCode() != 0 || containsUnauthorizedHint(output)) {
-            String reason = output.isBlank() ? "Unauthorized." : "Unauthorized. " + firstLine(output);
+            String reason = output.isBlank() ? "Unauthorized." : "Unauthorized. %s".formatted(firstLine(output));
             return OAuthStatus.unauthorized(reason);
         }
 
@@ -49,16 +51,16 @@ public class CliOAuthRunner {
     }
 
     public OAuthActionResult login(OAuthCliSpec spec) {
-        return runAction(spec == null ? List.of() : spec.loginCommand(), "Login");
+        return runAction(spec == null ? emptyList() : spec.loginCommand(), "Login");
     }
 
     public OAuthActionResult logout(OAuthCliSpec spec) {
-        return runAction(spec == null ? List.of() : spec.logoutCommand(), "Logout");
+        return runAction(spec == null ? emptyList() : spec.logoutCommand(), "Logout");
     }
 
     public String resolveBearerToken(OAuthCliSpec spec) {
         String token = resolveBearerTokenOrNull(spec);
-        if (token == null || token.isBlank()) {
+        if (StringUtils.isBlank(token)) {
             throw new IllegalStateException("OAuth token command is not configured");
         }
         return token;
@@ -88,25 +90,25 @@ public class CliOAuthRunner {
 
     private OAuthActionResult runAction(List<String> command, String actionName) {
         if (command == null || command.isEmpty()) {
-            return OAuthActionResult.failure(actionName + " command is not configured");
+            return OAuthActionResult.failure("%s command is not configured".formatted(actionName));
         }
 
         CommandResult result = execute(command, AUTH_ACTION_TIMEOUT);
         if (result.timedOut()) {
-            return OAuthActionResult.failure(actionName + " timed out");
+            return OAuthActionResult.failure("%s timed out".formatted(actionName));
         }
         if (result.error() != null) {
             if (isCommandMissing(result.error())) {
                 return OAuthActionResult.failure(missingCommandMessage(command));
             }
-            return OAuthActionResult.failure(actionName + " failed: " + firstLine(result.error().getMessage()));
+            return OAuthActionResult.failure("%s failed: %s".formatted(actionName, firstLine(result.error().getMessage())));
         }
         if (result.exitCode() != 0) {
-            String details = result.output().isBlank() ? "" : " - " + firstLine(result.output());
-            return OAuthActionResult.failure(actionName + " failed (exit " + result.exitCode() + ")" + details);
+            String details = result.output().isBlank() ? "" : " - %s".formatted(firstLine(result.output()));
+            return OAuthActionResult.failure("%s failed (exit %d)%s".formatted(actionName, result.exitCode(), details));
         }
 
-        return OAuthActionResult.success(actionName + " completed");
+        return OAuthActionResult.success("%s completed".formatted(actionName));
     }
 
     private CommandResult execute(List<String> command, Duration timeout) {
@@ -137,7 +139,7 @@ public class CliOAuthRunner {
 
     private String readAll(Process process) throws IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            return reader.lines().reduce("", (left, right) -> left.isEmpty() ? right : left + "\n" + right);
+            return reader.lines().reduce("", (left, right) -> left.isEmpty() ? right : "%s\n%s".formatted(left, right));
         }
     }
 
@@ -160,7 +162,7 @@ public class CliOAuthRunner {
         }
 
         String message = ioException.getMessage();
-        if (message == null || message.isBlank()) {
+        if (StringUtils.isBlank(message)) {
             return false;
         }
 
@@ -175,7 +177,7 @@ public class CliOAuthRunner {
         return switch (executable) {
             case "gh" -> "GitHub CLI ('gh') is not installed or not on PATH. Install it from https://cli.github.com/";
             case "codex" -> "OpenAI Codex CLI ('codex') is not installed or not on PATH.";
-            default -> "Required CLI command '" + executable + "' is not installed or not on PATH.";
+            default -> "Required CLI command '%s' is not installed or not on PATH.".formatted(executable);
         };
     }
 
@@ -185,7 +187,7 @@ public class CliOAuthRunner {
         }
 
         String executable = command.getFirst();
-        if (executable == null || executable.isBlank()) {
+        if (StringUtils.isBlank(executable)) {
             return "<command>";
         }
 
@@ -201,19 +203,19 @@ public class CliOAuthRunner {
 
             String content = Files.readString(authJson, StandardCharsets.UTF_8);
             String accessToken = extractJsonField(content, "access_token");
-            if (accessToken != null && !accessToken.isBlank()) {
+            if (StringUtils.isNotBlank(accessToken)) {
                 return accessToken;
             }
 
             String apiKey = extractJsonField(content, "OPENAI_API_KEY");
-            return apiKey == null || apiKey.isBlank() ? null : apiKey;
+            return StringUtils.isBlank(apiKey) ? null : apiKey;
         } catch (Exception e) {
             return null;
         }
     }
 
     private String extractJsonField(String content, String fieldName) {
-        Pattern pattern = Pattern.compile("\"" + Pattern.quote(fieldName) + "\"\\s*:\\s*\"([^\"]+)\"");
+        Pattern pattern = Pattern.compile("\"%s\"\\s*:\\s*\"([^\"]+)\"".formatted(Pattern.quote(fieldName)));
         Matcher matcher = pattern.matcher(content);
         return matcher.find() ? matcher.group(1).trim() : null;
     }
@@ -225,7 +227,7 @@ public class CliOAuthRunner {
     }
 
     private String firstLine(String text) {
-        if (text == null || text.isBlank()) {
+        if (StringUtils.isBlank(text)) {
             return "Unknown error";
         }
         int index = text.indexOf('\n');
@@ -233,9 +235,13 @@ public class CliOAuthRunner {
     }
 
     private String firstNonBlankLine(String text) {
+        if (StringUtils.isBlank(text)) {
+            return null;
+        }
+
         return text.lines()
                 .map(String::trim)
-                .filter(line -> !line.isBlank())
+                .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse(null);
     }

@@ -82,7 +82,7 @@ public final class ApplicationBootstrap {
         try {
             databaseBootstrap.init();
         } catch (Exception e) {
-            showStartupErrorAndExit("Failed to initialize database: " + e.getMessage());
+            showStartupErrorAndExit("Failed to initialize database: %s".formatted(e.getMessage()));
         }
 
         providerModelCacheService.primeFromDisk(

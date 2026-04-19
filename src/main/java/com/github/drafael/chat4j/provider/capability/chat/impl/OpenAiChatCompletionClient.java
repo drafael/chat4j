@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import static java.util.Collections.emptyList;
 
 public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
@@ -103,7 +104,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private List<ChatCompletionContentPart> mapUserParts(Message message, ProviderRuntime runtime) {
         if (!supportsNativeImages(runtime) || message.parts().isEmpty()) {
-            return List.of();
+            return emptyList();
         }
 
         List<ChatCompletionContentPart> parts = new ArrayList<>();
@@ -158,7 +159,9 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         return ProviderCapabilityResolver.supportsImageInput(
                 runtime.descriptor().capabilities(),
                 runtime.descriptor().name(),
-                runtime.selectedModel()
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.apiKey()
         );
     }
 

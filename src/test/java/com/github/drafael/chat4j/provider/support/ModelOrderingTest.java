@@ -10,8 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ModelOrderingTest {
 
     @Test
-    @DisplayName("sanitizeAndSortByRecency prioritizes dated model IDs and removes blank entries")
-    void sanitizeAndSortByRecency_whenModelIdsIncludeDates_ordersNewestDateFirst() {
+    @DisplayName("Dated model IDs are prioritized and blank entries are removed")
+    void sanitizeAndSortByRecency_whenModelIdsIncludeDates_returnsNewestDateFirst() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
                 "  ",
                 "claude-3-5-haiku-20241022",
@@ -26,8 +26,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByRecency puts non-dated models first and dated models after them")
-    void sanitizeAndSortByRecency_whenMixedDateSuffixes_groupsNonDatedBeforeDated() {
+    @DisplayName("Non-dated models are listed before dated models")
+    void sanitizeAndSortByRecency_whenMixedDateSuffixes_returnsNonDatedBeforeDated() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
                 "claude-sonnet-4-5-20250929",
                 "claude-sonnet-4-6",
@@ -44,8 +44,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByRecency falls back to natural version ordering when dates are absent")
-    void sanitizeAndSortByRecency_whenNoDates_ordersByVersionDescending() {
+    @DisplayName("Natural version ordering is used when date suffixes are absent")
+    void sanitizeAndSortByRecency_whenNoDates_returnsVersionDescendingOrder() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
                 "llama-3.1-8b-instant",
                 "llama-3.3-70b-versatile",
@@ -60,8 +60,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByRecency sorts prefixed models by provider prefix asc and version desc")
-    void sanitizeAndSortByRecency_whenModelsHaveProviderPrefix_ordersByPrefixThenVersion() {
+    @DisplayName("Prefixed models are ordered by provider and then by descending version")
+    void sanitizeAndSortByRecency_whenModelsHaveProviderPrefix_returnsPrefixThenVersionOrder() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
                 "openai/gpt-4.1",
                 "anthropic/claude-3.5",
@@ -80,8 +80,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByRecency sorts dated models in descending order within dated group")
-    void sanitizeAndSortByRecency_whenOnlyDatedModels_ordersByBaseThenDateDescending() {
+    @DisplayName("Dated models are ordered by descending date within each base model")
+    void sanitizeAndSortByRecency_whenOnlyDatedModels_returnsBaseThenDateDescendingOrder() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
                 "claude-sonnet-4-5-20250801",
                 "claude-sonnet-4-5-20250929",
@@ -96,8 +96,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByProvider strips models/ prefix for Google AI models")
-    void sanitizeAndSortByProvider_whenProviderIsGoogleAi_stripsModelsPrefix() {
+    @DisplayName("Google AI model IDs are normalized by removing the models/ prefix")
+    void sanitizeAndSortByProvider_whenProviderIsGoogleAi_returnsModelsWithoutPrefix() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("Google AI", List.of(
                 "models/gemini-2.0-flash",
                 "gemini-2.0-flash",
@@ -111,8 +111,8 @@ class ModelOrderingTest {
     }
 
     @Test
-    @DisplayName("sanitizeAndSortByProvider sorts Ollama models alphanumerically in ascending order")
-    void sanitizeAndSortByProvider_whenProviderIsOllama_ordersNaturallyAscending() {
+    @DisplayName("Ollama model IDs are sorted in natural ascending order")
+    void sanitizeAndSortByProvider_whenProviderIsOllama_returnsNaturallyAscendingOrder() {
         List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("Ollama", List.of(
                 "llama3.2:latest",
                 "llama3.10:latest",

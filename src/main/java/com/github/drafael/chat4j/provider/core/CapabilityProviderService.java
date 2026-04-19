@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import static java.util.Collections.emptyList;
 
 public class CapabilityProviderService implements ProviderService {
 
@@ -64,7 +65,7 @@ public class CapabilityProviderService implements ProviderService {
         try {
             return modelCatalogClient.fetchModels(runtime);
         } catch (Exception e) {
-            return List.of();
+            return emptyList();
         }
     }
 

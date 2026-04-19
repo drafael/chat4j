@@ -73,7 +73,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
 
     private ProviderCapabilities declaredCapabilities(String providerName) {
         return switch (providerName) {
-            case "OpenAI", "Google AI", "OpenRouter" -> ProviderCapabilities.chatModelsAndImages();
+            case "OpenAI", "OpenRouter" -> ProviderCapabilities.chatModelsAndImages();
             default -> ProviderCapabilities.chatAndModels();
         };
     }

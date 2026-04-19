@@ -5,12 +5,18 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatFileViewFileIcon;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
+import javax.swing.text.DefaultEditorKit;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
@@ -28,6 +34,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static java.util.Collections.emptyList;
+
 public class InputBar extends JPanel {
 
     private static final int SHELL_ARC = 20;
@@ -35,6 +43,7 @@ public class InputBar extends JPanel {
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int STOP_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_BUTTON_SIZE = 24;
+    private static final int MENU_ICON_SIZE = 14;
     private static final float CHIP_HOVER_BG_DELTA = 0.09f;
     private static final float CHIP_HOVER_BORDER_DELTA = 0.12f;
     private static final Map<String, Icon> CHIP_ICON_CACHE = new ConcurrentHashMap<>();
@@ -95,6 +104,8 @@ public class InputBar extends JPanel {
                 }
             }
         });
+
+        textArea.setComponentPopupMenu(createEditContextMenu(textArea));
 
         textArea.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
@@ -243,7 +254,7 @@ public class InputBar extends JPanel {
     }
 
     public void showValidationMessage(String message) {
-        if (message == null || message.isBlank()) {
+        if (StringUtils.isBlank(message)) {
             clearValidationMessage();
             return;
         }
@@ -304,6 +315,16 @@ public class InputBar extends JPanel {
 
     public boolean isGenerationIndicatorVisible() {
         return generationIndicatorPanel.isVisible();
+    }
+
+    public void setGenerationStatusText(String text) {
+        Runnable update = () -> generationLabel.setText(StringUtils.defaultIfBlank(text, "Generating response…"));
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            update.run();
+        } else {
+            SwingUtilities.invokeLater(update);
+        }
     }
 
     private void fireSend() {
@@ -385,7 +406,7 @@ public class InputBar extends JPanel {
             showValidationMessage(e.getMessage());
             return Optional.empty();
         } catch (IOException e) {
-            showValidationMessage("Failed to read attachment: " + path.getFileName());
+            showValidationMessage("Failed to read attachment: %s".formatted(path.getFileName()));
             return Optional.empty();
         }
     }
@@ -399,17 +420,24 @@ public class InputBar extends JPanel {
 
         Icon attachmentIcon = new FlatFileViewFileIcon();
 
-        new ArrayList<>(attachments).forEach(attachment -> chipsPanel.add(createAttachmentChip(
-                ellipsize(attachment.displayName(), 26),
-                attachmentIcon,
-                () -> {
-                    attachments.remove(attachment);
-                    refreshChips();
-                }
-        )));
+        new ArrayList<>(attachments).forEach(attachment -> {
+            Runnable onRemove = () -> {
+                attachments.remove(attachment);
+                refreshChips();
+            };
+            if (attachment.image()) {
+                chipsPanel.add(createImageAttachmentChip(attachment, onRemove));
+            } else {
+                chipsPanel.add(createAttachmentChip(
+                        ellipsize(attachment.displayName(), 26),
+                        attachmentIcon,
+                        onRemove
+                ));
+            }
+        });
 
         new ArrayList<>(activeSkills).forEach(skill -> chipsPanel.add(createSkillChip(
-                "/" + ellipsize(skill, 20),
+                "/%s".formatted(ellipsize(skill, 20)),
                 () -> {
                     activeSkills.remove(skill);
                     refreshChips();
@@ -450,6 +478,77 @@ public class InputBar extends JPanel {
         });
 
         return chip;
+    }
+
+    private JComponent createImageAttachmentChip(ComposerAttachment attachment, Runnable onRemove) {
+        ChipPanel chip = new ChipPanel();
+        chip.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        chip.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
+
+        RoundedImageIcon thumbnail = new RoundedImageIcon(attachment.path(), 36);
+        JLabel thumbLabel;
+        if (thumbnail.hasImage()) {
+            thumbLabel = new JLabel(thumbnail);
+        } else {
+            thumbLabel = new JLabel(new FlatFileViewFileIcon());
+        }
+        chip.add(thumbLabel);
+
+        JPanel textStack = new JPanel();
+        textStack.setOpaque(false);
+        textStack.setLayout(new BoxLayout(textStack, BoxLayout.Y_AXIS));
+
+        JLabel nameLabel = new JLabel(ellipsize(attachment.displayName(), 22));
+        Fonts.apply(nameLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
+        nameLabel.setForeground(UIManager.getColor("Label.foreground"));
+        nameLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        textStack.add(nameLabel);
+
+        JLabel sizeLabel = new JLabel(formatSize(attachment.sizeBytes()));
+        Fonts.apply(sizeLabel, Font.PLAIN, Fonts.SIZE_SMALL);
+        Color disabled = UIManager.getColor("Label.disabledForeground");
+        if (disabled == null) {
+            disabled = UIManager.getColor("Label.foreground");
+        }
+        sizeLabel.setForeground(disabled);
+        sizeLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        textStack.add(sizeLabel);
+
+        chip.add(textStack);
+
+        JButton remove = createChipRemoveButton(onRemove);
+        chip.add(remove);
+
+        chip.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent e) {
+                chip.setHovered(true);
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent e) {
+                chip.setHovered(false);
+            }
+        });
+
+        chip.setToolTipText(attachment.displayName());
+        return chip;
+    }
+
+    private static String formatSize(long bytes) {
+        if (bytes <= 0) {
+            return "";
+        }
+        if (bytes < 1_000) {
+            return "%d B".formatted(bytes);
+        }
+        if (bytes < 1_000_000) {
+            return "%.1f kB".formatted(bytes / 1_000.0);
+        }
+        if (bytes < 1_000_000_000) {
+            return "%.1f MB".formatted(bytes / 1_000_000.0);
+        }
+        return "%.1f GB".formatted(bytes / 1_000_000_000.0);
     }
 
     private JComponent createSkillChip(String text, Runnable onRemove) {
@@ -504,7 +603,90 @@ public class InputBar extends JPanel {
             return trimmed;
         }
 
-        return trimmed.substring(0, Math.max(0, maxLength - 1)) + "…";
+        return "%s…".formatted(trimmed.substring(0, Math.max(0, maxLength - 1)));
+    }
+
+    private JPopupMenu createEditContextMenu(JTextComponent target) {
+        int shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+
+        JMenuItem cutItem = buildEditMenuItem(
+                target,
+                "Cut",
+                DefaultEditorKit.cutAction,
+                KeyStroke.getKeyStroke(KeyEvent.VK_X, shortcut),
+                "/icons/input/scissors.svg"
+        );
+        JMenuItem copyItem = buildEditMenuItem(
+                target,
+                "Copy",
+                DefaultEditorKit.copyAction,
+                KeyStroke.getKeyStroke(KeyEvent.VK_C, shortcut),
+                "/icons/input/copy.svg"
+        );
+        JMenuItem pasteItem = buildEditMenuItem(
+                target,
+                "Paste",
+                DefaultEditorKit.pasteAction,
+                KeyStroke.getKeyStroke(KeyEvent.VK_V, shortcut),
+                "/icons/input/clipboard-paste.svg"
+        );
+
+        JPopupMenu popup = new JPopupMenu();
+        popup.add(cutItem);
+        popup.add(copyItem);
+        popup.add(pasteItem);
+
+        popup.addPopupMenuListener(new PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+                boolean hasSelection = target.getSelectionStart() != target.getSelectionEnd();
+                boolean editable = target.isEditable() && target.isEnabled();
+                cutItem.setEnabled(editable && hasSelection);
+                copyItem.setEnabled(hasSelection);
+                pasteItem.setEnabled(editable && clipboardHasText());
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuCanceled(PopupMenuEvent e) {
+            }
+        });
+
+        return popup;
+    }
+
+    private JMenuItem buildEditMenuItem(
+            JTextComponent target,
+            String label,
+            String actionName,
+            KeyStroke accelerator,
+            String iconPath
+    ) {
+        Action action = target.getActionMap().get(actionName);
+        JMenuItem item = new JMenuItem(label);
+        Fonts.apply(item, Font.PLAIN, Fonts.SIZE_BODY);
+        item.setIcon(svgIcon(iconPath, MENU_ICON_SIZE, UIManager.getColor("Label.foreground")));
+        item.setAccelerator(accelerator);
+        if (action != null) {
+            item.addActionListener(e -> {
+                ActionEvent forwarded = new ActionEvent(target, ActionEvent.ACTION_PERFORMED, actionName);
+                action.actionPerformed(forwarded);
+            });
+        }
+        return item;
+    }
+
+    private boolean clipboardHasText() {
+        try {
+            return Toolkit.getDefaultToolkit()
+                    .getSystemClipboard()
+                    .isDataFlavorAvailable(DataFlavor.stringFlavor);
+        } catch (IllegalStateException e) {
+            return false;
+        }
     }
 
     private void configureSlashPopup() {
@@ -515,7 +697,7 @@ public class InputBar extends JPanel {
             JPanel row = new JPanel(new BorderLayout(0, 2));
             row.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
 
-            JLabel title = new JLabel("/" + value.name());
+            JLabel title = new JLabel("/%s".formatted(value.name()));
             Fonts.apply(title, Font.PLAIN, Fonts.SIZE_BODY);
             row.add(title, BorderLayout.NORTH);
 
@@ -571,12 +753,12 @@ public class InputBar extends JPanel {
     private List<Path> skillSearchPaths() {
         List<Path> paths = new ArrayList<>();
         String userDir = System.getProperty("user.dir");
-        if (userDir != null && !userDir.isBlank()) {
+        if (StringUtils.isNotBlank(userDir)) {
             paths.add(Path.of(userDir, ".agents", "skills"));
         }
 
         String userHome = System.getProperty("user.home");
-        if (userHome != null && !userHome.isBlank()) {
+        if (StringUtils.isNotBlank(userHome)) {
             paths.add(Path.of(userHome, ".agents", "skills"));
         }
 
@@ -585,7 +767,7 @@ public class InputBar extends JPanel {
 
     private List<SkillCommand> loadSkills(Path skillRoot) {
         if (!Files.isDirectory(skillRoot)) {
-            return List.of();
+            return emptyList();
         }
 
         List<SkillCommand> skills = new ArrayList<>();
@@ -597,7 +779,7 @@ public class InputBar extends JPanel {
                     .flatMap(Optional::stream)
                     .forEach(skills::add);
         } catch (IOException e) {
-            return List.of();
+            return emptyList();
         }
 
         return skills;
@@ -1226,7 +1408,8 @@ public class InputBar extends JPanel {
     }
 
     private Icon svgIcon(String path, int size, Color tint) {
-        String key = path + "#" + size + "#" + (tint == null ? "default" : tint.getRGB());
+        String tintKey = tint == null ? "default" : String.valueOf(tint.getRGB());
+        String key = "%s#%d#%s".formatted(path, size, tintKey);
         return CHIP_ICON_CACHE.computeIfAbsent(key, ignored -> {
             URL iconUrl = InputBar.class.getResource(path);
             if (iconUrl == null) {
@@ -1253,26 +1436,65 @@ public class InputBar extends JPanel {
     private class FileDropTransferHandler extends TransferHandler {
 
         @Override
+        public int getSourceActions(JComponent c) {
+            return c instanceof JTextComponent ? COPY_OR_MOVE : NONE;
+        }
+
+        @Override
+        protected Transferable createTransferable(JComponent c) {
+            if (c instanceof JTextComponent textComponent) {
+                String selected = textComponent.getSelectedText();
+                if (selected != null && !selected.isEmpty()) {
+                    return new java.awt.datatransfer.StringSelection(selected);
+                }
+            }
+            return null;
+        }
+
+        @Override
+        protected void exportDone(JComponent source, Transferable data, int action) {
+            if (action == MOVE && source instanceof JTextComponent textComponent) {
+                textComponent.replaceSelection("");
+            }
+        }
+
+        @Override
         public boolean canImport(TransferSupport support) {
-            return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor);
+            if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                return true;
+            }
+            return support.getComponent() instanceof JTextComponent
+                    && support.isDataFlavorSupported(DataFlavor.stringFlavor);
         }
 
         @Override
         @SuppressWarnings("unchecked")
         public boolean importData(TransferSupport support) {
-            if (!canImport(support)) {
-                return false;
+            if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                try {
+                    List<java.io.File> files = (List<java.io.File>) support.getTransferable()
+                            .getTransferData(DataFlavor.javaFileListFlavor);
+                    List<Path> paths = files.stream().map(java.io.File::toPath).toList();
+                    addAttachments(paths);
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
             }
 
-            try {
-                List<java.io.File> files = (List<java.io.File>) support.getTransferable()
-                        .getTransferData(DataFlavor.javaFileListFlavor);
-                List<Path> paths = files.stream().map(java.io.File::toPath).toList();
-                addAttachments(paths);
-                return true;
-            } catch (Exception e) {
-                return false;
+            if (support.getComponent() instanceof JTextComponent textComponent
+                    && support.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                try {
+                    String text = (String) support.getTransferable()
+                            .getTransferData(DataFlavor.stringFlavor);
+                    textComponent.replaceSelection(text);
+                    return true;
+                } catch (Exception e) {
+                    return false;
+                }
             }
+
+            return false;
         }
     }
 

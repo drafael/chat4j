@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.api.content;
 
 import java.util.List;
+import static java.util.Collections.emptyList;
 
 public record MessageMeta(
     List<String> activeSkills,
@@ -10,16 +11,16 @@ public record MessageMeta(
 ) {
 
     public MessageMeta {
-        activeSkills = activeSkills == null ? List.of() : List.copyOf(activeSkills);
-        fallbackNotices = fallbackNotices == null ? List.of() : List.copyOf(fallbackNotices);
+        activeSkills = activeSkills == null ? emptyList() : List.copyOf(activeSkills);
+        fallbackNotices = fallbackNotices == null ? emptyList() : List.copyOf(fallbackNotices);
         error = error == null ? "" : error;
     }
 
     public MessageMeta(List<String> activeSkills, boolean cancelled, String error) {
-        this(activeSkills, List.of(), cancelled, error);
+        this(activeSkills, emptyList(), cancelled, error);
     }
 
     public static MessageMeta empty() {
-        return new MessageMeta(List.of(), List.of(), false, "");
+        return new MessageMeta(emptyList(), emptyList(), false, "");
     }
 }

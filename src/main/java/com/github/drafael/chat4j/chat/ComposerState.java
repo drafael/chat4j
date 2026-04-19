@@ -1,13 +1,14 @@
 package com.github.drafael.chat4j.chat;
 
 import java.util.List;
+import static java.util.Collections.emptyList;
 
 public record ComposerState(String text, List<ComposerAttachment> attachments, List<String> activeSkills) {
 
     public ComposerState {
         text = text == null ? "" : text;
-        attachments = attachments == null ? List.of() : List.copyOf(attachments);
-        activeSkills = activeSkills == null ? List.of() : List.copyOf(activeSkills);
+        attachments = attachments == null ? emptyList() : List.copyOf(attachments);
+        activeSkills = activeSkills == null ? emptyList() : List.copyOf(activeSkills);
     }
 
     public boolean isEmpty() {
@@ -15,6 +16,6 @@ public record ComposerState(String text, List<ComposerAttachment> attachments, L
     }
 
     public static ComposerState empty() {
-        return new ComposerState("", List.of(), List.of());
+        return new ComposerState("", emptyList(), emptyList());
     }
 }

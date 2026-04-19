@@ -25,6 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 
+import org.apache.commons.lang3.StringUtils;
 import static java.util.Collections.emptyList;
 
 public class OpenAiModelCatalogClient implements ModelCatalogClient {
@@ -85,8 +86,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     .timeout(Duration.ofSeconds(4))
                     .GET();
 
-            if (runtime.apiKey() != null && !runtime.apiKey().isBlank()) {
-                requestBuilder.header("Authorization", "Bearer " + runtime.apiKey());
+            if (StringUtils.isNotBlank(runtime.apiKey())) {
+                requestBuilder.header("Authorization", "Bearer %s".formatted(runtime.apiKey()));
             }
 
             HttpResponse<String> response = HTTP_CLIENT.send(
@@ -105,7 +106,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
             List<String> modelIds = StreamSupport.stream(data.spliterator(), false)
                     .map(OpenAiModelCatalogClient::modelId)
-                    .filter(modelId -> modelId != null && !modelId.isBlank())
+                    .filter(StringUtils::isNotBlank)
                     .filter(ModelFilters::isSupportedChatModelId)
                     .toList();
 
@@ -117,8 +118,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private static String modelsEndpoint(String baseUrl) {
         return baseUrl.endsWith("/")
-                ? baseUrl + "models"
-                : baseUrl + "/models";
+                ? "%smodels".formatted(baseUrl)
+                : "%s/models".formatted(baseUrl);
     }
 
     private static String modelId(JsonNode modelNode) {

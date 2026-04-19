@@ -36,7 +36,7 @@ public final class StoragePaths {
     }
 
     public Path databaseFile() {
-        return databaseDirectory().resolve(DB_NAME + ".mv.db");
+        return databaseDirectory().resolve("%s.mv.db".formatted(DB_NAME));
     }
 
     public Path modelsCacheDirectory() {
@@ -44,6 +44,6 @@ public final class StoragePaths {
     }
 
     public String jdbcUrl() {
-        return "jdbc:h2:file:" + databaseFilePrefix() + ";AUTO_SERVER=TRUE";
+        return "jdbc:h2:file:%s;AUTO_SERVER=TRUE".formatted(databaseFilePrefix());
     }
 }

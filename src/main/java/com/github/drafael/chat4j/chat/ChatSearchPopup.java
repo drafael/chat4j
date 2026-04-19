@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import org.apache.commons.lang3.StringUtils;
 
 public class ChatSearchPopup extends JDialog {
 
@@ -233,7 +234,7 @@ public class ChatSearchPopup extends JDialog {
 
     private static Icon providerIcon(String providerName) {
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);
-        if (iconPath == null || iconPath.isBlank()) {
+        if (StringUtils.isBlank(iconPath)) {
             return null;
         }
 
@@ -417,7 +418,9 @@ public class ChatSearchPopup extends JDialog {
     }
 
     private void scheduleSearch() {
-        if (debounceTimer != null) debounceTimer.stop();
+        if (debounceTimer != null) {
+            debounceTimer.stop();
+        }
         debounceTimer = new Timer(200, e -> performSearch());
         debounceTimer.setRepeats(false);
         debounceTimer.start();
@@ -502,7 +505,9 @@ public class ChatSearchPopup extends JDialog {
 
         if (snippet != null) {
             String cleanSnippet = snippet.replace("\n", " ").trim();
-            if (cleanSnippet.length() > 80) cleanSnippet = cleanSnippet.substring(0, 80) + "...";
+            if (cleanSnippet.length() > 80) {
+                cleanSnippet = "%s...".formatted(cleanSnippet.substring(0, 80));
+            }
             JLabel snippetLabel = new JLabel(cleanSnippet);
             Fonts.apply(snippetLabel, Font.PLAIN, Fonts.SIZE_SMALL);
             snippetLabel.setForeground(UIManager.getColor("Label.disabledForeground"));

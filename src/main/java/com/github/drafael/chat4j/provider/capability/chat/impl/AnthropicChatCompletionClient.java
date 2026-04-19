@@ -20,6 +20,7 @@ import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -28,6 +29,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import static java.util.Collections.emptyList;
 
 public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
@@ -100,7 +102,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
     private List<ContentBlockParam> mapUserBlocks(Message message, ProviderRuntime runtime) {
         if (!supportsNativeImages(runtime) || message.parts().isEmpty()) {
-            return List.of();
+            return emptyList();
         }
 
         List<ContentBlockParam> blocks = new ArrayList<>();
@@ -144,7 +146,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
     }
 
     private Optional<Base64ImageSource.MediaType> resolveMediaType(String mimeType) {
-        if (mimeType == null || mimeType.isBlank()) {
+        if (StringUtils.isBlank(mimeType)) {
             return Optional.empty();
         }
 
@@ -170,7 +172,9 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         return ProviderCapabilityResolver.supportsImageInput(
                 runtime.descriptor().capabilities(),
                 runtime.descriptor().name(),
-                runtime.selectedModel()
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.apiKey()
         );
     }
 

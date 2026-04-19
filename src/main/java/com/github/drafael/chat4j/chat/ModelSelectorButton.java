@@ -8,6 +8,7 @@ import java.awt.*;
 import java.net.URL;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.apache.commons.lang3.StringUtils;
 
 public class ModelSelectorButton extends JButton {
 
@@ -44,7 +45,7 @@ public class ModelSelectorButton extends JButton {
     public void setSelection(String providerName, String modelName) {
         this.providerName = providerName != null ? providerName : "";
         this.modelName = modelName != null ? modelName : "";
-        setToolTipText(this.modelName + "\n" + this.providerName);
+        setToolTipText("%s\n%s".formatted(this.modelName, this.providerName));
         revalidate();
         repaint();
     }
@@ -205,11 +206,11 @@ public class ModelSelectorButton extends JButton {
 
     private Icon providerIcon(int size) {
         String path = PROVIDER_ICON_PATHS.get(providerName);
-        if (path == null || path.isBlank()) {
+        if (StringUtils.isBlank(path)) {
             return null;
         }
 
-        String key = path + "#" + size;
+        String key = "%s#%d".formatted(path, size);
         return PROVIDER_ICON_CACHE.computeIfAbsent(key, iconPathWithSize -> {
             URL url = ModelSelectorButton.class.getResource(path);
             if (url == null) {

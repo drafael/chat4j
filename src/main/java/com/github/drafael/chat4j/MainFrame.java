@@ -20,6 +20,7 @@ import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import org.apache.commons.lang3.StringUtils;
 
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -41,6 +42,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import static java.util.Collections.emptyList;
 
 public class MainFrame extends JFrame {
 
@@ -299,7 +301,7 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                 this,
-                "Failed to load conversation: " + e.getMessage(),
+                "Failed to load conversation: %s".formatted(e.getMessage()),
                 "Error",
                 JOptionPane.ERROR_MESSAGE
             );
@@ -308,7 +310,9 @@ public class MainFrame extends JFrame {
 
     private void saveCurrentConversation() {
         List<Message> history = chatPanel.getHistory();
-        if (history.isEmpty()) return;
+        if (history.isEmpty()) {
+            return;
+        }
 
         try {
             if (currentConversationId == null) {
@@ -378,7 +382,7 @@ public class MainFrame extends JFrame {
             return fallbackTitle;
         }
 
-        return titleCandidate.length() > 50 ? titleCandidate.substring(0, 50) + "..." : titleCandidate;
+        return titleCandidate.length() > 50 ? "%s...".formatted(titleCandidate.substring(0, 50)) : titleCandidate;
     }
 
     private void saveWindowState() {
@@ -423,7 +427,7 @@ public class MainFrame extends JFrame {
 
         // Cmd+N / Ctrl+N: New Chat
         rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(mod + " N"), "newChat");
+                .put(KeyStroke.getKeyStroke("%s N".formatted(mod)), "newChat");
         rootPane.getActionMap().put(
             "newChat",
             new AbstractAction() {
@@ -435,7 +439,7 @@ public class MainFrame extends JFrame {
 
         // Cmd+, / Ctrl+,: Settings
         rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(mod + " COMMA"), "openSettings");
+                .put(KeyStroke.getKeyStroke("%s COMMA".formatted(mod)), "openSettings");
         rootPane.getActionMap().put(
             "openSettings",
             new AbstractAction() {
@@ -447,7 +451,7 @@ public class MainFrame extends JFrame {
 
         // Cmd+B / Ctrl+B: Toggle Sidebar
         rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(mod + " B"), "toggleSidebar");
+                .put(KeyStroke.getKeyStroke("%s B".formatted(mod)), "toggleSidebar");
         rootPane.getActionMap().put(
             "toggleSidebar",
             new AbstractAction() {
@@ -459,7 +463,7 @@ public class MainFrame extends JFrame {
 
         // Cmd+Shift+F / Ctrl+Shift+F: Chat Search
         rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(mod + " shift F"), "openChatSearch");
+                .put(KeyStroke.getKeyStroke("%s shift F".formatted(mod)), "openChatSearch");
         rootPane.getActionMap().put(
             "openChatSearch",
             new AbstractAction() {
@@ -471,7 +475,7 @@ public class MainFrame extends JFrame {
 
         // Cmd+/ / Ctrl+/: Toggle Model Dropdown
         rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(mod + " SLASH"), "toggleModelDropdown");
+                .put(KeyStroke.getKeyStroke("%s SLASH".formatted(mod)), "toggleModelDropdown");
         rootPane.getActionMap().put(
             "toggleModelDropdown",
             new AbstractAction() {
@@ -548,18 +552,18 @@ public class MainFrame extends JFrame {
 
         try {
             enabled = Boolean.parseBoolean(
-                    settingsRepo.get("provider." + providerDef.name() + ".enabled", "true"));
+                    settingsRepo.get("provider.%s.enabled".formatted(providerDef.name()), "true"));
         } catch (Exception e) {
             enabled = true;
         }
 
         try {
-            baseUrl = settingsRepo.get("provider." + providerDef.name() + ".baseUrl", providerDef.baseUrl());
+            baseUrl = settingsRepo.get("provider.%s.baseUrl".formatted(providerDef.name()), providerDef.baseUrl());
         } catch (Exception e) {
             baseUrl = providerDef.baseUrl();
         }
 
-        if (baseUrl == null || baseUrl.isBlank()) {
+        if (StringUtils.isBlank(baseUrl)) {
             baseUrl = providerDef.baseUrl();
         }
 
@@ -736,7 +740,7 @@ public class MainFrame extends JFrame {
             || !Boolean.parseBoolean(System.getProperty("apple.laf.useScreenMenuBar", "false"))
         ) {
             JMenu helpMenu = new JMenu("Help");
-            JMenuItem aboutItem = new JMenuItem("About " + getTitle());
+            JMenuItem aboutItem = new JMenuItem("About %s".formatted(getTitle()));
             aboutItem.addActionListener(e -> AboutDialog.show(this));
             helpMenu.add(aboutItem);
             modelMenuBar.add(helpMenu);
@@ -838,7 +842,7 @@ public class MainFrame extends JFrame {
                 ));
 
         List<ModelSelection> favorites = providers.stream()
-                .flatMap(provider -> modelsByProvider.getOrDefault(provider.name(), List.of()).stream()
+                .flatMap(provider -> modelsByProvider.getOrDefault(provider.name(), emptyList()).stream()
                         .filter(model -> modelFavoritesService.isFavorite(provider.name(), model))
                         .map(model -> new ModelSelection(provider.name(), model))
                 )
@@ -872,13 +876,13 @@ public class MainFrame extends JFrame {
             }
 
             boolean providerEnabled = providerSelectable.getOrDefault(provider.name(), true);
-            String providerLabel = providerEnabled ? provider.name() : provider.name() + " (offline)";
+            String providerLabel = providerEnabled ? provider.name() : "%s (offline)".formatted(provider.name());
 
             JMenuItem providerHeader = createProviderHeader(provider.name(), providerLabel, providerEnabled);
             modelsMenu.add(providerHeader);
             providerHeaderItemsByName.put(provider.name(), providerHeader);
 
-            List<String> models = modelsByProvider.getOrDefault(provider.name(), List.of()).stream()
+            List<String> models = modelsByProvider.getOrDefault(provider.name(), emptyList()).stream()
                     .filter(model -> !modelFavoritesService.isFavorite(provider.name(), model))
                     .toList();
 
@@ -991,7 +995,7 @@ public class MainFrame extends JFrame {
         providerHeaderItemsByName.forEach((providerName, headerItem) -> {
             Boolean enabled = providerEnabledByName.get(providerName);
             boolean providerEnabled = enabled == null || enabled;
-            String text = providerEnabled ? providerName : providerName + " (offline)";
+            String text = providerEnabled ? providerName : "%s (offline)".formatted(providerName);
             updateProviderHeader(headerItem, providerName, text, providerEnabled);
         });
     }
@@ -1015,8 +1019,8 @@ public class MainFrame extends JFrame {
 
     private String readConfiguredProviderBaseUrl(String providerName, String defaultBaseUrl) {
         try {
-            String value = settingsRepo.get("provider." + providerName + ".baseUrl", defaultBaseUrl);
-            if (value == null || value.isBlank()) {
+            String value = settingsRepo.get("provider.%s.baseUrl".formatted(providerName), defaultBaseUrl);
+            if (StringUtils.isBlank(value)) {
                 return defaultBaseUrl;
             }
             return value;
@@ -1270,7 +1274,7 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                     this,
-                    "Failed to apply UI font: " + e.getMessage(),
+                    "Failed to apply UI font: %s".formatted(e.getMessage()),
                     "Font Error",
                     JOptionPane.ERROR_MESSAGE
             );
@@ -1292,7 +1296,7 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                     this,
-                    "Failed to apply code font: " + e.getMessage(),
+                    "Failed to apply code font: %s".formatted(e.getMessage()),
                     "Font Error",
                     JOptionPane.ERROR_MESSAGE
             );
@@ -1363,7 +1367,7 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                 this,
-                "Failed to apply theme: " + e.getMessage(),
+                "Failed to apply theme: %s".formatted(e.getMessage()),
                 "Theme Error",
                 JOptionPane.ERROR_MESSAGE
             );
@@ -1382,7 +1386,7 @@ public class MainFrame extends JFrame {
 
     private static Icon providerIcon(String providerName, int size, Color tintColor) {
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);
-        if (iconPath == null || iconPath.isBlank()) {
+        if (StringUtils.isBlank(iconPath)) {
             return null;
         }
 
@@ -1451,7 +1455,7 @@ public class MainFrame extends JFrame {
         try {
             String key = KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX + conversationId;
             String stored = settingsRepo.get(key, null);
-            if (stored == null || stored.isBlank()) {
+            if (StringUtils.isBlank(stored)) {
                 return assistantMarkdownDefaultMode;
             }
             return AssistantRenderMode.fromSettingValue(stored);
@@ -1479,7 +1483,7 @@ public class MainFrame extends JFrame {
     }
 
     private static Optional<ModelSelection> parseModelSelection(String modelKey) {
-        if (modelKey == null || modelKey.isBlank()) {
+        if (StringUtils.isBlank(modelKey)) {
             return Optional.empty();
         }
 

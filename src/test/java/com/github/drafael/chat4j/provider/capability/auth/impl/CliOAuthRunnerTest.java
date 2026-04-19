@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.apache.commons.lang3.StringUtils;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CliOAuthRunnerTest {
@@ -57,9 +58,9 @@ class CliOAuthRunnerTest {
 
     @Test
     @DisplayName("Status command reports missing CLI without raw process exception text")
-    void checkStatus_whenCliIsMissing_reportsFriendlyUnavailableMessage() {
+    void checkStatus_whenCliIsMissing_returnsUnavailableWithFriendlyMessage() {
         OAuthCliSpec spec = new OAuthCliSpec(
-                List.of("chat4j-missing-cli-" + UUID.randomUUID()),
+                List.of("chat4j-missing-cli-%s".formatted(UUID.randomUUID())),
                 command("echo login"),
                 command("echo logout"),
                 command("echo token"));
@@ -77,7 +78,7 @@ class CliOAuthRunnerTest {
     @DisplayName("Status command can resolve CLI from loaded shell PATH")
     void checkStatus_whenCliIsOnlyInShellPath_returnsAuthorized() throws Exception {
         Path tempDir = Files.createTempDirectory("chat4j-cli-path");
-        String commandName = "chat4j-cli-" + UUID.randomUUID();
+        String commandName = "chat4j-cli-%s".formatted(UUID.randomUUID());
         Path executable = tempDir.resolve(commandName);
 
         try {
@@ -86,9 +87,9 @@ class CliOAuthRunnerTest {
             assertThat(executableSet).isTrue();
 
             String currentPath = System.getenv("PATH");
-            String shellPath = currentPath == null || currentPath.isBlank()
+            String shellPath = StringUtils.isBlank(currentPath)
                     ? tempDir.toString()
-                    : tempDir + ":" + currentPath;
+                    : "%s:%s".formatted(tempDir, currentPath);
             CredentialResolver.init(Map.of("PATH", shellPath));
 
             OAuthCliSpec spec = new OAuthCliSpec(

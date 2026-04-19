@@ -20,7 +20,7 @@ class ProviderRegistryTest {
 
     @Test
     @DisplayName("Runtime config can disable Ollama from available provider list")
-    void availableProviders_whenOllamaIsDisabled_hidesOllamaProvider() {
+    void availableProviders_whenOllamaIsDisabled_returnsProvidersWithoutOllama() {
         ProviderRegistry.applyRuntimeConfig(Map.of(
                 "Ollama",
                 new ProviderRegistry.ProviderRuntimeConfig(false, "http://localhost:11434/v1")
@@ -32,7 +32,7 @@ class ProviderRegistryTest {
 
     @Test
     @DisplayName("Runtime config base URL override is reflected in provider definition and factory")
-    void availableProviders_whenBaseUrlIsOverridden_usesOverriddenBaseUrl() throws Exception {
+    void availableProviders_whenBaseUrlIsOverridden_returnsProviderWithOverriddenBaseUrl() throws Exception {
         String overriddenBaseUrl = "http://127.0.0.1:22445/v1";
         ProviderRegistry.applyRuntimeConfig(Map.of(
                 "Ollama",
@@ -52,7 +52,7 @@ class ProviderRegistryTest {
 
     @Test
     @DisplayName("Anthropic provider definition uses root API URL without v1 suffix")
-    void availableProviders_whenAnthropicIsAvailable_usesRootApiUrl() {
+    void availableProviders_whenAnthropicIsAvailable_returnsAnthropicWithRootApiUrl() {
         assertThat(ProviderRegistry.allProviders())
                 .filteredOn(providerDef -> "Anthropic".equals(providerDef.name()))
                 .singleElement()

@@ -28,14 +28,22 @@ final class ModelRowComponent {
     private static final int ROW_MAX_HEIGHT = 40;
     private static final Dimension FAVORITE_LABEL_SIZE = new Dimension(26, 24);
     private static final Dimension CHECK_LABEL_SIZE = new Dimension(CHECK_COLUMN_WIDTH, 24);
+    private static final Dimension CAPABILITY_LABEL_SIZE = new Dimension(24, 24);
     private static final String STAR_OUTLINE_PATH = "/icons/sidebar/star.svg";
     private static final String STAR_FILLED_PATH = "/icons/sidebar/star-filled.svg";
+    private static final String IMAGE_CAPABILITY_PATH = "/icons/sidebar/eye.svg";
+    private static final String REASONING_CAPABILITY_PATH = "/icons/sidebar/brain.svg";
+    private static final Color IMAGE_CAPABILITY_COLOR = new Color(44, 123, 255);
+    private static final Color REASONING_CAPABILITY_COLOR = new Color(155, 81, 255);
     private static final Map<String, Icon> FAVORITE_ICON_CACHE = new ConcurrentHashMap<>();
+    private static final Map<String, Icon> CAPABILITY_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel panel;
     private final JLabel nameLabel;
     private final JLabel checkLabel;
     private final JLabel favoriteLabel;
+    private final JLabel imageCapabilityLabel;
+    private final JLabel reasoningCapabilityLabel;
     private final String providerName;
     private final String modelId;
     private final String displayLabel;
@@ -49,6 +57,8 @@ final class ModelRowComponent {
             String displayLabel,
             boolean selectable,
             boolean initiallyFavorite,
+            boolean supportsImageInput,
+            boolean supportsReasoning,
             Listener listener
     ) {
         this.providerName = providerName;
@@ -60,8 +70,11 @@ final class ModelRowComponent {
         this.nameLabel = buildNameLabel(displayLabel);
         this.checkLabel = buildCheckLabel();
         this.favoriteLabel = buildFavoriteLabel();
+        this.imageCapabilityLabel = buildCapabilityLabel();
+        this.reasoningCapabilityLabel = buildCapabilityLabel();
 
         updateFavoriteState(initiallyFavorite);
+        updateCapabilities(supportsImageInput, supportsReasoning);
         wireFavoriteLabel(listener);
         applyDisabledState();
         wireRow(listener);
@@ -107,10 +120,31 @@ final class ModelRowComponent {
         int iconSize = Math.max(12, Fonts.scale(Fonts.SIZE_COMPACT));
         String iconPath = favorite ? STAR_FILLED_PATH : STAR_OUTLINE_PATH;
 
-        favoriteLabel.setIcon(loadFavoriteIcon(iconPath, tint, iconSize));
+        favoriteLabel.setIcon(loadTintedIcon(FAVORITE_ICON_CACHE, iconPath, tint, iconSize));
         favoriteLabel.setText(null);
         favoriteLabel.setForeground(tint);
         favoriteLabel.setToolTipText(favorite ? "Remove from favorites" : "Add to favorites");
+    }
+
+    void updateCapabilities(boolean supportsImageInput, boolean supportsReasoning) {
+        int eyeSize = Math.max(16, Fonts.scale(Fonts.SIZE_BODY_LARGE) + 2);
+        int brainSize = Math.max(14, Fonts.scale(Fonts.SIZE_BODY_LARGE));
+
+        imageCapabilityLabel.setIcon(loadTintedIcon(
+                CAPABILITY_ICON_CACHE,
+                IMAGE_CAPABILITY_PATH,
+                IMAGE_CAPABILITY_COLOR,
+                eyeSize));
+        imageCapabilityLabel.setVisible(supportsImageInput);
+        imageCapabilityLabel.setToolTipText(supportsImageInput ? "Supports Image Input Natively" : null);
+
+        reasoningCapabilityLabel.setIcon(loadTintedIcon(
+                CAPABILITY_ICON_CACHE,
+                REASONING_CAPABILITY_PATH,
+                REASONING_CAPABILITY_COLOR,
+                brainSize));
+        reasoningCapabilityLabel.setVisible(supportsReasoning);
+        reasoningCapabilityLabel.setToolTipText(supportsReasoning ? "Supports Reasoning" : null);
     }
 
     private JPanel buildPanel() {
@@ -168,7 +202,7 @@ final class ModelRowComponent {
     private void wireFavoriteLabel(Listener listener) {
         if (!selectable) {
             favoriteLabel.setEnabled(false);
-            favoriteLabel.setToolTipText(providerName + " server is unavailable");
+            favoriteLabel.setToolTipText("%s server is unavailable".formatted(providerName));
             return;
         }
 
@@ -188,7 +222,19 @@ final class ModelRowComponent {
 
         nameLabel.setForeground(
                 colorOrDefault(UIManager.getColor("Label.disabledForeground"), new Color(140, 140, 140)));
-        panel.setToolTipText(providerName + " server is unavailable");
+        panel.setToolTipText("%s server is unavailable".formatted(providerName));
+    }
+
+    private JLabel buildCapabilityLabel() {
+        JLabel label = new JLabel();
+        label.setHorizontalAlignment(SwingConstants.CENTER);
+        label.setVerticalAlignment(SwingConstants.CENTER);
+        label.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        label.setPreferredSize(CAPABILITY_LABEL_SIZE);
+        label.setMinimumSize(CAPABILITY_LABEL_SIZE);
+        label.setMaximumSize(CAPABILITY_LABEL_SIZE);
+        label.setVisible(false);
+        return label;
     }
 
     private void wireRow(Listener listener) {
@@ -221,13 +267,18 @@ final class ModelRowComponent {
         panel.addMouseListener(rowMouseListener);
         nameLabel.addMouseListener(rowMouseListener);
         checkLabel.addMouseListener(rowMouseListener);
+        imageCapabilityLabel.addMouseListener(rowMouseListener);
+        reasoningCapabilityLabel.addMouseListener(rowMouseListener);
     }
 
     private void assemble() {
-        JPanel actions = new JPanel(new BorderLayout(4, 0));
+        JPanel actions = new JPanel();
         actions.setOpaque(false);
-        actions.add(checkLabel, BorderLayout.WEST);
-        actions.add(favoriteLabel, BorderLayout.EAST);
+        actions.setLayout(new BoxLayout(actions, BoxLayout.X_AXIS));
+        actions.add(checkLabel);
+        actions.add(favoriteLabel);
+        actions.add(imageCapabilityLabel);
+        actions.add(reasoningCapabilityLabel);
 
         panel.add(nameLabel, BorderLayout.CENTER);
         panel.add(actions, BorderLayout.EAST);
@@ -288,10 +339,10 @@ final class ModelRowComponent {
         return text.substring(0, low) + ellipsis;
     }
 
-    private static Icon loadFavoriteIcon(String iconPath, Color tint, int size) {
+    private static Icon loadTintedIcon(Map<String, Icon> cache, String iconPath, Color tint, int size) {
         int rgb = tint != null ? tint.getRGB() : STAR_OFF_COLOR.getRGB();
-        String cacheKey = iconPath + "#" + size + "#" + rgb;
-        return FAVORITE_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
+        String cacheKey = "%s#%d#%d".formatted(iconPath, size, rgb);
+        return cache.computeIfAbsent(cacheKey, key -> {
             URL url = ModelRowComponent.class.getResource(iconPath);
             if (url == null) {
                 return null;

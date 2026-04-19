@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import org.apache.commons.lang3.StringUtils;
 
 public final class ShellEnvironmentLoader {
 
@@ -20,7 +21,7 @@ public final class ShellEnvironmentLoader {
 
     public static Map<String, String> loadFromLoginShell() {
         String shell = System.getenv("SHELL");
-        if (shell == null || shell.isBlank()) {
+        if (StringUtils.isBlank(shell)) {
             shell = "/bin/zsh";
         }
 
@@ -30,7 +31,7 @@ public final class ShellEnvironmentLoader {
             boolean finished = process.waitFor(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                LOG.warning("Shell environment loading timed out after " + TIMEOUT.toSeconds() + "s");
+                LOG.warning("Shell environment loading timed out after %ds".formatted(TIMEOUT.toSeconds()));
                 return Map.of();
             }
 
@@ -40,7 +41,7 @@ public final class ShellEnvironmentLoader {
             }
 
             if (process.exitValue() != 0) {
-                LOG.warning("Shell exited with code " + process.exitValue());
+                LOG.warning("Shell exited with code %d".formatted(process.exitValue()));
                 return Map.of();
             }
 

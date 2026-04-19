@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import javax.swing.*;
 import java.awt.*;
+import org.apache.commons.lang3.StringUtils;
 
 final class MarkdownPaletteResolver {
 
@@ -110,14 +111,14 @@ final class MarkdownPaletteResolver {
     }
 
     private static String cssFontStack(Font font, String fallbackStack) {
-        if (font == null || font.getFamily() == null || font.getFamily().isBlank()) {
+        if (font == null || StringUtils.isBlank(font.getFamily())) {
             return fallbackStack;
         }
-        return "'" + font.getFamily().replace("'", "") + "', " + fallbackStack;
+        return "'%s', %s".formatted(font.getFamily().replace("'", ""), fallbackStack);
     }
 
     private static String htmlFontFace(Font font, String fallbackFace) {
-        if (font == null || font.getFamily() == null || font.getFamily().isBlank()) {
+        if (font == null || StringUtils.isBlank(font.getFamily())) {
             return fallbackFace;
         }
         return font.getFamily().replace("\"", "");

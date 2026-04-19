@@ -71,12 +71,10 @@ public class SettingsRepo {
         Map<String, String> entries = new LinkedHashMap<>();
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT \"key\", \"value\" FROM settings "
-                             + "WHERE \"key\" LIKE ? ESCAPE '!' "
-                             + "ORDER BY \"key\""
+                     "SELECT \"key\", \"value\" FROM settings WHERE \"key\" LIKE ? ESCAPE '!' ORDER BY \"key\""
              )
         ) {
-            ps.setString(1, escapedPrefix + "%");
+            ps.setString(1, "%s%%".formatted(escapedPrefix));
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     entries.put(rs.getString(1), rs.getString(2));

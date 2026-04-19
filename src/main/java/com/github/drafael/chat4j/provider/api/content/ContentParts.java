@@ -22,7 +22,6 @@ public final class ContentParts {
                 .filter(Objects::nonNull)
                 .map(ContentPart::asTextProjection)
                 .filter(value -> !value.isBlank())
-                .reduce((left, right) -> left + "\n" + right)
-                .orElse("");
+                .collect(java.util.stream.Collectors.joining("\n"));
     }
 }

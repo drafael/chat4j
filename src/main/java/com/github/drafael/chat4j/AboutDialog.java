@@ -48,6 +48,7 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
+import org.apache.commons.lang3.StringUtils;
 
 public final class AboutDialog {
 
@@ -59,7 +60,7 @@ public final class AboutDialog {
     public static void show(Window owner) {
         Info info = loadInfo();
 
-        JDialog dialog = new JDialog(owner, "About " + info.appName, Dialog.ModalityType.APPLICATION_MODAL);
+        JDialog dialog = new JDialog(owner, "About %s".formatted(info.appName), Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         dialog.setUndecorated(true);
         dialog.setResizable(false);
@@ -97,7 +98,7 @@ public final class AboutDialog {
             gbc.gridx = 0;
             gbc.gridy = row;
             gbc.weightx = 0;
-            JLabel key = new JLabel(e.getKey() + ":");
+            JLabel key = new JLabel("%s:".formatted(e.getKey()));
             center.add(key, gbc);
 
             gbc.gridx = 1;
@@ -201,28 +202,31 @@ public final class AboutDialog {
         rows.put("Build date", formatBuildDate(build.getProperty("buildTime")));
 
         String commit = git.getProperty("git.commit.id.abbrev");
-        if (commit != null && !commit.isBlank()) {
+        if (StringUtils.isNotBlank(commit)) {
             String branch = git.getProperty("git.branch", "");
             String dirty = "true".equalsIgnoreCase(git.getProperty("git.dirty")) ? " (dirty)" : "";
-            rows.put("Commit", commit + (branch.isBlank() ? "" : " on " + branch) + dirty);
+            rows.put("Commit", "%s%s%s".formatted(commit, branch.isBlank() ? "" : " on %s".formatted(branch), dirty));
         }
         String commitTime = git.getProperty("git.commit.time");
-        if (commitTime != null && !commitTime.isBlank()) {
+        if (StringUtils.isNotBlank(commitTime)) {
             rows.put("Commit date", commitTime);
         }
 
         Runtime.Version rtv = Runtime.version();
         String vendor = System.getProperty("java.vendor", "");
-        rows.put("Java", rtv.toString() + (vendor.isBlank() ? "" : " (" + vendor + ")"));
-        rows.put("VM", System.getProperty("java.vm.name", "") + " " + System.getProperty("java.vm.version", ""));
-        rows.put("OS", System.getProperty("os.name", "") + " " + System.getProperty("os.version", "")
-                + " (" + System.getProperty("os.arch", "") + ")");
+        rows.put("Java", "%s%s".formatted(rtv, vendor.isBlank() ? "" : " (%s)".formatted(vendor)));
+        rows.put("VM", "%s %s".formatted(System.getProperty("java.vm.name", ""), System.getProperty("java.vm.version", "")));
+        rows.put("OS", "%s %s (%s)".formatted(
+                System.getProperty("os.name", ""),
+                System.getProperty("os.version", ""),
+                System.getProperty("os.arch", "")
+        ));
 
         return new Info(appName, rows);
     }
 
     private static String formatBuildDate(String raw) {
-        if (raw == null || raw.isBlank()) {
+        if (StringUtils.isBlank(raw)) {
             return "unknown";
         }
         try {
@@ -274,7 +278,9 @@ public final class AboutDialog {
             for (int x = 0; x < w; x++) {
                 int argb = source.getRGB(x, y);
                 int a = (argb >>> 24) & 0xFF;
-                if (a == 0) continue;
+                if (a == 0) {
+                    continue;
+                }
                 int r = (argb >> 16) & 0xFF;
                 int g = (argb >> 8) & 0xFF;
                 int b = argb & 0xFF;

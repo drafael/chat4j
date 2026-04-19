@@ -57,9 +57,9 @@ public final class CredentialResolver {
 
     public static String resolveRequiredApiKey(String envVar, String fallbackApiKey) {
         String apiKey = resolveApiKey(envVar, fallbackApiKey);
-        if (apiKey == null || apiKey.isBlank()) {
+        if (StringUtils.isBlank(apiKey)) {
             String missing = envVar != null ? envVar : "API key";
-            throw new IllegalStateException(missing + " not set");
+            throw new IllegalStateException("%s not set".formatted(missing));
         }
         return apiKey;
     }
@@ -86,7 +86,7 @@ public final class CredentialResolver {
     }
 
     public static List<String> envVarCandidates(String envVar) {
-        if (envVar == null || envVar.isBlank()) {
+        if (StringUtils.isBlank(envVar)) {
             return emptyList();
         }
 

@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
 import java.util.UUID;
+import org.apache.commons.lang3.StringUtils;
 
 public class AttachmentStager {
 
@@ -35,7 +36,7 @@ public class AttachmentStager {
         Files.createDirectories(targetDirectory);
 
         String safeName = sanitizeFileName(attachment.displayName());
-        Path targetPath = targetDirectory.resolve(id + "-" + safeName);
+        Path targetPath = targetDirectory.resolve("%s-%s".formatted(id, safeName));
         Files.copy(attachment.path(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
         String sha256 = sha256Hex(targetPath);
@@ -59,7 +60,7 @@ public class AttachmentStager {
     }
 
     private String sanitizeFileName(String fileName) {
-        if (fileName == null || fileName.isBlank()) {
+        if (StringUtils.isBlank(fileName)) {
             return "attachment";
         }
 

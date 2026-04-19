@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyList;
 
 class ProviderModelCacheServiceTest {
 
@@ -116,7 +117,7 @@ class ProviderModelCacheServiceTest {
 
         @Override
         public void writeCache(String providerName, Instant fetchedAt, List<String> models) {
-            List<String> storedModels = models == null ? List.of() : List.copyOf(models);
+            List<String> storedModels = models == null ? emptyList() : List.copyOf(models);
             entries.put(providerName, new CacheSnapshot(fetchedAt, storedModels));
             lastWriteProvider = providerName;
             lastWriteTimestamp = fetchedAt;

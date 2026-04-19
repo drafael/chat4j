@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.commons.lang3.StringUtils;
 
 public final class LocalServiceHealth {
 
@@ -25,7 +26,7 @@ public final class LocalServiceHealth {
     }
 
     public static boolean isReachable(String baseUrl) {
-        if (baseUrl == null || baseUrl.isBlank()) {
+        if (StringUtils.isBlank(baseUrl)) {
             return false;
         }
 
@@ -58,7 +59,7 @@ public final class LocalServiceHealth {
     }
 
     public static boolean isReachableNonBlocking(String baseUrl) {
-        if (baseUrl == null || baseUrl.isBlank()) {
+        if (StringUtils.isBlank(baseUrl)) {
             return false;
         }
 
@@ -100,7 +101,7 @@ public final class LocalServiceHealth {
         try {
             URI uri = URI.create(endpoint);
             String host = uri.getHost();
-            if (host == null || host.isBlank()) {
+            if (StringUtils.isBlank(host)) {
                 return false;
             }
 
@@ -147,8 +148,8 @@ public final class LocalServiceHealth {
 
     private static String modelsEndpoint(String baseUrl) {
         return baseUrl.endsWith("/")
-                ? baseUrl + "models"
-                : baseUrl + "/models";
+                ? "%smodels".formatted(baseUrl)
+                : "%s/models".formatted(baseUrl);
     }
 
     private record HealthSnapshot(boolean reachable, Instant checkedAt) {

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import org.apache.commons.lang3.StringUtils;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -11,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
+import static java.util.Collections.emptyList;
 
 public class ProviderModelCacheService {
 
@@ -59,8 +61,8 @@ public class ProviderModelCacheService {
     }
 
     public List<String> getModels(String providerName) {
-        if (providerName == null || providerName.isBlank()) {
-            return List.of();
+        if (StringUtils.isBlank(providerName)) {
+            return emptyList();
         }
 
         return getOrLoadEntry(providerName).models();
@@ -71,7 +73,7 @@ public class ProviderModelCacheService {
     }
 
     public boolean shouldRefresh(String providerName, Duration ttl) {
-        if (providerName == null || providerName.isBlank()) {
+        if (StringUtils.isBlank(providerName)) {
             return false;
         }
 
@@ -93,7 +95,7 @@ public class ProviderModelCacheService {
     }
 
     public boolean tryMarkRefreshInFlight(String providerName) {
-        if (providerName == null || providerName.isBlank()) {
+        if (StringUtils.isBlank(providerName)) {
             return false;
         }
 
@@ -120,7 +122,7 @@ public class ProviderModelCacheService {
     }
 
     public void clearRefreshInFlight(String providerName) {
-        if (providerName == null || providerName.isBlank()) {
+        if (StringUtils.isBlank(providerName)) {
             return;
         }
 
@@ -128,7 +130,7 @@ public class ProviderModelCacheService {
     }
 
     public void update(String providerName, List<String> models) {
-        if (providerName == null || providerName.isBlank()) {
+        if (StringUtils.isBlank(providerName)) {
             return;
         }
 
@@ -139,9 +141,8 @@ public class ProviderModelCacheService {
         metrics.updates.incrementAndGet();
 
         if (metricsLoggingEnabled) {
-            LOG.info(() -> "[model-cache] updated provider=" + providerName
-                    + " size=" + sanitizedModels.size()
-                    + " metrics=" + metricsSnapshot());
+            LOG.info(() -> "[model-cache] updated provider=%s size=%d metrics=%s"
+                    .formatted(providerName, sanitizedModels.size(), metricsSnapshot()));
         }
     }
 
@@ -168,7 +169,7 @@ public class ProviderModelCacheService {
             return;
         }
 
-        LOG.info(() -> "[model-cache] snapshot(" + reason + ") " + metricsSnapshot());
+        LOG.info(() -> "[model-cache] snapshot(%s) %s".formatted(reason, metricsSnapshot()));
     }
 
     private CacheEntry getOrLoadEntry(String providerName) {
@@ -201,13 +202,13 @@ public class ProviderModelCacheService {
                 })
                 .orElseGet(() -> {
                     metrics.diskReadsEmpty.incrementAndGet();
-                    return new CacheEntry(List.of(), Instant.EPOCH, false);
+                    return new CacheEntry(emptyList(), Instant.EPOCH, false);
                 });
     }
 
     private static List<String> sanitizeModels(String providerName, List<String> models) {
         if (models == null || models.isEmpty()) {
-            return List.of();
+            return emptyList();
         }
 
         return List.copyOf(ModelOrdering.sanitizeAndSortByProvider(providerName, models));

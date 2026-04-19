@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.function.UnaryOperator;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyList;
 
 class OpenAiModelCatalogClientTest {
 
@@ -29,7 +30,7 @@ class OpenAiModelCatalogClientTest {
 
     @Test
     @DisplayName("Codex OAuth provider falls back to local codex models cache when API listing fails")
-    void fetchModels_whenCodexApiListingFails_usesLocalCodexModelsCache() throws Exception {
+    void fetchModels_whenCodexApiListingFails_returnsLocalCodexModelsFromCache() throws Exception {
         originalUserHome = System.getProperty("user.home");
         Path tempHome = Files.createTempDirectory("chat4j-codex-home");
         System.setProperty("user.home", tempHome.toString());
@@ -53,7 +54,7 @@ class OpenAiModelCatalogClientTest {
                 null,
                 null,
                 "http://127.0.0.1:9",
-                List.of(),
+                emptyList(),
                 ProviderCapabilities.chatAndModels(),
                 UnaryOperator.identity());
 

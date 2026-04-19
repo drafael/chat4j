@@ -2,8 +2,10 @@ package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderDef;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
@@ -27,7 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiConsumer;
+import org.apache.commons.lang3.StringUtils;
 
 public class ModelSelectorPopup extends JDialog {
 
@@ -69,6 +73,8 @@ public class ModelSelectorPopup extends JDialog {
     private final ModelFavoritesService modelFavoritesService;
     private final List<ProviderGroup> groups = new ArrayList<>();
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
+    private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
+    private final Set<ModelCapabilityKey> capabilityRefreshInFlight = ConcurrentHashMap.newKeySet();
 
     private boolean preloaded;
     private String currentProvider;
@@ -89,6 +95,12 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private record DisplayModel(String providerName, String modelId, String displayLabel) {
+    }
+
+    private record ModelCapabilityKey(String providerName, String modelId) {
+    }
+
+    private record ModelCapabilities(boolean supportsImageInput, boolean supportsReasoning) {
     }
 
     private static final class ProviderEntry {
@@ -662,7 +674,7 @@ public class ModelSelectorPopup extends JDialog {
                     .toList();
 
             if (!models.isEmpty()) {
-                addProviderGroup(entry.name(), models, entry.selectable);
+                addProviderGroup(entry, models);
             }
         });
 
@@ -683,8 +695,10 @@ public class ModelSelectorPopup extends JDialog {
         listPanel.repaint();
     }
 
-    private void addProviderGroup(String groupName, List<DisplayModel> models, boolean selectable) {
-        String label = selectable ? groupName : groupName + " (offline)";
+    private void addProviderGroup(ProviderEntry entry, List<DisplayModel> models) {
+        String groupName = entry.name();
+        boolean selectable = entry.selectable;
+        String label = selectable ? groupName : "%s (offline)".formatted(groupName);
         JLabel header = new JLabel(label);
         Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
         int providerIconSize = Math.max(10, header.getFontMetrics(header.getFont()).getHeight() - 1);
@@ -697,7 +711,7 @@ public class ModelSelectorPopup extends JDialog {
 
         List<ModelRowComponent> rows = new ArrayList<>();
         models.forEach(model -> {
-            ModelRowComponent row = createModelRow(model.providerName(), model.modelId(), model.displayLabel(), selectable);
+            ModelRowComponent row = createModelRow(entry, model.providerName(), model.modelId(), model.displayLabel(), selectable);
             rows.add(row);
             row.panel().setAlignmentX(Component.LEFT_ALIGNMENT);
             listPanel.add(row.panel());
@@ -726,7 +740,7 @@ public class ModelSelectorPopup extends JDialog {
                     // Fetch failed — keep showing cached/seed models
                 } finally {
                     modelCacheService.clearRefreshInFlight(entry.name());
-                    modelCacheService.logMetricsSnapshot("refresh-complete:" + entry.name());
+                    modelCacheService.logMetricsSnapshot("refresh-complete:%s".formatted(entry.name()));
                 }
             });
         });
@@ -752,13 +766,23 @@ public class ModelSelectorPopup extends JDialog {
         rebuildVisibleList();
     }
 
-    private ModelRowComponent createModelRow(String providerName, String modelId, String displayLabel, boolean selectable) {
-        return new ModelRowComponent(
+    private ModelRowComponent createModelRow(
+            ProviderEntry entry,
+            String providerName,
+            String modelId,
+            String displayLabel,
+            boolean selectable
+    ) {
+        ModelCapabilities initialCapabilities = resolveCachedCapabilities(entry, modelId);
+
+        ModelRowComponent row = new ModelRowComponent(
                 providerName,
                 modelId,
                 displayLabel,
                 selectable,
                 modelFavoritesService.isFavorite(providerName, modelId),
+                initialCapabilities.supportsImageInput(),
+                initialCapabilities.supportsReasoning(),
                 new ModelRowComponent.Listener() {
                     @Override
                     public void onSelect(String p, String m) {
@@ -786,7 +810,83 @@ public class ModelSelectorPopup extends JDialog {
                         }
                     }
                 });
+
+        refreshCapabilitiesAsync(entry, modelId);
+        return row;
     }
+
+    private ModelCapabilities resolveCachedCapabilities(ProviderEntry entry, String modelId) {
+        ModelCapabilityKey key = new ModelCapabilityKey(entry.name(), modelId);
+        ModelCapabilities cached = capabilityCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
+        ModelCapabilities fallback = fallbackCapabilities(entry, modelId);
+        capabilityCache.put(key, fallback);
+        return fallback;
+    }
+
+    private ModelCapabilities fallbackCapabilities(ProviderEntry entry, String modelId) {
+        boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
+                entry.def.capabilities(),
+                entry.name(),
+                modelId
+        );
+        boolean supportsReasoning = ProviderCapabilityResolver.supportsReasoning(
+                entry.def.capabilities(),
+                entry.name(),
+                modelId
+        );
+
+        return new ModelCapabilities(supportsImageInput, supportsReasoning);
+    }
+
+    private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
+        if (StringUtils.isBlank(entry.baseUrl)) {
+            return;
+        }
+
+        ModelCapabilityKey key = new ModelCapabilityKey(entry.name(), modelId);
+        if (!capabilityRefreshInFlight.add(key)) {
+            return;
+        }
+
+        Thread.startVirtualThread(() -> {
+            try {
+                String apiKey = CredentialResolver.resolveApiKey(entry.def.envVar(), null);
+                boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
+                        entry.def.capabilities(),
+                        entry.name(),
+                        modelId,
+                        entry.baseUrl,
+                        apiKey
+                );
+                boolean supportsReasoning = ProviderCapabilityResolver.supportsReasoning(
+                        entry.def.capabilities(),
+                        entry.name(),
+                        modelId,
+                        entry.baseUrl,
+                        apiKey
+                );
+
+                ModelCapabilities resolved = new ModelCapabilities(supportsImageInput, supportsReasoning);
+                capabilityCache.put(key, resolved);
+                SwingUtilities.invokeLater(() -> applyCapabilitiesToVisibleRows(key, resolved));
+            } finally {
+                capabilityRefreshInFlight.remove(key);
+            }
+        });
+    }
+
+    private void applyCapabilitiesToVisibleRows(ModelCapabilityKey key, ModelCapabilities capabilities) {
+        groups.forEach(group -> group.rows().forEach(row -> {
+            if (row.providerName().equals(key.providerName()) && row.modelId().equals(key.modelId())) {
+                row.updateCapabilities(capabilities.supportsImageInput(), capabilities.supportsReasoning());
+            }
+        }));
+    }
+
 
     private void toggleFavorite(String providerName, String modelId) {
         try {
@@ -798,7 +898,7 @@ public class ModelSelectorPopup extends JDialog {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                     this,
-                    "Failed to update favorites: " + e.getMessage(),
+                    "Failed to update favorites: %s".formatted(e.getMessage()),
                     "Favorites",
                     JOptionPane.WARNING_MESSAGE
             );
@@ -846,11 +946,11 @@ public class ModelSelectorPopup extends JDialog {
 
     private static Icon providerIcon(String providerName, int size) {
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);
-        if (iconPath == null || iconPath.isBlank()) {
+        if (StringUtils.isBlank(iconPath)) {
             return null;
         }
 
-        String cacheKey = iconPath + "#" + size;
+        String cacheKey = "%s#%d".formatted(iconPath, size);
         return PROVIDER_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
             URL url = ModelSelectorPopup.class.getResource(iconPath);
             if (url == null) {
@@ -890,7 +990,7 @@ public class ModelSelectorPopup extends JDialog {
         }
 
         ProviderEntry entry = entries.get(providerName);
-        if (entry == null || entry.baseUrl == null || entry.baseUrl.isBlank()) {
+        if (entry == null || StringUtils.isBlank(entry.baseUrl)) {
             return true;
         }
 

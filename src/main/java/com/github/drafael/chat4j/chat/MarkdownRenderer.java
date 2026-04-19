@@ -6,6 +6,6 @@ public class MarkdownRenderer {
         Palette palette = MarkdownPaletteResolver.resolve(isDark);
         String css = MarkdownCssBuilder.build(palette);
         String body = MarkdownBlockRenderer.render(markdown, palette);
-        return "<html><head><style>" + css + "</style></head><body>" + body + "</body></html>";
+        return "<html><head><style>%s</style></head><body>%s</body></html>".formatted(css, body);
     }
 }

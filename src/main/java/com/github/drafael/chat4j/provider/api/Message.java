@@ -7,12 +7,13 @@ import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import static java.util.Collections.emptyList;
 
 public record Message(Role role, List<ContentPart> parts, Instant timestamp, MessageMeta meta) {
 
     public Message {
         role = Objects.requireNonNull(role, "role can't be null");
-        parts = parts == null ? List.of() : List.copyOf(parts);
+        parts = parts == null ? emptyList() : List.copyOf(parts);
         timestamp = timestamp == null ? Instant.now() : timestamp;
         meta = meta == null ? MessageMeta.empty() : meta;
     }

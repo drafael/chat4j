@@ -52,7 +52,7 @@ class SettingsRepoTest {
 
     private static DataSource createDataSource(String dbName) {
         var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:" + dbName + ";DB_CLOSE_DELAY=-1");
+        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
         dataSource.setUser("sa");
         dataSource.setPassword("");
         return dataSource;

@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.commons.lang3.StringUtils;
 import static java.util.Collections.emptyList;
 
 public class ProvidersPanel extends AbstractSettingsPanel {
@@ -327,10 +328,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         String configuredEnvVar = CredentialResolver.firstConfiguredEnvVar(info.envVar());
         if (configuredEnvVar != null) {
-            status.setText("\u2713 " + configuredEnvVar + " detected");
+            status.setText("\u2713 %s detected".formatted(configuredEnvVar));
             status.setForeground(new Color(0, 150, 0));
         } else {
-            status.setText("\u2717 " + formatEnvVarNames(info.envVar()) + " not set");
+            status.setText("\u2717 %s not set".formatted(formatEnvVarNames(info.envVar())));
             status.setForeground(new Color(200, 50, 50));
         }
         return status;
@@ -338,10 +339,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private void applyLocalStatus(JLabel status, String configuredBaseUrl, boolean reachable) {
         if (reachable) {
-            status.setText("\u2713 Running at " + configuredBaseUrl);
+            status.setText("\u2713 Running at %s".formatted(configuredBaseUrl));
             status.setForeground(new Color(0, 150, 0));
         } else {
-            status.setText("\u2717 Not running at " + configuredBaseUrl);
+            status.setText("\u2717 Not running at %s".formatted(configuredBaseUrl));
             status.setForeground(new Color(200, 50, 50));
         }
     }
@@ -455,7 +456,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         instructions.setForeground(readablePanelTextColor(infoPanel.getBackground()));
         infoPanel.add(instructions, BorderLayout.CENTER);
 
-        if (localHelp.docsUrl() != null && !localHelp.docsUrl().isBlank()) {
+        if (StringUtils.isNotBlank(localHelp.docsUrl())) {
             JButton openDocsButton = new JButton("Open setup guide");
             openDocsButton.addActionListener(e -> openInBrowser(localHelp.docsUrl()));
 
@@ -551,7 +552,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setToolTipText(null);
         }
 
-        if (failureMessage != null && !failureMessage.isBlank()) {
+        if (StringUtils.isNotBlank(failureMessage)) {
             statusLabel.setText(failureMessage);
             statusLabel.setForeground(new Color(200, 50, 50));
         }
@@ -666,7 +667,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private OpenRouterUsageSnapshot fetchOpenRouterUsage(ProviderInfo info) {
         try {
             String apiKey = CredentialResolver.resolveApiKey(info.envVar(), null);
-            if (apiKey == null || apiKey.isBlank()) {
+            if (StringUtils.isBlank(apiKey)) {
                 return OpenRouterUsageSnapshot.error("OPENROUTER_API_KEY not set");
             }
 
@@ -690,7 +691,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             }
 
             String limitReset = asText(keyData, "limit_reset");
-            String note = (limitReset == null || limitReset.isBlank()) ? null : "Resets " + limitReset;
+            String note = StringUtils.isBlank(limitReset) ? null : "Resets %s".formatted(limitReset);
 
             Double balance = null;
             try {
@@ -702,7 +703,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 }
             } catch (Exception e) {
                 String creditsError = firstLine(e.getMessage());
-                note = note == null ? "Balance unavailable: " + creditsError : note + " • Balance unavailable";
+                note = note == null ? "Balance unavailable: %s".formatted(creditsError) : "%s • Balance unavailable".formatted(note);
             }
 
             return OpenRouterUsageSnapshot.success(balance, limit, remaining, usedPercent, note);
@@ -715,19 +716,19 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(6))
-                .header("Authorization", "Bearer " + apiKey)
+                .header("Authorization", "Bearer %s".formatted(apiKey))
                 .GET()
                 .build();
 
         HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("HTTP " + response.statusCode() + " from " + url);
+            throw new IllegalStateException("HTTP %d from %s".formatted(response.statusCode(), url));
         }
 
         JsonNode root = JSON.readTree(response.body());
         JsonNode data = root.path("data");
         if (data.isMissingNode() || data.isNull()) {
-            throw new IllegalStateException("Missing data object in response from " + url);
+            throw new IllegalStateException("Missing data object in response from %s".formatted(url));
         }
         return data;
     }
@@ -741,7 +742,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JLabel remainingLabel,
         JLabel noteLabel
     ) {
-        updatedLabel.setText("Updated " + formatRelativeTime(snapshot.updatedAtEpochMs()));
+        updatedLabel.setText("Updated %s".formatted(formatRelativeTime(snapshot.updatedAtEpochMs())));
 
         if (snapshot.errorMessage() != null) {
             balanceLabel.setText("Balance: n/a");
@@ -755,25 +756,25 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         balanceLabel.setText(snapshot.balance() == null
                 ? "Balance: n/a"
-                : "Balance: " + formatUsd(snapshot.balance()));
+                : "Balance: %s".formatted(formatUsd(snapshot.balance())));
 
         if (snapshot.usedPercent() >= 0) {
             usageBar.setValue(snapshot.usedPercent());
-            usedLabel.setText(snapshot.usedPercent() + "% used");
+            usedLabel.setText("%d%% used".formatted(snapshot.usedPercent()));
         } else {
             usageBar.setValue(0);
             usedLabel.setText("Used: n/a");
         }
 
         if (!Double.isNaN(snapshot.limit()) && !Double.isNaN(snapshot.remaining())) {
-            remainingLabel.setText(formatUsd(snapshot.remaining()) + "/" + formatUsd(snapshot.limit()) + " left");
+            remainingLabel.setText("%s/%s left".formatted(formatUsd(snapshot.remaining()), formatUsd(snapshot.limit())));
         } else {
             remainingLabel.setText("Remaining: n/a");
         }
 
         String note = snapshot.note();
         noteLabel.setForeground(new Color(214, 117, 0));
-        noteLabel.setText(note == null || note.isBlank() ? "" : note);
+        noteLabel.setText(StringUtils.isBlank(note) ? "" : note);
     }
 
     private double asDouble(JsonNode node, String fieldName) {
@@ -795,7 +796,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private String firstLine(String text) {
-        if (text == null || text.isBlank()) {
+        if (StringUtils.isBlank(text)) {
             return "Unknown error";
         }
         int newline = text.indexOf('\n');
@@ -855,12 +856,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     ) {
         CodexCliChatCompletionClient.DiagnosticsSnapshot snapshot = CodexCliChatCompletionClient.diagnosticsSnapshot();
 
-        transportLabel.setText("Transport: " + snapshot.transport());
-        deltasLabel.setText("Streaming deltas seen: " + yesNo(snapshot.sawStreamingDelta()));
-        fallbackLabel.setText("Fallback used: " + yesNo(snapshot.fallbackUsed()));
-        failureLabel.setText("Last failure: " + defaultValue(snapshot.lastFailureReason()));
-        appServerErrorLabel.setText("Last app-server error: " + defaultValue(snapshot.lastAppServerError()));
-        updatedLabel.setText("Updated: " + formatDiagnosticsTime(snapshot.updatedAtEpochMs()));
+        transportLabel.setText("Transport: %s".formatted(snapshot.transport()));
+        deltasLabel.setText("Streaming deltas seen: %s".formatted(yesNo(snapshot.sawStreamingDelta())));
+        fallbackLabel.setText("Fallback used: %s".formatted(yesNo(snapshot.fallbackUsed())));
+        failureLabel.setText("Last failure: %s".formatted(defaultValue(snapshot.lastFailureReason())));
+        appServerErrorLabel.setText("Last app-server error: %s".formatted(defaultValue(snapshot.lastAppServerError())));
+        updatedLabel.setText("Updated: %s".formatted(formatDiagnosticsTime(snapshot.updatedAtEpochMs())));
 
         Color failureColor = "none".equals(defaultValue(snapshot.lastFailureReason()))
                 ? UIManager.getColor("Label.disabledForeground")
@@ -881,12 +882,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return "just now";
         }
         if (seconds < 60) {
-            return seconds + "s ago";
+            return "%ds ago".formatted(seconds);
         }
 
         long minutes = seconds / 60;
         if (minutes < 60) {
-            return minutes + "m ago";
+            return "%dm ago".formatted(minutes);
         }
 
         return DIAGNOSTICS_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMillis));
@@ -899,7 +900,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private String defaultValue(String value) {
-        return value == null || value.isBlank() ? "none" : value;
+        return StringUtils.isBlank(value) ? "none" : value;
     }
 
     private String yesNo(boolean value) {
@@ -973,7 +974,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private static Icon loadProviderBaseIcon(String providerName) {
         String path = PROVIDER_ICON_PATHS.get(providerName);
-        if (path == null || path.isBlank()) {
+        if (StringUtils.isBlank(path)) {
             return null;
         }
 
@@ -1014,11 +1015,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private String providerBaseUrlKey(String providerName) {
-        return "provider." + providerName + ".baseUrl";
+        return "provider.%s.baseUrl".formatted(providerName);
     }
 
     private String providerEnabledKey(String providerName) {
-        return "provider." + providerName + ".enabled";
+        return "provider.%s.enabled".formatted(providerName);
     }
 
     private JLabel label(String text) {

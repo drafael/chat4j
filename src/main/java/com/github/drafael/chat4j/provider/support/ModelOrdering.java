@@ -1,10 +1,13 @@
 package com.github.drafael.chat4j.provider.support;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import static java.util.Collections.emptyList;
 
 public final class ModelOrdering {
 
@@ -21,11 +24,11 @@ public final class ModelOrdering {
 
     public static List<String> sanitizeAndSortByProvider(String providerName, List<String> modelIds) {
         if (modelIds == null || modelIds.isEmpty()) {
-            return List.of();
+            return emptyList();
         }
 
         return modelIds.stream()
-                .filter(modelId -> modelId != null && !modelId.isBlank())
+                .filter(StringUtils::isNotBlank)
                 .map(String::trim)
                 .map(modelId -> normalizeForProvider(providerName, modelId))
                 .filter(modelId -> !modelId.isBlank())

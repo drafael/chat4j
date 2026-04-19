@@ -23,7 +23,7 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Resolver returns value from loaded shell environment when variable is not present in process environment")
     void getenv_whenVariableExistsOnlyInShellEnv_returnsShellValue() {
-        var envVar = "CHAT4J_TEST_" + UUID.randomUUID();
+        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
         CredentialResolver.init(Map.of(envVar, "test-value"));
 
         var resolved = CredentialResolver.getenv(envVar);
@@ -33,7 +33,7 @@ class CredentialResolverTest {
 
     @Test
     @DisplayName("Resolver prefers process environment values over loaded shell environment values")
-    void getenv_whenVariableExistsInProcessEnv_prefersProcessValue() {
+    void getenv_whenVariableExistsInProcessEnv_returnsProcessValue() {
         var envVar = firstPresentEnvVar();
         var processValue = System.getenv(envVar);
         CredentialResolver.init(Map.of(envVar, "shell-override-value"));
@@ -45,7 +45,7 @@ class CredentialResolverTest {
 
     @Test
     @DisplayName("Merged environment gives precedence to loaded shell variables for subprocesses")
-    void mergedEnvironment_whenShellProvidesOverrides_prefersShellValues() {
+    void mergedEnvironment_whenShellProvidesOverrides_returnsShellOverrideValues() {
         CredentialResolver.init(Map.of("PATH", "/tmp/chat4j-path", "CHAT4J_FLAG", "yes"));
 
         Map<String, String> merged = CredentialResolver.mergedEnvironment();
@@ -76,7 +76,7 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Required credentials check returns false when required variable is missing")
     void hasRequiredCredentials_whenRequiredVariableIsMissing_returnsFalse() {
-        var envVar = "CHAT4J_TEST_" + UUID.randomUUID();
+        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
 
         var hasCredentials = CredentialResolver.hasRequiredCredentials(envVar);
 
@@ -86,7 +86,7 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Required API key resolution uses loaded shell environment when process environment is missing")
     void resolveRequiredApiKey_whenKeyExistsOnlyInShellEnv_returnsShellValue() {
-        var envVar = "CHAT4J_TEST_" + UUID.randomUUID();
+        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
         CredentialResolver.init(Map.of(envVar, "shell-api-key"));
 
         var resolved = CredentialResolver.resolveRequiredApiKey(envVar, "fallback-key");
@@ -105,11 +105,11 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Required API key resolution supports fallback environment variable aliases")
     void resolveRequiredApiKey_whenAliasVariableExists_returnsAliasValue() {
-        var primary = "CHAT4J_TEST_PRIMARY_" + UUID.randomUUID();
-        var alias = "CHAT4J_TEST_ALIAS_" + UUID.randomUUID();
+        var primary = "CHAT4J_TEST_PRIMARY_%s".formatted(UUID.randomUUID());
+        var alias = "CHAT4J_TEST_ALIAS_%s".formatted(UUID.randomUUID());
         CredentialResolver.init(Map.of(alias, "alias-key"));
 
-        var resolved = CredentialResolver.resolveRequiredApiKey(primary + "|" + alias, null);
+        var resolved = CredentialResolver.resolveRequiredApiKey("%s|%s".formatted(primary, alias), null);
 
         assertThat(resolved).isEqualTo("alias-key");
     }
@@ -117,11 +117,11 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Required credentials check supports fallback environment variable aliases")
     void hasRequiredCredentials_whenAliasVariableExists_returnsTrue() {
-        var primary = "CHAT4J_TEST_PRIMARY_" + UUID.randomUUID();
-        var alias = "CHAT4J_TEST_ALIAS_" + UUID.randomUUID();
+        var primary = "CHAT4J_TEST_PRIMARY_%s".formatted(UUID.randomUUID());
+        var alias = "CHAT4J_TEST_ALIAS_%s".formatted(UUID.randomUUID());
         CredentialResolver.init(Map.of(alias, "alias-key"));
 
-        var hasCredentials = CredentialResolver.hasRequiredCredentials(primary + "|" + alias);
+        var hasCredentials = CredentialResolver.hasRequiredCredentials("%s|%s".formatted(primary, alias));
 
         assertThat(hasCredentials).isTrue();
     }
@@ -129,17 +129,17 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Required API key resolution throws when required environment variable is missing")
     void resolveRequiredApiKey_whenRequiredVariableIsMissing_throwsIllegalStateException() {
-        var envVar = "CHAT4J_TEST_" + UUID.randomUUID();
+        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
 
         assertThatThrownBy(() -> CredentialResolver.resolveRequiredApiKey(envVar, null))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining(envVar + " not set");
+                .hasMessageContaining("%s not set".formatted(envVar));
     }
 
     @Test
-    @DisplayName("Loaded shell environment is copied defensively during initialization")
-    void init_whenSourceMapMutatesLater_keepsOriginalLoadedValues() {
-        var envVar = "CHAT4J_TEST_" + UUID.randomUUID();
+    @DisplayName("Loaded shell environment is copied defensively before source map mutation")
+    void init_whenSourceMapMutatesLater_returnsOriginalLoadedValues() {
+        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
         var source = new HashMap<String, String>();
         source.put(envVar, "initial-value");
 

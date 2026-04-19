@@ -13,6 +13,7 @@ import com.github.drafael.chat4j.provider.modules.OpenAiCompatibleModule;
 
 import java.util.ArrayList;
 import java.util.List;
+import static java.util.Collections.emptyList;
 
 final class ProviderCatalog {
 
@@ -22,7 +23,7 @@ final class ProviderCatalog {
             List.of("codex", "login", "status"),
             List.of("codex", "login"),
             List.of("codex", "logout"),
-            List.of());
+            emptyList());
 
     private static final OAuthCliSpec COPILOT_OAUTH = new OAuthCliSpec(
             List.of("gh", "auth", "status"),
@@ -106,6 +107,6 @@ final class ProviderCatalog {
         return PROVIDERS.stream()
                 .filter(providerDefinition -> providerDefinition.name().equals(providerName))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown provider: " + providerName));
+                .orElseThrow(() -> new IllegalArgumentException("Unknown provider: %s".formatted(providerName)));
     }
 }

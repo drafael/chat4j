@@ -28,7 +28,7 @@ public class ModelCache {
     }
 
     public Optional<CacheSnapshot> readCacheEntry(String providerName) {
-        Path file = cacheDir.resolve(sanitize(providerName) + ".txt");
+        Path file = cacheDir.resolve("%s.txt".formatted(sanitize(providerName)));
         if (!Files.exists(file)) {
             return Optional.empty();
         }
@@ -60,7 +60,7 @@ public class ModelCache {
     public void writeCache(String providerName, Instant fetchedAt, List<String> models) {
         try {
             Files.createDirectories(cacheDir);
-            Path file = cacheDir.resolve(sanitize(providerName) + ".txt");
+            Path file = cacheDir.resolve("%s.txt".formatted(sanitize(providerName)));
             List<String> lines = new ArrayList<>();
             lines.add(fetchedAt.toString());
             lines.addAll(sanitizeModels(providerName, models));
