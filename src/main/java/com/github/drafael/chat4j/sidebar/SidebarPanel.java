@@ -53,6 +53,7 @@ import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
@@ -103,6 +104,8 @@ public class SidebarPanel extends JPanel {
     private Runnable onNewChat;
     private boolean suppressSelection;
     private int hoveredIndex = -1;
+    private final AtomicLong refreshRequestCounter = new AtomicLong();
+    private UUID pendingSelectionConversationId;
 
     public SidebarPanel(ConversationRepo conversationRepo) {
         this.conversationRepo = Objects.requireNonNull(conversationRepo);
@@ -124,29 +127,33 @@ public class SidebarPanel extends JPanel {
     }
 
     public void refresh() {
-        withSelectionSuppressed(() -> {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::refresh);
+            return;
+        }
+
+        UUID selectedConversationId = selectedConversationId().orElse(null);
+        long refreshRequestId = refreshRequestCounter.incrementAndGet();
+
+        Thread.startVirtualThread(() -> {
             try {
-                UUID selectedConversationId = selectedConversationId().orElse(null);
-                int restoreIndex = rebuildConversationList(
-                    conversationRepo.findAllGroupedByDate(),
-                    selectedConversationId
-                );
-                restoreSelection(restoreIndex);
+                Map<String, List<ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
+                SwingUtilities.invokeLater(() -> applyRefreshResult(refreshRequestId, grouped, selectedConversationId));
             } catch (Exception e) {
-                listModel.clear();
-                hoveredIndex = -1;
-                showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
+                SwingUtilities.invokeLater(() -> applyRefreshFailure(refreshRequestId, e));
             }
         });
     }
 
     public void selectConversation(UUID id) {
-        expandGroupContaining(id);
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> selectConversation(id));
+            return;
+        }
 
-        withSelectionSuppressed(() -> findConversationIndex(id).ifPresent(index -> {
-            conversationList.setSelectedIndex(index);
-            conversationList.ensureIndexIsVisible(index);
-        }));
+        pendingSelectionConversationId = id;
+        expandGroupContaining(id);
+        withSelectionSuppressed(this::applyPendingSelection);
     }
 
     public void setOnConversationSelected(Consumer<UUID> handler) {
@@ -414,6 +421,41 @@ public class SidebarPanel extends JPanel {
         runRepositoryAction(RENAME_CONVERSATION_ERROR, CONVERSATIONS_TITLE, () -> {
             conversationRepo.updateTitle(conversation.id(), newTitle);
             refresh();
+        });
+    }
+
+    private void applyRefreshResult(long refreshRequestId, Map<String, List<ConversationRecord>> grouped, UUID selectedConversationId) {
+        if (refreshRequestId != refreshRequestCounter.get()) {
+            return;
+        }
+
+        withSelectionSuppressed(() -> {
+            int restoreIndex = rebuildConversationList(grouped, selectedConversationId);
+            restoreSelection(restoreIndex);
+            applyPendingSelection();
+        });
+    }
+
+    private void applyRefreshFailure(long refreshRequestId, Exception e) {
+        if (refreshRequestId != refreshRequestCounter.get()) {
+            return;
+        }
+
+        listModel.clear();
+        hoveredIndex = -1;
+        showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
+    }
+
+    private void applyPendingSelection() {
+        if (pendingSelectionConversationId == null) {
+            return;
+        }
+
+        UUID pendingId = pendingSelectionConversationId;
+        findConversationIndex(pendingId).ifPresent(index -> {
+            conversationList.setSelectedIndex(index);
+            conversationList.ensureIndexIsVisible(index);
+            pendingSelectionConversationId = null;
         });
     }
 

@@ -611,6 +611,48 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Google AI probing uses headers and avoids api key query parameters")
+    void supportsImageInput_whenGoogleAiRequiresHeaderAuthAndNoQueryKey_returnsTrue() throws Exception {
+        HttpServer server = createGoogleAiSecureModelsServer(
+                "gemini-2.5-flash",
+                """
+                        {
+                          "name": "models/gemini-2.5-flash",
+                          "inputModalities": ["TEXT", "IMAGE"],
+                          "supportedGenerationMethods": ["generateContent"]
+                        }
+                        """,
+                """
+                        {
+                          "models": [
+                            {
+                              "name": "models/gemini-2.5-flash",
+                              "inputModalities": ["TEXT", "IMAGE"],
+                              "supportedGenerationMethods": ["generateContent"]
+                            }
+                          ]
+                        }
+                        """,
+                TEST_API_KEY
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(),
+                    "Google AI",
+                    "gemini-2.5-flash",
+                    "http://127.0.0.1:%d/v1beta/openai".formatted(port),
+                    TEST_API_KEY
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Google AI native model metadata enables image support")
     void supportsImageInput_whenGoogleAiModelHasImageInputModalities_returnsTrue() throws Exception {
         HttpServer server = createGoogleAiModelsServer(
@@ -872,6 +914,43 @@ class ProviderCapabilityResolverTest {
         return server;
     }
 
+    private HttpServer createGoogleAiSecureModelsServer(
+            String modelId,
+            String modelResponseJson,
+            String listResponseJson,
+            String requiredApiKey
+    ) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1beta/models/%s".formatted(modelId), exchange -> {
+            if (!hasGoogleHeaderAuth(exchange, requiredApiKey) || hasApiKeyQuery(exchange)) {
+                exchange.sendResponseHeaders(401, -1);
+                exchange.close();
+                return;
+            }
+
+            byte[] body = modelResponseJson.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/v1beta/models", exchange -> {
+            if (!hasGoogleHeaderAuth(exchange, requiredApiKey) || hasApiKeyQuery(exchange)) {
+                exchange.sendResponseHeaders(401, -1);
+                exchange.close();
+                return;
+            }
+
+            byte[] body = listResponseJson.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
     private HttpServer createGoogleAiFallbackServer(
             String modelId,
             String nativeModelResponseJson,
@@ -928,6 +1007,18 @@ class ProviderCapabilityResolverTest {
     private boolean hasBearerToken(HttpExchange exchange, String apiKey) {
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         return ("Bearer %s".formatted(apiKey)).equals(authorization);
+    }
+
+    private boolean hasGoogleHeaderAuth(HttpExchange exchange, String apiKey) {
+        String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+        String xGoogApiKey = exchange.getRequestHeaders().getFirst("x-goog-api-key");
+        return ("Bearer %s".formatted(apiKey)).equals(authorization)
+                && apiKey.equals(xGoogApiKey);
+    }
+
+    private boolean hasApiKeyQuery(HttpExchange exchange) {
+        String query = exchange.getRequestURI().getRawQuery();
+        return query != null && query.contains("key=");
     }
 
     private HttpServer createLmStudioModelsServer(String responseJson) throws Exception {

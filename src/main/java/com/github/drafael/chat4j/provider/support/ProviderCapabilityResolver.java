@@ -508,7 +508,7 @@ public final class ProviderCapabilityResolver {
 
         String normalizedModelId = normalize(modelId);
         Optional<JsonNode> direct = fetchJson(
-                googleModelEndpoint(normalizedBaseUrl, canonicalModelId, apiKey),
+                googleModelEndpoint(normalizedBaseUrl, canonicalModelId),
                 provider,
                 apiKey
         );
@@ -519,7 +519,7 @@ public final class ProviderCapabilityResolver {
             }
         }
 
-        return fetchJson(googleModelsEndpoint(normalizedBaseUrl, apiKey), provider, apiKey)
+        return fetchJson(googleModelsEndpoint(normalizedBaseUrl), provider, apiKey)
                 .flatMap(root -> {
                     JsonNode modelsNode = root.path("models");
                     if (!modelsNode.isArray()) {
@@ -1127,17 +1127,15 @@ public final class ProviderCapabilityResolver {
         return "%s/%s".formatted(modelsEndpoint(normalizedBaseUrl), encodedModelId);
     }
 
-    private static String googleModelsEndpoint(String normalizedBaseUrl, String apiKey) {
+    private static String googleModelsEndpoint(String normalizedBaseUrl) {
         String base = googleApiBase(normalizedBaseUrl);
-        String endpoint = "%s/models".formatted(base);
-        return appendGoogleApiKey(endpoint, apiKey);
+        return "%s/models".formatted(base);
     }
 
-    private static String googleModelEndpoint(String normalizedBaseUrl, String modelId, String apiKey) {
+    private static String googleModelEndpoint(String normalizedBaseUrl, String modelId) {
         String base = googleApiBase(normalizedBaseUrl);
         String encodedModelId = URLEncoder.encode(modelId, StandardCharsets.UTF_8).replace("+", "%20");
-        String endpoint = "%s/models/%s".formatted(base, encodedModelId);
-        return appendGoogleApiKey(endpoint, apiKey);
+        return "%s/models/%s".formatted(base, encodedModelId);
     }
 
     private static String googleApiBase(String normalizedBaseUrl) {
@@ -1147,16 +1145,6 @@ public final class ProviderCapabilityResolver {
         }
 
         return normalizeBaseUrl(base);
-    }
-
-    private static String appendGoogleApiKey(String endpoint, String apiKey) {
-        if (StringUtils.isBlank(apiKey)) {
-            return endpoint;
-        }
-
-        String encodedApiKey = URLEncoder.encode(apiKey, StandardCharsets.UTF_8).replace("+", "%20");
-        String delimiter = endpoint.contains("?") ? "&" : "?";
-        return "%s%skey=%s".formatted(endpoint, delimiter, encodedApiKey);
     }
 
     private static String lmStudioModelsEndpoint(String normalizedBaseUrl) {

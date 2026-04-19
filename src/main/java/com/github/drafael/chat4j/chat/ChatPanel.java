@@ -15,6 +15,7 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
@@ -55,11 +56,14 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static java.util.Collections.emptyList;
 
 public class ChatPanel extends JPanel {
 
+    private static final Logger LOG = Logger.getLogger(ChatPanel.class.getName());
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
     private static final int CHAT_MENU_ICON_SIZE = 14;
@@ -91,7 +95,7 @@ public class ChatPanel extends JPanel {
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
     private Runnable messageSubmittedListener;
-    private Consumer<AssistantMessageEvent> assistantMessageCompletedListener;
+    private AssistantMessagePersistenceListener assistantMessageCompletedListener;
     private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
@@ -548,9 +552,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void persistUserMessage(UUID conversationId, Message userMessage, boolean visibleConversation) {
-        if (assistantMessageCompletedListener != null && conversationId != null) {
-            assistantMessageCompletedListener.accept(new AssistantMessageEvent(conversationId, userMessage));
-        }
+        persistAssistantMessageEvent(conversationId, userMessage);
 
         if (visibleConversation || conversationId == null) {
             notifyMessageSubmitted();
@@ -1528,18 +1530,12 @@ public class ChatPanel extends JPanel {
             return null;
         }
 
-        return "%s > %s".formatted(selectedProviderName, selectedModelId);
+        return ModelSelectionCodec.format(selectedProviderName, selectedModelId);
     }
 
     public void setSelectedModel(String modelKey) {
-        if (modelKey == null) {
-            return;
-        }
-
-        String[] parts = modelKey.split(" > ", 2);
-        if (parts.length == 2) {
-            selectModel(parts[0], parts[1]);
-        }
+        ModelSelectionCodec.parse(modelKey)
+                .ifPresent(selection -> selectModel(selection.provider(), selection.model()));
     }
 
     public InputBar getInputBar() {
@@ -1615,7 +1611,7 @@ public class ChatPanel extends JPanel {
         this.messageSubmittedListener = listener;
     }
 
-    public void setOnAssistantMessageCompleted(Consumer<AssistantMessageEvent> listener) {
+    public void setOnAssistantMessageCompleted(AssistantMessagePersistenceListener listener) {
         this.assistantMessageCompletedListener = listener;
     }
 
@@ -1715,12 +1711,8 @@ public class ChatPanel extends JPanel {
             }
         }
 
-        if (assistantMessageCompletedListener != null && conversationId != null) {
-            assistantMessageCompletedListener.accept(new AssistantMessageEvent(conversationId, assistantMessage));
-            return;
-        }
-
-        if (isVisibleConversation(conversationId) || conversationId == null) {
+        boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
+        if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
             notifyMessageSubmitted();
         }
     }
@@ -1920,10 +1912,29 @@ public class ChatPanel extends JPanel {
         return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
     }
 
+    private boolean persistAssistantMessageEvent(UUID conversationId, Message message) {
+        if (assistantMessageCompletedListener == null || conversationId == null || message == null) {
+            return false;
+        }
+
+        AssistantMessageEvent event = new AssistantMessageEvent(conversationId, message);
+        try {
+            return assistantMessageCompletedListener.persist(event);
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, "Assistant message persistence listener failed", e);
+            return false;
+        }
+    }
+
     public record AssistantMessageEvent(UUID conversationId, Message message) {
     }
 
     public record HistoryTruncatedEvent(UUID conversationId, int keepMessageCount) {
+    }
+
+    @FunctionalInterface
+    public interface AssistantMessagePersistenceListener {
+        boolean persist(AssistantMessageEvent event);
     }
 
     @FunctionalInterface

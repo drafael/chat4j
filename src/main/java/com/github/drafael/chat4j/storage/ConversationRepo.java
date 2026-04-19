@@ -124,29 +124,40 @@ public class ConversationRepo {
 
     public void addMessage(UUID conversationId, Message message) throws SQLException {
         try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
             UUID messageId = UUID.randomUUID();
 
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json) VALUES (?, ?, ?, ?, ?, ?)"
-            )
-            ) {
-                ps.setObject(1, messageId);
-                ps.setObject(2, conversationId);
-                ps.setString(3, message.role().name());
-                ps.setString(4, message.content());
-                ps.setString(5, serializeParts(message.parts()));
-                ps.setString(6, serializeMeta(message.meta()));
-                ps.executeUpdate();
-            }
+            try {
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                ) {
+                    ps.setObject(1, messageId);
+                    ps.setObject(2, conversationId);
+                    ps.setString(3, message.role().name());
+                    ps.setString(4, message.content());
+                    ps.setString(5, serializeParts(message.parts()));
+                    ps.setString(6, serializeMeta(message.meta()));
+                    ps.executeUpdate();
+                }
 
-            persistAttachmentLinks(connection, messageId, message.parts());
+                persistAttachmentLinks(connection, messageId, message.parts());
 
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-            )
-            ) {
-                ps.setObject(1, conversationId);
-                ps.executeUpdate();
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                )
+                ) {
+                    ps.setObject(1, conversationId);
+                    ps.executeUpdate();
+                }
+
+                connection.commit();
+            } catch (SQLException e) {
+                rollbackSafely(connection, e);
+                throw e;
+            } catch (RuntimeException e) {
+                rollbackSafely(connection, e);
+                throw e;
             }
         }
     }
@@ -287,6 +298,14 @@ public class ConversationRepo {
             }
         }
         return results;
+    }
+
+    private void rollbackSafely(Connection connection, Throwable error) {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackError) {
+            error.addSuppressed(rollbackError);
+        }
     }
 
     private void persistAttachmentLinks(Connection connection, UUID messageId, List<ContentPart> parts) throws SQLException {

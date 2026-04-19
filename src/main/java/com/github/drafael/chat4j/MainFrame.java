@@ -3,97 +3,307 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
-import com.github.drafael.chat4j.util.Fonts;
-import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
+import com.github.drafael.chat4j.chat.ChatSearchPopupCoordinator;
+import com.github.drafael.chat4j.chat.NewChatCoordinator;
+import com.github.drafael.chat4j.menu.BoundMenuFactory;
+import com.github.drafael.chat4j.menu.FileMenuFactory;
+import com.github.drafael.chat4j.menu.HelpMenuFactory;
+import com.github.drafael.chat4j.menu.HelpMenuVisibilityResolver;
+import com.github.drafael.chat4j.menu.MainMenuBarApplyStateCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarBuilder;
+import com.github.drafael.chat4j.menu.MainMenuBarCreateDispatchCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarCreatedApplyCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureApplyFlowCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureDispatchCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureResultApplyCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureStateResolver;
+import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
+import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
+import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
+import com.github.drafael.chat4j.menu.ViewMenuFactory;
+import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
+import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
+import com.github.drafael.chat4j.util.TitleBarUiSupport;
 import com.github.drafael.chat4j.provider.api.Message;
-import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
-import com.github.drafael.chat4j.provider.support.ModelOrdering;
-import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
+import com.github.drafael.chat4j.provider.support.ProviderAvailabilityResolver;
+import com.github.drafael.chat4j.provider.support.ProviderCatalogSectionAppender;
+import com.github.drafael.chat4j.provider.support.ProviderFavoritesResolver;
+import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
+import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
+import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityRefreshCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityRefreshDispatchCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderMenuDataResolver;
+import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
+import com.github.drafael.chat4j.provider.support.ProviderMenuReadyCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderMenuReadyDispatchCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
+import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
+import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
+import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
+import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
 import com.formdev.flatlaf.util.SystemInfo;
+import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
+import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
 import com.github.drafael.chat4j.settings.AppearancePanel;
+import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
+import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
+import com.github.drafael.chat4j.settings.AssistantRenderModeChangePlanner;
+import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.AssistantRenderModeToggleCoordinator;
+import com.github.drafael.chat4j.settings.AssistantRenderModeToggleSelectionSyncCoordinator;
+import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuReadyCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuReadyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuSelectionDispatchCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuSelectionRefreshCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
+import com.github.drafael.chat4j.settings.FontMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuStructureRebuilder;
+import com.github.drafael.chat4j.settings.FontPreviewApplier;
+import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
+import com.github.drafael.chat4j.settings.FontSettingsPersister;
+import com.github.drafael.chat4j.settings.FontSettingsResolver;
+import com.github.drafael.chat4j.settings.GeneralSettingsApplyCoordinator;
+import com.github.drafael.chat4j.settings.GeneralSettingsApplyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.GeneralSettingsResolver;
+import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.MenuBarSettingCoordinator;
+import com.github.drafael.chat4j.settings.MenuBarSettingDispatchCoordinator;
+import com.github.drafael.chat4j.settings.ProviderRuntimeSettingsResolver;
+import com.github.drafael.chat4j.settings.ProviderSettingsApplyCoordinator;
 import com.github.drafael.chat4j.settings.SettingsDialog;
+import com.github.drafael.chat4j.settings.SettingsDialogCoordinator;
+import com.github.drafael.chat4j.settings.SettingsOpenDispatchCoordinator;
+import com.github.drafael.chat4j.settings.SettingsOpenFlowCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuApplyCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuApplyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuReadyCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuReadyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuSelectionDispatchCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuSelectionRefreshCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
+import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
+import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
+import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
+import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
+import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
+import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
+import com.github.drafael.chat4j.storage.AssistantMessageCompletionDispatchCoordinator;
+import com.github.drafael.chat4j.storage.AssistantMessageCompletionEventDispatchCoordinator;
+import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadApplyCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadApplyDispatchCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadDispatchCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadFailureCoordinator;
+import com.github.drafael.chat4j.storage.ConversationLoadResultPlanner;
+import com.github.drafael.chat4j.storage.ConversationLoadStartCoordinator;
+import com.github.drafael.chat4j.storage.ConversationPersistenceCoordinator;
 import com.github.drafael.chat4j.storage.ConversationRepo;
+import com.github.drafael.chat4j.storage.ConversationTitleDeriver;
+import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
+import com.github.drafael.chat4j.storage.CurrentConversationSaveDispatchCoordinator;
+import com.github.drafael.chat4j.storage.CurrentConversationSaveUiApplyCoordinator;
 import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
+import com.github.drafael.chat4j.storage.PersistedMessageCounter;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.StringUtils;
 
-import java.awt.event.ActionEvent;
-import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
 import javax.swing.*;
-import javax.swing.event.MenuEvent;
-import javax.swing.event.MenuListener;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
-import java.net.URL;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
-import static java.util.Collections.emptyList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class MainFrame extends JFrame {
 
-    private static final String MODEL_KEY_DELIMITER = " > ";
-    private static final String KEY_ASSISTANT_MARKDOWN_DEFAULT = "chat.markdown.default";
-    private static final String KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX = "chat.markdown.conv.";
-    private static final String KEY_MENU_BAR_ENABLED = "menu.bar.enabled";
-    private static final String KEY_THEME = "theme";
-    private static final String KEY_APP_FONT = AppearancePanel.KEY_APP_FONT;
-    private static final String KEY_APP_FONT_SIZE = AppearancePanel.KEY_APP_FONT_SIZE;
-    private static final String KEY_CODE_FONT = AppearancePanel.KEY_CODE_FONT;
-    private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
-    private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
-            Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
-            Map.entry("OpenAI", "/icons/providers/openai.svg"),
-            Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
-            Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
-            Map.entry("Google AI", "/icons/providers/google.svg"),
-            Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
-            Map.entry("Groq", "/icons/providers/groq.svg"),
-            Map.entry("DeepSeek", "/icons/providers/deepseek.svg"),
-            Map.entry("Mistral", "/icons/providers/mistral.svg"),
-            Map.entry("xAI", "/icons/providers/xai.svg"),
-            Map.entry("LM Studio", "/icons/providers/lmstudio.svg"),
-            Map.entry("Ollama", "/icons/providers/ollama.svg")
-    );
-    private static final int PROVIDER_MODEL_ICON_SIZE = 16;
-    private static final int PROVIDER_HEADER_ICON_SIZE = 18;
-    private static final int PROVIDER_ICON_ALPHA_MIN = 210;
-    private static final Color MAC_MENU_ICON_ENABLED = new Color(66, 66, 66);
-    private static final Color MAC_MENU_ICON_DISABLED = new Color(150, 150, 150);
-    private static final Map<ProviderMenuIconKey, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
+    private static final Logger LOG = Logger.getLogger(MainFrame.class.getName());
 
     private final ChatPanel chatPanel;
     private final SidebarPanel sidebarPanel;
+    private final NewChatCoordinator newChatCoordinator = new NewChatCoordinator();
+    private final HelpMenuVisibilityResolver helpMenuVisibilityResolver = new HelpMenuVisibilityResolver();
+    private final HelpMenuFactory helpMenuFactory = new HelpMenuFactory();
+    private final MenuBarAssemblyFactory menuBarAssemblyFactory =
+            new MenuBarAssemblyFactory(helpMenuVisibilityResolver, helpMenuFactory);
+    private final FileMenuFactory fileMenuFactory = new FileMenuFactory();
+    private final MenuSectionHeaderFactory menuSectionHeaderFactory = new MenuSectionHeaderFactory();
+    private final MenuSelectionListenerBinder menuSelectionListenerBinder = new MenuSelectionListenerBinder();
+    private final BoundMenuFactory boundMenuFactory = new BoundMenuFactory(menuSelectionListenerBinder);
+    private final ViewMenuFactory viewMenuFactory = new ViewMenuFactory(menuSelectionListenerBinder);
+    private final MainMenuBarBuilder mainMenuBarBuilder =
+            new MainMenuBarBuilder(fileMenuFactory, viewMenuFactory, boundMenuFactory, menuBarAssemblyFactory);
+    private final MainMenuBarCreateDispatchCoordinator mainMenuBarCreateDispatchCoordinator =
+            new MainMenuBarCreateDispatchCoordinator(mainMenuBarBuilder);
+    private final MainMenuBarEnsureCoordinator mainMenuBarEnsureCoordinator = new MainMenuBarEnsureCoordinator();
+    private final MainMenuBarCreatedApplyCoordinator mainMenuBarCreatedApplyCoordinator =
+            new MainMenuBarCreatedApplyCoordinator();
+    private final MainMenuBarEnsureDispatchCoordinator mainMenuBarEnsureDispatchCoordinator =
+            new MainMenuBarEnsureDispatchCoordinator(mainMenuBarEnsureCoordinator, mainMenuBarCreatedApplyCoordinator);
+    private final MainMenuBarEnsureResultApplyCoordinator mainMenuBarEnsureResultApplyCoordinator =
+            new MainMenuBarEnsureResultApplyCoordinator();
+    private final MainMenuBarEnsureStateResolver mainMenuBarEnsureStateResolver =
+            new MainMenuBarEnsureStateResolver(
+                    mainMenuBarEnsureDispatchCoordinator,
+                    mainMenuBarEnsureResultApplyCoordinator
+            );
+    private final MainMenuBarApplyStateCoordinator mainMenuBarApplyStateCoordinator =
+            new MainMenuBarApplyStateCoordinator();
+    private final MainMenuBarEnsureApplyFlowCoordinator mainMenuBarEnsureApplyFlowCoordinator =
+            new MainMenuBarEnsureApplyFlowCoordinator(
+                    mainMenuBarEnsureStateResolver,
+                    mainMenuBarApplyStateCoordinator
+            );
+    private final SidebarToggleCoordinator sidebarToggleCoordinator = new SidebarToggleCoordinator();
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
+    private final ProviderModelsResolver providerModelsResolver;
+    private final ProviderFavoritesResolver providerFavoritesResolver;
+    private final ProviderAvailabilityResolver providerAvailabilityResolver;
+    private final ProviderSelectableResolver providerSelectableResolver = new ProviderSelectableResolver();
+    private final ProviderMenuDataResolver providerMenuDataResolver;
+    private final ProviderAvailabilityLabelFormatter providerAvailabilityLabelFormatter =
+            new ProviderAvailabilityLabelFormatter();
+    private final ProviderMenuAvailabilityApplier providerMenuAvailabilityApplier = new ProviderMenuAvailabilityApplier();
+    private final ProviderMenuAvailabilityRefreshCoordinator providerMenuAvailabilityRefreshCoordinator;
+    private final ProviderMenuAvailabilityRefreshDispatchCoordinator providerMenuAvailabilityRefreshDispatchCoordinator;
+    private final ProviderMenuReadyCoordinator providerMenuReadyCoordinator = new ProviderMenuReadyCoordinator();
+    private final ProviderMenuReadyDispatchCoordinator providerMenuReadyDispatchCoordinator =
+            new ProviderMenuReadyDispatchCoordinator(providerMenuReadyCoordinator);
+    private final ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory = new ProviderMenuEmptyStateFactory();
+    private final ProviderMenuIconTintResolver providerMenuIconTintResolver = new ProviderMenuIconTintResolver();
+    private final ProviderMenuIconResolver providerMenuIconResolver =
+            new ProviderMenuIconResolver(providerMenuIconTintResolver, MainFrame.class);
+    private final ProviderModelMenuItemFactory providerModelMenuItemFactory =
+            new ProviderModelMenuItemFactory(providerMenuIconResolver);
+    private final ProviderHeaderMenuItemFactory providerHeaderMenuItemFactory =
+            new ProviderHeaderMenuItemFactory(providerMenuIconResolver::resolveHeaderIcon);
+    private final ProviderFavoritesSectionAppender providerFavoritesSectionAppender =
+            new ProviderFavoritesSectionAppender(menuSectionHeaderFactory, providerModelMenuItemFactory);
+    private final ProviderCatalogSectionAppender providerCatalogSectionAppender;
+    private final ProviderMenuStructureRebuilder providerMenuStructureRebuilder;
+    private final ModelMenuStructureRebuildCoordinator modelMenuStructureRebuildCoordinator;
+    private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
+    private final AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator;
+    private final AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator =
+            new AssistantRenderModeChangeUiApplyCoordinator();
+    private final AssistantRenderModeChangeDispatchCoordinator assistantRenderModeChangeDispatchCoordinator;
+    private final AssistantRenderModeToggleCoordinator assistantRenderModeToggleCoordinator =
+            new AssistantRenderModeToggleCoordinator();
+    private final AssistantRenderModeToggleSelectionSyncCoordinator assistantRenderModeToggleSelectionSyncCoordinator =
+            new AssistantRenderModeToggleSelectionSyncCoordinator();
+    private final AssistantRenderModeSelectionResolver assistantRenderModeSelectionResolver =
+            new AssistantRenderModeSelectionResolver();
+    private final GeneralSettingsResolver generalSettingsResolver;
+    private final GeneralSettingsApplyCoordinator generalSettingsApplyCoordinator;
+    private final GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator =
+            new GeneralSettingsUiApplyCoordinator();
+    private final GeneralSettingsApplyDispatchCoordinator generalSettingsApplyDispatchCoordinator;
+    private final MenuBarSettingCoordinator menuBarSettingCoordinator = new MenuBarSettingCoordinator();
+    private final MenuBarSettingDispatchCoordinator menuBarSettingDispatchCoordinator =
+            new MenuBarSettingDispatchCoordinator(menuBarSettingCoordinator);
+    private final FontSettingsResolver fontSettingsResolver;
+    private final FontSelectionNormalizer fontSelectionNormalizer = new FontSelectionNormalizer();
+    private final FontPreviewApplier fontPreviewApplier = new FontPreviewApplier();
+    private final FontSettingsPersister fontSettingsPersister;
+    private final FontMenuApplyCoordinator fontMenuApplyCoordinator;
+    private final FontMenuApplyDispatchCoordinator fontMenuApplyDispatchCoordinator =
+            new FontMenuApplyDispatchCoordinator();
+    private final AppFontSizeStepResolver appFontSizeStepResolver;
+    private final AppFontSizeAdjustCoordinator appFontSizeAdjustCoordinator;
+    private final ThemeSettingsResolver themeSettingsResolver;
+    private final ThemeMenuApplyCoordinator themeMenuApplyCoordinator;
+    private final ThemeMenuApplyDispatchCoordinator themeMenuApplyDispatchCoordinator =
+            new ThemeMenuApplyDispatchCoordinator();
+    private final ThemeMenuStructureRebuilder themeMenuStructureRebuilder =
+            new ThemeMenuStructureRebuilder(menuSectionHeaderFactory);
+    private final ThemeMenuStructureRebuildCoordinator themeMenuStructureRebuildCoordinator =
+            new ThemeMenuStructureRebuildCoordinator(themeMenuStructureRebuilder);
+    private final ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer = new ThemeMenuSelectionSynchronizer();
+    private final ThemeMenuReadyCoordinator themeMenuReadyCoordinator = new ThemeMenuReadyCoordinator();
+    private final ThemeMenuReadyDispatchCoordinator themeMenuReadyDispatchCoordinator =
+            new ThemeMenuReadyDispatchCoordinator(themeMenuReadyCoordinator);
+    private final ThemeMenuSelectionRefreshCoordinator themeMenuSelectionRefreshCoordinator;
+    private final ThemeMenuSelectionDispatchCoordinator themeMenuSelectionDispatchCoordinator;
+    private final ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator =
+            new ThemeMenuSelectionApplyCoordinator();
+    private final FontMenuStructureRebuilder fontMenuStructureRebuilder =
+            new FontMenuStructureRebuilder(menuSectionHeaderFactory);
+    private final FontMenuStructureRebuildCoordinator fontMenuStructureRebuildCoordinator =
+            new FontMenuStructureRebuildCoordinator(fontMenuStructureRebuilder);
+    private final FontMenuSelectionSynchronizer fontMenuSelectionSynchronizer = new FontMenuSelectionSynchronizer();
+    private final FontMenuReadyCoordinator fontMenuReadyCoordinator = new FontMenuReadyCoordinator();
+    private final FontMenuReadyDispatchCoordinator fontMenuReadyDispatchCoordinator =
+            new FontMenuReadyDispatchCoordinator(fontMenuReadyCoordinator);
+    private final FontMenuSelectionRefreshCoordinator fontMenuSelectionRefreshCoordinator;
+    private final FontMenuSelectionDispatchCoordinator fontMenuSelectionDispatchCoordinator;
+    private final FontMenuSelectionApplyCoordinator fontMenuSelectionApplyCoordinator =
+            new FontMenuSelectionApplyCoordinator();
+    private final WindowStateSettingsCoordinator windowStateSettingsCoordinator;
+    private final WindowStateRestoreCoordinator windowStateRestoreCoordinator;
+    private final ConversationLoadCoordinator conversationLoadCoordinator;
+    private final ConversationLoadDispatchCoordinator conversationLoadDispatchCoordinator =
+            new ConversationLoadDispatchCoordinator();
+    private final ConversationLoadStartCoordinator conversationLoadStartCoordinator =
+            new ConversationLoadStartCoordinator(conversationLoadDispatchCoordinator);
+    private final ConversationLoadFailureCoordinator conversationLoadFailureCoordinator =
+            new ConversationLoadFailureCoordinator();
+    private final ConversationLoadResultPlanner conversationLoadResultPlanner;
+    private final ConversationLoadApplyDispatchCoordinator conversationLoadApplyDispatchCoordinator;
+    private final ConversationPersistenceCoordinator conversationPersistenceCoordinator;
+    private final AssistantMessageCompletionCoordinator assistantMessageCompletionCoordinator;
+    private final AssistantMessageCompletionDispatchCoordinator assistantMessageCompletionDispatchCoordinator =
+            new AssistantMessageCompletionDispatchCoordinator();
+    private final AssistantMessageCompletionEventDispatchCoordinator assistantMessageCompletionEventDispatchCoordinator =
+            new AssistantMessageCompletionEventDispatchCoordinator(assistantMessageCompletionDispatchCoordinator);
+    private final AssistantMessageCompletionFlowCoordinator assistantMessageCompletionFlowCoordinator;
+    private final CurrentConversationSaveCoordinator currentConversationSaveCoordinator;
+    private final CurrentConversationSaveDispatchCoordinator currentConversationSaveDispatchCoordinator =
+            new CurrentConversationSaveDispatchCoordinator();
+    private final CurrentConversationSaveUiApplyCoordinator currentConversationSaveUiApplyCoordinator =
+            new CurrentConversationSaveUiApplyCoordinator();
     private UUID currentConversationId;
     private boolean sidebarVisible = true;
     private int lastDividerLocation = 250;
     private JButton sidebarToggleBtn;
     private Icon sidebarToggleIconFilled;
     private Icon sidebarToggleIconOutline;
-    private ChatSearchPopup chatSearchPopup;
+    private final ChatSearchPopupCoordinator chatSearchPopupCoordinator = new ChatSearchPopupCoordinator();
     private AssistantRenderMode assistantMarkdownDefaultMode = AssistantRenderMode.PREVIEW;
     private AssistantRenderMode pendingUnsavedConversationRenderMode;
-    private final SingleInstanceWindowTracker<SettingsDialog> settingsDialogTracker =
-            new SingleInstanceWindowTracker<>();
+    private final SettingsDialogCoordinator settingsDialogCoordinator = new SettingsDialogCoordinator();
+    private final SettingsOpenDispatchCoordinator settingsOpenDispatchCoordinator = new SettingsOpenDispatchCoordinator();
+    private final SettingsOpenFlowCoordinator settingsOpenFlowCoordinator =
+            new SettingsOpenFlowCoordinator(settingsOpenDispatchCoordinator, settingsDialogCoordinator);
     private JMenuBar modelMenuBar;
     private JMenu fileMenu;
     private JMenu viewMenu;
@@ -102,10 +312,20 @@ public class MainFrame extends JFrame {
     private JMenu fontMenu;
     private final Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
     private final Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
+    private final ModelMenuSelectionSynchronizer modelMenuSelectionSynchronizer = new ModelMenuSelectionSynchronizer();
+    private final ModelMenuSelectionDispatchCoordinator modelMenuSelectionDispatchCoordinator =
+            new ModelMenuSelectionDispatchCoordinator(modelMenuSelectionSynchronizer);
+    private final ModelMenuSelectionChangeCoordinator modelMenuSelectionChangeCoordinator =
+            new ModelMenuSelectionChangeCoordinator();
+    private final MenuPopupVisibleRunner menuPopupVisibleRunner = new MenuPopupVisibleRunner();
+    private final ModelMenuDirtyRefreshCoordinator modelMenuDirtyRefreshCoordinator;
+    private final ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator;
+    private final LookAndFeelMenuRefreshCoordinator lookAndFeelMenuRefreshCoordinator;
     private final Map<String, JRadioButtonMenuItem> themeMenuItemsByName = new LinkedHashMap<>();
     private final Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily = new LinkedHashMap<>();
     private final Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize = new LinkedHashMap<>();
     private final Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily = new LinkedHashMap<>();
+    private final PersistedMessageCounter persistedMessageCounter = new PersistedMessageCounter();
     private boolean modelsMenuDirty = true;
     private boolean themesMenuBuilt;
     private boolean fontMenuBuilt;
@@ -135,6 +355,107 @@ public class MainFrame extends JFrame {
         this.settingsRepo = settingsRepo;
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
+        this.providerSettingsApplyCoordinator =
+                new ProviderSettingsApplyCoordinator(new ProviderRuntimeSettingsResolver(settingsRepo));
+        this.providerModelsResolver = new ProviderModelsResolver(modelCacheService);
+        this.providerFavoritesResolver = new ProviderFavoritesResolver(modelFavoritesService);
+        this.providerAvailabilityResolver = new ProviderAvailabilityResolver(settingsRepo);
+        this.providerMenuDataResolver = new ProviderMenuDataResolver(
+                providerModelsResolver,
+                providerSelectableResolver,
+                providerFavoritesResolver,
+                providerAvailabilityResolver
+        );
+        this.providerMenuAvailabilityRefreshCoordinator = new ProviderMenuAvailabilityRefreshCoordinator(
+                providerAvailabilityResolver::resolveMenuAvailability,
+                providerMenuAvailabilityApplier
+        );
+        this.providerMenuAvailabilityRefreshDispatchCoordinator =
+                new ProviderMenuAvailabilityRefreshDispatchCoordinator(providerMenuAvailabilityRefreshCoordinator);
+        this.providerCatalogSectionAppender = new ProviderCatalogSectionAppender(
+                providerAvailabilityLabelFormatter,
+                providerHeaderMenuItemFactory,
+                providerFavoritesResolver,
+                providerMenuEmptyStateFactory,
+                providerModelMenuItemFactory
+        );
+        this.providerMenuStructureRebuilder = new ProviderMenuStructureRebuilder(
+                providerMenuDataResolver,
+                providerFavoritesSectionAppender,
+                providerCatalogSectionAppender,
+                providerMenuEmptyStateFactory
+        );
+        this.modelMenuStructureRebuildCoordinator =
+                new ModelMenuStructureRebuildCoordinator(providerMenuStructureRebuilder);
+        this.assistantRenderModeSettingsCoordinator = new AssistantRenderModeSettingsCoordinator(settingsRepo);
+        this.assistantRenderModeChangeCoordinator = new AssistantRenderModeChangeCoordinator(
+                new AssistantRenderModeChangePlanner(),
+                assistantRenderModeSettingsCoordinator
+        );
+        this.assistantRenderModeChangeDispatchCoordinator = new AssistantRenderModeChangeDispatchCoordinator(
+                assistantRenderModeChangeCoordinator,
+                assistantRenderModeChangeUiApplyCoordinator
+        );
+        this.generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, assistantRenderModeSettingsCoordinator);
+        this.generalSettingsApplyCoordinator = new GeneralSettingsApplyCoordinator(
+                generalSettingsResolver,
+                assistantRenderModeSelectionResolver
+        );
+        this.generalSettingsApplyDispatchCoordinator = new GeneralSettingsApplyDispatchCoordinator(
+                generalSettingsApplyCoordinator,
+                generalSettingsUiApplyCoordinator
+        );
+        this.fontSettingsResolver = new FontSettingsResolver(settingsRepo);
+        this.fontSettingsPersister = new FontSettingsPersister(settingsRepo);
+        this.fontMenuApplyCoordinator = new FontMenuApplyCoordinator(
+                fontSelectionNormalizer,
+                fontPreviewApplier,
+                fontSettingsPersister
+        );
+        this.fontMenuSelectionRefreshCoordinator = new FontMenuSelectionRefreshCoordinator(
+                fontSettingsResolver,
+                fontMenuSelectionSynchronizer
+        );
+        this.fontMenuSelectionDispatchCoordinator =
+                new FontMenuSelectionDispatchCoordinator(fontMenuSelectionRefreshCoordinator);
+        this.appFontSizeStepResolver = new AppFontSizeStepResolver();
+        this.appFontSizeAdjustCoordinator = new AppFontSizeAdjustCoordinator(appFontSizeStepResolver);
+        this.themeSettingsResolver = new ThemeSettingsResolver(settingsRepo);
+        this.themeMenuApplyCoordinator = new ThemeMenuApplyCoordinator(themeSettingsResolver, settingsRepo);
+        this.themeMenuSelectionRefreshCoordinator = new ThemeMenuSelectionRefreshCoordinator(
+                themeSettingsResolver,
+                themeMenuSelectionSynchronizer
+        );
+        this.themeMenuSelectionDispatchCoordinator =
+                new ThemeMenuSelectionDispatchCoordinator(themeMenuSelectionRefreshCoordinator);
+        this.modelMenuDirtyRefreshCoordinator = new ModelMenuDirtyRefreshCoordinator(menuPopupVisibleRunner);
+        this.modelMenuDirtyRefreshTriggerCoordinator =
+                new ModelMenuDirtyRefreshTriggerCoordinator(modelMenuDirtyRefreshCoordinator);
+        this.lookAndFeelMenuRefreshCoordinator = new LookAndFeelMenuRefreshCoordinator(menuPopupVisibleRunner);
+        this.windowStateSettingsCoordinator = new WindowStateSettingsCoordinator(settingsRepo);
+        this.windowStateRestoreCoordinator = new WindowStateRestoreCoordinator(windowStateSettingsCoordinator);
+        this.conversationLoadCoordinator = new ConversationLoadCoordinator(conversationRepo);
+        this.conversationLoadResultPlanner = new ConversationLoadResultPlanner(
+                conversationLoadCoordinator::isCurrentRequest,
+                this::resolveConversationRenderMode
+        );
+        this.conversationLoadApplyDispatchCoordinator = new ConversationLoadApplyDispatchCoordinator(
+                conversationLoadResultPlanner,
+                new ConversationLoadApplyCoordinator()
+        );
+        this.conversationPersistenceCoordinator = new ConversationPersistenceCoordinator(
+                conversationRepo,
+                persistedMessageCounter
+        );
+        this.assistantMessageCompletionCoordinator =
+                new AssistantMessageCompletionCoordinator(conversationPersistenceCoordinator);
+        this.assistantMessageCompletionFlowCoordinator =
+                new AssistantMessageCompletionFlowCoordinator(assistantMessageCompletionCoordinator);
+        this.currentConversationSaveCoordinator = new CurrentConversationSaveCoordinator(
+                new ConversationTitleDeriver(),
+                conversationPersistenceCoordinator,
+                assistantRenderModeSettingsCoordinator
+        );
 
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(600, 400));
@@ -180,17 +501,23 @@ public class MainFrame extends JFrame {
         leftButtons.setOpaque(false);
         leftButtons.setBorder(BorderFactory.createEmptyBorder(0, 78, 0, 0));
 
-        sidebarToggleIconFilled = titleBarIcon("/icons/titlebar/panel-left-filled.svg");
-        sidebarToggleIconOutline = titleBarIcon("/icons/titlebar/panel-left.svg");
-        sidebarToggleBtn = createTitleBarButton(sidebarToggleIconFilled, "Toggle Sidebar");
+        sidebarToggleIconFilled = TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left-filled.svg");
+        sidebarToggleIconOutline = TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left.svg");
+        sidebarToggleBtn = TitleBarUiSupport.createButton(sidebarToggleIconFilled, "Toggle Sidebar");
         sidebarToggleBtn.addActionListener(e -> toggleSidebar());
         leftButtons.add(sidebarToggleBtn);
 
-        JButton searchBtn = createTitleBarButton(titleBarIcon("/icons/titlebar/search.svg"), "Search Chats");
+        JButton searchBtn = TitleBarUiSupport.createButton(
+                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/search.svg"),
+                "Search Chats"
+        );
         searchBtn.addActionListener(e -> openChatSearch(searchBtn));
         leftButtons.add(searchBtn);
 
-        JButton newChatBtn = createTitleBarButton(titleBarIcon("/icons/titlebar/square-pen.svg"), "New Chat");
+        JButton newChatBtn = TitleBarUiSupport.createButton(
+                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/square-pen.svg"),
+                "New Chat"
+        );
         newChatBtn.addActionListener(e -> newChat());
         leftButtons.add(newChatBtn);
 
@@ -255,533 +582,279 @@ public class MainFrame extends JFrame {
     }
 
     private void toggleSidebar() {
-        if (sidebarVisible) {
-            lastDividerLocation = splitPane.getDividerLocation();
-            splitPane.setDividerLocation(0);
-            splitPane.setDividerSize(0);
-            sidebarVisible = false;
-        } else {
-            splitPane.setDividerSize(2);
-            splitPane.setDividerLocation(lastDividerLocation);
-            sidebarVisible = true;
-        }
-        if (sidebarToggleBtn != null) {
-            sidebarToggleBtn.setIcon(sidebarVisible ? sidebarToggleIconFilled : sidebarToggleIconOutline);
-        }
+        SidebarToggleCoordinator.ToggleState toggleState = sidebarToggleCoordinator.toggle(
+                sidebarVisible,
+                lastDividerLocation,
+                splitPane.getDividerLocation(),
+                splitPane,
+                sidebarToggleBtn,
+                sidebarToggleIconFilled,
+                sidebarToggleIconOutline
+        );
+
+        sidebarVisible = toggleState.sidebarVisible();
+        lastDividerLocation = toggleState.lastDividerLocation();
     }
 
     private void newChat() {
-        saveCurrentConversation();
-        currentConversationId = null;
-        pendingUnsavedConversationRenderMode = null;
-        chatPanel.setActiveConversationId(null);
-        chatPanel.clearChatView();
-        chatPanel.setAssistantRenderMode(assistantMarkdownDefaultMode, true);
-        chatPanel.getInputBar().requestInputFocus();
+        newChatCoordinator.start(
+                this::saveCurrentConversation,
+                () -> currentConversationId = null,
+                () -> pendingUnsavedConversationRenderMode = null,
+                () -> chatPanel.setActiveConversationId(null),
+                chatPanel::clearChatView,
+                assistantMarkdownDefaultMode,
+                chatPanel::setAssistantRenderMode,
+                () -> chatPanel.getInputBar().requestInputFocus()
+        );
     }
 
     private void loadConversation(UUID id) {
-        saveCurrentConversation();
-        currentConversationId = id;
-        pendingUnsavedConversationRenderMode = null;
-        chatPanel.setActiveConversationId(id);
-        try {
-            List<MessageRecord> records = conversationRepo.getMessages(id);
-            List<Message> messages = records.stream()
-                    .map(MessageRecord::message)
-                    .toList();
-            chatPanel.loadHistory(messages);
-            chatPanel.setAssistantRenderMode(resolveConversationRenderMode(id), true);
-
-            // Restore the model selector to the conversation's model
-            conversationRepo.findById(id).ifPresent(conversation ->
-                    chatPanel.setSelectedModel(toModelKey(conversation.provider(), conversation.model())));
-
-            sidebarPanel.selectConversation(id);
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(
-                this,
-                "Failed to load conversation: %s".formatted(e.getMessage()),
-                "Error",
-                JOptionPane.ERROR_MESSAGE
-            );
-        }
+        conversationLoadStartCoordinator.start(
+                id,
+                this::saveCurrentConversation,
+                value -> currentConversationId = value,
+                () -> pendingUnsavedConversationRenderMode = null,
+                chatPanel::setActiveConversationId,
+                conversationLoadCoordinator::loadAsync,
+                this::applyLoadedConversation,
+                this::handleConversationLoadFailure
+        );
     }
 
     private void saveCurrentConversation() {
-        List<Message> history = chatPanel.getHistory();
-        if (history.isEmpty()) {
-            return;
-        }
-
-        try {
-            if (currentConversationId == null) {
-                String title = deriveConversationTitle(history.getFirst());
-                ModelSelection modelSelection = parseModelSelection(chatPanel.getSelectedModel())
-                        .orElse(new ModelSelection("Unknown", "unknown"));
-                currentConversationId = conversationRepo.createConversation(
-                    title,
-                    modelSelection.provider(),
-                    modelSelection.model());
-
-                AssistantRenderMode modeToPersist = pendingUnsavedConversationRenderMode != null
-                        ? pendingUnsavedConversationRenderMode
-                        : chatPanel.getAssistantRenderMode();
-                persistConversationRenderMode(currentConversationId, modeToPersist);
-                pendingUnsavedConversationRenderMode = null;
-                chatPanel.setActiveConversationId(currentConversationId);
-            }
-
-            List<MessageRecord> existing = conversationRepo.getMessages(currentConversationId);
-            for (int i = existing.size(); i < history.size(); i++) {
-                Message msg = history.get(i);
-                conversationRepo.addMessage(currentConversationId, msg);
-            }
-
-            sidebarPanel.refresh();
-            if (currentConversationId != null) {
-                sidebarPanel.selectConversation(currentConversationId);
-            }
-        } catch (Exception e) {
-            // Silent fail for save
-        }
+        currentConversationSaveDispatchCoordinator.save(
+                currentConversationId,
+                pendingUnsavedConversationRenderMode,
+                chatPanel.getHistory(),
+                chatPanel.getSelectedModel(),
+                chatPanel.getAssistantRenderMode(),
+                currentConversationSaveCoordinator::save,
+                saveResult -> currentConversationSaveUiApplyCoordinator.apply(
+                        saveResult,
+                        value -> currentConversationId = value,
+                        value -> pendingUnsavedConversationRenderMode = value,
+                        chatPanel::setActiveConversationId,
+                        sidebarPanel::refresh,
+                        sidebarPanel::selectConversation
+                ),
+                error -> LOG.log(Level.WARNING, "Failed to persist current conversation", error)
+        );
     }
 
-    private void onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
-        if (event == null || event.conversationId() == null || event.message() == null) {
-            return;
-        }
-
-        try {
-            conversationRepo.addMessage(event.conversationId(), event.message());
-            sidebarPanel.refresh();
-            if (Objects.equals(currentConversationId, event.conversationId())) {
-                sidebarPanel.selectConversation(currentConversationId);
-            }
-        } catch (Exception e) {
-            // Silent fail for background assistant persistence
-        }
+    private void applyLoadedConversation(
+            long requestId,
+            UUID conversationId,
+            List<MessageRecord> records,
+            Optional<ConversationRepo.ConversationRecord> conversation
+    ) {
+        conversationLoadApplyDispatchCoordinator.applyLoaded(
+                requestId,
+                currentConversationId,
+                conversationId,
+                records,
+                conversation,
+                chatPanel::loadHistory,
+                conversationPersistenceCoordinator::markConversationLoaded,
+                chatPanel::setAssistantRenderMode,
+                chatPanel::setSelectedModel,
+                sidebarPanel::selectConversation
+        );
     }
 
-    private String deriveConversationTitle(Message firstMessage) {
-        String fallbackTitle = "New chat";
-        if (firstMessage == null) {
-            return fallbackTitle;
-        }
+    private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
+        conversationLoadFailureCoordinator.handle(
+                requestId,
+                currentConversationId,
+                conversationId,
+                e,
+                conversationLoadResultPlanner::shouldHandleFailure,
+                message -> JOptionPane.showMessageDialog(this, message, "Error", JOptionPane.ERROR_MESSAGE)
+        );
+    }
 
-        String titleCandidate = firstMessage.parts().stream()
-                .filter(part -> part instanceof TextPart)
-                .map(part -> ((TextPart) part).text())
-                .map(String::trim)
-                .filter(text -> !text.isBlank())
-                .filter(text -> !text.startsWith("Activated skills:"))
-                .findFirst()
-                .orElse(firstMessage.content().trim());
-
-        if (titleCandidate.isBlank()) {
-            return fallbackTitle;
-        }
-
-        return titleCandidate.length() > 50 ? "%s...".formatted(titleCandidate.substring(0, 50)) : titleCandidate;
+    private boolean onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
+        return assistantMessageCompletionEventDispatchCoordinator.handle(
+                event,
+                currentConversationId,
+                (conversationId, message, activeConversationId) -> assistantMessageCompletionFlowCoordinator.handle(
+                        conversationId,
+                        message,
+                        activeConversationId,
+                        sidebarPanel::refresh,
+                        sidebarPanel::selectConversation
+                ),
+                (conversationId, error) -> LOG.log(
+                        Level.WARNING,
+                        "Failed to persist assistant message for conversation %s".formatted(conversationId),
+                        error
+                )
+        );
     }
 
     private void saveWindowState() {
-        try {
-            Rectangle bounds = getBounds();
-            settingsRepo.put("window.x", String.valueOf(bounds.x));
-            settingsRepo.put("window.y", String.valueOf(bounds.y));
-            settingsRepo.put("window.width", String.valueOf(bounds.width));
-            settingsRepo.put("window.height", String.valueOf(bounds.height));
-        } catch (Exception e) {
-            // ignore
-        }
+        windowStateSettingsCoordinator.save(getBounds());
     }
 
     private void restoreWindowState() {
-        try {
-            int x = Integer.parseInt(settingsRepo.get("window.x", "0"));
-            int y = Integer.parseInt(settingsRepo.get("window.y", "0"));
-            int w = Integer.parseInt(settingsRepo.get("window.width", "1000"));
-            int h = Integer.parseInt(settingsRepo.get("window.height", "700"));
-
-            Rectangle bounds = new Rectangle(x, y, w, h);
-            if (GraphicsEnvironment.getLocalGraphicsEnvironment()
-                    .getDefaultScreenDevice().getDefaultConfiguration()
-                    .getBounds().intersects(bounds)
-            ) {
-                setBounds(bounds);
-            } else {
-                setSize(1000, 700);
-                setLocationRelativeTo(null);
-            }
-        } catch (Exception e) {
-            setSize(1000, 700);
-            setLocationRelativeTo(null);
-        }
+        windowStateRestoreCoordinator.restore(
+                this::setBounds,
+                () -> {
+                    setSize(1000, 700);
+                    setLocationRelativeTo(null);
+                }
+        );
     }
 
     private void setupKeyboardShortcuts() {
-        JRootPane rootPane = getRootPane();
-        String mod = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx() == InputEvent.META_DOWN_MASK
-                ? "meta" : "ctrl";
-
-        // Cmd+N / Ctrl+N: New Chat
-        rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke("%s N".formatted(mod)), "newChat");
-        rootPane.getActionMap().put(
-            "newChat",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                newChat();
-            }
-        });
-
-        // Cmd+, / Ctrl+,: Settings
-        rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke("%s COMMA".formatted(mod)), "openSettings");
-        rootPane.getActionMap().put(
-            "openSettings",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                openSettings();
-            }
-        });
-
-        // Cmd+B / Ctrl+B: Toggle Sidebar
-        rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke("%s B".formatted(mod)), "toggleSidebar");
-        rootPane.getActionMap().put(
-            "toggleSidebar",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                toggleSidebar();
-            }
-        });
-
-        // Cmd+Shift+F / Ctrl+Shift+F: Chat Search
-        rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke("%s shift F".formatted(mod)), "openChatSearch");
-        rootPane.getActionMap().put(
-            "openChatSearch",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                openChatSearch(null);
-            }
-        });
-
-        // Cmd+/ / Ctrl+/: Toggle Model Dropdown
-        rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke("%s SLASH".formatted(mod)), "toggleModelDropdown");
-        rootPane.getActionMap().put(
-            "toggleModelDropdown",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                chatPanel.showModelPopupCentered();
-            }
-        });
+        MainFrameShortcutBinder.bindDefault(
+                getRootPane(),
+                new MainFrameShortcutBinder.ShortcutActions(
+                        this::newChat,
+                        this::openSettings,
+                        this::toggleSidebar,
+                        () -> openChatSearch(null),
+                        () -> chatPanel.showModelPopupCentered()
+                )
+        );
     }
 
     private void openChatSearch(Component relativeTo) {
-        if (chatSearchPopup == null) {
-            chatSearchPopup = new ChatSearchPopup(this, conversationRepo, this::loadConversation);
-        }
-        if (chatSearchPopup.isVisible()) {
-            chatSearchPopup.hidePopup();
-        } else {
-            chatSearchPopup.show(relativeTo);
-        }
+        chatSearchPopupCoordinator.toggle(
+                relativeTo,
+                () -> ChatSearchPopupCoordinator.PopupHandle.forPopup(
+                        new ChatSearchPopup(this, conversationRepo, this::loadConversation)
+                )
+        );
     }
 
     private void openSettings() {
-        if (!SwingUtilities.isEventDispatchThread()) {
-            SwingUtilities.invokeLater(this::openSettings);
-            return;
-        }
-
-        SettingsDialog existingDialog = settingsDialogTracker.get();
-        if (existingDialog != null) {
-            if (existingDialog.isDisplayable() && existingDialog.isVisible()) {
-                existingDialog.toFront();
-                existingDialog.requestFocus();
-                return;
-            }
-            if (existingDialog.isDisplayable()) {
-                existingDialog.setVisible(true);
-                return;
-            }
-            settingsDialogTracker.clear();
-        }
-
-        SettingsDialog dialog = new SettingsDialog(this, settingsRepo);
-        settingsDialogTracker.set(dialog);
-        dialog.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosed(WindowEvent e) {
-                settingsDialogTracker.clear();
-                applyProviderSettings();
-                applyGeneralSettings();
-            }
-        });
-        dialog.setVisible(true);
+        settingsOpenFlowCoordinator.open(
+                SwingUtilities.isEventDispatchThread(),
+                () -> SwingUtilities.invokeLater(this::openSettings),
+                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(this, settingsRepo)),
+                () -> {
+                    applyProviderSettings();
+                    applyGeneralSettings();
+                }
+        );
     }
 
     private void applyProviderSettings() {
-        Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider = ProviderRegistry
-                .allProviders()
-                .stream()
-                .collect(Collectors.toMap(
-                    ProviderRegistry.ProviderDef::name,
-                    this::readProviderRuntimeConfig,
-                    (existing, replacement) -> replacement,
-                    LinkedHashMap::new
-                ));
-
-        ProviderRegistry.applyRuntimeConfig(runtimeConfigByProvider);
-        chatPanel.refreshProviders();
-        markModelsMenuDirty();
-    }
-
-    private ProviderRegistry.ProviderRuntimeConfig readProviderRuntimeConfig(ProviderRegistry.ProviderDef providerDef) {
-        boolean enabled = true;
-        String baseUrl = providerDef.baseUrl();
-
-        try {
-            enabled = Boolean.parseBoolean(
-                    settingsRepo.get("provider.%s.enabled".formatted(providerDef.name()), "true"));
-        } catch (Exception e) {
-            enabled = true;
-        }
-
-        try {
-            baseUrl = settingsRepo.get("provider.%s.baseUrl".formatted(providerDef.name()), providerDef.baseUrl());
-        } catch (Exception e) {
-            baseUrl = providerDef.baseUrl();
-        }
-
-        if (StringUtils.isBlank(baseUrl)) {
-            baseUrl = providerDef.baseUrl();
-        }
-
-        return new ProviderRegistry.ProviderRuntimeConfig(enabled, baseUrl);
+        providerSettingsApplyCoordinator.apply(
+                ProviderRegistry.allProviders(),
+                chatPanel::refreshProviders,
+                this::markModelsMenuDirty
+        );
     }
 
     private void applyGeneralSettings() {
-        boolean menuBarEnabled = SystemInfo.isMacOS;
-
-        try {
-            String sendKey = settingsRepo.get("send.key", "Enter");
-            chatPanel.getInputBar().setSendOnEnter(!"Ctrl+Enter".equalsIgnoreCase(sendKey));
-
-            boolean autoScroll = Boolean.parseBoolean(settingsRepo.get("auto.scroll", "true"));
-            chatPanel.setAutoScrollEnabled(autoScroll);
-
-            assistantMarkdownDefaultMode = AssistantRenderMode.fromSettingValue(
-                    settingsRepo.get(KEY_ASSISTANT_MARKDOWN_DEFAULT, AssistantRenderMode.PREVIEW.settingValue()));
-
-            menuBarEnabled = Boolean.parseBoolean(
-                    settingsRepo.get(KEY_MENU_BAR_ENABLED, String.valueOf(SystemInfo.isMacOS)));
-        } catch (Exception e) {
-            chatPanel.getInputBar().setSendOnEnter(true);
-            chatPanel.setAutoScrollEnabled(true);
-            assistantMarkdownDefaultMode = AssistantRenderMode.PREVIEW;
-            menuBarEnabled = SystemInfo.isMacOS;
-        }
-
-        AssistantRenderMode modeToApply = currentConversationId != null
-                ? resolveConversationRenderMode(currentConversationId)
-                : pendingUnsavedConversationRenderMode != null
-                ? pendingUnsavedConversationRenderMode
-                : assistantMarkdownDefaultMode;
-        chatPanel.setAssistantRenderMode(modeToApply, true);
-        applyMenuBarSetting(menuBarEnabled);
+        assistantMarkdownDefaultMode = generalSettingsApplyDispatchCoordinator.apply(
+                SystemInfo.isMacOS,
+                currentConversationId,
+                currentConversationId != null ? resolveConversationRenderMode(currentConversationId) : null,
+                pendingUnsavedConversationRenderMode,
+                sendOnEnter -> chatPanel.getInputBar().setSendOnEnter(sendOnEnter),
+                chatPanel::setAutoScrollEnabled,
+                chatPanel::setAssistantRenderMode,
+                this::applyMenuBarSetting
+        );
     }
 
     private void applyMenuBarSetting(boolean enabled) {
-        if (!enabled) {
-            setJMenuBar(null);
-            revalidate();
-            repaint();
-            return;
-        }
-
-        ensureModelsMenuBar();
-        setJMenuBar(modelMenuBar);
-        ensureThemesMenuReady();
-        ensureModelsMenuReady();
-        ensureFontMenuReady();
-        syncTogglePreviewMenuSelection();
-        revalidate();
-        repaint();
+        menuBarSettingDispatchCoordinator.apply(
+                enabled,
+                this::setJMenuBar,
+                this::ensureModelsMenuBar,
+                () -> modelMenuBar,
+                this::ensureThemesMenuReady,
+                this::ensureModelsMenuReady,
+                this::ensureFontMenuReady,
+                this::syncTogglePreviewMenuSelection,
+                () -> {
+                    revalidate();
+                    repaint();
+                }
+        );
     }
 
     private void ensureModelsMenuBar() {
-        if (modelMenuBar != null) {
-            return;
-        }
-
-        modelMenuBar = new JMenuBar();
-        int menuShortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
-
-        fileMenu = new JMenu("File");
-        JMenuItem newChatItem = new JMenuItem("New Chat");
-        newChatItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, menuShortcut));
-        newChatItem.addActionListener(e -> newChat());
-        fileMenu.add(newChatItem);
-
-        viewMenu = new JMenu("View");
-        viewMenu.addMenuListener(new MenuListener() {
-            @Override
-            public void menuSelected(MenuEvent e) {
-                chatPanel.hideModelPopup();
-                syncTogglePreviewMenuSelection();
-            }
-
-            @Override
-            public void menuDeselected(MenuEvent e) {
-            }
-
-            @Override
-            public void menuCanceled(MenuEvent e) {
-            }
-        });
-
-        JMenuItem toggleSidebarItem = new JMenuItem("Toggle Sidebar");
-        toggleSidebarItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_B, menuShortcut));
-        toggleSidebarItem.addActionListener(e -> toggleSidebar());
-        viewMenu.add(toggleSidebarItem);
-
-        JMenuItem toggleModelDropdownItem = new JMenuItem("Toggle Model Dropdown");
-        toggleModelDropdownItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_SLASH, menuShortcut));
-        toggleModelDropdownItem.addActionListener(e -> chatPanel.showModelPopupCentered());
-        viewMenu.add(toggleModelDropdownItem);
-
-        JMenuItem chatSearchItem = new JMenuItem("Chat Search");
-        chatSearchItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F, menuShortcut | InputEvent.SHIFT_DOWN_MASK));
-        chatSearchItem.addActionListener(e -> openChatSearch(null));
-        viewMenu.add(chatSearchItem);
-
-        togglePreviewMenuItem = new JCheckBoxMenuItem("Toggle Preview");
-        togglePreviewMenuItem.addActionListener(e -> {
-            if (syncingPreviewMenuSelection) {
-                return;
-            }
-
-            AssistantRenderMode mode = togglePreviewMenuItem.isSelected()
-                    ? AssistantRenderMode.PREVIEW
-                    : AssistantRenderMode.MARKDOWN;
-            chatPanel.setAssistantRenderMode(mode, true);
-        });
-        viewMenu.add(togglePreviewMenuItem);
-        syncTogglePreviewMenuSelection();
-
-        themesMenu = new JMenu("Theme");
-        themesMenu.addMenuListener(new MenuListener() {
-            @Override
-            public void menuSelected(MenuEvent e) {
-                chatPanel.hideModelPopup();
-                ensureThemesMenuReady();
-            }
-
-            @Override
-            public void menuDeselected(MenuEvent e) {
-            }
-
-            @Override
-            public void menuCanceled(MenuEvent e) {
-            }
-        });
-
-        fontMenu = new JMenu("Font");
-        fontMenu.addMenuListener(new MenuListener() {
-            @Override
-            public void menuSelected(MenuEvent e) {
-                chatPanel.hideModelPopup();
-                ensureFontMenuReady();
-            }
-
-            @Override
-            public void menuDeselected(MenuEvent e) {
-            }
-
-            @Override
-            public void menuCanceled(MenuEvent e) {
-            }
-        });
-
-        modelsMenu = new JMenu("Model");
-        modelsMenu.addMenuListener(new MenuListener() {
-            @Override
-            public void menuSelected(MenuEvent e) {
-                chatPanel.hideModelPopup();
-                ensureModelsMenuReady();
-            }
-
-            @Override
-            public void menuDeselected(MenuEvent e) {
-            }
-
-            @Override
-            public void menuCanceled(MenuEvent e) {
-            }
-        });
-
-        modelMenuBar.add(fileMenu);
-        modelMenuBar.add(viewMenu);
-        modelMenuBar.add(modelsMenu);
-        modelMenuBar.add(fontMenu);
-        modelMenuBar.add(themesMenu);
-
-        if (!SystemInfo.isMacOS
-            || !Boolean.parseBoolean(System.getProperty("apple.laf.useScreenMenuBar", "false"))
-        ) {
-            JMenu helpMenu = new JMenu("Help");
-            JMenuItem aboutItem = new JMenuItem("About %s".formatted(getTitle()));
-            aboutItem.addActionListener(e -> AboutDialog.show(this));
-            helpMenu.add(aboutItem);
-            modelMenuBar.add(helpMenu);
-        }
-
-        modelsMenuDirty = true;
-        themesMenuBuilt = false;
-        fontMenuBuilt = false;
+        mainMenuBarEnsureApplyFlowCoordinator.ensureAndApply(
+                modelMenuBar,
+                () -> mainMenuBarCreateDispatchCoordinator.create(
+                        getTitle(),
+                        this::newChat,
+                        chatPanel::hideModelPopup,
+                        this::syncTogglePreviewMenuSelection,
+                        this::toggleSidebar,
+                        () -> chatPanel.showModelPopupCentered(),
+                        () -> openChatSearch(null),
+                        selected -> assistantRenderModeToggleCoordinator.apply(
+                                selected,
+                                syncingPreviewMenuSelection,
+                                chatPanel::setAssistantRenderMode
+                        ),
+                        this::ensureThemesMenuReady,
+                        this::ensureFontMenuReady,
+                        this::ensureModelsMenuReady,
+                        () -> AboutDialog.show(this)
+                ),
+                this::syncTogglePreviewMenuSelection,
+                new MainMenuBarEnsureStateResolver.CurrentState(
+                        fileMenu,
+                        viewMenu,
+                        modelsMenu,
+                        fontMenu,
+                        themesMenu,
+                        togglePreviewMenuItem,
+                        modelsMenuDirty,
+                        themesMenuBuilt,
+                        fontMenuBuilt
+                ),
+                value -> modelMenuBar = value,
+                value -> fileMenu = value,
+                value -> viewMenu = value,
+                value -> modelsMenu = value,
+                value -> fontMenu = value,
+                value -> themesMenu = value,
+                value -> togglePreviewMenuItem = value,
+                value -> modelsMenuDirty = value,
+                value -> themesMenuBuilt = value,
+                value -> fontMenuBuilt = value
+        );
     }
 
     private void ensureModelsMenuReady() {
-        if (modelsMenuDirty) {
-            rebuildModelsMenuStructure();
-        }
-
-        refreshLocalProviderAvailabilityInMenu();
-        syncModelsMenuSelection();
+        providerMenuReadyDispatchCoordinator.ensureReady(
+                modelsMenuDirty,
+                this::rebuildModelsMenuStructure,
+                this::refreshLocalProviderAvailabilityInMenu,
+                this::syncModelsMenuSelection
+        );
     }
 
     private void ensureThemesMenuReady() {
-        if (!themesMenuBuilt) {
-            rebuildThemesMenuStructure();
-        }
-        syncThemeMenuSelection();
+        themeMenuReadyDispatchCoordinator.ensureReady(
+                themesMenuBuilt,
+                this::rebuildThemesMenuStructure,
+                this::syncThemeMenuSelection
+        );
     }
 
     private void ensureFontMenuReady() {
-        if (!fontMenuBuilt) {
-            rebuildFontMenuStructure();
-        }
-        syncFontMenuSelection();
+        fontMenuReadyDispatchCoordinator.ensureReady(
+                fontMenuBuilt,
+                this::rebuildFontMenuStructure,
+                this::syncFontMenuSelection
+        );
     }
 
     private void syncTogglePreviewMenuSelection() {
-        if (togglePreviewMenuItem == null) {
-            return;
-        }
-
-        syncingPreviewMenuSelection = true;
-        togglePreviewMenuItem.setSelected(chatPanel.getAssistantRenderMode() == AssistantRenderMode.PREVIEW);
-        syncingPreviewMenuSelection = false;
+        assistantRenderModeToggleSelectionSyncCoordinator.sync(
+                togglePreviewMenuItem,
+                chatPanel.getAssistantRenderMode(),
+                value -> syncingPreviewMenuSelection = value
+        );
     }
 
     private void markModelsMenuDirty() {
@@ -789,520 +862,177 @@ public class MainFrame extends JFrame {
     }
 
     private void onLookAndFeelChanged() {
-        PROVIDER_ICON_CACHE.clear();
-        markModelsMenuDirty();
-        if (modelsMenu != null && modelsMenu.isPopupMenuVisible()) {
-            ensureModelsMenuReady();
-        }
-
-        if (fontMenu != null && fontMenu.isPopupMenuVisible()) {
-            ensureFontMenuReady();
-        }
+        lookAndFeelMenuRefreshCoordinator.refresh(
+                ProviderMenuIconRenderer::clearCache,
+                this::markModelsMenuDirty,
+                modelsMenu,
+                this::ensureModelsMenuReady,
+                fontMenu,
+                this::ensureFontMenuReady
+        );
     }
 
     private void rebuildModelsMenuStructure() {
-        if (modelsMenu == null) {
-            return;
-        }
+        ModelMenuStructureRebuildCoordinator.RebuildState rebuildState = modelMenuStructureRebuildCoordinator.rebuild(
+                modelsMenu,
+                modelMenuItemsByKey,
+                providerHeaderItemsByName,
+                ProviderRegistry.availableProviders(),
+                chatPanel::setSelectedModel,
+                modelsMenuDirty,
+                lastMenuSelectedModelKey
+        );
 
-        modelsMenu.removeAll();
-        modelMenuItemsByKey.clear();
-        providerHeaderItemsByName.clear();
-        List<ProviderRegistry.ProviderDef> providers = ProviderRegistry.availableProviders();
-        if (providers.isEmpty()) {
-            JMenuItem empty = new JMenuItem("No providers available");
-            empty.setEnabled(false);
-            modelsMenu.add(empty);
-            modelsMenuDirty = false;
-            lastMenuSelectedModelKey = null;
-            return;
-        }
-
-        Map<String, List<String>> modelsByProvider = providers.stream()
-                .collect(Collectors.toMap(
-                    ProviderRegistry.ProviderDef::name,
-                    provider -> {
-                            List<String> models = sanitizeModelIds(provider.name(), modelCacheService.getModels(provider.name()));
-                            return models.isEmpty()
-                                    ? sanitizeModelIds(provider.name(), provider.seedModels())
-                                    : models;
-                        },
-                    (existing, replacement) -> existing,
-                    LinkedHashMap::new
-                ));
-
-        ButtonGroup group = new ButtonGroup();
-
-        Map<String, Boolean> providerSelectable = providers.stream()
-                .collect(Collectors.toMap(
-                        ProviderRegistry.ProviderDef::name,
-                        this::isProviderModelSelectionEnabled,
-                        (existing, replacement) -> replacement,
-                        LinkedHashMap::new
-                ));
-
-        List<ModelSelection> favorites = providers.stream()
-                .flatMap(provider -> modelsByProvider.getOrDefault(provider.name(), emptyList()).stream()
-                        .filter(model -> modelFavoritesService.isFavorite(provider.name(), model))
-                        .map(model -> new ModelSelection(provider.name(), model))
-                )
-                .toList();
-
-        if (!favorites.isEmpty()) {
-            JMenuItem favoritesHeader = new JMenuItem("★ Favorites");
-            favoritesHeader.setEnabled(false);
-            modelsMenu.add(favoritesHeader);
-
-            favorites.forEach(selection -> {
-                String modelKey = toModelKey(selection.provider(), selection.model());
-                JRadioButtonMenuItem item = new JRadioButtonMenuItem(selection.model());
-                boolean selectable = providerSelectable.getOrDefault(selection.provider(), true);
-                item.setEnabled(selectable);
-                item.setIcon(providerIcon(selection.provider(), PROVIDER_MODEL_ICON_SIZE, resolveMenuItemIconTint(item, selectable)));
-                item.setIconTextGap(8);
-                item.addActionListener(e -> chatPanel.setSelectedModel(modelKey));
-                group.add(item);
-                modelsMenu.add(item);
-                modelMenuItemsByKey.put(modelKey, item);
-            });
-
-            modelsMenu.addSeparator();
-        }
-
-        boolean firstProvider = true;
-        for (ProviderRegistry.ProviderDef provider : providers) {
-            if (!firstProvider) {
-                modelsMenu.addSeparator();
-            }
-
-            boolean providerEnabled = providerSelectable.getOrDefault(provider.name(), true);
-            String providerLabel = providerEnabled ? provider.name() : "%s (offline)".formatted(provider.name());
-
-            JMenuItem providerHeader = createProviderHeader(provider.name(), providerLabel, providerEnabled);
-            modelsMenu.add(providerHeader);
-            providerHeaderItemsByName.put(provider.name(), providerHeader);
-
-            List<String> models = modelsByProvider.getOrDefault(provider.name(), emptyList()).stream()
-                    .filter(model -> !modelFavoritesService.isFavorite(provider.name(), model))
-                    .toList();
-
-            if (models.isEmpty()) {
-                JMenuItem emptyProvider = new JMenuItem("No models available");
-                emptyProvider.setEnabled(false);
-                modelsMenu.add(emptyProvider);
-            } else {
-                models.forEach(model -> {
-                    String modelKey = toModelKey(provider.name(), model);
-                    JRadioButtonMenuItem item = new JRadioButtonMenuItem(model);
-                    item.setEnabled(providerEnabled);
-                    item.setIcon(providerIcon(provider.name(), PROVIDER_MODEL_ICON_SIZE, resolveMenuItemIconTint(item, providerEnabled)));
-                    item.setIconTextGap(8);
-                    item.addActionListener(e -> chatPanel.setSelectedModel(modelKey));
-                    group.add(item);
-                    modelsMenu.add(item);
-                    modelMenuItemsByKey.put(modelKey, item);
-                });
-            }
-
-            firstProvider = false;
-        }
-
-        modelsMenuDirty = false;
-        lastMenuSelectedModelKey = null;
+        modelsMenuDirty = rebuildState.modelsMenuDirty();
+        lastMenuSelectedModelKey = rebuildState.lastMenuSelectedModelKey();
     }
 
     private void syncModelsMenuSelection() {
-        if (modelsMenuDirty) {
-            return;
-        }
-
-        String selectedModelKey = chatPanel.getSelectedModel();
-        if (Objects.equals(selectedModelKey, lastMenuSelectedModelKey)) {
-            return;
-        }
-
-        if (lastMenuSelectedModelKey != null) {
-            JRadioButtonMenuItem previous = modelMenuItemsByKey.get(lastMenuSelectedModelKey);
-            if (previous != null) {
-                previous.setSelected(false);
-            }
-        }
-
-        if (selectedModelKey != null) {
-            JRadioButtonMenuItem current = modelMenuItemsByKey.get(selectedModelKey);
-            if (current != null) {
-                current.setSelected(true);
-            }
-        }
-
-        lastMenuSelectedModelKey = selectedModelKey;
+        lastMenuSelectedModelKey = modelMenuSelectionDispatchCoordinator.sync(
+                modelMenuItemsByKey,
+                chatPanel.getSelectedModel(),
+                lastMenuSelectedModelKey,
+                modelsMenuDirty
+        );
     }
 
     private void onSelectedModelChanged(String modelKey) {
-        if (modelsMenu == null || modelsMenuDirty) {
-            return;
-        }
-
-        syncModelsMenuSelection();
+        modelMenuSelectionChangeCoordinator.onSelectedModelChanged(
+                modelsMenu,
+                modelsMenuDirty,
+                this::syncModelsMenuSelection
+        );
     }
 
     private void onModelFavoritesChanged() {
-        markModelsMenuDirty();
-        if (modelsMenu != null && modelsMenu.isPopupMenuVisible()) {
-            ensureModelsMenuReady();
-        }
+        modelMenuDirtyRefreshTriggerCoordinator.trigger(
+                modelsMenu,
+                this::markModelsMenuDirty,
+                this::ensureModelsMenuReady
+        );
     }
 
     private void onModelCatalogChanged() {
-        markModelsMenuDirty();
-        if (modelsMenu != null && modelsMenu.isPopupMenuVisible()) {
-            ensureModelsMenuReady();
-        }
+        modelMenuDirtyRefreshTriggerCoordinator.trigger(
+                modelsMenu,
+                this::markModelsMenuDirty,
+                this::ensureModelsMenuReady
+        );
     }
 
     private void refreshLocalProviderAvailabilityInMenu() {
-        if (modelMenuItemsByKey.isEmpty()) {
-            return;
-        }
-
-        Map<String, String> defaultBaseUrlByProvider = ProviderRegistry.allProviders().stream()
-                .collect(Collectors.toMap(
-                        ProviderRegistry.ProviderDef::name,
-                        ProviderRegistry.ProviderDef::baseUrl,
-                        (existing, replacement) -> replacement,
-                        LinkedHashMap::new
-                ));
-
-        Map<String, Boolean> providerEnabledByName = new LinkedHashMap<>();
-        LOCAL_HEALTH_GATED_PROVIDERS.forEach(providerName -> {
-            String defaultBaseUrl = defaultBaseUrlByProvider.get(providerName);
-            String configuredBaseUrl = readConfiguredProviderBaseUrl(providerName, defaultBaseUrl);
-            providerEnabledByName.put(providerName, LocalServiceHealth.isReachable(configuredBaseUrl));
-        });
-
-        modelMenuItemsByKey.forEach((modelKey, item) -> parseModelSelection(modelKey).ifPresentOrElse(selection -> {
-                    Boolean enabled = providerEnabledByName.get(selection.provider());
-                    boolean selectable = enabled == null || enabled;
-                    item.setEnabled(selectable);
-                    item.setIcon(providerIcon(
-                            selection.provider(),
-                            PROVIDER_MODEL_ICON_SIZE,
-                            resolveMenuItemIconTint(item, selectable)));
-                },
-                () -> item.setEnabled(true)
-        ));
-
-        providerHeaderItemsByName.forEach((providerName, headerItem) -> {
-            Boolean enabled = providerEnabledByName.get(providerName);
-            boolean providerEnabled = enabled == null || enabled;
-            String text = providerEnabled ? providerName : "%s (offline)".formatted(providerName);
-            updateProviderHeader(headerItem, providerName, text, providerEnabled);
-        });
-    }
-
-    private JMenuItem createProviderHeader(String providerName, String text, boolean enabled) {
-        JMenuItem header = new JMenuItem();
-        header.setEnabled(false);
-        Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
-        header.setIconTextGap(10);
-        updateProviderHeader(header, providerName, text, enabled);
-        return header;
-    }
-
-    private void updateProviderHeader(JMenuItem header, String providerName, String text, boolean enabled) {
-        header.setText(text);
-        header.setIcon(providerIcon(
-                providerName,
-                PROVIDER_HEADER_ICON_SIZE,
-                resolveMenuItemIconTint(header, enabled)));
-    }
-
-    private String readConfiguredProviderBaseUrl(String providerName, String defaultBaseUrl) {
-        try {
-            String value = settingsRepo.get("provider.%s.baseUrl".formatted(providerName), defaultBaseUrl);
-            if (StringUtils.isBlank(value)) {
-                return defaultBaseUrl;
-            }
-            return value;
-        } catch (Exception e) {
-            return defaultBaseUrl;
-        }
-    }
-
-    private boolean isProviderModelSelectionEnabled(ProviderRegistry.ProviderDef provider) {
-        if (!LOCAL_HEALTH_GATED_PROVIDERS.contains(provider.name())) {
-            return true;
-        }
-
-        return LocalServiceHealth.isReachableNonBlocking(provider.baseUrl());
+        providerMenuAvailabilityRefreshDispatchCoordinator.refresh(
+                modelMenuItemsByKey,
+                providerHeaderItemsByName,
+                providerMenuIconResolver
+        );
     }
 
     private void rebuildThemesMenuStructure() {
-        if (themesMenu == null) {
-            return;
-        }
+        ThemeMenuStructureRebuildCoordinator.RebuildState rebuildState =
+                themeMenuStructureRebuildCoordinator.rebuild(
+                        themesMenu,
+                        themeMenuItemsByName,
+                        this::applyThemeFromMenu,
+                        themesMenuBuilt,
+                        lastMenuSelectedTheme
+                );
 
-        themesMenu.removeAll();
-        themeMenuItemsByName.clear();
-
-        ButtonGroup group = new ButtonGroup();
-        boolean firstSection = true;
-        for (Map.Entry<String, Map<String, String>> section : AppearancePanel.groupedThemes().entrySet()) {
-            if (!firstSection) {
-                themesMenu.addSeparator();
-            }
-
-            JMenuItem sectionHeader = new JMenuItem(section.getKey());
-            sectionHeader.setEnabled(false);
-            themesMenu.add(sectionHeader);
-
-            section.getValue().forEach((themeName, className) -> {
-                JRadioButtonMenuItem item = new JRadioButtonMenuItem(themeName);
-                item.addActionListener(e -> applyThemeFromMenu(themeName, className));
-                group.add(item);
-                themesMenu.add(item);
-                themeMenuItemsByName.put(themeName, item);
-            });
-            firstSection = false;
-        }
-
-        themesMenuBuilt = true;
-        lastMenuSelectedTheme = null;
+        themesMenuBuilt = rebuildState.themesMenuBuilt();
+        lastMenuSelectedTheme = rebuildState.lastMenuSelectedTheme();
     }
 
     private void syncThemeMenuSelection() {
-        if (!themesMenuBuilt) {
-            return;
-        }
+        String selectedTheme = themeMenuSelectionDispatchCoordinator.refresh(
+                themeMenuItemsByName,
+                lastMenuSelectedTheme,
+                themesMenuBuilt,
+                "GitHub"
+        );
 
-        String selectedTheme = "GitHub";
-        try {
-            selectedTheme = settingsRepo.get(KEY_THEME, "GitHub");
-        } catch (Exception e) {
-            selectedTheme = "GitHub";
-        }
-
-        if (Objects.equals(selectedTheme, lastMenuSelectedTheme)) {
-            return;
-        }
-
-        if (lastMenuSelectedTheme != null) {
-            JRadioButtonMenuItem previous = themeMenuItemsByName.get(lastMenuSelectedTheme);
-            if (previous != null) {
-                previous.setSelected(false);
-            }
-        }
-
-        JRadioButtonMenuItem current = themeMenuItemsByName.get(selectedTheme);
-        if (current != null) {
-            current.setSelected(true);
-        }
-
-        lastMenuSelectedTheme = selectedTheme;
+        themeMenuSelectionApplyCoordinator.apply(
+                selectedTheme,
+                value -> lastMenuSelectedTheme = value
+        );
     }
 
     private void rebuildFontMenuStructure() {
-        if (fontMenu == null) {
-            return;
-        }
+        FontMenuStructureRebuildCoordinator.RebuildState rebuildState =
+                fontMenuStructureRebuildCoordinator.rebuild(
+                        fontMenu,
+                        appFontMenuItemsByFamily,
+                        appFontSizeMenuItemsBySize,
+                        codeFontMenuItemsByFamily,
+                        this::restoreAppFontFromMenu,
+                        () -> adjustAppFontSizeFromMenu(true),
+                        () -> adjustAppFontSizeFromMenu(false),
+                        this::applyAppFontFamilyFromMenu,
+                        this::applyCodeFontFromMenu,
+                        this::applyAppFontSizeFromMenu,
+                        fontMenuBuilt,
+                        lastMenuSelectedAppFontFamily,
+                        lastMenuSelectedAppFontSize,
+                        lastMenuSelectedCodeFontFamily
+                );
 
-        fontMenu.removeAll();
-        appFontMenuItemsByFamily.clear();
-        appFontSizeMenuItemsBySize.clear();
-        codeFontMenuItemsByFamily.clear();
-
-        int menuShortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
-
-        JMenuItem restoreFontItem = new JMenuItem("Restore Font");
-        restoreFontItem.setAccelerator(KeyStroke.getKeyStroke(
-                KeyEvent.VK_0,
-                menuShortcut | InputEvent.ALT_DOWN_MASK));
-        restoreFontItem.addActionListener(e -> restoreAppFontFromMenu());
-        fontMenu.add(restoreFontItem);
-
-        JMenuItem increaseFontItem = new JMenuItem("Increase Font Size");
-        increaseFontItem.setAccelerator(KeyStroke.getKeyStroke(
-                KeyEvent.VK_PLUS,
-                menuShortcut | InputEvent.ALT_DOWN_MASK));
-        increaseFontItem.addActionListener(e -> adjustAppFontSizeFromMenu(true));
-        fontMenu.add(increaseFontItem);
-
-        JMenuItem decreaseFontItem = new JMenuItem("Decrease Font Size");
-        decreaseFontItem.setAccelerator(KeyStroke.getKeyStroke(
-                KeyEvent.VK_MINUS,
-                menuShortcut | InputEvent.ALT_DOWN_MASK));
-        decreaseFontItem.addActionListener(e -> adjustAppFontSizeFromMenu(false));
-        fontMenu.add(decreaseFontItem);
-
-        fontMenu.addSeparator();
-
-        addMenuSectionHeader(fontMenu, "UI Font Family");
-        ButtonGroup appFontGroup = new ButtonGroup();
-        for (String fontFamily : AppearancePanel.appFontOptions()) {
-            JRadioButtonMenuItem item = new JRadioButtonMenuItem(fontFamily);
-            item.addActionListener(e -> applyAppFontFamilyFromMenu(fontFamily));
-            appFontGroup.add(item);
-            fontMenu.add(item);
-            appFontMenuItemsByFamily.put(fontFamily, item);
-        }
-
-        fontMenu.addSeparator();
-
-        addMenuSectionHeader(fontMenu, "Code Font Family (Monospaced)");
-        ButtonGroup codeFontGroup = new ButtonGroup();
-        for (String fontFamily : AppearancePanel.codeFontOptions()) {
-            JRadioButtonMenuItem item = new JRadioButtonMenuItem(fontFamily);
-            item.addActionListener(e -> applyCodeFontFromMenu(fontFamily));
-            codeFontGroup.add(item);
-            fontMenu.add(item);
-            codeFontMenuItemsByFamily.put(fontFamily, item);
-        }
-
-        fontMenu.addSeparator();
-
-        addMenuSectionHeader(fontMenu, "UI Font Size");
-        ButtonGroup appFontSizeGroup = new ButtonGroup();
-        for (int fontSize : AppearancePanel.appFontSizeOptions()) {
-            JRadioButtonMenuItem item = new JRadioButtonMenuItem(String.valueOf(fontSize));
-            item.addActionListener(e -> applyAppFontSizeFromMenu(fontSize));
-            appFontSizeGroup.add(item);
-            fontMenu.add(item);
-            appFontSizeMenuItemsBySize.put(fontSize, item);
-        }
-
-        fontMenuBuilt = true;
-        lastMenuSelectedAppFontFamily = null;
-        lastMenuSelectedAppFontSize = null;
-        lastMenuSelectedCodeFontFamily = null;
-    }
-
-    private static void addMenuSectionHeader(JMenu menu, String text) {
-        JMenuItem sectionHeader = new JMenuItem(text);
-        sectionHeader.setEnabled(false);
-        menu.add(sectionHeader);
+        fontMenuBuilt = rebuildState.fontMenuBuilt();
+        lastMenuSelectedAppFontFamily = rebuildState.lastMenuSelectedAppFontFamily();
+        lastMenuSelectedAppFontSize = rebuildState.lastMenuSelectedAppFontSize();
+        lastMenuSelectedCodeFontFamily = rebuildState.lastMenuSelectedCodeFontFamily();
     }
 
     private void syncFontMenuSelection() {
-        if (!fontMenuBuilt) {
-            return;
-        }
+        FontMenuSelectionSynchronizer.FontMenuSelectionState syncedSelection =
+                fontMenuSelectionDispatchCoordinator.refresh(
+                        appFontMenuItemsByFamily,
+                        appFontSizeMenuItemsBySize,
+                        codeFontMenuItemsByFamily,
+                        lastMenuSelectedAppFontFamily,
+                        lastMenuSelectedAppFontSize,
+                        lastMenuSelectedCodeFontFamily,
+                        fontMenuBuilt
+                );
 
-        String appFontFamily = readStringSetting(KEY_APP_FONT, AppearancePanel.DEFAULT_APP_FONT);
-        if (!appFontMenuItemsByFamily.containsKey(appFontFamily)) {
-            appFontFamily = AppearancePanel.DEFAULT_APP_FONT;
-        }
-
-        int appFontSize = readAppFontSizeSetting();
-        if (!appFontSizeMenuItemsBySize.containsKey(appFontSize)) {
-            appFontSize = AppearancePanel.normalizeAppFontSize(appFontSize);
-        }
-
-        String codeFontFamily = readStringSetting(KEY_CODE_FONT, AppearancePanel.DEFAULT_CODE_FONT);
-        if (!codeFontMenuItemsByFamily.containsKey(codeFontFamily)) {
-            codeFontFamily = AppearancePanel.DEFAULT_CODE_FONT;
-        }
-
-        boolean selectionUnchanged = Objects.equals(appFontFamily, lastMenuSelectedAppFontFamily)
-                && Objects.equals(appFontSize, lastMenuSelectedAppFontSize)
-                && Objects.equals(codeFontFamily, lastMenuSelectedCodeFontFamily);
-        if (selectionUnchanged) {
-            return;
-        }
-
-        if (lastMenuSelectedAppFontFamily != null) {
-            JRadioButtonMenuItem previousAppFont = appFontMenuItemsByFamily.get(lastMenuSelectedAppFontFamily);
-            if (previousAppFont != null) {
-                previousAppFont.setSelected(false);
-            }
-        }
-
-        if (lastMenuSelectedAppFontSize != null) {
-            JRadioButtonMenuItem previousAppFontSize = appFontSizeMenuItemsBySize.get(lastMenuSelectedAppFontSize);
-            if (previousAppFontSize != null) {
-                previousAppFontSize.setSelected(false);
-            }
-        }
-
-        if (lastMenuSelectedCodeFontFamily != null) {
-            JRadioButtonMenuItem previousCodeFont = codeFontMenuItemsByFamily.get(lastMenuSelectedCodeFontFamily);
-            if (previousCodeFont != null) {
-                previousCodeFont.setSelected(false);
-            }
-        }
-
-        JRadioButtonMenuItem currentAppFont = appFontMenuItemsByFamily.get(appFontFamily);
-        if (currentAppFont != null) {
-            currentAppFont.setSelected(true);
-        }
-
-        JRadioButtonMenuItem currentAppFontSize = appFontSizeMenuItemsBySize.get(appFontSize);
-        if (currentAppFontSize != null) {
-            currentAppFontSize.setSelected(true);
-        }
-
-        JRadioButtonMenuItem currentCodeFont = codeFontMenuItemsByFamily.get(codeFontFamily);
-        if (currentCodeFont != null) {
-            currentCodeFont.setSelected(true);
-        }
-
-        lastMenuSelectedAppFontFamily = appFontFamily;
-        lastMenuSelectedAppFontSize = appFontSize;
-        lastMenuSelectedCodeFontFamily = codeFontFamily;
+        fontMenuSelectionApplyCoordinator.apply(
+                syncedSelection,
+                value -> lastMenuSelectedAppFontFamily = value,
+                value -> lastMenuSelectedAppFontSize = value,
+                value -> lastMenuSelectedCodeFontFamily = value
+        );
     }
 
     private void applyAppFontFamilyFromMenu(String fontFamily) {
-        applyAppFontSelectionFromMenu(fontFamily, readAppFontSizeSetting());
+        applyAppFontSelectionFromMenu(fontFamily, fontSettingsResolver.resolveAppFontSizeSetting());
     }
 
     private void applyAppFontSizeFromMenu(int appFontSize) {
-        String appFontFamily = readStringSetting(KEY_APP_FONT, AppearancePanel.DEFAULT_APP_FONT);
+        String appFontFamily = fontSettingsResolver.resolveAppFontFamilySetting();
         applyAppFontSelectionFromMenu(appFontFamily, appFontSize);
     }
 
     private void applyAppFontSelectionFromMenu(String appFontFamily, int appFontSize) {
-        String family = appFontMenuItemsByFamily.containsKey(appFontFamily)
-                ? appFontFamily
-                : AppearancePanel.DEFAULT_APP_FONT;
-        int size = AppearancePanel.normalizeAppFontSize(appFontSize);
-
-        AppearancePanel.applyAppFont(family, size);
-        refreshAllWindows();
-
-        try {
-            settingsRepo.put(KEY_APP_FONT, family);
-            settingsRepo.put(KEY_APP_FONT_SIZE, String.valueOf(size));
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to apply UI font: %s".formatted(e.getMessage()),
-                    "Font Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
-
-        syncFontMenuSelection();
+        fontMenuApplyDispatchCoordinator.apply(
+                () -> fontMenuApplyCoordinator.applyAppFontSelection(
+                        appFontFamily,
+                        appFontSize,
+                        appFontMenuItemsByFamily.keySet(),
+                        this::syncFontMenuSelection
+                ),
+                "Failed to apply UI font: ",
+                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
+        );
     }
 
     private void applyCodeFontFromMenu(String fontFamily) {
-        String family = codeFontMenuItemsByFamily.containsKey(fontFamily)
-                ? fontFamily
-                : AppearancePanel.DEFAULT_CODE_FONT;
-
-        AppearancePanel.applyCodeFont(family);
-        refreshAllWindows();
-
-        try {
-            settingsRepo.put(KEY_CODE_FONT, family);
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to apply code font: %s".formatted(e.getMessage()),
-                    "Font Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
-
-        syncFontMenuSelection();
+        fontMenuApplyDispatchCoordinator.apply(
+                () -> fontMenuApplyCoordinator.applyCodeFontSelection(
+                        fontFamily,
+                        codeFontMenuItemsByFamily.keySet(),
+                        this::syncFontMenuSelection
+                ),
+                "Failed to apply code font: ",
+                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
+        );
     }
 
     private void restoreAppFontFromMenu() {
@@ -1312,232 +1042,41 @@ public class MainFrame extends JFrame {
     }
 
     private void adjustAppFontSizeFromMenu(boolean increase) {
-        int[] sizeOptions = AppearancePanel.appFontSizeOptions();
-        int currentSize = readAppFontSizeSetting();
-        int normalizedCurrentSize = AppearancePanel.normalizeAppFontSize(currentSize);
-        int adjustedSize = normalizedCurrentSize;
-
-        if (increase) {
-            for (int size : sizeOptions) {
-                if (size > normalizedCurrentSize) {
-                    adjustedSize = size;
-                    break;
-                }
-            }
-        } else {
-            for (int index = sizeOptions.length - 1; index >= 0; index--) {
-                if (sizeOptions[index] < normalizedCurrentSize) {
-                    adjustedSize = sizeOptions[index];
-                    break;
-                }
-            }
-        }
-
-        applyAppFontSizeFromMenu(adjustedSize);
-    }
-
-    private String readStringSetting(String key, String defaultValue) {
-        try {
-            return settingsRepo.get(key, defaultValue);
-        } catch (Exception e) {
-            return defaultValue;
-        }
-    }
-
-    private int readAppFontSizeSetting() {
-        String defaultSize = String.valueOf(AppearancePanel.defaultAppFontSize());
-        String value = readStringSetting(KEY_APP_FONT_SIZE, defaultSize);
-        try {
-            return AppearancePanel.normalizeAppFontSize(Integer.parseInt(value));
-        } catch (Exception e) {
-            return AppearancePanel.normalizeAppFontSize(Integer.parseInt(defaultSize));
-        }
+        appFontSizeAdjustCoordinator.adjust(
+                increase,
+                AppearancePanel::appFontSizeOptions,
+                fontSettingsResolver::resolveAppFontSizeSetting,
+                this::applyAppFontSizeFromMenu
+        );
     }
 
     private void applyThemeFromMenu(String themeName, String className) {
-        try {
-            UIManager.setLookAndFeel(className);
-            PROVIDER_ICON_CACHE.clear();
-            markModelsMenuDirty();
-            AppearancePanel.applySavedFonts(settingsRepo);
-            refreshAllWindows();
-            settingsRepo.put(KEY_THEME, themeName);
-            syncThemeMenuSelection();
-            syncFontMenuSelection();
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(
-                this,
-                "Failed to apply theme: %s".formatted(e.getMessage()),
-                "Theme Error",
-                JOptionPane.ERROR_MESSAGE
-            );
-        }
-    }
-
-    private static void refreshAllWindows() {
-        for (Window window : Window.getWindows()) {
-            SwingUtilities.updateComponentTreeUI(window);
-            Fonts.refreshComponentTreeFonts(window);
-            window.invalidate();
-            window.validate();
-            window.repaint();
-        }
-    }
-
-    private static Icon providerIcon(String providerName, int size, Color tintColor) {
-        String iconPath = PROVIDER_ICON_PATHS.get(providerName);
-        if (StringUtils.isBlank(iconPath)) {
-            return null;
-        }
-
-        Color effectiveTint = normalizeOpaque(tintColor, new Color(60, 60, 60));
-        ProviderMenuIconKey cacheKey = new ProviderMenuIconKey(iconPath, size, effectiveTint.getRGB());
-        return PROVIDER_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
-            URL url = MainFrame.class.getResource(key.path());
-            if (url == null) {
-                return null;
-            }
-
-            Color iconColor = new Color(key.fallbackRgb(), true);
-            FlatSVGIcon icon = new FlatSVGIcon(url).derive(key.size(), key.size());
-            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                int alpha = color.getAlpha() == 0 ? 0 : Math.max(color.getAlpha(), PROVIDER_ICON_ALPHA_MIN);
-                return new Color(iconColor.getRed(), iconColor.getGreen(), iconColor.getBlue(), alpha);
-            }));
-            return icon.hasFound() ? icon : null;
-        });
-    }
-
-    private static Color resolveMenuItemIconTint(JMenuItem item, boolean enabled) {
-        if (SystemInfo.isMacOS && Boolean.parseBoolean(System.getProperty("apple.laf.useScreenMenuBar", "false"))) {
-            return enabled ? MAC_MENU_ICON_ENABLED : MAC_MENU_ICON_DISABLED;
-        }
-
-        if (enabled) {
-            return normalizeOpaque(item.getForeground(), new Color(55, 55, 55));
-        }
-
-        Color disabledForeground = UIManager.getColor("MenuItem.disabledForeground");
-        return normalizeOpaque(disabledForeground, new Color(140, 140, 140));
-    }
-
-    private static Color normalizeOpaque(Color candidate, Color fallback) {
-        if (candidate == null) {
-            return fallback;
-        }
-        return new Color(candidate.getRed(), candidate.getGreen(), candidate.getBlue());
-    }
-
-    private static List<String> sanitizeModelIds(String providerName, List<String> modelIds) {
-        return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
+        themeMenuApplyDispatchCoordinator.apply(
+                themeName,
+                className,
+                themeMenuApplyCoordinator::apply,
+                this::markModelsMenuDirty,
+                this::syncThemeMenuSelection,
+                this::syncFontMenuSelection,
+                message -> JOptionPane.showMessageDialog(this, message, "Theme Error", JOptionPane.ERROR_MESSAGE)
+        );
     }
 
     private void onAssistantRenderModeChanged(AssistantRenderMode mode) {
-        if (mode == null) {
-            return;
-        }
-
-        syncTogglePreviewMenuSelection();
-
-        if (currentConversationId != null) {
-            persistConversationRenderMode(currentConversationId, mode);
-            return;
-        }
-
-        pendingUnsavedConversationRenderMode = mode;
+        assistantRenderModeChangeDispatchCoordinator.apply(
+                currentConversationId,
+                mode,
+                pendingUnsavedConversationRenderMode,
+                this::syncTogglePreviewMenuSelection,
+                value -> pendingUnsavedConversationRenderMode = value
+        );
     }
 
     private AssistantRenderMode resolveConversationRenderMode(UUID conversationId) {
-        if (conversationId == null) {
-            return assistantMarkdownDefaultMode;
-        }
-
-        try {
-            String key = KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX + conversationId;
-            String stored = settingsRepo.get(key, null);
-            if (StringUtils.isBlank(stored)) {
-                return assistantMarkdownDefaultMode;
-            }
-            return AssistantRenderMode.fromSettingValue(stored);
-        } catch (Exception e) {
-            return assistantMarkdownDefaultMode;
-        }
+        return assistantRenderModeSettingsCoordinator.resolveConversationMode(
+                conversationId,
+                assistantMarkdownDefaultMode
+        );
     }
 
-    private void persistConversationRenderMode(UUID conversationId, AssistantRenderMode mode) {
-        if (conversationId == null || mode == null) {
-            return;
-        }
-
-        try {
-            settingsRepo.put(
-                KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX + conversationId,
-                mode.settingValue());
-        } catch (Exception e) {
-            // ignore mode persistence failure
-        }
-    }
-
-    private static String toModelKey(String providerName, String modelId) {
-        return providerName + MODEL_KEY_DELIMITER + modelId;
-    }
-
-    private static Optional<ModelSelection> parseModelSelection(String modelKey) {
-        if (StringUtils.isBlank(modelKey)) {
-            return Optional.empty();
-        }
-
-        String[] parts = modelKey.split(MODEL_KEY_DELIMITER, 2);
-        if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
-            return Optional.empty();
-        }
-
-        return Optional.of(new ModelSelection(parts[0], parts[1]));
-    }
-
-    private record ModelSelection(String provider, String model) {
-    }
-
-    private record ProviderMenuIconKey(String path, int size, int fallbackRgb) {
-    }
-
-    private static JButton createTitleBarButton(Icon icon, String tooltip) {
-        JButton btn = new JButton(icon);
-        btn.putClientProperty("JButton.buttonType", "borderless");
-        btn.setToolTipText(tooltip);
-        btn.setFocusable(false);
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        btn.setPreferredSize(new Dimension(24, 24));
-        btn.setMinimumSize(new Dimension(24, 24));
-        btn.setMaximumSize(new Dimension(24, 24));
-        btn.setHorizontalAlignment(SwingConstants.CENTER);
-        btn.setVerticalAlignment(SwingConstants.CENTER);
-        return btn;
-    }
-
-    private static final int TITLE_BAR_ICON_SIZE = 16;
-
-    private static Icon titleBarIcon(String resourcePath) {
-        URL url = MainFrame.class.getResource(resourcePath);
-        if (url == null) {
-            return null;
-        }
-
-        FlatSVGIcon icon = new FlatSVGIcon(url).derive(TITLE_BAR_ICON_SIZE, TITLE_BAR_ICON_SIZE);
-        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-            Color foreground = component != null ? component.getForeground() : null;
-            if (foreground == null) {
-                foreground = UIManager.getColor("Label.foreground");
-            }
-            if (foreground == null) {
-                foreground = new Color(90, 90, 90);
-            }
-            return new Color(
-                    foreground.getRed(),
-                    foreground.getGreen(),
-                    foreground.getBlue(),
-                    color.getAlpha());
-        }));
-        return icon.hasFound() ? icon : null;
-    }
 }

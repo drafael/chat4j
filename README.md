@@ -79,6 +79,11 @@ Chat4J stores its local database in:
 - `$XDG_CONFIG_HOME/chat4j/data/chat4j.mv.db`
 - fallback when `XDG_CONFIG_HOME` is not set: `~/.config/chat4j/data/chat4j.mv.db`
 
+Database credentials are stored in:
+
+- `$XDG_CONFIG_HOME/chat4j/db.credentials`
+- fallback when `XDG_CONFIG_HOME` is not set: `~/.config/chat4j/db.credentials`
+
 Chat4J uses this location directly and does not perform automatic migration from older paths.
 
 Schema creation and upgrades are managed by Flyway on startup.

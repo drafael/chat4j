@@ -294,6 +294,37 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Assistant persistence listener failure falls back to message-submitted callback")
+    void onSend_whenAssistantPersistenceListenerFails_triggersMessageSubmittedFallback() throws Exception {
+        var callbackCount = new AtomicInteger();
+        var callbacks = new CountDownLatch(2);
+        subject.setOnMessageSubmitted(() -> {
+            callbackCount.incrementAndGet();
+            callbacks.countDown();
+        });
+
+        subject.setOnAssistantMessageCompleted(event -> {
+            if (event.message().role() == Role.ASSISTANT) {
+                throw new IllegalStateException("boom");
+            }
+            return true;
+        });
+
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(callbackCount.get()).isEqualTo(2);
+        assertThat(subject.getHistory()).hasSize(2);
+        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
+    }
+
+    @Test
     @DisplayName("First send in unsaved chat keeps assistant stream bound after conversation is created")
     void onSend_whenUnsavedConversationGetsPersisted_streamRemainsVisibleAndPersistsAssistantMessage() throws Exception {
         var currentConversationId = new AtomicReference<UUID>();
@@ -346,6 +377,7 @@ class ChatPanelTest {
                 persistedEvents.add(event);
             }
             completion.countDown();
+            return true;
         });
 
         subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {

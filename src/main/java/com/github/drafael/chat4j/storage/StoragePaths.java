@@ -44,6 +44,6 @@ public final class StoragePaths {
     }
 
     public String jdbcUrl() {
-        return "jdbc:h2:file:%s;AUTO_SERVER=TRUE".formatted(databaseFilePrefix());
+        return "jdbc:h2:file:%s".formatted(databaseFilePrefix());
     }
 }
