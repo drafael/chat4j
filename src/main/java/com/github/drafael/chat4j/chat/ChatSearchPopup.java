@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.storage.ConversationRepo.SearchResult;
@@ -10,13 +12,32 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.*;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 public class ChatSearchPopup extends JDialog {
+
+    private static final int PROVIDER_ICON_SIZE = 16;
+    private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
+            Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
+            Map.entry("OpenAI", "/icons/providers/openai.svg"),
+            Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
+            Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
+            Map.entry("Google AI", "/icons/providers/google.svg"),
+            Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
+            Map.entry("Groq", "/icons/providers/groq.svg"),
+            Map.entry("DeepSeek", "/icons/providers/deepseek.svg"),
+            Map.entry("Mistral", "/icons/providers/mistral.svg"),
+            Map.entry("xAI", "/icons/providers/xai.svg"),
+            Map.entry("LM Studio", "/icons/providers/lmstudio.svg"),
+            Map.entry("Ollama", "/icons/providers/ollama.svg")
+    );
+    private static final Map<String, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JTextField searchField;
     private final JPanel listPanel;
@@ -28,6 +49,9 @@ public class ChatSearchPopup extends JDialog {
     private Timer debounceTimer;
     private int highlightedIndex = -1;
     private boolean scrolling;
+    private Component triggerComponent;
+    private final AWTEventListener outsideClickListener;
+    private boolean outsideClickListenerInstalled;
 
     public ChatSearchPopup(Window owner, ConversationRepo conversationRepo, Consumer<UUID> onSelect) {
         super(owner);
@@ -37,20 +61,31 @@ public class ChatSearchPopup extends JDialog {
         setType(Type.POPUP);
         setModalityType(ModalityType.MODELESS);
 
-        JPanel content = new JPanel(new BorderLayout());
-        content.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
-            BorderFactory.createEmptyBorder(8, 0, 8, 0)
-        ));
+        JPanel content = new JPanel(new BorderLayout()) {
+            @Override
+            public void updateUI() {
+                super.updateUI();
+                setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
+                    BorderFactory.createEmptyBorder(8, 0, 8, 0)
+                ));
+            }
+        };
 
         // Search field
-        searchField = new JTextField();
+        searchField = new JTextField() {
+            @Override
+            public void updateUI() {
+                super.updateUI();
+                setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),
+                    BorderFactory.createEmptyBorder(6, 12, 6, 12)
+                ));
+            }
+        };
         searchField.putClientProperty("JTextField.placeholderText", "Search chats...");
-        searchField.setFont(Fonts.of(Font.PLAIN, 13));
-        searchField.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),
-            BorderFactory.createEmptyBorder(6, 12, 6, 12)
-        ));
+        searchField.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        Fonts.apply(searchField, Font.PLAIN, Fonts.SIZE_BODY);
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { scheduleSearch(); }
             public void removeUpdate(DocumentEvent e) { scheduleSearch(); }
@@ -63,7 +98,7 @@ public class ChatSearchPopup extends JDialog {
         listPanel.setLayout(new BoxLayout(listPanel, BoxLayout.Y_AXIS));
 
         scrollPane = new JScrollPane(listPanel);
-        scrollPane.setBorder(null);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
@@ -110,24 +145,16 @@ public class ChatSearchPopup extends JDialog {
 
         // Escape key dismisses
         getRootPane().registerKeyboardAction(
-            e -> dispose(),
+            e -> hidePopup(),
             KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
             JComponent.WHEN_IN_FOCUSED_WINDOW
         );
 
-        // Dismiss on focus loss
-        addWindowFocusListener(new WindowFocusListener() {
-            @Override
-            public void windowGainedFocus(WindowEvent e) {}
-
-            @Override
-            public void windowLostFocus(WindowEvent e) {
-                dispose();
-            }
-        });
+        this.outsideClickListener = createOutsideClickListener();
     }
 
     public void show(Component relativeTo) {
+        this.triggerComponent = relativeTo;
         searchField.setText("");
         listPanel.removeAll();
         resultRows.clear();
@@ -144,8 +171,95 @@ public class ChatSearchPopup extends JDialog {
             centerOnScreen();
         }
 
+        installOutsideClickListener();
         setVisible(true);
         searchField.requestFocusInWindow();
+    }
+
+    public void hidePopup() {
+        setVisible(false);
+        uninstallOutsideClickListener();
+    }
+
+    @Override
+    public void dispose() {
+        uninstallOutsideClickListener();
+        super.dispose();
+    }
+
+    private AWTEventListener createOutsideClickListener() {
+        return event -> {
+            if (!(event instanceof MouseEvent mouseEvent) || mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) {
+                return;
+            }
+
+            if (!isVisible()) {
+                return;
+            }
+
+            Object source = mouseEvent.getSource();
+            if (!(source instanceof Component sourceComponent)) {
+                hidePopup();
+                return;
+            }
+
+            if (SwingUtilities.isDescendingFrom(sourceComponent, this)) {
+                return;
+            }
+
+            if (triggerComponent != null && SwingUtilities.isDescendingFrom(sourceComponent, triggerComponent)) {
+                return;
+            }
+
+            hidePopup();
+        };
+    }
+
+    private void installOutsideClickListener() {
+        if (outsideClickListenerInstalled) {
+            return;
+        }
+        Toolkit.getDefaultToolkit().addAWTEventListener(outsideClickListener, AWTEvent.MOUSE_EVENT_MASK);
+        outsideClickListenerInstalled = true;
+    }
+
+    private void uninstallOutsideClickListener() {
+        if (!outsideClickListenerInstalled) {
+            return;
+        }
+        Toolkit.getDefaultToolkit().removeAWTEventListener(outsideClickListener);
+        outsideClickListenerInstalled = false;
+    }
+
+    private static Icon providerIcon(String providerName) {
+        String iconPath = PROVIDER_ICON_PATHS.get(providerName);
+        if (iconPath == null || iconPath.isBlank()) {
+            return null;
+        }
+
+        return PROVIDER_ICON_CACHE.computeIfAbsent(iconPath, path -> {
+            URL url = ChatSearchPopup.class.getResource(path);
+            if (url == null) {
+                return null;
+            }
+
+            FlatSVGIcon icon = new FlatSVGIcon(url).derive(PROVIDER_ICON_SIZE, PROVIDER_ICON_SIZE);
+            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
+                Color foreground = component != null ? component.getForeground() : null;
+                if (foreground == null) {
+                    foreground = UIManager.getColor("Label.foreground");
+                }
+                if (foreground == null) {
+                    foreground = new Color(90, 90, 90);
+                }
+                return new Color(
+                        foreground.getRed(),
+                        foreground.getGreen(),
+                        foreground.getBlue(),
+                        color.getAlpha());
+            }));
+            return icon.hasFound() ? icon : null;
+        });
     }
 
     private void centerOnScreen() {
@@ -203,7 +317,7 @@ public class ChatSearchPopup extends JDialog {
         if (highlighted) {
             row.setOpaque(true);
             row.setBackground(UIManager.getColor("List.selectionBackground"));
-            Component textPanel = row.getComponent(0);
+            Component textPanel = ((BorderLayout) row.getLayout()).getLayoutComponent(BorderLayout.CENTER);
             if (textPanel instanceof JPanel tp && tp.getComponentCount() > 0
                     && tp.getComponent(0) instanceof JLabel titleLabel) {
                 titleLabel.setForeground(UIManager.getColor("List.selectionForeground"));
@@ -211,7 +325,7 @@ public class ChatSearchPopup extends JDialog {
         } else {
             row.setOpaque(false);
             row.setBackground(UIManager.getColor("Panel.background"));
-            Component textPanel = row.getComponent(0);
+            Component textPanel = ((BorderLayout) row.getLayout()).getLayoutComponent(BorderLayout.CENTER);
             if (textPanel instanceof JPanel tp && tp.getComponentCount() > 0
                     && tp.getComponent(0) instanceof JLabel titleLabel) {
                 titleLabel.setForeground(UIManager.getColor("Label.foreground"));
@@ -276,7 +390,7 @@ public class ChatSearchPopup extends JDialog {
     private void selectHighlighted() {
         if (highlightedIndex >= 0 && highlightedIndex < resultIds.size()) {
             onSelect.accept(resultIds.get(highlightedIndex));
-            dispose();
+            hidePopup();
         }
     }
 
@@ -291,7 +405,7 @@ public class ChatSearchPopup extends JDialog {
             for (Map.Entry<String, List<ConversationRecord>> entry : grouped.entrySet()) {
                 addHeader(entry.getKey());
                 for (ConversationRecord rec : entry.getValue()) {
-                    addResultRow(rec.id(), rec.title(), rec.provider() + " > " + rec.model(), null);
+                    addResultRow(rec.id(), rec.provider(), rec.title(), null);
                 }
             }
 
@@ -327,7 +441,7 @@ public class ChatSearchPopup extends JDialog {
 
                     if (results.isEmpty()) {
                         JLabel noResults = new JLabel("No results found");
-                        noResults.setFont(noResults.getFont().deriveFont(Font.PLAIN, 13f));
+                        Fonts.apply(noResults, Font.PLAIN, Fonts.SIZE_BODY);
                         noResults.setForeground(UIManager.getColor("Label.disabledForeground"));
                         noResults.setBorder(BorderFactory.createEmptyBorder(16, 12, 16, 12));
                         noResults.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -337,8 +451,8 @@ public class ChatSearchPopup extends JDialog {
                         for (SearchResult result : results) {
                             addResultRow(
                                 result.id(),
+                                result.provider(),
                                 result.title(),
-                                result.provider() + " > " + result.model(),
                                 result.snippet());
                         }
                     }
@@ -354,7 +468,7 @@ public class ChatSearchPopup extends JDialog {
 
     private void addHeader(String text) {
         JLabel header = new JLabel(text);
-        header.setFont(header.getFont().deriveFont(Font.BOLD, 11f));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_SMALL);
         header.setForeground(UIManager.getColor("Label.disabledForeground"));
         header.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
         header.setMaximumSize(new Dimension(Integer.MAX_VALUE, header.getPreferredSize().height));
@@ -362,19 +476,27 @@ public class ChatSearchPopup extends JDialog {
         listPanel.add(header);
     }
 
-    private void addResultRow(UUID id, String title, String subtitle, String snippet) {
-        JPanel row = new JPanel(new BorderLayout());
+    private void addResultRow(UUID id, String provider, String title, String snippet) {
+        JPanel row = new JPanel(new BorderLayout(10, 0));
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, snippet != null ? 52 : 36));
         row.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
         row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         row.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel iconLabel = new JLabel();
+        iconLabel.setPreferredSize(new Dimension(PROVIDER_ICON_SIZE, PROVIDER_ICON_SIZE));
+        Icon providerIcon = providerIcon(provider);
+        if (providerIcon != null) {
+            iconLabel.setIcon(providerIcon);
+        }
+        row.add(iconLabel, BorderLayout.WEST);
 
         JPanel textPanel = new JPanel();
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
         textPanel.setOpaque(false);
 
         JLabel titleLabel = new JLabel(title);
-        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.PLAIN, 13f));
+        Fonts.apply(titleLabel, Font.PLAIN, Fonts.SIZE_BODY);
         titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         textPanel.add(titleLabel);
 
@@ -382,7 +504,7 @@ public class ChatSearchPopup extends JDialog {
             String cleanSnippet = snippet.replace("\n", " ").trim();
             if (cleanSnippet.length() > 80) cleanSnippet = cleanSnippet.substring(0, 80) + "...";
             JLabel snippetLabel = new JLabel(cleanSnippet);
-            snippetLabel.setFont(snippetLabel.getFont().deriveFont(Font.PLAIN, 11f));
+            Fonts.apply(snippetLabel, Font.PLAIN, Fonts.SIZE_SMALL);
             snippetLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
             snippetLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
             textPanel.add(snippetLabel);
@@ -402,7 +524,7 @@ public class ChatSearchPopup extends JDialog {
             @Override
             public void mouseClicked(MouseEvent e) {
                 onSelect.accept(id);
-                dispose();
+                hidePopup();
             }
         });
 

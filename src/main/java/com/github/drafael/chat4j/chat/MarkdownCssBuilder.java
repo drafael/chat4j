@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.util.Fonts;
+
 final class MarkdownCssBuilder {
 
     private MarkdownCssBuilder() {
@@ -9,7 +11,7 @@ final class MarkdownCssBuilder {
         return """
             body {
                 font-family: %s;
-                font-size: 11px;
+                font-size: %dpx;
                 color: %s;
                 margin: 0;
                 padding: 0;
@@ -22,12 +24,12 @@ final class MarkdownCssBuilder {
                 margin-right: 0;
                 font-weight: bold;
             }
-            h1 { font-size: 16px; margin-top: 14px; margin-bottom: 6px; }
-            h2 { font-size: 14px; margin-top: 12px; margin-bottom: 5px; }
-            h3 { font-size: 12px; margin-top: 10px; margin-bottom: 4px; }
-            h4 { font-size: 11px; margin-top: 9px; margin-bottom: 4px; }
-            h5 { font-size: 10px; margin-top: 8px; margin-bottom: 3px; }
-            h6 { font-size: 10px; margin-top: 8px; margin-bottom: 3px; }
+            h1 { font-size: %dpx; margin-top: 14px; margin-bottom: 6px; }
+            h2 { font-size: %dpx; margin-top: 12px; margin-bottom: 5px; }
+            h3 { font-size: %dpx; margin-top: 10px; margin-bottom: 4px; }
+            h4 { font-size: %dpx; margin-top: 9px; margin-bottom: 4px; }
+            h5 { font-size: %dpx; margin-top: 8px; margin-bottom: 3px; }
+            h6 { font-size: %dpx; margin-top: 8px; margin-bottom: 3px; }
             p {
                 margin: 5px 0;
                 word-wrap: break-word;
@@ -67,8 +69,15 @@ final class MarkdownCssBuilder {
             }
             """.formatted(
                 palette.baseFontFamily(),
+                Fonts.scale(Fonts.SIZE_SMALL),
                 palette.textColor(),
                 palette.textColor(),
+                Fonts.scale(Fonts.SIZE_SUBTITLE),
+                Fonts.scale(Fonts.SIZE_BODY_LARGE),
+                Fonts.scale(Fonts.SIZE_COMPACT),
+                Fonts.scale(Fonts.SIZE_SMALL),
+                Fonts.scale(Fonts.SIZE_MICRO),
+                Fonts.scale(Fonts.SIZE_MICRO),
                 palette.linkColor(),
                 palette.hrColor(),
                 palette.codeBorder(),

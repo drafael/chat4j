@@ -3,6 +3,7 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
+import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
@@ -10,7 +11,6 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.formdev.flatlaf.icons.FlatAbstractIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.SettingsDialog;
@@ -49,6 +49,9 @@ public class MainFrame extends JFrame {
     private static final String KEY_ASSISTANT_MARKDOWN_CONVERSATION_PREFIX = "chat.markdown.conv.";
     private static final String KEY_MENU_BAR_ENABLED = "menu.bar.enabled";
     private static final String KEY_THEME = "theme";
+    private static final String KEY_APP_FONT = AppearancePanel.KEY_APP_FONT;
+    private static final String KEY_APP_FONT_SIZE = AppearancePanel.KEY_APP_FONT_SIZE;
+    private static final String KEY_CODE_FONT = AppearancePanel.KEY_CODE_FONT;
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
@@ -81,6 +84,10 @@ public class MainFrame extends JFrame {
     private UUID currentConversationId;
     private boolean sidebarVisible = true;
     private int lastDividerLocation = 250;
+    private JButton sidebarToggleBtn;
+    private Icon sidebarToggleIconFilled;
+    private Icon sidebarToggleIconOutline;
+    private ChatSearchPopup chatSearchPopup;
     private AssistantRenderMode assistantMarkdownDefaultMode = AssistantRenderMode.PREVIEW;
     private AssistantRenderMode pendingUnsavedConversationRenderMode;
     private final SingleInstanceWindowTracker<SettingsDialog> settingsDialogTracker =
@@ -90,13 +97,21 @@ public class MainFrame extends JFrame {
     private JMenu viewMenu;
     private JMenu modelsMenu;
     private JMenu themesMenu;
+    private JMenu fontMenu;
     private final Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
     private final Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
     private final Map<String, JRadioButtonMenuItem> themeMenuItemsByName = new LinkedHashMap<>();
+    private final Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily = new LinkedHashMap<>();
+    private final Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize = new LinkedHashMap<>();
+    private final Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily = new LinkedHashMap<>();
     private boolean modelsMenuDirty = true;
     private boolean themesMenuBuilt;
+    private boolean fontMenuBuilt;
     private String lastMenuSelectedModelKey;
     private String lastMenuSelectedTheme;
+    private String lastMenuSelectedAppFontFamily;
+    private Integer lastMenuSelectedAppFontSize;
+    private String lastMenuSelectedCodeFontFamily;
     private JCheckBoxMenuItem togglePreviewMenuItem;
     private boolean syncingPreviewMenuSelection;
     private final PropertyChangeListener lookAndFeelListener = event -> {
@@ -145,7 +160,10 @@ public class MainFrame extends JFrame {
         chatPanel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
-        chatPanel.setOnMessageSubmitted(() -> SwingUtilities.invokeLater(this::saveCurrentConversation));
+        chatPanel.setOnMessageSubmitted(this::saveCurrentConversation);
+        chatPanel.setConversationIdSupplier(() -> currentConversationId);
+        chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
+        chatPanel.setActiveConversationId(currentConversationId);
         applyProviderSettings();
         applyGeneralSettings();
         UIManager.addPropertyChangeListener(lookAndFeelListener);
@@ -160,15 +178,17 @@ public class MainFrame extends JFrame {
         leftButtons.setOpaque(false);
         leftButtons.setBorder(BorderFactory.createEmptyBorder(0, 78, 0, 0));
 
-        JButton sidebarToggleBtn = createTitleBarButton(new SidebarToggleIcon(), "Toggle Sidebar");
+        sidebarToggleIconFilled = titleBarIcon("/icons/titlebar/panel-left-filled.svg");
+        sidebarToggleIconOutline = titleBarIcon("/icons/titlebar/panel-left.svg");
+        sidebarToggleBtn = createTitleBarButton(sidebarToggleIconFilled, "Toggle Sidebar");
         sidebarToggleBtn.addActionListener(e -> toggleSidebar());
         leftButtons.add(sidebarToggleBtn);
 
-        JButton searchBtn = createTitleBarButton(new SearchActionIcon(), "Search Chats");
+        JButton searchBtn = createTitleBarButton(titleBarIcon("/icons/titlebar/search.svg"), "Search Chats");
         searchBtn.addActionListener(e -> openChatSearch(searchBtn));
         leftButtons.add(searchBtn);
 
-        JButton newChatBtn = createTitleBarButton(new NewChatIcon(), "New Chat");
+        JButton newChatBtn = createTitleBarButton(titleBarIcon("/icons/titlebar/square-pen.svg"), "New Chat");
         newChatBtn.addActionListener(e -> newChat());
         leftButtons.add(newChatBtn);
 
@@ -214,6 +234,9 @@ public class MainFrame extends JFrame {
         if (Desktop.isDesktopSupported()) {
             Desktop desktop = Desktop.getDesktop();
             desktop.setPreferencesHandler(e -> openSettings());
+            if (desktop.isSupported(Desktop.Action.APP_ABOUT)) {
+                desktop.setAboutHandler(e -> AboutDialog.show(this));
+            }
             desktop.setQuitHandler((e, response) -> {
                 UIManager.removePropertyChangeListener(lookAndFeelListener);
                 chatPanel.cancelStreaming();
@@ -240,23 +263,26 @@ public class MainFrame extends JFrame {
             splitPane.setDividerLocation(lastDividerLocation);
             sidebarVisible = true;
         }
+        if (sidebarToggleBtn != null) {
+            sidebarToggleBtn.setIcon(sidebarVisible ? sidebarToggleIconFilled : sidebarToggleIconOutline);
+        }
     }
 
     private void newChat() {
-        chatPanel.cancelStreaming();
         saveCurrentConversation();
         currentConversationId = null;
         pendingUnsavedConversationRenderMode = null;
-        chatPanel.clearChat();
+        chatPanel.setActiveConversationId(null);
+        chatPanel.clearChatView();
         chatPanel.setAssistantRenderMode(assistantMarkdownDefaultMode, true);
         chatPanel.getInputBar().requestInputFocus();
     }
 
     private void loadConversation(UUID id) {
-        chatPanel.cancelStreaming();
         saveCurrentConversation();
         currentConversationId = id;
         pendingUnsavedConversationRenderMode = null;
+        chatPanel.setActiveConversationId(id);
         try {
             List<MessageRecord> records = conversationRepo.getMessages(id);
             List<Message> messages = records.stream()
@@ -299,6 +325,7 @@ public class MainFrame extends JFrame {
                         : chatPanel.getAssistantRenderMode();
                 persistConversationRenderMode(currentConversationId, modeToPersist);
                 pendingUnsavedConversationRenderMode = null;
+                chatPanel.setActiveConversationId(currentConversationId);
             }
 
             List<MessageRecord> existing = conversationRepo.getMessages(currentConversationId);
@@ -313,6 +340,22 @@ public class MainFrame extends JFrame {
             }
         } catch (Exception e) {
             // Silent fail for save
+        }
+    }
+
+    private void onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
+        if (event == null || event.conversationId() == null || event.message() == null) {
+            return;
+        }
+
+        try {
+            conversationRepo.addMessage(event.conversationId(), event.message());
+            sidebarPanel.refresh();
+            if (Objects.equals(currentConversationId, event.conversationId())) {
+                sidebarPanel.selectConversation(currentConversationId);
+            }
+        } catch (Exception e) {
+            // Silent fail for background assistant persistence
         }
     }
 
@@ -440,8 +483,14 @@ public class MainFrame extends JFrame {
     }
 
     private void openChatSearch(Component relativeTo) {
-        ChatSearchPopup popup = new ChatSearchPopup(this, conversationRepo, this::loadConversation);
-        popup.show(relativeTo);
+        if (chatSearchPopup == null) {
+            chatSearchPopup = new ChatSearchPopup(this, conversationRepo, this::loadConversation);
+        }
+        if (chatSearchPopup.isVisible()) {
+            chatSearchPopup.hidePopup();
+        } else {
+            chatSearchPopup.show(relativeTo);
+        }
     }
 
     private void openSettings() {
@@ -560,6 +609,7 @@ public class MainFrame extends JFrame {
         setJMenuBar(modelMenuBar);
         ensureThemesMenuReady();
         ensureModelsMenuReady();
+        ensureFontMenuReady();
         syncTogglePreviewMenuSelection();
         revalidate();
         repaint();
@@ -642,6 +692,23 @@ public class MainFrame extends JFrame {
             }
         });
 
+        fontMenu = new JMenu("Font");
+        fontMenu.addMenuListener(new MenuListener() {
+            @Override
+            public void menuSelected(MenuEvent e) {
+                chatPanel.hideModelPopup();
+                ensureFontMenuReady();
+            }
+
+            @Override
+            public void menuDeselected(MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(MenuEvent e) {
+            }
+        });
+
         modelsMenu = new JMenu("Model");
         modelsMenu.addMenuListener(new MenuListener() {
             @Override
@@ -662,9 +729,22 @@ public class MainFrame extends JFrame {
         modelMenuBar.add(fileMenu);
         modelMenuBar.add(viewMenu);
         modelMenuBar.add(modelsMenu);
+        modelMenuBar.add(fontMenu);
         modelMenuBar.add(themesMenu);
+
+        if (!SystemInfo.isMacOS
+            || !Boolean.parseBoolean(System.getProperty("apple.laf.useScreenMenuBar", "false"))
+        ) {
+            JMenu helpMenu = new JMenu("Help");
+            JMenuItem aboutItem = new JMenuItem("About " + getTitle());
+            aboutItem.addActionListener(e -> AboutDialog.show(this));
+            helpMenu.add(aboutItem);
+            modelMenuBar.add(helpMenu);
+        }
+
         modelsMenuDirty = true;
         themesMenuBuilt = false;
+        fontMenuBuilt = false;
     }
 
     private void ensureModelsMenuReady() {
@@ -681,6 +761,13 @@ public class MainFrame extends JFrame {
             rebuildThemesMenuStructure();
         }
         syncThemeMenuSelection();
+    }
+
+    private void ensureFontMenuReady() {
+        if (!fontMenuBuilt) {
+            rebuildFontMenuStructure();
+        }
+        syncFontMenuSelection();
     }
 
     private void syncTogglePreviewMenuSelection() {
@@ -702,6 +789,10 @@ public class MainFrame extends JFrame {
         markModelsMenuDirty();
         if (modelsMenu != null && modelsMenu.isPopupMenuVisible()) {
             ensureModelsMenuReady();
+        }
+
+        if (fontMenu != null && fontMenu.isPopupMenuVisible()) {
+            ensureFontMenuReady();
         }
     }
 
@@ -760,8 +851,7 @@ public class MainFrame extends JFrame {
 
             favorites.forEach(selection -> {
                 String modelKey = toModelKey(selection.provider(), selection.model());
-                String label = selection.model() + " (" + selection.provider() + ")";
-                JRadioButtonMenuItem item = new JRadioButtonMenuItem(label);
+                JRadioButtonMenuItem item = new JRadioButtonMenuItem(selection.model());
                 boolean selectable = providerSelectable.getOrDefault(selection.provider(), true);
                 item.setEnabled(selectable);
                 item.setIcon(providerIcon(selection.provider(), PROVIDER_MODEL_ICON_SIZE, resolveMenuItemIconTint(item, selectable)));
@@ -909,7 +999,7 @@ public class MainFrame extends JFrame {
     private JMenuItem createProviderHeader(String providerName, String text, boolean enabled) {
         JMenuItem header = new JMenuItem();
         header.setEnabled(false);
-        header.setFont(header.getFont().deriveFont(Font.BOLD, 13f));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
         header.setIconTextGap(10);
         updateProviderHeader(header, providerName, text, enabled);
         return header;
@@ -1007,6 +1097,259 @@ public class MainFrame extends JFrame {
         lastMenuSelectedTheme = selectedTheme;
     }
 
+    private void rebuildFontMenuStructure() {
+        if (fontMenu == null) {
+            return;
+        }
+
+        fontMenu.removeAll();
+        appFontMenuItemsByFamily.clear();
+        appFontSizeMenuItemsBySize.clear();
+        codeFontMenuItemsByFamily.clear();
+
+        int menuShortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+
+        JMenuItem restoreFontItem = new JMenuItem("Restore Font");
+        restoreFontItem.setAccelerator(KeyStroke.getKeyStroke(
+                KeyEvent.VK_0,
+                menuShortcut | InputEvent.ALT_DOWN_MASK));
+        restoreFontItem.addActionListener(e -> restoreAppFontFromMenu());
+        fontMenu.add(restoreFontItem);
+
+        JMenuItem increaseFontItem = new JMenuItem("Increase Font Size");
+        increaseFontItem.setAccelerator(KeyStroke.getKeyStroke(
+                KeyEvent.VK_PLUS,
+                menuShortcut | InputEvent.ALT_DOWN_MASK));
+        increaseFontItem.addActionListener(e -> adjustAppFontSizeFromMenu(true));
+        fontMenu.add(increaseFontItem);
+
+        JMenuItem decreaseFontItem = new JMenuItem("Decrease Font Size");
+        decreaseFontItem.setAccelerator(KeyStroke.getKeyStroke(
+                KeyEvent.VK_MINUS,
+                menuShortcut | InputEvent.ALT_DOWN_MASK));
+        decreaseFontItem.addActionListener(e -> adjustAppFontSizeFromMenu(false));
+        fontMenu.add(decreaseFontItem);
+
+        fontMenu.addSeparator();
+
+        addMenuSectionHeader(fontMenu, "UI Font Family");
+        ButtonGroup appFontGroup = new ButtonGroup();
+        for (String fontFamily : AppearancePanel.appFontOptions()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(fontFamily);
+            item.addActionListener(e -> applyAppFontFamilyFromMenu(fontFamily));
+            appFontGroup.add(item);
+            fontMenu.add(item);
+            appFontMenuItemsByFamily.put(fontFamily, item);
+        }
+
+        fontMenu.addSeparator();
+
+        addMenuSectionHeader(fontMenu, "Code Font Family (Monospaced)");
+        ButtonGroup codeFontGroup = new ButtonGroup();
+        for (String fontFamily : AppearancePanel.codeFontOptions()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(fontFamily);
+            item.addActionListener(e -> applyCodeFontFromMenu(fontFamily));
+            codeFontGroup.add(item);
+            fontMenu.add(item);
+            codeFontMenuItemsByFamily.put(fontFamily, item);
+        }
+
+        fontMenu.addSeparator();
+
+        addMenuSectionHeader(fontMenu, "UI Font Size");
+        ButtonGroup appFontSizeGroup = new ButtonGroup();
+        for (int fontSize : AppearancePanel.appFontSizeOptions()) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(String.valueOf(fontSize));
+            item.addActionListener(e -> applyAppFontSizeFromMenu(fontSize));
+            appFontSizeGroup.add(item);
+            fontMenu.add(item);
+            appFontSizeMenuItemsBySize.put(fontSize, item);
+        }
+
+        fontMenuBuilt = true;
+        lastMenuSelectedAppFontFamily = null;
+        lastMenuSelectedAppFontSize = null;
+        lastMenuSelectedCodeFontFamily = null;
+    }
+
+    private static void addMenuSectionHeader(JMenu menu, String text) {
+        JMenuItem sectionHeader = new JMenuItem(text);
+        sectionHeader.setEnabled(false);
+        menu.add(sectionHeader);
+    }
+
+    private void syncFontMenuSelection() {
+        if (!fontMenuBuilt) {
+            return;
+        }
+
+        String appFontFamily = readStringSetting(KEY_APP_FONT, AppearancePanel.DEFAULT_APP_FONT);
+        if (!appFontMenuItemsByFamily.containsKey(appFontFamily)) {
+            appFontFamily = AppearancePanel.DEFAULT_APP_FONT;
+        }
+
+        int appFontSize = readAppFontSizeSetting();
+        if (!appFontSizeMenuItemsBySize.containsKey(appFontSize)) {
+            appFontSize = AppearancePanel.normalizeAppFontSize(appFontSize);
+        }
+
+        String codeFontFamily = readStringSetting(KEY_CODE_FONT, AppearancePanel.DEFAULT_CODE_FONT);
+        if (!codeFontMenuItemsByFamily.containsKey(codeFontFamily)) {
+            codeFontFamily = AppearancePanel.DEFAULT_CODE_FONT;
+        }
+
+        boolean selectionUnchanged = Objects.equals(appFontFamily, lastMenuSelectedAppFontFamily)
+                && Objects.equals(appFontSize, lastMenuSelectedAppFontSize)
+                && Objects.equals(codeFontFamily, lastMenuSelectedCodeFontFamily);
+        if (selectionUnchanged) {
+            return;
+        }
+
+        if (lastMenuSelectedAppFontFamily != null) {
+            JRadioButtonMenuItem previousAppFont = appFontMenuItemsByFamily.get(lastMenuSelectedAppFontFamily);
+            if (previousAppFont != null) {
+                previousAppFont.setSelected(false);
+            }
+        }
+
+        if (lastMenuSelectedAppFontSize != null) {
+            JRadioButtonMenuItem previousAppFontSize = appFontSizeMenuItemsBySize.get(lastMenuSelectedAppFontSize);
+            if (previousAppFontSize != null) {
+                previousAppFontSize.setSelected(false);
+            }
+        }
+
+        if (lastMenuSelectedCodeFontFamily != null) {
+            JRadioButtonMenuItem previousCodeFont = codeFontMenuItemsByFamily.get(lastMenuSelectedCodeFontFamily);
+            if (previousCodeFont != null) {
+                previousCodeFont.setSelected(false);
+            }
+        }
+
+        JRadioButtonMenuItem currentAppFont = appFontMenuItemsByFamily.get(appFontFamily);
+        if (currentAppFont != null) {
+            currentAppFont.setSelected(true);
+        }
+
+        JRadioButtonMenuItem currentAppFontSize = appFontSizeMenuItemsBySize.get(appFontSize);
+        if (currentAppFontSize != null) {
+            currentAppFontSize.setSelected(true);
+        }
+
+        JRadioButtonMenuItem currentCodeFont = codeFontMenuItemsByFamily.get(codeFontFamily);
+        if (currentCodeFont != null) {
+            currentCodeFont.setSelected(true);
+        }
+
+        lastMenuSelectedAppFontFamily = appFontFamily;
+        lastMenuSelectedAppFontSize = appFontSize;
+        lastMenuSelectedCodeFontFamily = codeFontFamily;
+    }
+
+    private void applyAppFontFamilyFromMenu(String fontFamily) {
+        applyAppFontSelectionFromMenu(fontFamily, readAppFontSizeSetting());
+    }
+
+    private void applyAppFontSizeFromMenu(int appFontSize) {
+        String appFontFamily = readStringSetting(KEY_APP_FONT, AppearancePanel.DEFAULT_APP_FONT);
+        applyAppFontSelectionFromMenu(appFontFamily, appFontSize);
+    }
+
+    private void applyAppFontSelectionFromMenu(String appFontFamily, int appFontSize) {
+        String family = appFontMenuItemsByFamily.containsKey(appFontFamily)
+                ? appFontFamily
+                : AppearancePanel.DEFAULT_APP_FONT;
+        int size = AppearancePanel.normalizeAppFontSize(appFontSize);
+
+        AppearancePanel.applyAppFont(family, size);
+        refreshAllWindows();
+
+        try {
+            settingsRepo.put(KEY_APP_FONT, family);
+            settingsRepo.put(KEY_APP_FONT_SIZE, String.valueOf(size));
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to apply UI font: " + e.getMessage(),
+                    "Font Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+
+        syncFontMenuSelection();
+    }
+
+    private void applyCodeFontFromMenu(String fontFamily) {
+        String family = codeFontMenuItemsByFamily.containsKey(fontFamily)
+                ? fontFamily
+                : AppearancePanel.DEFAULT_CODE_FONT;
+
+        AppearancePanel.applyCodeFont(family);
+        refreshAllWindows();
+
+        try {
+            settingsRepo.put(KEY_CODE_FONT, family);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to apply code font: " + e.getMessage(),
+                    "Font Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+
+        syncFontMenuSelection();
+    }
+
+    private void restoreAppFontFromMenu() {
+        applyAppFontSelectionFromMenu(
+                AppearancePanel.DEFAULT_APP_FONT,
+                AppearancePanel.defaultAppFontSize());
+    }
+
+    private void adjustAppFontSizeFromMenu(boolean increase) {
+        int[] sizeOptions = AppearancePanel.appFontSizeOptions();
+        int currentSize = readAppFontSizeSetting();
+        int normalizedCurrentSize = AppearancePanel.normalizeAppFontSize(currentSize);
+        int adjustedSize = normalizedCurrentSize;
+
+        if (increase) {
+            for (int size : sizeOptions) {
+                if (size > normalizedCurrentSize) {
+                    adjustedSize = size;
+                    break;
+                }
+            }
+        } else {
+            for (int index = sizeOptions.length - 1; index >= 0; index--) {
+                if (sizeOptions[index] < normalizedCurrentSize) {
+                    adjustedSize = sizeOptions[index];
+                    break;
+                }
+            }
+        }
+
+        applyAppFontSizeFromMenu(adjustedSize);
+    }
+
+    private String readStringSetting(String key, String defaultValue) {
+        try {
+            return settingsRepo.get(key, defaultValue);
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private int readAppFontSizeSetting() {
+        String defaultSize = String.valueOf(AppearancePanel.defaultAppFontSize());
+        String value = readStringSetting(KEY_APP_FONT_SIZE, defaultSize);
+        try {
+            return AppearancePanel.normalizeAppFontSize(Integer.parseInt(value));
+        } catch (Exception e) {
+            return AppearancePanel.normalizeAppFontSize(Integer.parseInt(defaultSize));
+        }
+    }
+
     private void applyThemeFromMenu(String themeName, String className) {
         try {
             UIManager.setLookAndFeel(className);
@@ -1016,6 +1359,7 @@ public class MainFrame extends JFrame {
             refreshAllWindows();
             settingsRepo.put(KEY_THEME, themeName);
             syncThemeMenuSelection();
+            syncFontMenuSelection();
         } catch (Exception e) {
             JOptionPane.showMessageDialog(
                 this,
@@ -1029,6 +1373,7 @@ public class MainFrame extends JFrame {
     private static void refreshAllWindows() {
         for (Window window : Window.getWindows()) {
             SwingUtilities.updateComponentTreeUI(window);
+            Fonts.refreshComponentTreeFonts(window);
             window.invalidate();
             window.validate();
             window.repaint();
@@ -1166,86 +1511,29 @@ public class MainFrame extends JFrame {
         return btn;
     }
 
-    private abstract static class TitleBarActionIcon extends FlatAbstractIcon {
-        protected TitleBarActionIcon() {
-            super(16, 16, null);
+    private static final int TITLE_BAR_ICON_SIZE = 16;
+
+    private static Icon titleBarIcon(String resourcePath) {
+        URL url = MainFrame.class.getResource(resourcePath);
+        if (url == null) {
+            return null;
         }
 
-        protected final void applyStyle(Graphics2D graphics) {
-            Color color = UIManager.getColor("Label.foreground");
-            graphics.setColor(color != null ? color : Color.GRAY);
-            graphics.setStroke(new BasicStroke(1.7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        }
-
-        protected final boolean isDarkTheme() {
-            Color background = UIManager.getColor("Panel.background");
-            if (background == null) {
-                background = UIManager.getColor("Menu.background");
+        FlatSVGIcon icon = new FlatSVGIcon(url).derive(TITLE_BAR_ICON_SIZE, TITLE_BAR_ICON_SIZE);
+        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
+            Color foreground = component != null ? component.getForeground() : null;
+            if (foreground == null) {
+                foreground = UIManager.getColor("Label.foreground");
             }
-            if (background == null) {
-                return false;
+            if (foreground == null) {
+                foreground = new Color(90, 90, 90);
             }
-
-            float brightness = (0.299f * background.getRed()
-                    + 0.587f * background.getGreen()
-                    + 0.114f * background.getBlue()) / 255f;
-            return brightness < 0.5f;
-        }
-
-        protected final Color blend(Color base, Color target, float targetWeight, int alpha) {
-            float clampedWeight = Math.max(0f, Math.min(1f, targetWeight));
-            float baseWeight = 1f - clampedWeight;
-            int red = Math.round(base.getRed() * baseWeight + target.getRed() * clampedWeight);
-            int green = Math.round(base.getGreen() * baseWeight + target.getGreen() * clampedWeight);
-            int blue = Math.round(base.getBlue() * baseWeight + target.getBlue() * clampedWeight);
-            return new Color(red, green, blue, Math.max(0, Math.min(255, alpha)));
-        }
-    }
-
-    private static class SidebarToggleIcon extends TitleBarActionIcon {
-        @Override
-        protected void paintIcon(Component component, Graphics2D graphics) {
-            applyStyle(graphics);
-
-            Color strokeColor = graphics.getColor();
-            Color leftPaneFill = isDarkTheme()
-                    ? blend(strokeColor, Color.WHITE, 0.58f, 190)
-                    : blend(strokeColor, Color.BLACK, 0.45f, 145);
-            Shape previousClip = graphics.getClip();
-            Shape viewport = new java.awt.geom.RoundRectangle2D.Float(2f, 2f, 12f, 11f, 2f, 2f);
-
-            graphics.setClip(viewport);
-            graphics.setColor(leftPaneFill);
-            graphics.fillRect(3, 3, 3, 10);
-            graphics.setClip(previousClip);
-
-            graphics.setColor(strokeColor);
-            graphics.drawRoundRect(2, 2, 12, 11, 2, 2);
-
-            Stroke previousStroke = graphics.getStroke();
-            graphics.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND));
-            graphics.drawLine(6, 3, 6, 12);
-            graphics.setStroke(previousStroke);
-        }
-    }
-
-    private static class SearchActionIcon extends TitleBarActionIcon {
-        @Override
-        protected void paintIcon(Component component, Graphics2D graphics) {
-            applyStyle(graphics);
-            graphics.drawOval(2, 2, 9, 9);
-            graphics.drawLine(10, 10, 14, 14);
-        }
-    }
-
-    private static class NewChatIcon extends TitleBarActionIcon {
-        @Override
-        protected void paintIcon(Component component, Graphics2D graphics) {
-            applyStyle(graphics);
-
-            graphics.drawRoundRect(2, 2, 12, 9, 5, 5);
-            graphics.drawLine(5, 11, 4, 14);
-            graphics.drawLine(4, 14, 8, 11);
-        }
+            return new Color(
+                    foreground.getRed(),
+                    foreground.getGreen(),
+                    foreground.getBlue(),
+                    color.getAlpha());
+        }));
+        return icon.hasFound() ? icon : null;
     }
 }

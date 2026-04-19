@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.util.Fonts;
 
 import javax.swing.*;
 import javax.swing.event.HyperlinkEvent;
@@ -172,9 +173,10 @@ public class MessageBubble extends JPanel {
         String escaped = escapeHtml(text).replace("\n", "<br>");
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
+        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
         return "<html><head><style>"
                 + "body { font-family: " + fontFamily + "; "
-                + "font-size: 11px; line-height: 1.4; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
+                + "font-size: " + bodyFontSize + "px; line-height: 1.4; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
                 + "</style></head><body>" + escaped + "</body></html>";
     }
 
@@ -189,10 +191,12 @@ public class MessageBubble extends JPanel {
                 .reduce((left, right) -> left + right)
                 .orElse("");
 
+        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
+        int badgeFontSize = Fonts.scale(Fonts.SIZE_BADGE);
         return "<html><head><style>"
-                + "body { font-family: " + palette.baseFontFamily() + "; font-size: 11px; line-height: 1.45; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
+                + "body { font-family: " + palette.baseFontFamily() + "; font-size: " + bodyFontSize + "px; line-height: 1.45; color: " + palette.textColor() + "; margin: 0; padding: 0; }"
                 + ".line { margin: 0 0 3px 0; }"
-                + ".badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }"
+                + ".badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: " + badgeFontSize + "px; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }"
                 + ".skill { background: " + badgeBackground + "; color: " + badgeText + "; }"
                 + ".fallback { background: " + fallbackBackground + "; color: " + fallbackText + "; }"
                 + "</style></head><body>" + body + "</body></html>";

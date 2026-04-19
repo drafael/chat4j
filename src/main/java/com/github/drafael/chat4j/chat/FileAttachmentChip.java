@@ -46,7 +46,7 @@ final class FileAttachmentChip extends JPanel {
         }
 
         JLabel nameLabel = new JLabel(label, fileIcon, SwingConstants.LEADING);
-        nameLabel.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(nameLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
         nameLabel.setForeground(UIManager.getColor("Label.foreground"));
         nameLabel.setIconTextGap(5);
         add(nameLabel);

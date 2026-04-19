@@ -136,7 +136,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         setBorder(new EmptyBorder(20, 24, 20, 24));
 
         JLabel title = new JLabel("Providers");
-        title.setFont(Fonts.of(Font.BOLD, 18));
+        Fonts.apply(title, Font.BOLD, Fonts.SIZE_PANEL_TITLE);
         title.setBorder(new EmptyBorder(0, 0, 16, 0));
         add(title, BorderLayout.NORTH);
 
@@ -200,7 +200,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         gbc.gridy = row;
         gbc.gridwidth = 2;
         JLabel header = new JLabel(name);
-        header.setFont(Fonts.of(Font.BOLD, 16));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_SUBTITLE);
         panel.add(header, gbc);
         gbc.gridwidth = 1;
 
@@ -311,7 +311,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private JLabel createStatusLabel(String providerName, ProviderInfo info, String configuredBaseUrl, boolean localReachable) {
         JLabel status = new JLabel();
-        status.setFont(Fonts.of(Font.PLAIN, 13));
+        Fonts.apply(status, Font.PLAIN, Fonts.SIZE_BODY);
 
         if (info.authType() == AuthType.CLI_OAUTH) {
             CliOAuthRunner.OAuthStatus oauthStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
@@ -365,7 +365,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         infoPanel.setBackground(warningBackground != null ? warningBackground : new Color(255, 248, 225));
 
         JLabel header = new JLabel("\u26A0 API key setup required");
-        header.setFont(Fonts.of(Font.BOLD, 13));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
         header.setForeground(new Color(214, 117, 0));
         infoPanel.add(header, BorderLayout.NORTH);
 
@@ -390,7 +390,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         instructions.setWrapStyleWord(true);
         instructions.setOpaque(false);
         instructions.setBorder(null);
-        instructions.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
         instructions.setForeground(readablePanelTextColor(infoPanel.getBackground()));
         infoPanel.add(instructions, BorderLayout.CENTER);
 
@@ -434,7 +434,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         infoPanel.setBackground(infoBackground != null ? infoBackground : new Color(232, 245, 253));
 
         JLabel header = new JLabel("\u2139 Local server setup");
-        header.setFont(Fonts.of(Font.BOLD, 13));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
         header.setForeground(new Color(25, 118, 210));
         infoPanel.add(header, BorderLayout.NORTH);
 
@@ -451,7 +451,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         instructions.setWrapStyleWord(true);
         instructions.setOpaque(false);
         instructions.setBorder(null);
-        instructions.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
         instructions.setForeground(readablePanelTextColor(infoPanel.getBackground()));
         infoPanel.add(instructions, BorderLayout.CENTER);
 
@@ -573,7 +573,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         updatedLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
 
         JLabel balanceLabel = new JLabel("Balance: n/a");
-        balanceLabel.setFont(Fonts.of(Font.BOLD, 16));
+        Fonts.apply(balanceLabel, Font.BOLD, Fonts.SIZE_SUBTITLE);
 
         JPanel headerRow = new JPanel(new BorderLayout());
         headerRow.setOpaque(false);
@@ -581,7 +581,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         headerRow.add(balanceLabel, BorderLayout.EAST);
 
         JLabel limitTitleLabel = new JLabel("API key limit");
-        limitTitleLabel.setFont(Fonts.of(Font.BOLD, 13));
+        Fonts.apply(limitTitleLabel, Font.BOLD, Fonts.SIZE_BODY);
 
         JProgressBar usageBar = new JProgressBar(0, 100);
         usageBar.setStringPainted(false);
@@ -1023,7 +1023,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private JLabel label(String text) {
         JLabel label = new JLabel(text);
-        label.setFont(Fonts.of(Font.PLAIN, 14));
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
         Dimension preferred = label.getPreferredSize();
         Dimension alignedSize = new Dimension(DETAIL_LABEL_COLUMN_WIDTH, preferred.height);
         label.setPreferredSize(alignedSize);
@@ -1199,7 +1199,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                     cellHasFocus
             );
             label.setBorder(new EmptyBorder(4, 10, 4, 10));
-            label.setFont(Fonts.of(Font.PLAIN, 13));
+            Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
             label.setIconTextGap(8);
 
             String providerName = value instanceof String s ? s : "";

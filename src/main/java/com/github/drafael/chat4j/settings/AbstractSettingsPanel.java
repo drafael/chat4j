@@ -26,7 +26,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
     protected AbstractSettingsPanel(SettingsRepo settingsRepo) {
         this.settingsRepo = settingsRepo;
 
-        statusLabel.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(statusLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
         statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
     }
 
@@ -35,7 +35,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         setBorder(new EmptyBorder(20, 24, 20, 24));
 
         JLabel title = new JLabel(titleText);
-        title.setFont(Fonts.of(Font.BOLD, 18));
+        Fonts.apply(title, Font.BOLD, Fonts.SIZE_PANEL_TITLE);
         title.setBorder(new EmptyBorder(0, 0, 16, 0));
         add(title, BorderLayout.NORTH);
 
@@ -270,7 +270,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
 
     private JLabel createRowLabel(String text) {
         JLabel label = new JLabel(text);
-        label.setFont(Fonts.of(Font.PLAIN, 14));
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
         return label;
     }
 

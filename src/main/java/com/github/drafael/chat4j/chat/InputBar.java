@@ -33,6 +33,8 @@ public class InputBar extends JPanel {
     private static final int SHELL_ARC = 20;
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
+    private static final int STOP_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int STOP_BUTTON_SIZE = 24;
     private static final float CHIP_HOVER_BG_DELTA = 0.09f;
     private static final float CHIP_HOVER_BORDER_DELTA = 0.12f;
     private static final Map<String, Icon> CHIP_ICON_CACHE = new ConcurrentHashMap<>();
@@ -70,7 +72,7 @@ public class InputBar extends JPanel {
         textArea.setWrapStyleWord(true);
         textArea.setOpaque(false);
         textArea.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-        textArea.setFont(Fonts.of(Font.PLAIN, 14));
+        Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
         textArea.putClientProperty("JTextField.placeholderText", "Message, / for skills, ⇧↵ for newline");
         textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
         textArea.putClientProperty("JComponent.outline", null);
@@ -133,12 +135,12 @@ public class InputBar extends JPanel {
         attachButton.setMinimumSize(new Dimension(24, 24));
         attachButton.addActionListener(e -> openAttachmentPicker());
 
-        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(attachButton);
 
         validationLabel = new JLabel();
-        validationLabel.setFont(Fonts.of(Font.PLAIN, 11));
+        Fonts.apply(validationLabel, Font.PLAIN, Fonts.SIZE_SMALL);
         validationLabel.setVisible(false);
 
         JPanel composerBottomPanel = new JPanel(new BorderLayout(0, 4));
@@ -166,24 +168,39 @@ public class InputBar extends JPanel {
         generationInfoPanel.add(generationProgressBar);
 
         generationLabel = new JLabel("Generating response…");
-        generationLabel.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(generationLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
         generationInfoPanel.add(generationLabel);
 
         jumpToLatestButton = new JButton("Jump to latest");
         jumpToLatestButton.putClientProperty("JButton.buttonType", "borderless");
-        jumpToLatestButton.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(jumpToLatestButton, Font.PLAIN, Fonts.SIZE_COMPACT);
         jumpToLatestButton.setFocusable(false);
         jumpToLatestButton.addActionListener(e -> fireJumpToLatest());
         generationInfoPanel.add(jumpToLatestButton);
 
-        cancelGenerationButton = new JButton("Cancel");
-        cancelGenerationButton.putClientProperty("JButton.buttonType", "borderless");
-        cancelGenerationButton.setFont(Fonts.of(Font.PLAIN, 12));
+        cancelGenerationButton = new JButton();
+        cancelGenerationButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        cancelGenerationButton.putClientProperty(
+                FlatClientProperties.STYLE,
+                "focusWidth:0;innerFocusWidth:0;arc:10"
+        );
         cancelGenerationButton.setFocusable(false);
+        cancelGenerationButton.setToolTipText("Stop generation");
+        cancelGenerationButton.setPreferredSize(new Dimension(STOP_BUTTON_SIZE, STOP_BUTTON_SIZE));
+        cancelGenerationButton.setMinimumSize(new Dimension(STOP_BUTTON_SIZE, STOP_BUTTON_SIZE));
+        cancelGenerationButton.setMaximumSize(new Dimension(STOP_BUTTON_SIZE, STOP_BUTTON_SIZE));
+        cancelGenerationButton.setHorizontalAlignment(SwingConstants.CENTER);
+        cancelGenerationButton.setVerticalAlignment(SwingConstants.CENTER);
+        cancelGenerationButton.setMargin(new Insets(0, 0, 0, 0));
+        cancelGenerationButton.setVisible(false);
         cancelGenerationButton.addActionListener(e -> fireCancelGeneration());
 
+        JPanel cancelPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        cancelPanel.setOpaque(false);
+        cancelPanel.add(cancelGenerationButton);
+        composerBottomPanel.add(cancelPanel, BorderLayout.EAST);
+
         generationIndicatorPanel.add(generationInfoPanel, BorderLayout.WEST);
-        generationIndicatorPanel.add(cancelGenerationButton, BorderLayout.EAST);
 
         configureSlashPopup();
         refreshSkills();
@@ -273,6 +290,7 @@ public class InputBar extends JPanel {
         Runnable update = () -> {
             generationIndicatorPanel.setVisible(visible);
             generationProgressBar.setIndeterminate(visible);
+            cancelGenerationButton.setVisible(visible);
             revalidate();
             repaint();
         };
@@ -411,7 +429,7 @@ public class InputBar extends JPanel {
         chip.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 3));
 
         JLabel label = new JLabel(text, leadingIcon, SwingConstants.LEADING);
-        label.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_COMPACT);
         label.setForeground(UIManager.getColor("Label.foreground"));
         label.setIconTextGap(4);
         chip.add(label);
@@ -440,7 +458,7 @@ public class InputBar extends JPanel {
         chip.setBorder(BorderFactory.createEmptyBorder(1, 8, 1, 3));
 
         JLabel label = new JLabel(text);
-        label.setFont(Fonts.of(Font.PLAIN, 12));
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_COMPACT);
         label.setForeground(resolveSkillTextColor(resolveSkillChipBackground(false)));
         chip.add(label);
 
@@ -491,18 +509,18 @@ public class InputBar extends JPanel {
 
     private void configureSlashPopup() {
         slashSuggestionsList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        slashSuggestionsList.setFont(Fonts.of(Font.PLAIN, 13));
+        Fonts.apply(slashSuggestionsList, Font.PLAIN, Fonts.SIZE_BODY);
         slashSuggestionsList.setVisibleRowCount(8);
         slashSuggestionsList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
             JPanel row = new JPanel(new BorderLayout(0, 2));
             row.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
 
             JLabel title = new JLabel("/" + value.name());
-            title.setFont(Fonts.of(Font.PLAIN, 13));
+            Fonts.apply(title, Font.PLAIN, Fonts.SIZE_BODY);
             row.add(title, BorderLayout.NORTH);
 
             JLabel desc = new JLabel(value.description());
-            desc.setFont(Fonts.of(Font.PLAIN, 11));
+            Fonts.apply(desc, Font.PLAIN, Fonts.SIZE_SMALL);
             desc.setForeground(UIManager.getColor("Label.disabledForeground"));
             row.add(desc, BorderLayout.SOUTH);
 
@@ -664,11 +682,15 @@ public class InputBar extends JPanel {
             return;
         }
 
+        int popupWidth = Math.max(240, (int) (getWidth() * 0.8));
+        Dimension popupPref = slashPopup.getPreferredSize();
+        slashPopup.setPreferredSize(new Dimension(popupWidth, popupPref.height));
+
         try {
-            Rectangle2D caretBounds = textArea.modelToView2D(textArea.getCaretPosition());
-            int x = Math.max(6, (int) caretBounds.getX());
-            int y = Math.max(6, (int) (caretBounds.getY() - slashPopup.getPreferredSize().height - 8));
-            slashPopup.show(textArea, x, y);
+            Point anchorInInputBar = new Point((getWidth() - popupWidth) / 2, 0);
+            Point anchorInTextArea = SwingUtilities.convertPoint(this, anchorInInputBar, textArea);
+            int y = Math.max(6, anchorInTextArea.y - slashPopup.getPreferredSize().height - 8);
+            slashPopup.show(textArea, anchorInTextArea.x, y);
         } catch (Exception e) {
             slashPopup.show(textArea, 6, 6);
         }
@@ -806,16 +828,19 @@ public class InputBar extends JPanel {
             jumpToLatestButton.setForeground(linkColor);
         }
 
-        if (cancelGenerationButton != null) {
-            cancelGenerationButton.setForeground(linkColor);
+        Color attachColor = UIManager.getColor("Label.foreground");
+        if (attachColor == null) {
+            attachColor = new Color(120, 120, 120);
         }
 
         if (attachButton != null) {
-            Color attachColor = UIManager.getColor("Label.foreground");
-            if (attachColor != null) {
-                attachButton.setForeground(attachColor);
-            }
+            attachButton.setForeground(attachColor);
             attachButton.setIcon(attachIcon(attachColor));
+        }
+
+        if (cancelGenerationButton != null) {
+            cancelGenerationButton.setForeground(attachColor);
+            cancelGenerationButton.setIcon(stopIcon(attachColor));
         }
 
         if (validationLabel != null) {
@@ -1188,6 +1213,16 @@ public class InputBar extends JPanel {
     private Icon attachIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/paperclip.svg", ATTACH_ICON_SIZE, tint);
         return icon != null ? icon : new FlatFileViewFileIcon();
+    }
+
+    private Icon stopIcon(Color tint) {
+        Icon icon = svgIcon("/icons/input/stop-circle.svg", STOP_ICON_SIZE, tint);
+        if (icon != null) {
+            return icon;
+        }
+
+        Icon fallback = svgIcon("/icons/input/stop.svg", STOP_ICON_SIZE, tint);
+        return fallback != null ? fallback : UIManager.getIcon("OptionPane.errorIcon");
     }
 
     private Icon svgIcon(String path, int size, Color tint) {

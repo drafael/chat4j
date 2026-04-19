@@ -15,26 +15,39 @@ import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
+import com.github.drafael.chat4j.util.Fonts;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.net.URL;
+import javax.imageio.ImageIO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public class ChatPanel extends JPanel {
 
+    private static final String CARD_EMPTY = "empty";
+    private static final String CARD_CHAT = "chat";
+
     private final JPanel messagesPanel;
     private final JScrollPane scrollPane;
+    private final CardLayout messagesCardLayout = new CardLayout();
+    private final JPanel messagesContainer;
     private final InputBar inputBar;
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
@@ -49,6 +62,8 @@ public class ChatPanel extends JPanel {
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
     private Runnable messageSubmittedListener;
+    private Consumer<AssistantMessageEvent> assistantMessageCompletedListener;
+    private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
 
     private final List<Message> history = new ArrayList<>();
@@ -58,12 +73,11 @@ public class ChatPanel extends JPanel {
     private ProviderService currentProvider;
     private MessageBubble currentAssistantBubble;
     private final AtomicLong streamSessionCounter = new AtomicLong();
+    private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
     private volatile long activeStreamSessionId = -1L;
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
-    private volatile AtomicBoolean activeStreamCancelled = new AtomicBoolean(false);
-    private volatile ProviderService activeStreamingProvider;
-    private volatile Thread activeStreamWorker;
+    private volatile UUID activeConversationId;
     private boolean autoScrollQueued = false;
     private int messageRow = 0;
 
@@ -109,7 +123,12 @@ public class ChatPanel extends JPanel {
         scrollPane = new JScrollPane(messagesPanel);
         scrollPane.addPropertyChangeListener("UI", e -> SwingUtilities.invokeLater(this::applyScrollPaneStyles));
         applyScrollPaneStyles();
-        add(scrollPane, BorderLayout.CENTER);
+
+        messagesContainer = new JPanel(messagesCardLayout);
+        messagesContainer.add(buildEmptyStatePanel(), CARD_EMPTY);
+        messagesContainer.add(scrollPane, CARD_CHAT);
+        messagesCardLayout.show(messagesContainer, CARD_EMPTY);
+        add(messagesContainer, BorderLayout.CENTER);
 
         // Input bar at bottom
         inputBar = new InputBar();
@@ -198,7 +217,7 @@ public class ChatPanel extends JPanel {
         button.setFocusable(false);
         button.setToolTipText(tooltip);
         button.setMargin(new Insets(2, 8, 2, 8));
-        button.setFont(button.getFont().deriveFont(Font.PLAIN, 11f));
+        Fonts.apply(button, Font.PLAIN, Fonts.SIZE_SMALL);
         button.setPreferredSize(new Dimension(92, 22));
         button.setMinimumSize(new Dimension(92, 22));
     }
@@ -313,7 +332,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void onSend() {
-        if (streaming) {
+        if (isVisibleConversationStreaming()) {
             return;
         }
 
@@ -340,61 +359,63 @@ public class ChatPanel extends JPanel {
         addUserBubble(userMsg);
         notifyMessageSubmitted();
 
+        UUID streamConversationId = resolveConversationId();
+
         currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
 
-        long streamSessionId = beginStreamingSession();
+        StreamingSession session = beginStreamingSession(streamConversationId, currentProvider);
 
-        AtomicBoolean cancellationFlag = activeStreamCancelled;
-        ProviderService streamingProvider = currentProvider;
-        activeStreamingProvider = streamingProvider;
-
-        activeStreamWorker = Thread.startVirtualThread(() -> {
-            streamingProvider.streamCompletion(
+        session.worker = Thread.startVirtualThread(() -> {
+            session.provider.streamCompletion(
                 new ArrayList<>(history),
                 token -> {
-                        if (!isActiveStreamingSession(streamSessionId)) {
+                        if (!session.isLive()) {
                             return;
                         }
+                        appendAssistantResponse(session, token);
                         SwingUtilities.invokeLater(() -> {
-                            if (!isActiveStreamingSession(streamSessionId) || currentAssistantBubble == null) {
+                            if (!session.isLive()
+                                    || currentAssistantBubble == null
+                                    || !isVisibleConversation(session.conversationId)
+                            ) {
                                 return;
                             }
                             currentAssistantBubble.appendText(token);
                             scrollToBottom();
                         });
                     },
-                () -> {
-                        if (!isActiveStreamingSession(streamSessionId)) {
+                () -> SwingUtilities.invokeLater(() -> {
+                        if (!session.isLive()) {
                             return;
                         }
-                        SwingUtilities.invokeLater(() -> {
-                            if (!isActiveStreamingSession(streamSessionId)) {
-                                return;
-                            }
-                            if (currentAssistantBubble != null) {
-                                history.add(Message.assistant(currentAssistantBubble.getFullText()));
-                            }
+                        persistAssistantResponse(session, true);
+                        if (isVisibleConversation(session.conversationId)) {
                             currentAssistantBubble = null;
-                            finishStreamingSession(streamSessionId);
-                        });
-                    },
+                        }
+                        finishStreamingSession(session);
+                    }),
                 error -> {
-                        if (!isActiveStreamingSession(streamSessionId)) {
+                        if (!session.isLive()) {
                             return;
                         }
+                        String errorText = "\n\n[Error: " + error.getMessage() + "]";
+                        appendAssistantResponse(session, errorText);
                         SwingUtilities.invokeLater(() -> {
-                            if (!isActiveStreamingSession(streamSessionId)) {
+                            if (!session.isLive()) {
                                 return;
                             }
-                            if (currentAssistantBubble != null) {
-                                currentAssistantBubble.appendText("\n\n[Error: " + error.getMessage() + "]");
+                            if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
+                                currentAssistantBubble.appendText(errorText);
                             }
-                            currentAssistantBubble = null;
-                            finishStreamingSession(streamSessionId);
+                            persistAssistantResponse(session, false);
+                            if (isVisibleConversation(session.conversationId)) {
+                                currentAssistantBubble = null;
+                            }
+                            finishStreamingSession(session);
                         });
                     },
-                cancellationFlag::get
+                session.cancelled::get
             );
         });
     }
@@ -609,7 +630,108 @@ public class ChatPanel extends JPanel {
         messagesPanel.add(wrapper, gbc);
         addBottomFiller();
         messagesPanel.revalidate();
+        messagesCardLayout.show(messagesContainer, CARD_CHAT);
         scrollToBottom();
+    }
+
+    private static final int EMPTY_STATE_ICON_SIZE = 128;
+
+    private JPanel buildEmptyStatePanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        BufferedImage source = loadLogoSource();
+        if (source != null) {
+            JLabel label = new JLabel() {
+                @Override
+                public void updateUI() {
+                    super.updateUI();
+                    setIcon(new LogoIcon(tintLogo(source), EMPTY_STATE_ICON_SIZE));
+                }
+            };
+            label.setIcon(new LogoIcon(tintLogo(source), EMPTY_STATE_ICON_SIZE));
+            panel.add(label);
+        }
+        return panel;
+    }
+
+    private static BufferedImage loadLogoSource() {
+        URL url = ChatPanel.class.getResource("/icons/icon.png");
+        if (url == null) {
+            return null;
+        }
+        try {
+            return ImageIO.read(url);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static BufferedImage tintLogo(BufferedImage source) {
+        Color base = UIManager.getColor("Label.foreground");
+        if (base == null) {
+            base = new Color(128, 128, 128);
+        }
+        int fgRgb = base.getRGB() & 0xFFFFFF;
+
+        int w = source.getWidth();
+        int h = source.getHeight();
+        BufferedImage tinted = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int argb = source.getRGB(x, y);
+                int a = (argb >>> 24) & 0xFF;
+                if (a == 0) {
+                    continue;
+                }
+                int r = (argb >> 16) & 0xFF;
+                int g = (argb >> 8) & 0xFF;
+                int b = argb & 0xFF;
+                int luminance = (r * 299 + g * 587 + b * 114) / 1000;
+                int newAlpha;
+                if (luminance <= 80) {
+                    newAlpha = a;
+                } else if (luminance >= 180) {
+                    newAlpha = 0;
+                } else {
+                    newAlpha = a * (180 - luminance) / 100;
+                }
+                if (newAlpha == 0) {
+                    continue;
+                }
+                tinted.setRGB(x, y, (newAlpha << 24) | fgRgb);
+            }
+        }
+        return tinted;
+    }
+
+    private static final class LogoIcon implements Icon {
+        private final BufferedImage source;
+        private final int size;
+
+        LogoIcon(BufferedImage source, int size) {
+            this.source = source;
+            this.size = size;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.drawImage(source, x, y, size, size, null);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return size;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return size;
+        }
     }
 
     private void addBubble(MessageBubble bubble, String text, Role role) {
@@ -702,13 +824,26 @@ public class ChatPanel extends JPanel {
     }
 
     public void clearChat() {
-        cancelStreaming();
+        clearChat(true);
+    }
+
+    public void clearChatView() {
+        clearChat(false);
+    }
+
+    private void clearChat(boolean cancelActiveStream) {
+        if (cancelActiveStream) {
+            cancelStreaming();
+        }
+
+        currentAssistantBubble = null;
         history.clear();
         assistantBubbles.clear();
         messagesPanel.removeAll();
         messageRow = 0;
         messagesPanel.revalidate();
         messagesPanel.repaint();
+        messagesCardLayout.show(messagesContainer, CARD_EMPTY);
     }
 
     public List<Message> getHistory() {
@@ -716,7 +851,7 @@ public class ChatPanel extends JPanel {
     }
 
     public void loadHistory(List<Message> messages) {
-        clearChat();
+        clearChat(false);
         for (Message msg : messages) {
             history.add(msg);
             if (msg.role() == Role.USER) {
@@ -813,6 +948,29 @@ public class ChatPanel extends JPanel {
         this.messageSubmittedListener = listener;
     }
 
+    public void setOnAssistantMessageCompleted(Consumer<AssistantMessageEvent> listener) {
+        this.assistantMessageCompletedListener = listener;
+    }
+
+    public void setConversationIdSupplier(Supplier<UUID> supplier) {
+        this.conversationIdSupplier = supplier;
+    }
+
+    public void setActiveConversationId(UUID conversationId) {
+        this.activeConversationId = conversationId;
+        StreamingSession visibleSession = visibleStreamingSession();
+        if (visibleSession != null) {
+            activeStreamSessionId = visibleSession.sessionId;
+            streaming = true;
+            inputBar.setEnabled(false);
+        } else {
+            activeStreamSessionId = -1L;
+            streaming = false;
+            inputBar.setEnabled(true);
+        }
+        updateGenerationIndicator();
+    }
+
     private void notifyModelFavoritesChanged() {
         if (modelFavoritesChangedListener != null) {
             modelFavoritesChangedListener.run();
@@ -828,6 +986,60 @@ public class ChatPanel extends JPanel {
     private void notifyMessageSubmitted() {
         if (messageSubmittedListener != null) {
             messageSubmittedListener.run();
+        }
+    }
+
+    private UUID resolveConversationId() {
+        if (conversationIdSupplier != null) {
+            UUID suppliedConversationId = conversationIdSupplier.get();
+            if (suppliedConversationId != null) {
+                return suppliedConversationId;
+            }
+        }
+        return activeConversationId;
+    }
+
+    private boolean isVisibleConversation(UUID conversationId) {
+        return Objects.equals(activeConversationId, conversationId);
+    }
+
+    private void appendAssistantResponse(StreamingSession session, String text) {
+        if (session == null || !session.isLive() || text == null || text.isEmpty()) {
+            return;
+        }
+
+        synchronized (session.response) {
+            session.response.append(text);
+        }
+    }
+
+    private void persistAssistantResponse(StreamingSession session, boolean allowBlankContent) {
+        String assistantText;
+        synchronized (session.response) {
+            assistantText = session.response.toString();
+        }
+
+        boolean hasContent = !assistantText.isBlank();
+        if (!allowBlankContent && !hasContent) {
+            return;
+        }
+
+        Message assistantMessage = Message.assistant(assistantText);
+        UUID conversationId = session.conversationId;
+        if (isVisibleConversation(conversationId)) {
+            history.add(assistantMessage);
+            if (currentAssistantBubble == null) {
+                addBubble(new MessageBubble(Role.ASSISTANT), assistantText, Role.ASSISTANT);
+            }
+        }
+
+        if (assistantMessageCompletedListener != null && conversationId != null) {
+            assistantMessageCompletedListener.accept(new AssistantMessageEvent(conversationId, assistantMessage));
+            return;
+        }
+
+        if (isVisibleConversation(conversationId) || conversationId == null) {
+            notifyMessageSubmitted();
         }
     }
 
@@ -868,24 +1080,31 @@ public class ChatPanel extends JPanel {
     }
 
     private void cancelStreaming(boolean markAsCancelled) {
-        activeStreamCancelled.set(true);
+        StreamingSession session = visibleStreamingSession();
 
-        if (markAsCancelled && streaming && currentAssistantBubble != null) {
-            currentAssistantBubble.appendText("\n\n[Cancelled]");
+        if (session != null) {
+            session.cancelled.set(true);
+
+            if (markAsCancelled) {
+                String cancelledMarker = "\n\n[Cancelled]";
+                appendAssistantResponse(session, cancelledMarker);
+                if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
+                    currentAssistantBubble.appendText(cancelledMarker);
+                }
+                persistAssistantResponse(session, false);
+            }
+
+            if (session.provider != null) {
+                session.provider.cancelActiveRequest();
+            }
+            Thread worker = session.worker;
+            if (worker != null) {
+                worker.interrupt();
+            }
+            session.finished = true;
+            activeSessions.remove(session.sessionId);
         }
 
-        ProviderService provider = activeStreamingProvider;
-        if (provider != null) {
-            provider.cancelActiveRequest();
-        }
-
-        Thread worker = activeStreamWorker;
-        if (worker != null) {
-            worker.interrupt();
-        }
-
-        activeStreamingProvider = null;
-        activeStreamWorker = null;
         autoScrollQueued = false;
         activeStreamSessionId = -1L;
         streaming = false;
@@ -897,33 +1116,51 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private long beginStreamingSession() {
+    private StreamingSession beginStreamingSession(UUID conversationId, ProviderService provider) {
         long streamSessionId = streamSessionCounter.incrementAndGet();
-        activeStreamSessionId = streamSessionId;
-        activeStreamCancelled = new AtomicBoolean(false);
-        activeStreamWorker = null;
-        streaming = true;
+        StreamingSession session = new StreamingSession(streamSessionId, conversationId, provider);
+        activeSessions.put(streamSessionId, session);
+        if (isVisibleConversation(conversationId)) {
+            activeStreamSessionId = streamSessionId;
+            streaming = true;
+            inputBar.setEnabled(false);
+        }
         updateGenerationIndicator();
-        inputBar.setEnabled(false);
-        return streamSessionId;
+        return session;
     }
 
-    private void finishStreamingSession(long streamSessionId) {
-        if (!isActiveStreamingSession(streamSessionId)) {
+    private void finishStreamingSession(StreamingSession session) {
+        if (session == null) {
             return;
         }
-        activeStreamingProvider = null;
-        activeStreamWorker = null;
-        autoScrollQueued = false;
-        activeStreamSessionId = -1L;
-        streaming = false;
-        updateGenerationIndicator();
-        inputBar.setEnabled(true);
-        inputBar.requestInputFocus();
+        session.finished = true;
+        activeSessions.remove(session.sessionId);
+        if (activeStreamSessionId == session.sessionId) {
+            autoScrollQueued = false;
+            activeStreamSessionId = -1L;
+            streaming = false;
+            updateGenerationIndicator();
+            inputBar.setEnabled(true);
+            inputBar.requestInputFocus();
+        }
     }
 
     private boolean isActiveStreamingSession(long streamSessionId) {
         return activeStreamSessionId == streamSessionId;
+    }
+
+    private boolean isVisibleConversationStreaming() {
+        return visibleStreamingSession() != null;
+    }
+
+    private StreamingSession visibleStreamingSession() {
+        UUID visibleId = activeConversationId;
+        for (StreamingSession session : activeSessions.values()) {
+            if (session.isLive() && Objects.equals(session.conversationId, visibleId)) {
+                return session;
+            }
+        }
+        return null;
     }
 
     private void updateGenerationIndicator() {
@@ -932,6 +1169,29 @@ public class ChatPanel extends JPanel {
 
     private static List<String> sanitizeModelIds(String providerName, List<String> modelIds) {
         return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
+    }
+
+    public record AssistantMessageEvent(UUID conversationId, Message message) {
+    }
+
+    private static final class StreamingSession {
+        final long sessionId;
+        final UUID conversationId;
+        final ProviderService provider;
+        final AtomicBoolean cancelled = new AtomicBoolean(false);
+        final StringBuilder response = new StringBuilder();
+        volatile Thread worker;
+        volatile boolean finished = false;
+
+        StreamingSession(long sessionId, UUID conversationId, ProviderService provider) {
+            this.sessionId = sessionId;
+            this.conversationId = conversationId;
+            this.provider = provider;
+        }
+
+        boolean isLive() {
+            return !finished && !cancelled.get();
+        }
     }
 
     private record ProviderModelSelection(String providerName, List<String> models) {

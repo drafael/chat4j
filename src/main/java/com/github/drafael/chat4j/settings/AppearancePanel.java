@@ -17,19 +17,38 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 public class AppearancePanel extends AbstractSettingsPanel {
 
     private static final String KEY_THEME = "theme";
     private static final String KEY_ACCENT_COLOR = "accentColor";
-    private static final String KEY_APP_FONT = "app.font";
-    private static final String KEY_CODE_FONT = "code.font";
+    public static final String KEY_APP_FONT = "app.font";
+    public static final String KEY_APP_FONT_SIZE = "app.font.size";
+    public static final String KEY_CODE_FONT = "code.font";
 
     private static final String DEFAULT_THEME = "GitHub";
-    private static final String DEFAULT_APP_FONT = "System Default";
-    private static final String DEFAULT_CODE_FONT = "Monospaced";
+    public static final String DEFAULT_APP_FONT = "System Default";
+    public static final String DEFAULT_CODE_FONT = "Monospaced";
+    private static final int FALLBACK_FONT_SIZE = Fonts.SIZE_BODY;
+    private static final int[] APP_FONT_SIZE_OPTIONS = {
+            Fonts.SIZE_COMPACT,
+            Fonts.SIZE_BODY,
+            Fonts.SIZE_BODY_LARGE,
+            Fonts.SIZE_SUBTITLE,
+            Fonts.SIZE_PANEL_TITLE,
+            Fonts.SIZE_DISPLAY
+    };
+    private static final String[] UI_COMPATIBLE_FONT_CANDIDATES = {
+            "Helvetica Neue",
+            "Helvetica",
+            "Arial",
+            "Verdana",
+            "Tahoma"
+    };
 
     // Accent colors: name -> hex color (null = default/theme color)
     private static final String[][] ACCENT_COLORS = {
@@ -127,11 +146,101 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     public static void applySavedFonts(SettingsRepo settings) {
         try {
+            String savedAppFont = settings.get(KEY_APP_FONT, DEFAULT_APP_FONT);
+            int savedAppFontSize = parseAppFontSize(
+                    settings.get(KEY_APP_FONT_SIZE, String.valueOf(defaultAppFontSize())));
             String savedCodeFont = settings.get(KEY_CODE_FONT, DEFAULT_CODE_FONT);
+
+            applyAppFont(savedAppFont, savedAppFontSize);
             applyCodeFont(savedCodeFont);
         } catch (Exception ignored) {
+            applyAppFont(DEFAULT_APP_FONT, defaultAppFontSize());
             applyCodeFont(DEFAULT_CODE_FONT);
         }
+    }
+
+    public static String[] appFontOptions() {
+        String[] availableFonts = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+        Set<String> ordered = new LinkedHashSet<>();
+        ordered.add(DEFAULT_APP_FONT);
+
+        Font defaultFont = resolveLookAndFeelDefaultAppFont();
+        if (defaultFont != null && defaultFont.getFamily() != null && !defaultFont.getFamily().isBlank()) {
+            ordered.add(defaultFont.getFamily());
+        }
+
+        Arrays.stream(UI_COMPATIBLE_FONT_CANDIDATES)
+                .map(candidate -> findFontFamilyIgnoreCase(availableFonts, candidate))
+                .filter(candidate -> candidate != null && !candidate.isBlank())
+                .forEach(ordered::add);
+
+        Arrays.stream(availableFonts)
+                .filter(AppearancePanel::isHelveticaFamily)
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .forEach(ordered::add);
+
+        return ordered.toArray(String[]::new);
+    }
+
+    public static String[] codeFontOptions() {
+        String[] availableFonts = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+        return withPreferredFont(DEFAULT_CODE_FONT, monospacedFontFamilies(availableFonts));
+    }
+
+    public static int[] appFontSizeOptions() {
+        return APP_FONT_SIZE_OPTIONS.clone();
+    }
+
+    public static int defaultAppFontSize() {
+        Font defaultFont = resolveLookAndFeelDefaultAppFont();
+        return defaultFont != null ? defaultFont.getSize() : FALLBACK_FONT_SIZE;
+    }
+
+    public static int normalizeAppFontSize(int requestedSize) {
+        if (requestedSize <= 0) {
+            return normalizeAppFontSize(defaultAppFontSize());
+        }
+
+        int bestMatch = APP_FONT_SIZE_OPTIONS[0];
+        int bestDistance = Math.abs(requestedSize - bestMatch);
+        for (int candidate : APP_FONT_SIZE_OPTIONS) {
+            int distance = Math.abs(requestedSize - candidate);
+            if (distance < bestDistance) {
+                bestMatch = candidate;
+                bestDistance = distance;
+            }
+        }
+
+        return bestMatch;
+    }
+
+    public static void applyAppFont(String fontFamily, int fontSize) {
+        Font defaultFont = resolveLookAndFeelDefaultAppFont();
+        int normalizedSize = normalizeAppFontSize(fontSize);
+
+        int style = defaultFont != null ? defaultFont.getStyle() : Font.PLAIN;
+        String resolvedFamily;
+        if (fontFamily == null || fontFamily.isBlank() || DEFAULT_APP_FONT.equals(fontFamily)) {
+            resolvedFamily = defaultFont != null ? defaultFont.getFamily() : Font.SANS_SERIF;
+        } else {
+            resolvedFamily = fontFamily;
+        }
+
+        Font appFont = new Font(resolvedFamily, style, normalizedSize);
+        UIManager.put("defaultFont", new FontUIResource(appFont));
+    }
+
+    public static void applyCodeFont(String fontFamily) {
+        Font base = resolveLookAndFeelDefaultCodeFont();
+        int size = base != null ? base.getSize() : FALLBACK_FONT_SIZE;
+
+        String family = fontFamily;
+        if (family == null || family.isBlank() || DEFAULT_CODE_FONT.equals(family)) {
+            family = base != null ? base.getFamily() : Font.MONOSPACED;
+        }
+
+        Font codeFont = new Font(family, Font.PLAIN, size);
+        UIManager.put("monospaced.font", new FontUIResource(codeFont));
     }
 
     /** Look up the LaF class name for a saved theme display name, or null if not found. */
@@ -169,35 +278,63 @@ public class AppearancePanel extends AbstractSettingsPanel {
         JPanel accentPanel = createAccentPanel();
         addRow(form, gbc, row++, "Accent color", accentPanel);
 
-        String[] fontFamilies = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
-
-        JComboBox<String> appFont = createFontSelector(withPreferredFont(DEFAULT_APP_FONT, fontFamilies));
+        String[] availableAppFontOptions = appFontOptions();
+        JComboBox<String> appFont = createFontSelector(availableAppFontOptions);
         addRow(form, gbc, row++, "App font", appFont);
         bindComboBox(
             appFont,
             KEY_APP_FONT,
             DEFAULT_APP_FONT,
             Validators.oneOf(
-                new LinkedHashSet<>(Arrays.asList(withPreferredFont(DEFAULT_APP_FONT, fontFamilies))),
+                new LinkedHashSet<>(Arrays.asList(availableAppFontOptions)),
                 "Invalid app font option"
             ),
-            null
+            value -> {
+                int appFontSize = parseAppFontSize(readString(
+                        KEY_APP_FONT_SIZE,
+                        String.valueOf(defaultAppFontSize())));
+                applyAppFont(value, appFontSize);
+                refreshAllWindows();
+            }
         );
 
-        JComboBox<String> codeFont = createFontSelector(withPreferredFont(DEFAULT_CODE_FONT, fontFamilies));
+        String[] availableAppFontSizeOptions = IntStream.of(appFontSizeOptions())
+                .mapToObj(String::valueOf)
+                .toArray(String[]::new);
+        JComboBox<String> appFontSize = createFontSelector(availableAppFontSizeOptions);
+        addRow(form, gbc, row++, "App font size", appFontSize);
+        bindComboBox(
+            appFontSize,
+            KEY_APP_FONT_SIZE,
+            String.valueOf(normalizeAppFontSize(defaultAppFontSize())),
+            Validators.oneOf(
+                new LinkedHashSet<>(Arrays.asList(availableAppFontSizeOptions)),
+                "Invalid app font size"
+            ),
+            value -> {
+                int size = parseAppFontSize(value);
+                String family = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
+                applyAppFont(family, size);
+                refreshAllWindows();
+            }
+        );
+
+        String[] availableCodeFontOptions = codeFontOptions();
+        JComboBox<String> codeFont = createFontSelector(availableCodeFontOptions);
         addRow(form, gbc, row++, "Code font", codeFont);
         bindComboBox(
             codeFont,
             KEY_CODE_FONT,
             DEFAULT_CODE_FONT,
             Validators.oneOf(
-                new LinkedHashSet<>(Arrays.asList(withPreferredFont(DEFAULT_CODE_FONT, fontFamilies))),
+                new LinkedHashSet<>(Arrays.asList(availableCodeFontOptions)),
                 "Invalid code font option"
             ),
             value -> {
-                    applyCodeFont(value);
-                    refreshAllWindows();
-                });
+                applyCodeFont(value);
+                refreshAllWindows();
+            }
+        );
 
         addVerticalSpacer(form, gbc, row);
     }
@@ -295,11 +432,76 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return new JComboBox<>(options);
     }
 
-    private String[] withPreferredFont(String preferred, String[] availableFonts) {
+    private static String[] withPreferredFont(String preferred, String[] availableFonts) {
         Set<String> ordered = new LinkedHashSet<>();
         ordered.add(preferred);
         ordered.addAll(Arrays.asList(availableFonts));
         return ordered.toArray(String[]::new);
+    }
+
+    private static String[] monospacedFontFamilies(String[] availableFonts) {
+        JLabel probe = new JLabel();
+        return Arrays.stream(availableFonts)
+                .filter(fontFamily -> isMonospacedFontFamily(probe, fontFamily))
+                .toArray(String[]::new);
+    }
+
+    private static String findFontFamilyIgnoreCase(String[] availableFonts, String candidate) {
+        return Arrays.stream(availableFonts)
+                .filter(fontFamily -> fontFamily.equalsIgnoreCase(candidate))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static boolean isHelveticaFamily(String fontFamily) {
+        return fontFamily != null && fontFamily.toLowerCase(Locale.ROOT).contains("helvetica");
+    }
+
+    private static boolean isMonospacedFontFamily(JLabel probe, String fontFamily) {
+        Font font = new Font(fontFamily, Font.PLAIN, FALLBACK_FONT_SIZE);
+        FontMetrics metrics = probe.getFontMetrics(font);
+
+        int i = metrics.charWidth('i');
+        int m = metrics.charWidth('m');
+        int w = metrics.charWidth('W');
+        int zero = metrics.charWidth('0');
+        return i > 0 && i == m && m == w && w == zero;
+    }
+
+    private static Font resolveLookAndFeelDefaultAppFont() {
+        Font defaultFont = UIManager.getLookAndFeelDefaults().getFont("defaultFont");
+        if (defaultFont != null) {
+            return defaultFont;
+        }
+
+        return UIManager.getFont("defaultFont");
+    }
+
+    private static Font resolveLookAndFeelDefaultCodeFont() {
+        Font monoFont = UIManager.getLookAndFeelDefaults().getFont("monospaced.font");
+        if (monoFont != null) {
+            return monoFont;
+        }
+
+        monoFont = UIManager.getLookAndFeelDefaults().getFont("TextArea.font");
+        if (monoFont != null) {
+            return monoFont;
+        }
+
+        monoFont = UIManager.getFont("monospaced.font");
+        if (monoFont != null) {
+            return monoFont;
+        }
+
+        return UIManager.getFont("TextArea.font");
+    }
+
+    private static int parseAppFontSize(String value) {
+        try {
+            return normalizeAppFontSize(Integer.parseInt(value));
+        } catch (Exception ignored) {
+            return normalizeAppFontSize(defaultAppFontSize());
+        }
     }
 
     private void applyAccentSelection(Color color, String hex) {
@@ -343,6 +545,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private void refreshAllWindows() {
         for (Window window : Window.getWindows()) {
             SwingUtilities.updateComponentTreeUI(window);
+            Fonts.refreshComponentTreeFonts(window);
             window.invalidate();
             window.validate();
             window.repaint();
@@ -350,19 +553,14 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private void applyConfiguredFontsFromSettings() {
+        String savedAppFont = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
+        int savedAppFontSize = parseAppFontSize(readString(
+                KEY_APP_FONT_SIZE,
+                String.valueOf(defaultAppFontSize())));
         String savedCodeFont = readString(KEY_CODE_FONT, DEFAULT_CODE_FONT);
+
+        applyAppFont(savedAppFont, savedAppFontSize);
         applyCodeFont(savedCodeFont);
-    }
-
-    private static void applyCodeFont(String fontFamily) {
-        Font base = UIManager.getFont("monospaced.font");
-        if (base == null) {
-            base = UIManager.getFont("TextArea.font");
-        }
-
-        int size = base != null ? base.getSize() : 13;
-        Font codeFont = new Font(fontFamily, Font.PLAIN, size);
-        UIManager.put("monospaced.font", new FontUIResource(codeFont));
     }
 
     /** Colored circle icon for accent color buttons */
@@ -437,12 +635,12 @@ public class AppearancePanel extends AbstractSettingsPanel {
             if (value instanceof String s && s.startsWith("---")) {
                 String header = s.replace("---", "").trim();
                 label.setText(header);
-                label.setFont(Fonts.of(Font.BOLD, 11));
+                Fonts.apply(label, Font.BOLD, Fonts.SIZE_SMALL);
                 label.setForeground(UIManager.getColor("Label.disabledForeground"));
                 label.setEnabled(false);
                 label.setBorder(new EmptyBorder(4, 6, 2, 6));
             } else {
-                label.setFont(Fonts.of(Font.PLAIN, 13));
+                Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
                 label.setBorder(new EmptyBorder(2, 12, 2, 6));
             }
             return label;

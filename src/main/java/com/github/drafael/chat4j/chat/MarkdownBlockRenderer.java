@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.util.Fonts;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -226,24 +228,30 @@ final class MarkdownBlockRenderer {
     }
 
     private static void appendCodeBlock(StringBuilder html, String code, String lang, Palette palette) {
+        int languageFontSize = Fonts.scale(Fonts.SIZE_MICRO);
+        int codeFontSize = Fonts.scale(Fonts.SIZE_SMALL);
+
         html.append("<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
         if (lang != null && !lang.isEmpty()) {
             html.append("<tr><td bgcolor=\"").append(palette.codeHeaderBg()).append("\"")
                     .append(" style=\"border: 1px solid ").append(palette.codeBorder())
-                    .append("; border-bottom: none; padding: 4px 10px;\">");
-            html.append("<font face=\"").append(palette.baseFontFamilyAttr()).append("\" size=\"2\" color=\"")
-                    .append(palette.langColor()).append("\">").append(lang).append("</font>");
+                    .append("; border-bottom: none; padding: 4px 10px; font-size: ").append(languageFontSize).append("px;\">");
+            html.append("<font face=\"").append(palette.baseFontFamilyAttr()).append("\" color=\"")
+                    .append(palette.langColor()).append("\">")
+                    .append(lang)
+                    .append("</font>");
             html.append("</td></tr>");
         }
 
         html.append("<tr><td bgcolor=\"").append(palette.codeBg()).append("\"")
                 .append(" style=\"border: 1px solid ").append(palette.codeBorder())
                 .append("; padding: 8px 12px;\">");
-        html.append("<pre style=\"margin: 0;\"><font face=\"").append(palette.monoFontFamilyAttr())
-                .append("\" size=\"3\" color=\"")
-                .append(palette.codeText()).append("\">")
+        html.append("<pre style=\"margin: 0;\"><font face=\"")
+                .append(palette.monoFontFamilyAttr()).append("\" color=\"")
+                .append(palette.codeText()).append("\" style=\"font-size: ")
+                .append(codeFontSize).append("px;\">")
                 .append(HtmlEscaper.escape(code))
                 .append("</font></pre>");
         html.append("</td></tr>");

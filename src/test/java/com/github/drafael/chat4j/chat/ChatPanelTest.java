@@ -15,9 +15,13 @@ import org.junit.jupiter.api.Test;
 import javax.swing.*;
 import java.awt.*;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -137,6 +141,193 @@ class ChatPanelTest {
                 .doesNotContain("[Image attached:");
     }
 
+    @Test
+    @DisplayName("Completing a stream triggers save callback for both user and assistant messages")
+    void onSend_whenStreamCompletes_notifiesMessageSubmittedForAssistantResponse() throws Exception {
+        var callbackCount = new AtomicInteger();
+        var callbacks = new CountDownLatch(2);
+        subject.setOnMessageSubmitted(() -> {
+            callbackCount.incrementAndGet();
+            callbacks.countDown();
+        });
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    java.util.function.Consumer<String> onToken,
+                    Runnable onComplete,
+                    java.util.function.Consumer<Exception> onError,
+                    java.util.function.BooleanSupplier isCancelled
+            ) {
+                onToken.accept("pong");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(callbackCount.get()).isEqualTo(2);
+        assertThat(subject.getHistory()).hasSize(2);
+        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
+    }
+
+    @Test
+    @DisplayName("Switching visible conversation keeps streaming in background and persists assistant response to original conversation")
+    void onSend_whenConversationChangesWhileStreaming_persistsAssistantToOriginalConversationOnly() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var persistedEvent = new AtomicReference<ChatPanel.AssistantMessageEvent>();
+        var completion = new CountDownLatch(1);
+        var tokenDelivered = new CountDownLatch(1);
+        var continueStream = new CountDownLatch(1);
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+        subject.setOnAssistantMessageCompleted(event -> {
+            persistedEvent.set(event);
+            completion.countDown();
+        });
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    java.util.function.Consumer<String> onToken,
+                    Runnable onComplete,
+                    java.util.function.Consumer<Exception> onError,
+                    java.util.function.BooleanSupplier isCancelled
+            ) {
+                onToken.accept("pong");
+                tokenDelivered.countDown();
+                try {
+                    continueStream.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.loadHistory(List.of(Message.user("visible conversation")));
+        });
+
+        continueStream.countDown();
+        assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        assertThat(persistedEvent.get()).isNotNull();
+        assertThat(persistedEvent.get().conversationId()).isEqualTo(originalConversationId);
+        assertThat(persistedEvent.get().message().content()).isEqualTo("pong");
+        assertThat(subject.getHistory()).hasSize(1);
+        assertThat(subject.getHistory().getFirst().content()).isEqualTo("visible conversation");
+    }
+
+    @Test
+    @DisplayName("Switching conversations while streaming re-enables input in the newly visible chat")
+    void setActiveConversationId_whenSwitchingAwayFromStreamingConversation_reEnablesInputBar() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var tokenDelivered = new CountDownLatch(1);
+        var continueStream = new CountDownLatch(1);
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    java.util.function.Consumer<String> onToken,
+                    Runnable onComplete,
+                    java.util.function.Consumer<Exception> onError,
+                    java.util.function.BooleanSupplier isCancelled
+            ) {
+                onToken.accept("pong");
+                tokenDelivered.countDown();
+                try {
+                    continueStream.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(subject.getInputBar().isEnabled()).isFalse();
+
+        SwingUtilities.invokeAndWait(() -> subject.setActiveConversationId(visibleConversationId));
+
+        assertThat(subject.getInputBar().isEnabled()).isTrue();
+        assertThat((boolean) readField(subject, "streaming")).isFalse();
+
+        continueStream.countDown();
+        flushEdt();
+    }
+
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
         return readField(chatPanel, "currentProvider");
     }
@@ -157,6 +348,30 @@ class ChatPanelTest {
         Field field = MessageBubble.class.getDeclaredField("assistantRenderMode");
         field.setAccessible(true);
         return (AssistantRenderMode) field.get(bubble);
+    }
+
+    private static JTextArea readInputTextArea(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("textArea");
+        field.setAccessible(true);
+        return (JTextArea) field.get(inputBar);
+    }
+
+    private static void invokeOnSend(ChatPanel chatPanel) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("onSend");
+        method.setAccessible(true);
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                method.invoke(chatPanel);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private static void flushEdt() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            // flush pending UI tasks
+        });
     }
 
     private static <T extends Component> List<T> findComponents(Container root, Class<T> componentType) {

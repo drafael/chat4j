@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.formdev.flatlaf.icons.FlatSearchIcon;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -33,7 +34,12 @@ public class ModelSelectorPopup extends JDialog {
     private static final Duration MODEL_REFRESH_TTL = Duration.ofHours(12);
     private static final Duration LOCAL_PROVIDER_REFRESH_TTL = Duration.ofSeconds(20);
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
-    private static final Dimension POPUP_SIZE = new Dimension(420, 560);
+    private static final int POPUP_MIN_WIDTH = 340;
+    private static final int POPUP_MAX_WIDTH = 768;
+    private static final int POPUP_HEIGHT = 560;
+    private static final int POPUP_HORIZONTAL_MARGIN = 24;
+    private static final int POPUP_CHROME_WIDTH = 170;
+    private static final float POPUP_WIDTH_REDUCTION_FACTOR = 0.8f;
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
@@ -48,7 +54,6 @@ public class ModelSelectorPopup extends JDialog {
             Map.entry("LM Studio", "/icons/providers/lmstudio.svg"),
             Map.entry("Ollama", "/icons/providers/ollama.svg")
     );
-    private static final int PROVIDER_ICON_SIZE = 14;
     private static final Map<String, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JTextField searchField;
@@ -165,7 +170,7 @@ public class ModelSelectorPopup extends JDialog {
         highlightedIndex = -1;
         searchField.setText("");
         filterModels();
-        setSize(POPUP_SIZE);
+        setSize(computePopupSize());
     }
 
     private void openPopup() {
@@ -179,19 +184,78 @@ public class ModelSelectorPopup extends JDialog {
 
     private void positionRelativeTo(Component relativeTo) {
         Point location = relativeTo.getLocationOnScreen();
+        Rectangle bounds = screenBounds(relativeTo);
+
         int x = location.x + (relativeTo.getWidth() - getWidth()) / 2;
-        int y = location.y + relativeTo.getHeight();
+        x = clamp(x, bounds.x + POPUP_HORIZONTAL_MARGIN,
+                bounds.x + bounds.width - getWidth() - POPUP_HORIZONTAL_MARGIN);
+
+        int yBelow = location.y + relativeTo.getHeight();
+        int yAbove = location.y - getHeight();
+        int y = yBelow;
+        if (y + getHeight() > bounds.y + bounds.height - POPUP_HORIZONTAL_MARGIN && yAbove >= bounds.y + POPUP_HORIZONTAL_MARGIN) {
+            y = yAbove;
+        }
+        y = clamp(y, bounds.y + POPUP_HORIZONTAL_MARGIN,
+                bounds.y + bounds.height - getHeight() - POPUP_HORIZONTAL_MARGIN);
+
         setLocation(x, y);
     }
 
     private void centerOnScreen() {
-        GraphicsConfiguration configuration = getOwner() != null
-                ? getOwner().getGraphicsConfiguration()
-                : GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration();
-        Rectangle bounds = configuration.getBounds();
+        Rectangle bounds = screenBounds(getOwner());
         int x = bounds.x + (bounds.width - getWidth()) / 2;
         int y = bounds.y + (bounds.height - getHeight()) / 2;
         setLocation(x, y);
+    }
+
+    private Dimension computePopupSize() {
+        Rectangle bounds = screenBounds(getOwner());
+        Font modelFont = popupModelFont();
+        FontMetrics metrics = getFontMetrics(modelFont);
+
+        int longestModelWidth = entries.values().stream()
+                .flatMap(entry -> entry.models.stream())
+                .mapToInt(metrics::stringWidth)
+                .max()
+                .orElse(0);
+
+        int desiredWidth = longestModelWidth + POPUP_CHROME_WIDTH;
+        int reducedDesiredWidth = Math.round(desiredWidth * POPUP_WIDTH_REDUCTION_FACTOR);
+        int maxWidth = Math.min(POPUP_MAX_WIDTH, bounds.width - POPUP_HORIZONTAL_MARGIN * 2);
+        int width = Math.max(POPUP_MIN_WIDTH, Math.min(reducedDesiredWidth, maxWidth));
+
+        return new Dimension(width, POPUP_HEIGHT);
+    }
+
+    private Font popupModelFont() {
+        Font mono = UIManager.getFont("monospaced.font");
+        int size = Fonts.scale(Fonts.SIZE_BODY);
+        if (mono != null) {
+            return new Font(mono.getFamily(), Font.PLAIN, size);
+        }
+
+        return new Font(Font.MONOSPACED, Font.PLAIN, size);
+    }
+
+    private static Rectangle screenBounds(Component component) {
+        GraphicsConfiguration configuration = component != null
+                ? component.getGraphicsConfiguration()
+                : null;
+        if (configuration == null) {
+            configuration = GraphicsEnvironment.getLocalGraphicsEnvironment()
+                    .getDefaultScreenDevice()
+                    .getDefaultConfiguration();
+        }
+
+        return configuration.getBounds();
+    }
+
+    private static int clamp(int value, int min, int max) {
+        if (max < min) {
+            return min;
+        }
+        return Math.max(min, Math.min(max, value));
     }
 
     public void preload() {
@@ -217,7 +281,8 @@ public class ModelSelectorPopup extends JDialog {
     private JTextField buildSearchField() {
         JTextField field = new JTextField();
         field.putClientProperty("JTextField.placeholderText", "Search models");
-        field.setFont(Fonts.of(Font.PLAIN, 13));
+        field.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        Fonts.apply(field, Font.PLAIN, Fonts.SIZE_BODY);
         field.setBorder(BorderFactory.createEmptyBorder(6, 4, 6, 4));
         field.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
@@ -247,17 +312,27 @@ public class ModelSelectorPopup extends JDialog {
             JToggleButton favoritesToggle,
             JScrollPane scrollPane
     ) {
-        JPanel content = new JPanel(new BorderLayout());
-        content.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
-                BorderFactory.createEmptyBorder(8, 0, 8, 0)
-        ));
+        JPanel content = new JPanel(new BorderLayout()) {
+            @Override
+            public void updateUI() {
+                super.updateUI();
+                setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
+                        BorderFactory.createEmptyBorder(8, 0, 8, 0)
+                ));
+            }
+        };
 
-        JPanel controls = new JPanel(new BorderLayout(8, 0));
-        controls.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),
-                BorderFactory.createEmptyBorder(0, 12, 6, 12)
-        ));
+        JPanel controls = new JPanel(new BorderLayout(8, 0)) {
+            @Override
+            public void updateUI() {
+                super.updateUI();
+                setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")),
+                        BorderFactory.createEmptyBorder(0, 12, 6, 12)
+                ));
+            }
+        };
         controls.add(searchField, BorderLayout.CENTER);
 
         JPanel togglePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
@@ -266,8 +341,8 @@ public class ModelSelectorPopup extends JDialog {
         togglePanel.add(favoritesToggle);
         controls.add(togglePanel, BorderLayout.EAST);
 
-        JLabel tipLabel = new JLabel("Tip: click ☆ Fav on the right to favorite models");
-        tipLabel.setFont(Fonts.of(Font.PLAIN, 11));
+        JLabel tipLabel = new JLabel("Tip: click the star icon on the right to favorite models");
+        Fonts.apply(tipLabel, Font.PLAIN, Fonts.SIZE_SMALL);
         tipLabel.setForeground(colorOrDefault(UIManager.getColor("Label.disabledForeground"), new Color(120, 120, 120)));
         tipLabel.setBorder(BorderFactory.createEmptyBorder(0, 12, 6, 12));
 
@@ -278,7 +353,7 @@ public class ModelSelectorPopup extends JDialog {
 
         content.add(headerPanel, BorderLayout.NORTH);
 
-        scrollPane.setBorder(null);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
@@ -611,8 +686,9 @@ public class ModelSelectorPopup extends JDialog {
     private void addProviderGroup(String groupName, List<DisplayModel> models, boolean selectable) {
         String label = selectable ? groupName : groupName + " (offline)";
         JLabel header = new JLabel(label);
-        header.setFont(header.getFont().deriveFont(Font.BOLD, 12f));
-        header.setIcon(providerIcon(groupName));
+        Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
+        int providerIconSize = Math.max(10, header.getFontMetrics(header.getFont()).getHeight() - 1);
+        header.setIcon(providerIcon(groupName, providerIconSize));
         header.setIconTextGap(6);
         header.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
         header.setMaximumSize(new Dimension(Integer.MAX_VALUE, header.getPreferredSize().height));
@@ -768,19 +844,20 @@ public class ModelSelectorPopup extends JDialog {
         return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
     }
 
-    private static Icon providerIcon(String providerName) {
+    private static Icon providerIcon(String providerName, int size) {
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);
         if (iconPath == null || iconPath.isBlank()) {
             return null;
         }
 
-        return PROVIDER_ICON_CACHE.computeIfAbsent(iconPath, path -> {
-            URL url = ModelSelectorPopup.class.getResource(path);
+        String cacheKey = iconPath + "#" + size;
+        return PROVIDER_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
+            URL url = ModelSelectorPopup.class.getResource(iconPath);
             if (url == null) {
                 return null;
             }
 
-            FlatSVGIcon icon = new FlatSVGIcon(url).derive(PROVIDER_ICON_SIZE, PROVIDER_ICON_SIZE);
+            FlatSVGIcon icon = new FlatSVGIcon(url).derive(size, size);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
                 Color foreground = component != null ? component.getForeground() : null;
                 if (foreground == null) {

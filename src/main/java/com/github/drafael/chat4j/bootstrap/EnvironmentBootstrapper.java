@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.bootstrap;
 
 import com.github.drafael.chat4j.env.ShellEnvironmentLoader;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.util.SystemInfo;
 
 import javax.swing.*;
@@ -58,7 +59,7 @@ public final class EnvironmentBootstrapper {
                 content.setBorder(BorderFactory.createEmptyBorder(20, 24, 20, 24));
 
                 JLabel label = new JLabel("Loading environment\u2026");
-                label.setFont(label.getFont().deriveFont(13f));
+                Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
                 content.add(label, BorderLayout.NORTH);
 
                 JProgressBar progress = new JProgressBar();

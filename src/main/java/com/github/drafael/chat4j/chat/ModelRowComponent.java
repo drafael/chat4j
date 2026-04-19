@@ -1,11 +1,16 @@
 package com.github.drafael.chat4j.chat;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.util.Fonts;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.net.URL;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 final class ModelRowComponent {
 
@@ -17,11 +22,15 @@ final class ModelRowComponent {
         void onMouseEnter(String providerName, String modelId);
     }
 
-    private static final int FAVORITE_HOTSPOT_WIDTH = 220;
+    private static final int CHECK_COLUMN_WIDTH = 18;
     private static final Color STAR_ON_COLOR = new Color(255, 140, 0);
     private static final Color STAR_OFF_COLOR = new Color(140, 140, 140);
     private static final int ROW_MAX_HEIGHT = 40;
-    private static final Dimension FAVORITE_LABEL_SIZE = new Dimension(150, 28);
+    private static final Dimension FAVORITE_LABEL_SIZE = new Dimension(26, 24);
+    private static final Dimension CHECK_LABEL_SIZE = new Dimension(CHECK_COLUMN_WIDTH, 24);
+    private static final String STAR_OUTLINE_PATH = "/icons/sidebar/star.svg";
+    private static final String STAR_FILLED_PATH = "/icons/sidebar/star-filled.svg";
+    private static final Map<String, Icon> FAVORITE_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel panel;
     private final JLabel nameLabel;
@@ -29,7 +38,10 @@ final class ModelRowComponent {
     private final JLabel favoriteLabel;
     private final String providerName;
     private final String modelId;
+    private final String displayLabel;
     private final boolean selectable;
+    private int lastNameLabelWidth = -1;
+    private String lastRenderedNameText;
 
     ModelRowComponent(
             String providerName,
@@ -41,6 +53,7 @@ final class ModelRowComponent {
     ) {
         this.providerName = providerName;
         this.modelId = modelId;
+        this.displayLabel = displayLabel;
         this.selectable = selectable;
 
         this.panel = buildPanel();
@@ -53,6 +66,7 @@ final class ModelRowComponent {
         applyDisabledState();
         wireRow(listener);
         assemble();
+        updateModelLabelText();
     }
 
     JPanel panel() {
@@ -88,33 +102,53 @@ final class ModelRowComponent {
     }
 
     void updateFavoriteState(boolean favorite) {
-        favoriteLabel.setText(favorite ? "★ Fav" : "☆ Fav");
         Color offColor = colorOrDefault(UIManager.getColor("Label.foreground"), STAR_OFF_COLOR);
-        favoriteLabel.setForeground(favorite ? STAR_ON_COLOR : offColor);
+        Color tint = favorite ? STAR_ON_COLOR : offColor;
+        int iconSize = Math.max(12, Fonts.scale(Fonts.SIZE_COMPACT));
+        String iconPath = favorite ? STAR_FILLED_PATH : STAR_OUTLINE_PATH;
+
+        favoriteLabel.setIcon(loadFavoriteIcon(iconPath, tint, iconSize));
+        favoriteLabel.setText(null);
+        favoriteLabel.setForeground(tint);
         favoriteLabel.setToolTipText(favorite ? "Remove from favorites" : "Add to favorites");
     }
 
     private JPanel buildPanel() {
-        JPanel row = new JPanel();
-        row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+        JPanel row = new JPanel(new BorderLayout(8, 0));
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, ROW_MAX_HEIGHT));
         row.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
         row.setCursor(selectable
                 ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 : Cursor.getDefaultCursor());
+        row.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                updateModelLabelText();
+            }
+        });
         return row;
     }
 
     private JLabel buildNameLabel(String displayLabel) {
         JLabel label = new JLabel(displayLabel);
-        label.setFont(label.getFont().deriveFont(Font.PLAIN, 13f));
+        Font mono = UIManager.getFont("monospaced.font");
+        int size = Fonts.scale(Fonts.SIZE_BODY);
+        if (mono != null) {
+            label.setFont(new Font(mono.getFamily(), Font.PLAIN, size));
+        } else {
+            label.setFont(new Font(Font.MONOSPACED, Font.PLAIN, size));
+        }
+        label.setHorizontalAlignment(SwingConstants.LEFT);
         return label;
     }
 
     private JLabel buildCheckLabel() {
-        JLabel label = new JLabel("\u2713");
+        JLabel label = new JLabel("\u2713", SwingConstants.CENTER);
         label.setForeground(new Color(76, 175, 80));
-        label.setFont(label.getFont().deriveFont(Font.BOLD, 14f));
+        Fonts.apply(label, Font.BOLD, Fonts.SIZE_BODY_LARGE);
+        label.setPreferredSize(CHECK_LABEL_SIZE);
+        label.setMinimumSize(CHECK_LABEL_SIZE);
+        label.setMaximumSize(CHECK_LABEL_SIZE);
         label.setVisible(false);
         return label;
     }
@@ -122,12 +156,12 @@ final class ModelRowComponent {
     private JLabel buildFavoriteLabel() {
         JLabel label = new JLabel();
         label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        label.setHorizontalAlignment(SwingConstants.RIGHT);
-        label.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        label.setHorizontalAlignment(SwingConstants.CENTER);
+        label.setVerticalAlignment(SwingConstants.CENTER);
+        label.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 2));
         label.setPreferredSize(FAVORITE_LABEL_SIZE);
         label.setMinimumSize(FAVORITE_LABEL_SIZE);
         label.setMaximumSize(FAVORITE_LABEL_SIZE);
-        label.setFont(Fonts.of(Font.PLAIN, 12));
         return label;
     }
 
@@ -139,16 +173,6 @@ final class ModelRowComponent {
         }
 
         favoriteLabel.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                e.consume();
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                e.consume();
-            }
-
             @Override
             public void mouseClicked(MouseEvent e) {
                 e.consume();
@@ -168,7 +192,7 @@ final class ModelRowComponent {
     }
 
     private void wireRow(Listener listener) {
-        panel.addMouseListener(new MouseAdapter() {
+        MouseAdapter rowMouseListener = new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
                 if (!selectable) {
@@ -184,32 +208,111 @@ final class ModelRowComponent {
                     return;
                 }
 
-                if (isFavoriteHotspotClick(panel, e.getPoint())
-                        || isClickInside(panel, favoriteLabel, e.getPoint())) {
+                Point panelPoint = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), panel);
+                if (isClickInside(panel, favoriteLabel, panelPoint)) {
                     listener.onToggleFavorite(providerName, modelId);
                     return;
                 }
 
                 listener.onSelect(providerName, modelId);
             }
-        });
+        };
+
+        panel.addMouseListener(rowMouseListener);
+        nameLabel.addMouseListener(rowMouseListener);
+        checkLabel.addMouseListener(rowMouseListener);
     }
 
     private void assemble() {
-        panel.add(nameLabel);
-        panel.add(Box.createHorizontalGlue());
-        panel.add(checkLabel);
-        panel.add(favoriteLabel);
+        JPanel actions = new JPanel(new BorderLayout(4, 0));
+        actions.setOpaque(false);
+        actions.add(checkLabel, BorderLayout.WEST);
+        actions.add(favoriteLabel, BorderLayout.EAST);
+
+        panel.add(nameLabel, BorderLayout.CENTER);
+        panel.add(actions, BorderLayout.EAST);
+    }
+
+    private void updateModelLabelText() {
+        int availableWidth = nameLabel.getWidth();
+        if (availableWidth <= 0) {
+            if (!Objects.equals(nameLabel.getText(), displayLabel)) {
+                nameLabel.setText(displayLabel);
+            }
+            lastNameLabelWidth = availableWidth;
+            lastRenderedNameText = displayLabel;
+            return;
+        }
+
+        if (availableWidth == lastNameLabelWidth && Objects.equals(lastRenderedNameText, nameLabel.getText())) {
+            return;
+        }
+
+        String clipped = clipTextToWidth(displayLabel, nameLabel.getFontMetrics(nameLabel.getFont()), availableWidth);
+        if (!Objects.equals(nameLabel.getText(), clipped)) {
+            nameLabel.setText(clipped);
+        }
+        nameLabel.setToolTipText(clipped.equals(displayLabel) ? null : displayLabel);
+        lastNameLabelWidth = availableWidth;
+        lastRenderedNameText = clipped;
+    }
+
+    private static String clipTextToWidth(String text, FontMetrics metrics, int maxWidth) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+
+        if (metrics.stringWidth(text) <= maxWidth) {
+            return text;
+        }
+
+        String ellipsis = "…";
+        int ellipsisWidth = metrics.stringWidth(ellipsis);
+        if (ellipsisWidth >= maxWidth) {
+            return ellipsis;
+        }
+
+        int low = 0;
+        int high = text.length();
+        while (low < high) {
+            int mid = (low + high + 1) / 2;
+            String candidate = text.substring(0, mid);
+            int width = metrics.stringWidth(candidate) + ellipsisWidth;
+            if (width <= maxWidth) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return text.substring(0, low) + ellipsis;
+    }
+
+    private static Icon loadFavoriteIcon(String iconPath, Color tint, int size) {
+        int rgb = tint != null ? tint.getRGB() : STAR_OFF_COLOR.getRGB();
+        String cacheKey = iconPath + "#" + size + "#" + rgb;
+        return FAVORITE_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
+            URL url = ModelRowComponent.class.getResource(iconPath);
+            if (url == null) {
+                return null;
+            }
+
+            FlatSVGIcon icon = new FlatSVGIcon(url).derive(size, size);
+            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
+                Color effectiveTint = tint != null ? tint : STAR_OFF_COLOR;
+                return new Color(
+                        effectiveTint.getRed(),
+                        effectiveTint.getGreen(),
+                        effectiveTint.getBlue(),
+                        color.getAlpha());
+            }));
+            return icon.hasFound() ? icon : null;
+        });
     }
 
     private static boolean isClickInside(Component container, Component target, Point containerPoint) {
         Point targetPoint = SwingUtilities.convertPoint(container, containerPoint, target);
         return target.contains(targetPoint);
-    }
-
-    private static boolean isFavoriteHotspotClick(Component container, Point containerPoint) {
-        int hotspotStartX = Math.max(0, container.getWidth() - FAVORITE_HOTSPOT_WIDTH);
-        return containerPoint.x >= hotspotStartX;
     }
 
     private static Color colorOrDefault(Color candidate, Color fallback) {

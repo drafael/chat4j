@@ -812,7 +812,7 @@ public class SidebarPanel extends JPanel {
         ) {
             if (value instanceof GroupHeader header) {
                 var label = new JLabel(header.name());
-                label.setFont(Fonts.of(Font.BOLD, 11));
+                Fonts.apply(label, Font.BOLD, Fonts.SIZE_SMALL);
                 label.setForeground(UIManager.getColor("Label.disabledForeground"));
                 label.setBorder(new EmptyBorder(8, 10, 4, 10));
                 label.setOpaque(false);
@@ -831,7 +831,7 @@ public class SidebarPanel extends JPanel {
                     cellHasFocus
                 );
                 label.setBorder(new EmptyBorder(6, 14, 6, 10));
-                label.setFont(Fonts.of(Font.PLAIN, 13));
+                Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
                 label.setIcon(providerIcon(conversation.provider()));
                 label.setIconTextGap(8);
 
