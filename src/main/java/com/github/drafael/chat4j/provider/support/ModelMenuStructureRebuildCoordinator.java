@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JMenu;
@@ -24,17 +25,13 @@ public class ModelMenuStructureRebuildCoordinator {
 
     public RebuildState rebuild(
             JMenu modelsMenu,
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            Map<String, JMenuItem> providerHeaderItemsByName,
-            List<ProviderRegistry.ProviderDef> providers,
-            Consumer<String> onModelSelected,
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
+            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull Consumer<String> onModelSelected,
             boolean currentModelsMenuDirty,
             String currentLastMenuSelectedModelKey
     ) {
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(providerHeaderItemsByName, "providerHeaderItemsByName must not be null");
-        Validate.notNull(providers, "providers must not be null");
-        Validate.notNull(onModelSelected, "onModelSelected must not be null");
 
         if (modelsMenu == null) {
             return new RebuildState(currentModelsMenuDirty, currentLastMenuSelectedModelKey);
@@ -49,7 +46,7 @@ public class ModelMenuStructureRebuildCoordinator {
 
     @FunctionalInterface
     interface RebuildAction {
-        boolean rebuild(
+        void rebuild(
                 JMenu modelsMenu,
                 Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
                 Map<String, JMenuItem> providerHeaderItemsByName,

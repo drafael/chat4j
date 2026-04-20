@@ -7,6 +7,7 @@ import java.sql.SQLException;
 
 public class ThemeSettingsResolver {
 
+    public static final String DEFAULT_THEME = "GitHub";
     private static final String KEY_THEME = "theme";
 
     private final SettingsRepo settingsRepo;

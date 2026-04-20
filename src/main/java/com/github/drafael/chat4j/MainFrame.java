@@ -30,6 +30,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCatalogSectionAppender;
@@ -68,9 +69,11 @@ import com.github.drafael.chat4j.settings.FontMenuReadyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionDispatchCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionRefreshCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
 import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
@@ -78,6 +81,7 @@ import com.github.drafael.chat4j.settings.FontSettingsPersister;
 import com.github.drafael.chat4j.settings.FontSettingsResolver;
 import com.github.drafael.chat4j.settings.GeneralSettingsApplyCoordinator;
 import com.github.drafael.chat4j.settings.GeneralSettingsApplyDispatchCoordinator;
+import com.github.drafael.chat4j.settings.GeneralSettingsDefaultModeApplyCoordinator;
 import com.github.drafael.chat4j.settings.GeneralSettingsResolver;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingCoordinator;
@@ -94,15 +98,18 @@ import com.github.drafael.chat4j.settings.ThemeMenuReadyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionDispatchCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionRefreshCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
 import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
 import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
+import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionDispatchCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionEventDispatchCoordinator;
@@ -120,6 +127,8 @@ import com.github.drafael.chat4j.storage.ConversationTitleDeriver;
 import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
 import com.github.drafael.chat4j.storage.CurrentConversationSaveDispatchCoordinator;
 import com.github.drafael.chat4j.storage.CurrentConversationSaveUiApplyCoordinator;
+import com.github.drafael.chat4j.storage.ShutdownFlowCoordinator;
+import com.github.drafael.chat4j.storage.ShutdownSaveDispatchCoordinator;
 import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.PersistedMessageCounter;
@@ -128,12 +137,11 @@ import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.desktop.QuitResponse;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -143,6 +151,7 @@ import java.util.logging.Logger;
 public class MainFrame extends JFrame {
 
     private static final Logger LOG = Logger.getLogger(MainFrame.class.getName());
+    private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
 
     private final ChatPanel chatPanel;
     private final SidebarPanel sidebarPanel;
@@ -180,6 +189,9 @@ public class MainFrame extends JFrame {
                     mainMenuBarApplyStateCoordinator
             );
     private final SidebarToggleCoordinator sidebarToggleCoordinator = new SidebarToggleCoordinator();
+    private final SidebarToggleStateApplyCoordinator sidebarToggleStateApplyCoordinator =
+            new SidebarToggleStateApplyCoordinator();
+    private final MainFrameDependenciesFactory mainFrameDependenciesFactory = new MainFrameDependenciesFactory();
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
@@ -212,6 +224,8 @@ public class MainFrame extends JFrame {
     private final ProviderCatalogSectionAppender providerCatalogSectionAppender;
     private final ProviderMenuStructureRebuilder providerMenuStructureRebuilder;
     private final ModelMenuStructureRebuildCoordinator modelMenuStructureRebuildCoordinator;
+    private final ModelMenuStructureRebuildApplyCoordinator modelMenuStructureRebuildApplyCoordinator =
+            new ModelMenuStructureRebuildApplyCoordinator();
     private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
     private final AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator;
     private final AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator =
@@ -228,6 +242,8 @@ public class MainFrame extends JFrame {
     private final GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator =
             new GeneralSettingsUiApplyCoordinator();
     private final GeneralSettingsApplyDispatchCoordinator generalSettingsApplyDispatchCoordinator;
+    private final GeneralSettingsDefaultModeApplyCoordinator generalSettingsDefaultModeApplyCoordinator =
+            new GeneralSettingsDefaultModeApplyCoordinator();
     private final MenuBarSettingCoordinator menuBarSettingCoordinator = new MenuBarSettingCoordinator();
     private final MenuBarSettingDispatchCoordinator menuBarSettingDispatchCoordinator =
             new MenuBarSettingDispatchCoordinator(menuBarSettingCoordinator);
@@ -248,6 +264,8 @@ public class MainFrame extends JFrame {
             new ThemeMenuStructureRebuilder(menuSectionHeaderFactory);
     private final ThemeMenuStructureRebuildCoordinator themeMenuStructureRebuildCoordinator =
             new ThemeMenuStructureRebuildCoordinator(themeMenuStructureRebuilder);
+    private final ThemeMenuStructureRebuildApplyCoordinator themeMenuStructureRebuildApplyCoordinator =
+            new ThemeMenuStructureRebuildApplyCoordinator();
     private final ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer = new ThemeMenuSelectionSynchronizer();
     private final ThemeMenuReadyCoordinator themeMenuReadyCoordinator = new ThemeMenuReadyCoordinator();
     private final ThemeMenuReadyDispatchCoordinator themeMenuReadyDispatchCoordinator =
@@ -256,10 +274,13 @@ public class MainFrame extends JFrame {
     private final ThemeMenuSelectionDispatchCoordinator themeMenuSelectionDispatchCoordinator;
     private final ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator =
             new ThemeMenuSelectionApplyCoordinator();
+    private final ThemeMenuSelectionFlowCoordinator themeMenuSelectionFlowCoordinator;
     private final FontMenuStructureRebuilder fontMenuStructureRebuilder =
             new FontMenuStructureRebuilder(menuSectionHeaderFactory);
     private final FontMenuStructureRebuildCoordinator fontMenuStructureRebuildCoordinator =
             new FontMenuStructureRebuildCoordinator(fontMenuStructureRebuilder);
+    private final FontMenuStructureRebuildApplyCoordinator fontMenuStructureRebuildApplyCoordinator =
+            new FontMenuStructureRebuildApplyCoordinator();
     private final FontMenuSelectionSynchronizer fontMenuSelectionSynchronizer = new FontMenuSelectionSynchronizer();
     private final FontMenuReadyCoordinator fontMenuReadyCoordinator = new FontMenuReadyCoordinator();
     private final FontMenuReadyDispatchCoordinator fontMenuReadyDispatchCoordinator =
@@ -268,6 +289,7 @@ public class MainFrame extends JFrame {
     private final FontMenuSelectionDispatchCoordinator fontMenuSelectionDispatchCoordinator;
     private final FontMenuSelectionApplyCoordinator fontMenuSelectionApplyCoordinator =
             new FontMenuSelectionApplyCoordinator();
+    private final FontMenuSelectionFlowCoordinator fontMenuSelectionFlowCoordinator;
     private final WindowStateSettingsCoordinator windowStateSettingsCoordinator;
     private final WindowStateRestoreCoordinator windowStateRestoreCoordinator;
     private final ConversationLoadCoordinator conversationLoadCoordinator;
@@ -280,7 +302,6 @@ public class MainFrame extends JFrame {
     private final ConversationLoadResultPlanner conversationLoadResultPlanner;
     private final ConversationLoadApplyDispatchCoordinator conversationLoadApplyDispatchCoordinator;
     private final ConversationPersistenceCoordinator conversationPersistenceCoordinator;
-    private final AssistantMessageCompletionCoordinator assistantMessageCompletionCoordinator;
     private final AssistantMessageCompletionDispatchCoordinator assistantMessageCompletionDispatchCoordinator =
             new AssistantMessageCompletionDispatchCoordinator();
     private final AssistantMessageCompletionEventDispatchCoordinator assistantMessageCompletionEventDispatchCoordinator =
@@ -291,51 +312,38 @@ public class MainFrame extends JFrame {
             new CurrentConversationSaveDispatchCoordinator();
     private final CurrentConversationSaveUiApplyCoordinator currentConversationSaveUiApplyCoordinator =
             new CurrentConversationSaveUiApplyCoordinator();
-    private UUID currentConversationId;
-    private boolean sidebarVisible = true;
-    private int lastDividerLocation = 250;
-    private JButton sidebarToggleBtn;
-    private Icon sidebarToggleIconFilled;
-    private Icon sidebarToggleIconOutline;
+    private final ShutdownSaveDispatchCoordinator shutdownSaveDispatchCoordinator = new ShutdownSaveDispatchCoordinator();
+    private final ShutdownFlowCoordinator shutdownFlowCoordinator =
+            new ShutdownFlowCoordinator(shutdownSaveDispatchCoordinator);
+    private final MainFrameConversationState conversationState = new MainFrameConversationState();
+    private final MainFrameShutdownState shutdownState = new MainFrameShutdownState();
+    private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
+    private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
     private final ChatSearchPopupCoordinator chatSearchPopupCoordinator = new ChatSearchPopupCoordinator();
-    private AssistantRenderMode assistantMarkdownDefaultMode = AssistantRenderMode.PREVIEW;
-    private AssistantRenderMode pendingUnsavedConversationRenderMode;
+    private final MainFrameAssistantRenderModeState assistantRenderModeState = new MainFrameAssistantRenderModeState();
     private final SettingsDialogCoordinator settingsDialogCoordinator = new SettingsDialogCoordinator();
     private final SettingsOpenDispatchCoordinator settingsOpenDispatchCoordinator = new SettingsOpenDispatchCoordinator();
     private final SettingsOpenFlowCoordinator settingsOpenFlowCoordinator =
             new SettingsOpenFlowCoordinator(settingsOpenDispatchCoordinator, settingsDialogCoordinator);
-    private JMenuBar modelMenuBar;
-    private JMenu fileMenu;
-    private JMenu viewMenu;
-    private JMenu modelsMenu;
-    private JMenu themesMenu;
-    private JMenu fontMenu;
-    private final Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
-    private final Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
+    private final MainFrameTopMenusState topMenusState = new MainFrameTopMenusState();
+    private final MainFrameBoundMenusState boundMenusState = new MainFrameBoundMenusState();
+    private final MainFrameMenuItemsState menuItemsState = new MainFrameMenuItemsState();
     private final ModelMenuSelectionSynchronizer modelMenuSelectionSynchronizer = new ModelMenuSelectionSynchronizer();
     private final ModelMenuSelectionDispatchCoordinator modelMenuSelectionDispatchCoordinator =
             new ModelMenuSelectionDispatchCoordinator(modelMenuSelectionSynchronizer);
+    private final ModelMenuSelectionApplyCoordinator modelMenuSelectionApplyCoordinator =
+            new ModelMenuSelectionApplyCoordinator();
     private final ModelMenuSelectionChangeCoordinator modelMenuSelectionChangeCoordinator =
             new ModelMenuSelectionChangeCoordinator();
     private final MenuPopupVisibleRunner menuPopupVisibleRunner = new MenuPopupVisibleRunner();
     private final ModelMenuDirtyRefreshCoordinator modelMenuDirtyRefreshCoordinator;
     private final ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator;
     private final LookAndFeelMenuRefreshCoordinator lookAndFeelMenuRefreshCoordinator;
-    private final Map<String, JRadioButtonMenuItem> themeMenuItemsByName = new LinkedHashMap<>();
-    private final Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily = new LinkedHashMap<>();
-    private final Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize = new LinkedHashMap<>();
-    private final Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily = new LinkedHashMap<>();
     private final PersistedMessageCounter persistedMessageCounter = new PersistedMessageCounter();
-    private boolean modelsMenuDirty = true;
-    private boolean themesMenuBuilt;
-    private boolean fontMenuBuilt;
-    private String lastMenuSelectedModelKey;
-    private String lastMenuSelectedTheme;
-    private String lastMenuSelectedAppFontFamily;
-    private Integer lastMenuSelectedAppFontSize;
-    private String lastMenuSelectedCodeFontFamily;
-    private JCheckBoxMenuItem togglePreviewMenuItem;
-    private boolean syncingPreviewMenuSelection;
+    private final MainFrameModelMenuState modelMenuState = new MainFrameModelMenuState();
+    private final MainFrameThemeMenuState themeMenuState = new MainFrameThemeMenuState();
+    private final MainFrameFontMenuState fontMenuState = new MainFrameFontMenuState();
+    private final MainFramePreviewMenuState previewMenuState = new MainFramePreviewMenuState();
     private final PropertyChangeListener lookAndFeelListener = event -> {
         if (!"lookAndFeel".equals(event.getPropertyName())) {
             return;
@@ -355,109 +363,84 @@ public class MainFrame extends JFrame {
         this.settingsRepo = settingsRepo;
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
-        this.providerSettingsApplyCoordinator =
-                new ProviderSettingsApplyCoordinator(new ProviderRuntimeSettingsResolver(settingsRepo));
-        this.providerModelsResolver = new ProviderModelsResolver(modelCacheService);
-        this.providerFavoritesResolver = new ProviderFavoritesResolver(modelFavoritesService);
-        this.providerAvailabilityResolver = new ProviderAvailabilityResolver(settingsRepo);
-        this.providerMenuDataResolver = new ProviderMenuDataResolver(
-                providerModelsResolver,
+        var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
+                conversationRepo,
+                settingsRepo,
+                modelCacheService,
+                modelFavoritesService,
                 providerSelectableResolver,
-                providerFavoritesResolver,
-                providerAvailabilityResolver
-        );
-        this.providerMenuAvailabilityRefreshCoordinator = new ProviderMenuAvailabilityRefreshCoordinator(
-                providerAvailabilityResolver::resolveMenuAvailability,
-                providerMenuAvailabilityApplier
-        );
-        this.providerMenuAvailabilityRefreshDispatchCoordinator =
-                new ProviderMenuAvailabilityRefreshDispatchCoordinator(providerMenuAvailabilityRefreshCoordinator);
-        this.providerCatalogSectionAppender = new ProviderCatalogSectionAppender(
+                providerMenuAvailabilityApplier,
                 providerAvailabilityLabelFormatter,
                 providerHeaderMenuItemFactory,
-                providerFavoritesResolver,
                 providerMenuEmptyStateFactory,
-                providerModelMenuItemFactory
-        );
-        this.providerMenuStructureRebuilder = new ProviderMenuStructureRebuilder(
-                providerMenuDataResolver,
+                providerModelMenuItemFactory,
                 providerFavoritesSectionAppender,
-                providerCatalogSectionAppender,
-                providerMenuEmptyStateFactory
-        );
-        this.modelMenuStructureRebuildCoordinator =
-                new ModelMenuStructureRebuildCoordinator(providerMenuStructureRebuilder);
-        this.assistantRenderModeSettingsCoordinator = new AssistantRenderModeSettingsCoordinator(settingsRepo);
-        this.assistantRenderModeChangeCoordinator = new AssistantRenderModeChangeCoordinator(
-                new AssistantRenderModeChangePlanner(),
-                assistantRenderModeSettingsCoordinator
-        );
-        this.assistantRenderModeChangeDispatchCoordinator = new AssistantRenderModeChangeDispatchCoordinator(
-                assistantRenderModeChangeCoordinator,
-                assistantRenderModeChangeUiApplyCoordinator
-        );
-        this.generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, assistantRenderModeSettingsCoordinator);
-        this.generalSettingsApplyCoordinator = new GeneralSettingsApplyCoordinator(
-                generalSettingsResolver,
-                assistantRenderModeSelectionResolver
-        );
-        this.generalSettingsApplyDispatchCoordinator = new GeneralSettingsApplyDispatchCoordinator(
-                generalSettingsApplyCoordinator,
-                generalSettingsUiApplyCoordinator
-        );
-        this.fontSettingsResolver = new FontSettingsResolver(settingsRepo);
-        this.fontSettingsPersister = new FontSettingsPersister(settingsRepo);
-        this.fontMenuApplyCoordinator = new FontMenuApplyCoordinator(
+                assistantRenderModeSelectionResolver,
+                assistantRenderModeChangeUiApplyCoordinator,
+                generalSettingsUiApplyCoordinator,
                 fontSelectionNormalizer,
                 fontPreviewApplier,
-                fontSettingsPersister
-        );
-        this.fontMenuSelectionRefreshCoordinator = new FontMenuSelectionRefreshCoordinator(
-                fontSettingsResolver,
-                fontMenuSelectionSynchronizer
-        );
-        this.fontMenuSelectionDispatchCoordinator =
-                new FontMenuSelectionDispatchCoordinator(fontMenuSelectionRefreshCoordinator);
-        this.appFontSizeStepResolver = new AppFontSizeStepResolver();
-        this.appFontSizeAdjustCoordinator = new AppFontSizeAdjustCoordinator(appFontSizeStepResolver);
-        this.themeSettingsResolver = new ThemeSettingsResolver(settingsRepo);
-        this.themeMenuApplyCoordinator = new ThemeMenuApplyCoordinator(themeSettingsResolver, settingsRepo);
-        this.themeMenuSelectionRefreshCoordinator = new ThemeMenuSelectionRefreshCoordinator(
-                themeSettingsResolver,
-                themeMenuSelectionSynchronizer
-        );
-        this.themeMenuSelectionDispatchCoordinator =
-                new ThemeMenuSelectionDispatchCoordinator(themeMenuSelectionRefreshCoordinator);
-        this.modelMenuDirtyRefreshCoordinator = new ModelMenuDirtyRefreshCoordinator(menuPopupVisibleRunner);
-        this.modelMenuDirtyRefreshTriggerCoordinator =
-                new ModelMenuDirtyRefreshTriggerCoordinator(modelMenuDirtyRefreshCoordinator);
-        this.lookAndFeelMenuRefreshCoordinator = new LookAndFeelMenuRefreshCoordinator(menuPopupVisibleRunner);
-        this.windowStateSettingsCoordinator = new WindowStateSettingsCoordinator(settingsRepo);
-        this.windowStateRestoreCoordinator = new WindowStateRestoreCoordinator(windowStateSettingsCoordinator);
-        this.conversationLoadCoordinator = new ConversationLoadCoordinator(conversationRepo);
-        this.conversationLoadResultPlanner = new ConversationLoadResultPlanner(
-                conversationLoadCoordinator::isCurrentRequest,
+                fontMenuSelectionSynchronizer,
+                fontMenuSelectionApplyCoordinator,
+                themeMenuSelectionSynchronizer,
+                themeMenuSelectionApplyCoordinator,
+                menuPopupVisibleRunner,
+                persistedMessageCounter,
                 this::resolveConversationRenderMode
-        );
-        this.conversationLoadApplyDispatchCoordinator = new ConversationLoadApplyDispatchCoordinator(
-                conversationLoadResultPlanner,
-                new ConversationLoadApplyCoordinator()
-        );
-        this.conversationPersistenceCoordinator = new ConversationPersistenceCoordinator(
-                conversationRepo,
-                persistedMessageCounter
-        );
-        this.assistantMessageCompletionCoordinator =
-                new AssistantMessageCompletionCoordinator(conversationPersistenceCoordinator);
-        this.assistantMessageCompletionFlowCoordinator =
-                new AssistantMessageCompletionFlowCoordinator(assistantMessageCompletionCoordinator);
-        this.currentConversationSaveCoordinator = new CurrentConversationSaveCoordinator(
-                new ConversationTitleDeriver(),
-                conversationPersistenceCoordinator,
-                assistantRenderModeSettingsCoordinator
-        );
+        ));
 
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        var providerMenuWiring = dependencies.providerMenuWiring();
+        this.providerSettingsApplyCoordinator = providerMenuWiring.providerSettingsApplyCoordinator();
+        this.providerModelsResolver = providerMenuWiring.providerModelsResolver();
+        this.providerFavoritesResolver = providerMenuWiring.providerFavoritesResolver();
+        this.providerAvailabilityResolver = providerMenuWiring.providerAvailabilityResolver();
+        this.providerMenuDataResolver = providerMenuWiring.providerMenuDataResolver();
+        this.providerMenuAvailabilityRefreshCoordinator =
+                providerMenuWiring.providerMenuAvailabilityRefreshCoordinator();
+        this.providerMenuAvailabilityRefreshDispatchCoordinator =
+                providerMenuWiring.providerMenuAvailabilityRefreshDispatchCoordinator();
+        this.providerCatalogSectionAppender = providerMenuWiring.providerCatalogSectionAppender();
+        this.providerMenuStructureRebuilder = providerMenuWiring.providerMenuStructureRebuilder();
+        this.modelMenuStructureRebuildCoordinator = providerMenuWiring.modelMenuStructureRebuildCoordinator();
+
+        var settingsWiring = dependencies.settingsWiring();
+        this.assistantRenderModeSettingsCoordinator = settingsWiring.assistantRenderModeSettingsCoordinator();
+        this.assistantRenderModeChangeCoordinator = settingsWiring.assistantRenderModeChangeCoordinator();
+        this.assistantRenderModeChangeDispatchCoordinator =
+                settingsWiring.assistantRenderModeChangeDispatchCoordinator();
+        this.generalSettingsResolver = settingsWiring.generalSettingsResolver();
+        this.generalSettingsApplyCoordinator = settingsWiring.generalSettingsApplyCoordinator();
+        this.generalSettingsApplyDispatchCoordinator = settingsWiring.generalSettingsApplyDispatchCoordinator();
+        this.fontSettingsResolver = settingsWiring.fontSettingsResolver();
+        this.fontSettingsPersister = settingsWiring.fontSettingsPersister();
+        this.fontMenuApplyCoordinator = settingsWiring.fontMenuApplyCoordinator();
+        this.fontMenuSelectionRefreshCoordinator = settingsWiring.fontMenuSelectionRefreshCoordinator();
+        this.fontMenuSelectionDispatchCoordinator = settingsWiring.fontMenuSelectionDispatchCoordinator();
+        this.fontMenuSelectionFlowCoordinator = settingsWiring.fontMenuSelectionFlowCoordinator();
+        this.appFontSizeStepResolver = settingsWiring.appFontSizeStepResolver();
+        this.appFontSizeAdjustCoordinator = settingsWiring.appFontSizeAdjustCoordinator();
+        this.themeSettingsResolver = settingsWiring.themeSettingsResolver();
+        this.themeMenuApplyCoordinator = settingsWiring.themeMenuApplyCoordinator();
+        this.themeMenuSelectionRefreshCoordinator = settingsWiring.themeMenuSelectionRefreshCoordinator();
+        this.themeMenuSelectionDispatchCoordinator = settingsWiring.themeMenuSelectionDispatchCoordinator();
+        this.themeMenuSelectionFlowCoordinator = settingsWiring.themeMenuSelectionFlowCoordinator();
+
+        var lifecycleWiring = dependencies.lifecycleWiring();
+        this.modelMenuDirtyRefreshCoordinator = lifecycleWiring.modelMenuDirtyRefreshCoordinator();
+        this.modelMenuDirtyRefreshTriggerCoordinator = lifecycleWiring.modelMenuDirtyRefreshTriggerCoordinator();
+        this.lookAndFeelMenuRefreshCoordinator = lifecycleWiring.lookAndFeelMenuRefreshCoordinator();
+        this.windowStateSettingsCoordinator = lifecycleWiring.windowStateSettingsCoordinator();
+        this.windowStateRestoreCoordinator = lifecycleWiring.windowStateRestoreCoordinator();
+
+        var conversationWiring = dependencies.conversationWiring();
+        this.conversationLoadCoordinator = conversationWiring.conversationLoadCoordinator();
+        this.conversationLoadResultPlanner = conversationWiring.conversationLoadResultPlanner();
+        this.conversationLoadApplyDispatchCoordinator = conversationWiring.conversationLoadApplyDispatchCoordinator();
+        this.conversationPersistenceCoordinator = conversationWiring.conversationPersistenceCoordinator();
+        this.assistantMessageCompletionFlowCoordinator = conversationWiring.assistantMessageCompletionFlowCoordinator();
+        this.currentConversationSaveCoordinator = conversationWiring.currentConversationSaveCoordinator();
+
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setMinimumSize(new Dimension(600, 400));
         var iconImage = new ImageIcon(getClass().getResource("/icons/icon.png")).getImage();
         setIconImage(iconImage);
@@ -484,9 +467,9 @@ public class MainFrame extends JFrame {
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         chatPanel.setOnMessageSubmitted(this::saveCurrentConversation);
-        chatPanel.setConversationIdSupplier(() -> currentConversationId);
+        chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
         chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
-        chatPanel.setActiveConversationId(currentConversationId);
+        chatPanel.setActiveConversationId(conversationState.currentConversationId());
         applyProviderSettings();
         applyGeneralSettings();
         UIManager.addPropertyChangeListener(lookAndFeelListener);
@@ -501,11 +484,17 @@ public class MainFrame extends JFrame {
         leftButtons.setOpaque(false);
         leftButtons.setBorder(BorderFactory.createEmptyBorder(0, 78, 0, 0));
 
-        sidebarToggleIconFilled = TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left-filled.svg");
-        sidebarToggleIconOutline = TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left.svg");
-        sidebarToggleBtn = TitleBarUiSupport.createButton(sidebarToggleIconFilled, "Toggle Sidebar");
-        sidebarToggleBtn.addActionListener(e -> toggleSidebar());
-        leftButtons.add(sidebarToggleBtn);
+        sidebarToggleState.setSidebarToggleFilledIcon(
+                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left-filled.svg")
+        );
+        sidebarToggleState.setSidebarToggleOutlineIcon(
+                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left.svg")
+        );
+        sidebarToggleState.setSidebarToggleButton(
+                TitleBarUiSupport.createButton(sidebarToggleState.sidebarToggleFilledIcon(), "Toggle Sidebar")
+        );
+        sidebarToggleState.sidebarToggleButton().addActionListener(e -> toggleSidebar());
+        leftButtons.add(sidebarToggleState.sidebarToggleButton());
 
         JButton searchBtn = TitleBarUiSupport.createButton(
                 TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/search.svg"),
@@ -552,10 +541,7 @@ public class MainFrame extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                UIManager.removePropertyChangeListener(lookAndFeelListener);
-                chatPanel.cancelStreaming();
-                saveCurrentConversation();
-                saveWindowState();
+                requestWindowClose();
             }
         });
 
@@ -567,11 +553,8 @@ public class MainFrame extends JFrame {
                 desktop.setAboutHandler(e -> AboutDialog.show(this));
             }
             desktop.setQuitHandler((e, response) -> {
-                UIManager.removePropertyChangeListener(lookAndFeelListener);
-                chatPanel.cancelStreaming();
-                saveCurrentConversation();
-                saveWindowState();
-                response.performQuit();
+                response.cancelQuit();
+                requestQuit(response);
             });
         }
 
@@ -583,27 +566,30 @@ public class MainFrame extends JFrame {
 
     private void toggleSidebar() {
         SidebarToggleCoordinator.ToggleState toggleState = sidebarToggleCoordinator.toggle(
-                sidebarVisible,
-                lastDividerLocation,
+                sidebarState.sidebarVisible(),
+                sidebarState.lastDividerLocation(),
                 splitPane.getDividerLocation(),
                 splitPane,
-                sidebarToggleBtn,
-                sidebarToggleIconFilled,
-                sidebarToggleIconOutline
+                sidebarToggleState.sidebarToggleButton(),
+                sidebarToggleState.sidebarToggleFilledIcon(),
+                sidebarToggleState.sidebarToggleOutlineIcon()
         );
 
-        sidebarVisible = toggleState.sidebarVisible();
-        lastDividerLocation = toggleState.lastDividerLocation();
+        sidebarToggleStateApplyCoordinator.apply(
+                toggleState,
+                sidebarState::setSidebarVisible,
+                sidebarState::setLastDividerLocation
+        );
     }
 
     private void newChat() {
         newChatCoordinator.start(
                 this::saveCurrentConversation,
-                () -> currentConversationId = null,
-                () -> pendingUnsavedConversationRenderMode = null,
+                conversationState::clearCurrentConversationId,
+                conversationState::clearPendingUnsavedConversationRenderMode,
                 () -> chatPanel.setActiveConversationId(null),
                 chatPanel::clearChatView,
-                assistantMarkdownDefaultMode,
+                assistantRenderModeState.defaultAssistantRenderMode(),
                 chatPanel::setAssistantRenderMode,
                 () -> chatPanel.getInputBar().requestInputFocus()
         );
@@ -613,8 +599,8 @@ public class MainFrame extends JFrame {
         conversationLoadStartCoordinator.start(
                 id,
                 this::saveCurrentConversation,
-                value -> currentConversationId = value,
-                () -> pendingUnsavedConversationRenderMode = null,
+                conversationState::setCurrentConversationId,
+                conversationState::clearPendingUnsavedConversationRenderMode,
                 chatPanel::setActiveConversationId,
                 conversationLoadCoordinator::loadAsync,
                 this::applyLoadedConversation,
@@ -624,22 +610,78 @@ public class MainFrame extends JFrame {
 
     private void saveCurrentConversation() {
         currentConversationSaveDispatchCoordinator.save(
-                currentConversationId,
-                pendingUnsavedConversationRenderMode,
+                conversationState.currentConversationId(),
+                conversationState.pendingUnsavedConversationRenderMode(),
                 chatPanel.getHistory(),
                 chatPanel.getSelectedModel(),
                 chatPanel.getAssistantRenderMode(),
                 currentConversationSaveCoordinator::save,
                 saveResult -> currentConversationSaveUiApplyCoordinator.apply(
                         saveResult,
-                        value -> currentConversationId = value,
-                        value -> pendingUnsavedConversationRenderMode = value,
+                        conversationState::setCurrentConversationId,
+                        conversationState::setPendingUnsavedConversationRenderMode,
                         chatPanel::setActiveConversationId,
                         sidebarPanel::refresh,
                         sidebarPanel::selectConversation
                 ),
                 error -> LOG.log(Level.WARNING, "Failed to persist current conversation", error)
         );
+    }
+
+    private void requestWindowClose() {
+        runShutdownFlow(() -> {
+            dispose();
+            System.exit(0);
+        });
+    }
+
+    private void requestQuit(QuitResponse quitResponse) {
+        runShutdownFlow(quitResponse::performQuit);
+    }
+
+    private void runShutdownFlow(Runnable finishAction) {
+        shutdownFlowCoordinator.request(
+                shutdownState::shutdownInProgress,
+                () -> shutdownState.setShutdownInProgress(true),
+                SHUTDOWN_SAVE_TIMEOUT_MILLIS,
+                () -> {
+                    UIManager.removePropertyChangeListener(lookAndFeelListener);
+                    chatPanel.cancelStreaming();
+                    saveWindowState();
+                },
+                () -> {
+                    ShutdownSaveSnapshot saveSnapshot = captureShutdownSaveSnapshot();
+                    return () -> currentConversationSaveCoordinator.save(
+                            saveSnapshot.currentConversationId(),
+                            saveSnapshot.pendingUnsavedConversationRenderMode(),
+                            saveSnapshot.history(),
+                            saveSnapshot.selectedModelKey(),
+                            saveSnapshot.currentAssistantRenderMode()
+                    );
+                },
+                finishAction,
+                () -> LOG.warning("Timed out persisting current conversation during shutdown"),
+                error -> LOG.log(Level.WARNING, "Failed to persist current conversation during shutdown", error)
+        );
+    }
+
+    private ShutdownSaveSnapshot captureShutdownSaveSnapshot() {
+        return new ShutdownSaveSnapshot(
+                conversationState.currentConversationId(),
+                conversationState.pendingUnsavedConversationRenderMode(),
+                List.copyOf(chatPanel.getHistory()),
+                chatPanel.getSelectedModel(),
+                chatPanel.getAssistantRenderMode()
+        );
+    }
+
+    private record ShutdownSaveSnapshot(
+            UUID currentConversationId,
+            AssistantRenderMode pendingUnsavedConversationRenderMode,
+            List<Message> history,
+            String selectedModelKey,
+            AssistantRenderMode currentAssistantRenderMode
+    ) {
     }
 
     private void applyLoadedConversation(
@@ -650,7 +692,7 @@ public class MainFrame extends JFrame {
     ) {
         conversationLoadApplyDispatchCoordinator.applyLoaded(
                 requestId,
-                currentConversationId,
+                conversationState.currentConversationId(),
                 conversationId,
                 records,
                 conversation,
@@ -665,7 +707,7 @@ public class MainFrame extends JFrame {
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
         conversationLoadFailureCoordinator.handle(
                 requestId,
-                currentConversationId,
+                conversationState.currentConversationId(),
                 conversationId,
                 e,
                 conversationLoadResultPlanner::shouldHandleFailure,
@@ -676,7 +718,7 @@ public class MainFrame extends JFrame {
     private boolean onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
         return assistantMessageCompletionEventDispatchCoordinator.handle(
                 event,
-                currentConversationId,
+                conversationState.currentConversationId(),
                 (conversationId, message, activeConversationId) -> assistantMessageCompletionFlowCoordinator.handle(
                         conversationId,
                         message,
@@ -749,15 +791,22 @@ public class MainFrame extends JFrame {
     }
 
     private void applyGeneralSettings() {
-        assistantMarkdownDefaultMode = generalSettingsApplyDispatchCoordinator.apply(
+        AssistantRenderMode defaultAssistantRenderMode = generalSettingsApplyDispatchCoordinator.apply(
                 SystemInfo.isMacOS,
-                currentConversationId,
-                currentConversationId != null ? resolveConversationRenderMode(currentConversationId) : null,
-                pendingUnsavedConversationRenderMode,
+                conversationState.currentConversationId(),
+                conversationState.currentConversationId() != null
+                        ? resolveConversationRenderMode(conversationState.currentConversationId())
+                        : null,
+                conversationState.pendingUnsavedConversationRenderMode(),
                 sendOnEnter -> chatPanel.getInputBar().setSendOnEnter(sendOnEnter),
                 chatPanel::setAutoScrollEnabled,
                 chatPanel::setAssistantRenderMode,
                 this::applyMenuBarSetting
+        );
+
+        generalSettingsDefaultModeApplyCoordinator.apply(
+                defaultAssistantRenderMode,
+                assistantRenderModeState::setDefaultAssistantRenderMode
         );
     }
 
@@ -766,7 +815,7 @@ public class MainFrame extends JFrame {
                 enabled,
                 this::setJMenuBar,
                 this::ensureModelsMenuBar,
-                () -> modelMenuBar,
+                topMenusState::modelMenuBar,
                 this::ensureThemesMenuReady,
                 this::ensureModelsMenuReady,
                 this::ensureFontMenuReady,
@@ -780,7 +829,7 @@ public class MainFrame extends JFrame {
 
     private void ensureModelsMenuBar() {
         mainMenuBarEnsureApplyFlowCoordinator.ensureAndApply(
-                modelMenuBar,
+                topMenusState.modelMenuBar(),
                 () -> mainMenuBarCreateDispatchCoordinator.create(
                         getTitle(),
                         this::newChat,
@@ -791,7 +840,7 @@ public class MainFrame extends JFrame {
                         () -> openChatSearch(null),
                         selected -> assistantRenderModeToggleCoordinator.apply(
                                 selected,
-                                syncingPreviewMenuSelection,
+                                previewMenuState.syncingPreviewMenuSelection(),
                                 chatPanel::setAssistantRenderMode
                         ),
                         this::ensureThemesMenuReady,
@@ -801,32 +850,32 @@ public class MainFrame extends JFrame {
                 ),
                 this::syncTogglePreviewMenuSelection,
                 new MainMenuBarEnsureStateResolver.CurrentState(
-                        fileMenu,
-                        viewMenu,
-                        modelsMenu,
-                        fontMenu,
-                        themesMenu,
-                        togglePreviewMenuItem,
-                        modelsMenuDirty,
-                        themesMenuBuilt,
-                        fontMenuBuilt
+                        topMenusState.fileMenu(),
+                        topMenusState.viewMenu(),
+                        boundMenusState.modelsMenu(),
+                        boundMenusState.fontMenu(),
+                        boundMenusState.themesMenu(),
+                        previewMenuState.togglePreviewMenuItem(),
+                        modelMenuState.modelsMenuDirty(),
+                        themeMenuState.themesMenuBuilt(),
+                        fontMenuState.fontMenuBuilt()
                 ),
-                value -> modelMenuBar = value,
-                value -> fileMenu = value,
-                value -> viewMenu = value,
-                value -> modelsMenu = value,
-                value -> fontMenu = value,
-                value -> themesMenu = value,
-                value -> togglePreviewMenuItem = value,
-                value -> modelsMenuDirty = value,
-                value -> themesMenuBuilt = value,
-                value -> fontMenuBuilt = value
+                topMenusState::setModelMenuBar,
+                topMenusState::setFileMenu,
+                topMenusState::setViewMenu,
+                boundMenusState::setModelsMenu,
+                boundMenusState::setFontMenu,
+                boundMenusState::setThemesMenu,
+                previewMenuState::setTogglePreviewMenuItem,
+                modelMenuState::setModelsMenuDirty,
+                themeMenuState::setThemesMenuBuilt,
+                fontMenuState::setFontMenuBuilt
         );
     }
 
     private void ensureModelsMenuReady() {
         providerMenuReadyDispatchCoordinator.ensureReady(
-                modelsMenuDirty,
+                modelMenuState.modelsMenuDirty(),
                 this::rebuildModelsMenuStructure,
                 this::refreshLocalProviderAvailabilityInMenu,
                 this::syncModelsMenuSelection
@@ -835,7 +884,7 @@ public class MainFrame extends JFrame {
 
     private void ensureThemesMenuReady() {
         themeMenuReadyDispatchCoordinator.ensureReady(
-                themesMenuBuilt,
+                themeMenuState.themesMenuBuilt(),
                 this::rebuildThemesMenuStructure,
                 this::syncThemeMenuSelection
         );
@@ -843,7 +892,7 @@ public class MainFrame extends JFrame {
 
     private void ensureFontMenuReady() {
         fontMenuReadyDispatchCoordinator.ensureReady(
-                fontMenuBuilt,
+                fontMenuState.fontMenuBuilt(),
                 this::rebuildFontMenuStructure,
                 this::syncFontMenuSelection
         );
@@ -851,62 +900,70 @@ public class MainFrame extends JFrame {
 
     private void syncTogglePreviewMenuSelection() {
         assistantRenderModeToggleSelectionSyncCoordinator.sync(
-                togglePreviewMenuItem,
+                previewMenuState.togglePreviewMenuItem(),
                 chatPanel.getAssistantRenderMode(),
-                value -> syncingPreviewMenuSelection = value
+                previewMenuState::setSyncingPreviewMenuSelection
         );
     }
 
     private void markModelsMenuDirty() {
-        modelsMenuDirty = true;
+        modelMenuState.markModelsMenuDirty();
     }
 
     private void onLookAndFeelChanged() {
         lookAndFeelMenuRefreshCoordinator.refresh(
                 ProviderMenuIconRenderer::clearCache,
                 this::markModelsMenuDirty,
-                modelsMenu,
+                boundMenusState.modelsMenu(),
                 this::ensureModelsMenuReady,
-                fontMenu,
+                boundMenusState.fontMenu(),
                 this::ensureFontMenuReady
         );
     }
 
     private void rebuildModelsMenuStructure() {
         ModelMenuStructureRebuildCoordinator.RebuildState rebuildState = modelMenuStructureRebuildCoordinator.rebuild(
-                modelsMenu,
-                modelMenuItemsByKey,
-                providerHeaderItemsByName,
+                boundMenusState.modelsMenu(),
+                menuItemsState.modelMenuItemsByKey(),
+                menuItemsState.providerHeaderItemsByName(),
                 ProviderRegistry.availableProviders(),
                 chatPanel::setSelectedModel,
-                modelsMenuDirty,
-                lastMenuSelectedModelKey
+                modelMenuState.modelsMenuDirty(),
+                modelMenuState.lastMenuSelectedModelKey()
         );
 
-        modelsMenuDirty = rebuildState.modelsMenuDirty();
-        lastMenuSelectedModelKey = rebuildState.lastMenuSelectedModelKey();
+        modelMenuStructureRebuildApplyCoordinator.apply(
+                rebuildState,
+                modelMenuState::setModelsMenuDirty,
+                modelMenuState::setLastMenuSelectedModelKey
+        );
     }
 
     private void syncModelsMenuSelection() {
-        lastMenuSelectedModelKey = modelMenuSelectionDispatchCoordinator.sync(
-                modelMenuItemsByKey,
+        String syncedSelection = modelMenuSelectionDispatchCoordinator.sync(
+                menuItemsState.modelMenuItemsByKey(),
                 chatPanel.getSelectedModel(),
-                lastMenuSelectedModelKey,
-                modelsMenuDirty
+                modelMenuState.lastMenuSelectedModelKey(),
+                modelMenuState.modelsMenuDirty()
+        );
+
+        modelMenuSelectionApplyCoordinator.apply(
+                syncedSelection,
+                modelMenuState::setLastMenuSelectedModelKey
         );
     }
 
     private void onSelectedModelChanged(String modelKey) {
         modelMenuSelectionChangeCoordinator.onSelectedModelChanged(
-                modelsMenu,
-                modelsMenuDirty,
+                boundMenusState.modelsMenu(),
+                modelMenuState.modelsMenuDirty(),
                 this::syncModelsMenuSelection
         );
     }
 
     private void onModelFavoritesChanged() {
         modelMenuDirtyRefreshTriggerCoordinator.trigger(
-                modelsMenu,
+                boundMenusState.modelsMenu(),
                 this::markModelsMenuDirty,
                 this::ensureModelsMenuReady
         );
@@ -914,7 +971,7 @@ public class MainFrame extends JFrame {
 
     private void onModelCatalogChanged() {
         modelMenuDirtyRefreshTriggerCoordinator.trigger(
-                modelsMenu,
+                boundMenusState.modelsMenu(),
                 this::markModelsMenuDirty,
                 this::ensureModelsMenuReady
         );
@@ -922,8 +979,8 @@ public class MainFrame extends JFrame {
 
     private void refreshLocalProviderAvailabilityInMenu() {
         providerMenuAvailabilityRefreshDispatchCoordinator.refresh(
-                modelMenuItemsByKey,
-                providerHeaderItemsByName,
+                menuItemsState.modelMenuItemsByKey(),
+                menuItemsState.providerHeaderItemsByName(),
                 providerMenuIconResolver
         );
     }
@@ -931,73 +988,70 @@ public class MainFrame extends JFrame {
     private void rebuildThemesMenuStructure() {
         ThemeMenuStructureRebuildCoordinator.RebuildState rebuildState =
                 themeMenuStructureRebuildCoordinator.rebuild(
-                        themesMenu,
-                        themeMenuItemsByName,
+                        boundMenusState.themesMenu(),
+                        menuItemsState.themeMenuItemsByName(),
                         this::applyThemeFromMenu,
-                        themesMenuBuilt,
-                        lastMenuSelectedTheme
+                        themeMenuState.themesMenuBuilt(),
+                        themeMenuState.lastMenuSelectedTheme()
                 );
 
-        themesMenuBuilt = rebuildState.themesMenuBuilt();
-        lastMenuSelectedTheme = rebuildState.lastMenuSelectedTheme();
+        themeMenuStructureRebuildApplyCoordinator.apply(
+                rebuildState,
+                themeMenuState::setThemesMenuBuilt,
+                themeMenuState::setLastMenuSelectedTheme
+        );
     }
 
     private void syncThemeMenuSelection() {
-        String selectedTheme = themeMenuSelectionDispatchCoordinator.refresh(
-                themeMenuItemsByName,
-                lastMenuSelectedTheme,
-                themesMenuBuilt,
-                "GitHub"
-        );
-
-        themeMenuSelectionApplyCoordinator.apply(
-                selectedTheme,
-                value -> lastMenuSelectedTheme = value
+        themeMenuSelectionFlowCoordinator.refreshAndApply(
+                menuItemsState.themeMenuItemsByName(),
+                themeMenuState.lastMenuSelectedTheme(),
+                themeMenuState.themesMenuBuilt(),
+                ThemeSettingsResolver.DEFAULT_THEME,
+                themeMenuState::setLastMenuSelectedTheme
         );
     }
 
     private void rebuildFontMenuStructure() {
         FontMenuStructureRebuildCoordinator.RebuildState rebuildState =
                 fontMenuStructureRebuildCoordinator.rebuild(
-                        fontMenu,
-                        appFontMenuItemsByFamily,
-                        appFontSizeMenuItemsBySize,
-                        codeFontMenuItemsByFamily,
+                        boundMenusState.fontMenu(),
+                        menuItemsState.appFontMenuItemsByFamily(),
+                        menuItemsState.appFontSizeMenuItemsBySize(),
+                        menuItemsState.codeFontMenuItemsByFamily(),
                         this::restoreAppFontFromMenu,
                         () -> adjustAppFontSizeFromMenu(true),
                         () -> adjustAppFontSizeFromMenu(false),
                         this::applyAppFontFamilyFromMenu,
                         this::applyCodeFontFromMenu,
                         this::applyAppFontSizeFromMenu,
-                        fontMenuBuilt,
-                        lastMenuSelectedAppFontFamily,
-                        lastMenuSelectedAppFontSize,
-                        lastMenuSelectedCodeFontFamily
+                        fontMenuState.fontMenuBuilt(),
+                        fontMenuState.lastMenuSelectedAppFontFamily(),
+                        fontMenuState.lastMenuSelectedAppFontSize(),
+                        fontMenuState.lastMenuSelectedCodeFontFamily()
                 );
 
-        fontMenuBuilt = rebuildState.fontMenuBuilt();
-        lastMenuSelectedAppFontFamily = rebuildState.lastMenuSelectedAppFontFamily();
-        lastMenuSelectedAppFontSize = rebuildState.lastMenuSelectedAppFontSize();
-        lastMenuSelectedCodeFontFamily = rebuildState.lastMenuSelectedCodeFontFamily();
+        fontMenuStructureRebuildApplyCoordinator.apply(
+                rebuildState,
+                fontMenuState::setFontMenuBuilt,
+                fontMenuState::setLastMenuSelectedAppFontFamily,
+                fontMenuState::setLastMenuSelectedAppFontSize,
+                fontMenuState::setLastMenuSelectedCodeFontFamily
+        );
     }
 
     private void syncFontMenuSelection() {
-        FontMenuSelectionSynchronizer.FontMenuSelectionState syncedSelection =
-                fontMenuSelectionDispatchCoordinator.refresh(
-                        appFontMenuItemsByFamily,
-                        appFontSizeMenuItemsBySize,
-                        codeFontMenuItemsByFamily,
-                        lastMenuSelectedAppFontFamily,
-                        lastMenuSelectedAppFontSize,
-                        lastMenuSelectedCodeFontFamily,
-                        fontMenuBuilt
-                );
-
-        fontMenuSelectionApplyCoordinator.apply(
-                syncedSelection,
-                value -> lastMenuSelectedAppFontFamily = value,
-                value -> lastMenuSelectedAppFontSize = value,
-                value -> lastMenuSelectedCodeFontFamily = value
+        fontMenuSelectionFlowCoordinator.refreshAndApply(
+                menuItemsState.appFontMenuItemsByFamily(),
+                menuItemsState.appFontSizeMenuItemsBySize(),
+                menuItemsState.codeFontMenuItemsByFamily(),
+                fontMenuState.lastMenuSelectedAppFontFamily(),
+                fontMenuState.lastMenuSelectedAppFontSize(),
+                fontMenuState.lastMenuSelectedCodeFontFamily(),
+                fontMenuState.fontMenuBuilt(),
+                fontMenuState::setLastMenuSelectedAppFontFamily,
+                fontMenuState::setLastMenuSelectedAppFontSize,
+                fontMenuState::setLastMenuSelectedCodeFontFamily
         );
     }
 
@@ -1015,7 +1069,7 @@ public class MainFrame extends JFrame {
                 () -> fontMenuApplyCoordinator.applyAppFontSelection(
                         appFontFamily,
                         appFontSize,
-                        appFontMenuItemsByFamily.keySet(),
+                        menuItemsState.appFontMenuItemsByFamily().keySet(),
                         this::syncFontMenuSelection
                 ),
                 "Failed to apply UI font: ",
@@ -1027,7 +1081,7 @@ public class MainFrame extends JFrame {
         fontMenuApplyDispatchCoordinator.apply(
                 () -> fontMenuApplyCoordinator.applyCodeFontSelection(
                         fontFamily,
-                        codeFontMenuItemsByFamily.keySet(),
+                        menuItemsState.codeFontMenuItemsByFamily().keySet(),
                         this::syncFontMenuSelection
                 ),
                 "Failed to apply code font: ",
@@ -1064,18 +1118,18 @@ public class MainFrame extends JFrame {
 
     private void onAssistantRenderModeChanged(AssistantRenderMode mode) {
         assistantRenderModeChangeDispatchCoordinator.apply(
-                currentConversationId,
+                conversationState.currentConversationId(),
                 mode,
-                pendingUnsavedConversationRenderMode,
+                conversationState.pendingUnsavedConversationRenderMode(),
                 this::syncTogglePreviewMenuSelection,
-                value -> pendingUnsavedConversationRenderMode = value
+                conversationState::setPendingUnsavedConversationRenderMode
         );
     }
 
     private AssistantRenderMode resolveConversationRenderMode(UUID conversationId) {
         return assistantRenderModeSettingsCoordinator.resolveConversationMode(
                 conversationId,
-                assistantMarkdownDefaultMode
+                assistantRenderModeState.defaultAssistantRenderMode()
         );
     }
 

@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.bootstrap;
 import com.github.drafael.chat4j.MainFrame;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.AppearancePanel;
+import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.DatabaseBootstrap;
 import com.github.drafael.chat4j.storage.H2DataSourceFactory;
@@ -98,7 +99,7 @@ public final class ApplicationBootstrap {
         try {
             AppearancePanel.restoreAccentColor(settingsRepo);
 
-            String themeName = settingsRepo.get("theme", "GitHub");
+            String themeName = settingsRepo.get("theme", ThemeSettingsResolver.DEFAULT_THEME);
             String className = AppearancePanel.classNameForTheme(themeName);
             if (className != null) {
                 UIManager.setLookAndFeel(className);

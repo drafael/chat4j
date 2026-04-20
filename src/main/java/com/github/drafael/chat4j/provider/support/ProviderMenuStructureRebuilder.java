@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
@@ -19,41 +19,24 @@ public class ProviderMenuStructureRebuilder {
     private final ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory;
 
     public ProviderMenuStructureRebuilder(
-            ProviderMenuDataResolver providerMenuDataResolver,
-            ProviderFavoritesSectionAppender providerFavoritesSectionAppender,
-            ProviderCatalogSectionAppender providerCatalogSectionAppender,
-            ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory
+            @NonNull ProviderMenuDataResolver providerMenuDataResolver,
+            @NonNull ProviderFavoritesSectionAppender providerFavoritesSectionAppender,
+            @NonNull ProviderCatalogSectionAppender providerCatalogSectionAppender,
+            @NonNull ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory
     ) {
-        this.providerMenuDataResolver = Validate.notNull(
-                providerMenuDataResolver,
-                "providerMenuDataResolver must not be null"
-        );
-        this.providerFavoritesSectionAppender = Validate.notNull(
-                providerFavoritesSectionAppender,
-                "providerFavoritesSectionAppender must not be null"
-        );
-        this.providerCatalogSectionAppender = Validate.notNull(
-                providerCatalogSectionAppender,
-                "providerCatalogSectionAppender must not be null"
-        );
-        this.providerMenuEmptyStateFactory = Validate.notNull(
-                providerMenuEmptyStateFactory,
-                "providerMenuEmptyStateFactory must not be null"
-        );
+        this.providerMenuDataResolver = providerMenuDataResolver;
+        this.providerFavoritesSectionAppender = providerFavoritesSectionAppender;
+        this.providerCatalogSectionAppender = providerCatalogSectionAppender;
+        this.providerMenuEmptyStateFactory = providerMenuEmptyStateFactory;
     }
 
-    public boolean rebuild(
-            JMenu modelsMenu,
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            Map<String, JMenuItem> providerHeaderItemsByName,
-            List<ProviderRegistry.ProviderDef> providers,
-            Consumer<String> onModelSelected
+    public void rebuild(
+            @NonNull JMenu modelsMenu,
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
+            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull Consumer<String> onModelSelected
     ) {
-        Validate.notNull(modelsMenu, "modelsMenu must not be null");
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(providerHeaderItemsByName, "providerHeaderItemsByName must not be null");
-        Validate.notNull(providers, "providers must not be null");
-        Validate.notNull(onModelSelected, "onModelSelected must not be null");
 
         modelsMenu.removeAll();
         modelMenuItemsByKey.clear();
@@ -61,7 +44,7 @@ public class ProviderMenuStructureRebuilder {
 
         if (providers.isEmpty()) {
             modelsMenu.add(providerMenuEmptyStateFactory.noProvidersAvailableItem());
-            return false;
+            return;
         }
 
         ProviderMenuDataResolver.ProviderMenuData menuData = providerMenuDataResolver.resolve(providers);
@@ -85,6 +68,5 @@ public class ProviderMenuStructureRebuilder {
                 menuData.providerSelectable(),
                 onModelSelected
         );
-        return true;
     }
 }

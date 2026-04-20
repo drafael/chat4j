@@ -50,7 +50,7 @@ class ProviderMenuStructureRebuilderTest {
         Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
         providerHeaderItemsByName.put("stale", new JMenuItem("stale"));
 
-        boolean result = subject.rebuild(
+        subject.rebuild(
                 modelsMenu,
                 modelMenuItemsByKey,
                 providerHeaderItemsByName,
@@ -59,7 +59,6 @@ class ProviderMenuStructureRebuilderTest {
                 }
         );
 
-        assertThat(result).isFalse();
         assertThat(modelsMenu.getItemCount()).isEqualTo(1);
         assertThat(modelsMenu.getItem(0).getText()).isEqualTo("No providers available");
         assertThat(modelsMenu.getItem(0).isEnabled()).isFalse();
@@ -94,7 +93,7 @@ class ProviderMenuStructureRebuilderTest {
         Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
         Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
 
-        boolean result = subject.rebuild(
+        subject.rebuild(
                 modelsMenu,
                 modelMenuItemsByKey,
                 providerHeaderItemsByName,
@@ -103,7 +102,6 @@ class ProviderMenuStructureRebuilderTest {
                 }
         );
 
-        assertThat(result).isTrue();
         assertThat(menuDataResolver.calls.get()).isEqualTo(1);
         assertThat(menuDataResolver.lastProviders).isEqualTo(providers);
 

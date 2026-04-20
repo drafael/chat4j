@@ -20,9 +20,9 @@ class ThemeSettingsResolverTest {
         SettingsRepo settingsRepo = settingsRepo("theme-settings-default");
         var subject = new ThemeSettingsResolver(settingsRepo);
 
-        String selectedTheme = subject.resolveSelectedTheme("GitHub");
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
 
-        assertThat(selectedTheme).isEqualTo("GitHub");
+        assertThat(selectedTheme).isEqualTo(ThemeSettingsResolver.DEFAULT_THEME);
     }
 
     @Test
@@ -33,7 +33,7 @@ class ThemeSettingsResolverTest {
 
         var subject = new ThemeSettingsResolver(settingsRepo);
 
-        String selectedTheme = subject.resolveSelectedTheme("GitHub");
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
 
         assertThat(selectedTheme).isEqualTo("Solarized Dark");
     }
@@ -43,9 +43,9 @@ class ThemeSettingsResolverTest {
     void resolveSelectedTheme_whenSettingsAccessFails_returnsDefaultTheme() {
         var subject = new ThemeSettingsResolver(new ThrowingSettingsRepo());
 
-        String selectedTheme = subject.resolveSelectedTheme("GitHub");
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
 
-        assertThat(selectedTheme).isEqualTo("GitHub");
+        assertThat(selectedTheme).isEqualTo(ThemeSettingsResolver.DEFAULT_THEME);
     }
 
     @Test

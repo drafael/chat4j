@@ -27,10 +27,7 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 providerHeaderItemsByName,
                 providers,
                 onModelSelected
-        ) -> {
-            actionCalls.incrementAndGet();
-            return true;
-        });
+        ) -> actionCalls.incrementAndGet());
 
         ModelMenuStructureRebuildCoordinator.RebuildState state = subject.rebuild(
                 null,
@@ -62,7 +59,6 @@ class ModelMenuStructureRebuildCoordinatorTest {
         ) -> {
             actionCalls.incrementAndGet();
             capturedProviders.addAll(providers);
-            return true;
         });
 
         Map<String, JRadioButtonMenuItem> modelMenuItemsByKey = new LinkedHashMap<>();
@@ -94,7 +90,8 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 providerHeaderItemsByName,
                 providers,
                 onModelSelected
-        ) -> true);
+        ) -> {
+        });
 
         assertThatThrownBy(() -> subject.rebuild(
                 new JMenu("Model"),
@@ -107,7 +104,7 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 "old-key"
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("modelMenuItemsByKey must not be null");
+                .hasMessageContaining("modelMenuItemsByKey");
 
         assertThatThrownBy(() -> new ModelMenuStructureRebuildCoordinator(
                 (ModelMenuStructureRebuildCoordinator.RebuildAction) null
