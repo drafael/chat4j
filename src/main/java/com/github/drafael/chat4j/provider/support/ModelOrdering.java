@@ -14,6 +14,8 @@ public final class ModelOrdering {
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\\d+|[a-zA-Z]+");
     private static final Pattern TRAILING_DATE_COMPACT_PATTERN = Pattern.compile("^(.*?)[-_](20\\d{2})(\\d{2})(\\d{2})$");
     private static final Pattern TRAILING_DATE_DELIMITED_PATTERN = Pattern.compile("^(.*?)[-_](20\\d{2})[-_](\\d{2})[-_](\\d{2})$");
+    private static final Pattern COPILOT_GPT4O_DATED_ALIAS = Pattern.compile("gpt-4o[-_]20\\d{2}[-_]\\d{2}[-_]\\d{2}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern COPILOT_GPT4O_MINI_DATED_ALIAS = Pattern.compile("gpt-4o-mini[-_]20\\d{2}[-_]\\d{2}[-_]\\d{2}", Pattern.CASE_INSENSITIVE);
 
     private ModelOrdering() {
     }
@@ -27,12 +29,16 @@ public final class ModelOrdering {
             return emptyList();
         }
 
-        return modelIds.stream()
+        List<String> normalized = modelIds.stream()
                 .filter(StringUtils::isNotBlank)
                 .map(String::trim)
                 .map(modelId -> normalizeForProvider(providerName, modelId))
                 .filter(modelId -> !modelId.isBlank())
                 .distinct()
+                .toList();
+
+        List<String> filtered = applyProviderSpecificFiltering(providerName, normalized);
+        return filtered.stream()
                 .sorted(isOllama(providerName) ? ModelOrdering::compareNaturalAsc : ModelOrdering::compareByRecency)
                 .toList();
     }
@@ -206,12 +212,40 @@ public final class ModelOrdering {
         return modelId;
     }
 
+    private static List<String> applyProviderSpecificFiltering(String providerName, List<String> modelIds) {
+        if (!isGitHubCopilot(providerName)) {
+            return modelIds;
+        }
+
+        boolean hasCanonicalGpt4o = modelIds.stream().anyMatch("gpt-4o"::equalsIgnoreCase);
+        boolean hasCanonicalGpt4oMini = modelIds.stream().anyMatch("gpt-4o-mini"::equalsIgnoreCase);
+
+        return modelIds.stream()
+                .filter(modelId -> {
+                    String normalized = modelId.trim().toLowerCase();
+                    if (normalized.startsWith("gpt-3.5")) {
+                        return false;
+                    }
+
+                    if (hasCanonicalGpt4o && COPILOT_GPT4O_DATED_ALIAS.matcher(normalized).matches()) {
+                        return false;
+                    }
+
+                    return !(hasCanonicalGpt4oMini && COPILOT_GPT4O_MINI_DATED_ALIAS.matcher(normalized).matches());
+                })
+                .toList();
+    }
+
     private static boolean isOllama(String providerName) {
         return providerName != null && "ollama".equalsIgnoreCase(providerName.trim());
     }
 
     private static boolean isGoogleAi(String providerName) {
         return providerName != null && "google ai".equalsIgnoreCase(providerName.trim());
+    }
+
+    private static boolean isGitHubCopilot(String providerName) {
+        return providerName != null && "github copilot".equalsIgnoreCase(providerName.trim());
     }
 
     private static List<String> tokenize(String value) {

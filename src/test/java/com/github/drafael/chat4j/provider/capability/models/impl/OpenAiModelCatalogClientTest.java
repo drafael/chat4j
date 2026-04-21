@@ -4,13 +4,17 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.UnaryOperator;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,12 +23,204 @@ import static java.util.Collections.emptyList;
 class OpenAiModelCatalogClientTest {
 
     private static final OpenAiModelCatalogClient subject = new OpenAiModelCatalogClient();
+    private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+
     private String originalUserHome;
+    private String originalCopilotTokenEndpoint;
 
     @AfterEach
     void tearDown() {
         if (originalUserHome != null) {
             System.setProperty("user.home", originalUserHome);
+        }
+
+        if (originalCopilotTokenEndpoint == null) {
+            System.clearProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+        } else {
+            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, originalCopilotTokenEndpoint);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing exchanges GitHub OAuth token and returns modern GPT models")
+    void fetchModels_whenCopilotUsesGithubOAuthToken_exchangesTokenAndReturnsModernModels() throws Exception {
+        AtomicInteger tokenExchangeCalls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/copilot_internal/v2/token", exchange -> {
+            tokenExchangeCalls.incrementAndGet();
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            String body = "token gho_generic_token".equals(authHeader)
+                    ? "{\"token\":\"copilot-internal-token\"}"
+                    : "{\"token\":\"\"}";
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+
+        server.createContext("/models", exchange -> {
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            String integrationHeader = exchange.getRequestHeaders().getFirst("Copilot-Integration-Id");
+
+            String body;
+            if ("Bearer copilot-internal-token".equals(authHeader)
+                    && "copilot-developer-cli".equals(integrationHeader)) {
+                body = "{\"data\":[{\"id\":\"gpt-5.4\",\"supported_endpoints\":[\"/chat/completions\"]},{\"id\":\"gpt-5.4-mini\",\"supported_endpoints\":[\"/responses\"]},{\"id\":\"claude-messages-only\",\"supported_endpoints\":[\"/v1/messages\"]},{\"id\":\"gpt-4o\"}]}";
+            } else {
+                body = "{\"data\":[{\"id\":\"gpt-3.5-turbo\"},{\"id\":\"gpt-4o\"}]}";
+            }
+
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+            int port = server.getAddress().getPort();
+            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
+
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "gho_generic_token",
+                    null
+            );
+
+            List<String> firstModels = subject.fetchModels(runtime);
+            List<String> secondModels = subject.fetchModels(runtime);
+
+            assertThat(firstModels).contains("gpt-5.4", "gpt-5.4-mini", "gpt-4o");
+            assertThat(firstModels).doesNotContain("gpt-3.5-turbo", "claude-messages-only");
+            assertThat(secondModels).isEqualTo(firstModels);
+            assertThat(tokenExchangeCalls.get()).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing honors model picker flags and suppresses legacy aliases")
+    void fetchModels_whenCopilotModelPickerFlagsPresent_filtersOutLegacyModels() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            String body = """
+                    {
+                      "data": [
+                        {"id":"gpt-4o","model_picker_enabled":true},
+                        {"id":"gpt-4o-2024-11-20","model_picker_enabled":false},
+                        {"id":"gpt-4o-mini","model_picker_enabled":true},
+                        {"id":"gpt-4o-mini-2024-07-18","model_picker_enabled":false},
+                        {"id":"gpt-3.5-turbo","model_picker_enabled":false},
+                        {"id":"gpt-5.4","model_picker_enabled":true}
+                      ]
+                    }
+                    """;
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "copilot-token",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-5.4", "gpt-4o", "gpt-4o-mini");
+            assertThat(models).doesNotContain("gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing keeps non-legacy models when model_picker_enabled set is too narrow")
+    void fetchModels_whenCopilotModelPickerHasSingleModel_keepsCanonicalNonLegacyModels() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            String body = """
+                    {
+                      "data": [
+                        {"id":"gpt-4o-mini","model_picker_enabled":false},
+                        {"id":"gpt-4o-mini-2024-07-18","model_picker_enabled":false},
+                        {"id":"gpt-4o","model_picker_enabled":true},
+                        {"id":"gpt-4o-2024-11-20","model_picker_enabled":false},
+                        {"id":"gpt-3.5-turbo","model_picker_enabled":false}
+                      ]
+                    }
+                    """;
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "copilot-token",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-4o", "gpt-4o-mini");
+            assertThat(models).doesNotContain("gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo");
+        } finally {
+            server.stop(0);
         }
     }
 

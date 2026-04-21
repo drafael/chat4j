@@ -2,7 +2,7 @@
 
 A lightweight desktop AI chat client built with **Java 21**, **Swing**, and **Maven**.
 
-Chat4J supports multiple LLM providers (OpenAI-compatible + Anthropic), streams responses token-by-token, and stores conversation history locally using H2.
+Chat4J supports multiple LLM providers (OpenAI-compatible, Anthropic, GitHub Copilot, and local runtimes), streams responses token-by-token, and stores conversation history locally using H2.
 
 ## Features
 
@@ -27,16 +27,31 @@ Chat4J supports multiple LLM providers (OpenAI-compatible + Anthropic), streams 
 Enable one or more providers by setting API keys in your environment:
 
 - `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY` (aliases: `GOOGLEAI_API_KEY`, `GOOGLE_AI_API_KEY`)
 - `OPENAI_API_KEY`
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
+- **OpenAI Codex** via `codex` CLI OAuth
+- **GitHub Copilot** via Chat4J OAuth device login (no `gh auth` dependency)
 - **LM Studio** — local OpenAI-compatible server at `localhost:1234`, no API key needed
 - **Ollama** — local models at `localhost:11434`, no API key needed
 
 If no provider key is available and no local provider (LM Studio/Ollama) is running, the model list will be empty and chat requests cannot be sent.
+
+### GitHub Copilot OAuth setup
+
+Chat4J Copilot login requires a GitHub OAuth App client ID. Configure one of:
+
+- JVM property: `chat4j.copilot.oauthClientId`
+- Environment variable: `CHAT4J_COPILOT_OAUTH_CLIENT_ID`
+- Build property resource key: `copilotOAuthClientId` (from `build.properties`)
+
+Optional scope override (default is least-privilege `read:user user:email`):
+
+- JVM property: `chat4j.copilot.oauthScopes`
 
 ## Requirements
 
@@ -71,6 +86,12 @@ java --enable-preview -jar target/chat4j-1.0-SNAPSHOT.jar
 ```bash
 mvn test
 ```
+
+## Documentation
+
+- [docs/README.md](docs/README.md) — documentation index
+- [docs/copilot-auth-device-flow.md](docs/copilot-auth-device-flow.md) — current Copilot auth/runtime behavior
+- [docs/copilot-integration-header-behavior.md](docs/copilot-integration-header-behavior.md) — Copilot header-routing evidence and curl proofs
 
 ## Configuration and data storage
 

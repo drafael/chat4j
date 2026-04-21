@@ -1,0 +1,91 @@
+package com.github.drafael.chat4j.provider.capability.chat.impl;
+
+import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.ImagePart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Method;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class OpenAiChatCompletionClientTest {
+
+    private final OpenAiChatCompletionClient subject = new OpenAiChatCompletionClient();
+
+    @Test
+    @DisplayName("Responses input line includes text projections from message parts")
+    void toResponsesInputLine_whenMessageContainsParts_includesProjectedContent() throws Exception {
+        List<ContentPart> parts = List.of(
+                new TextPart("Describe this screenshot"),
+                new ImagePart(new AttachmentRef(UUID.randomUUID(), "img.png", "img.png", "image/png", 42L, "sha"), 512, 320)
+        );
+        Message message = new Message(Role.USER, parts, Instant.now());
+
+        String line = invokeToResponsesInputLine(message);
+
+        assertThat(line)
+                .contains("User:")
+                .contains("Describe this screenshot")
+                .contains("[Image attached:");
+    }
+
+    @Test
+    @DisplayName("Unsupported API detection matches endpoint-specific Copilot errors")
+    void isUnsupportedApiForEndpoint_whenErrorIndicatesUnsupportedEndpoint_returnsTrue() throws Exception {
+        Exception exception = new IllegalStateException("request failed", new RuntimeException(
+                "model \"gpt-5.4-mini\" is not accessible via the /responses endpoint"
+        ));
+
+        boolean unsupported = invokeIsUnsupportedApiForEndpoint(exception, "/responses");
+
+        assertThat(unsupported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Unsupported API detection ignores unrelated errors")
+    void isUnsupportedApiForEndpoint_whenErrorIsUnrelated_returnsFalse() throws Exception {
+        Exception exception = new IllegalStateException("rate limited");
+
+        boolean unsupported = invokeIsUnsupportedApiForEndpoint(exception, "/chat/completions");
+
+        assertThat(unsupported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Diagnostics snapshot exposes last Copilot model and endpoint")
+    void diagnosticsSnapshot_whenUpdated_returnsLatestValues() throws Exception {
+        invokeUpdateCopilotDiagnostics("gpt-5.4-mini", "/responses");
+
+        OpenAiChatCompletionClient.CopilotEndpointDiagnosticsSnapshot snapshot = OpenAiChatCompletionClient.diagnosticsSnapshot();
+
+        assertThat(snapshot.modelId()).isEqualTo("gpt-5.4-mini");
+        assertThat(snapshot.endpoint()).isEqualTo("/responses");
+        assertThat(snapshot.updatedAtEpochMs()).isPositive();
+    }
+
+    private String invokeToResponsesInputLine(Message message) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("toResponsesInputLine", Message.class);
+        method.setAccessible(true);
+        return (String) method.invoke(subject, message);
+    }
+
+    private boolean invokeIsUnsupportedApiForEndpoint(Exception exception, String endpoint) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedApiForEndpoint", Exception.class, String.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, exception, endpoint);
+    }
+
+    private void invokeUpdateCopilotDiagnostics(String modelId, String endpoint) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("updateCopilotDiagnostics", String.class, String.class);
+        method.setAccessible(true);
+        method.invoke(subject, modelId, endpoint);
+    }
+}

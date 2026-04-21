@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.openai.client.OpenAIClient;
@@ -21,16 +22,33 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageParam;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
+import com.openai.models.responses.ResponseCreateParams;
+import com.openai.models.responses.ResponseStreamEvent;
+import com.openai.models.responses.ResponseTextDeltaEvent;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.joining;
 
 public class OpenAiChatCompletionClient implements ChatCompletionClient {
+
+    private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
+    private static final String CHAT_COMPLETIONS_ENDPOINT = "/chat/completions";
+    private static final String RESPONSES_ENDPOINT = "/responses";
+    private static final Map<String, CopilotEndpointMode> COPILOT_ENDPOINT_BY_MODEL = new ConcurrentHashMap<>();
+    private static final AtomicReference<String> LAST_COPILOT_MODEL_ID = new AtomicReference<>(null);
+    private static final AtomicReference<String> LAST_COPILOT_ENDPOINT = new AtomicReference<>(null);
+    private static final AtomicLong LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS = new AtomicLong(0L);
 
     @Override
     public void streamCompletion(
@@ -41,11 +59,73 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
-        OpenAIClient client = OpenAIOkHttpClient.builder()
+        OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
-                .baseUrl(runtime.baseUrl())
-                .build();
+                .baseUrl(runtime.baseUrl());
 
+        if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
+            CopilotRequestHeaders.asMap().forEach(builder::putHeader);
+        }
+
+        OpenAIClient client = builder.build();
+        if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
+            streamCopilotCompletion(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            return;
+        }
+
+        streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+    }
+
+    private void streamCopilotCompletion(
+            ProviderRuntime runtime,
+            List<Message> history,
+            OpenAIClient client,
+            Consumer<String> onToken,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
+        String modelId = runtime.selectedModel();
+        CopilotEndpointMode mode = COPILOT_ENDPOINT_BY_MODEL.getOrDefault(modelId, CopilotEndpointMode.RESPONSES);
+
+        if (mode == CopilotEndpointMode.RESPONSES) {
+            try {
+                streamWithResponses(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+                updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
+                return;
+            } catch (Exception e) {
+                if (!isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
+                    throw e;
+                }
+                COPILOT_ENDPOINT_BY_MODEL.put(modelId, CopilotEndpointMode.CHAT_COMPLETIONS);
+                streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+                updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
+                return;
+            }
+        }
+
+        try {
+            streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
+        } catch (Exception e) {
+            if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
+                throw e;
+            }
+            COPILOT_ENDPOINT_BY_MODEL.put(modelId, CopilotEndpointMode.RESPONSES);
+            streamWithResponses(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
+        }
+    }
+
+    private void streamWithChatCompletions(
+            ProviderRuntime runtime,
+            List<Message> history,
+            OpenAIClient client,
+            Consumer<String> onToken,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
         List<ChatCompletionMessageParam> messages = history.stream()
                 .map(message -> toParam(message, runtime))
                 .toList();
@@ -73,6 +153,129 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         } finally {
             clearActiveStream.run();
         }
+    }
+
+    private void streamWithResponses(
+            ProviderRuntime runtime,
+            List<Message> history,
+            OpenAIClient client,
+            Consumer<String> onToken,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
+        String input = StringUtils.defaultIfBlank(toResponsesInput(history), "Continue.");
+        ResponseCreateParams params = ResponseCreateParams.builder()
+                .model(runtime.selectedModel())
+                .input(input)
+                .build();
+
+        try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {
+            registerActiveStream.accept(stream);
+            Iterator<ResponseStreamEvent> iterator = stream.stream().iterator();
+            while (iterator.hasNext()) {
+                if (shouldStop(isCancelled)) {
+                    return;
+                }
+
+                ResponseStreamEvent event = iterator.next();
+                event.outputTextDelta()
+                        .map(ResponseTextDeltaEvent::delta)
+                        .filter(StringUtils::isNotBlank)
+                        .ifPresent(onToken);
+
+                if (event.error().isPresent()) {
+                    throw new IllegalStateException(event.error().get().message());
+                }
+            }
+        } finally {
+            clearActiveStream.run();
+        }
+    }
+
+    private String toResponsesInput(List<Message> history) {
+        return history.stream()
+                .map(this::toResponsesInputLine)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n\n"));
+    }
+
+    private String toResponsesInputLine(Message message) {
+        String content = StringUtils.trimToEmpty(toResponsesMessageContent(message));
+        if (content.isBlank()) {
+            return "";
+        }
+
+        return "%s: %s".formatted(responseRoleLabel(message), content);
+    }
+
+    private String toResponsesMessageContent(Message message) {
+        if (message.parts().isEmpty()) {
+            return message.content();
+        }
+
+        return message.parts().stream()
+                .map(ContentPart::asTextProjection)
+                .map(StringUtils::trimToEmpty)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n"));
+    }
+
+    private String responseRoleLabel(Message message) {
+        return switch (message.role()) {
+            case USER -> "User";
+            case ASSISTANT -> "Assistant";
+            case SYSTEM -> "System";
+        };
+    }
+
+    private boolean isUnsupportedApiForEndpoint(Exception exception, String endpoint) {
+        String message = flattenErrorMessage(exception).toLowerCase();
+        String normalizedEndpoint = endpoint.toLowerCase();
+        return message.contains("unsupported_api_for_model")
+                || message.contains("not accessible via the %s endpoint".formatted(normalizedEndpoint))
+                || message.contains("not accessible via the %s".formatted(normalizedEndpoint));
+    }
+
+    private String flattenErrorMessage(Throwable throwable) {
+        StringBuilder builder = new StringBuilder();
+        Throwable current = throwable;
+        while (current != null) {
+            if (StringUtils.isNotBlank(current.getMessage())) {
+                if (builder.length() > 0) {
+                    builder.append(" | ");
+                }
+                builder.append(current.getMessage());
+            }
+            current = current.getCause();
+        }
+        return builder.toString();
+    }
+
+    private void updateCopilotDiagnostics(String modelId, String endpoint) {
+        LAST_COPILOT_MODEL_ID.set(StringUtils.trimToNull(modelId));
+        LAST_COPILOT_ENDPOINT.set(StringUtils.trimToNull(endpoint));
+        LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS.set(System.currentTimeMillis());
+    }
+
+    public static CopilotEndpointDiagnosticsSnapshot diagnosticsSnapshot() {
+        return new CopilotEndpointDiagnosticsSnapshot(
+                LAST_COPILOT_MODEL_ID.get(),
+                LAST_COPILOT_ENDPOINT.get(),
+                LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS.get()
+        );
+    }
+
+    public record CopilotEndpointDiagnosticsSnapshot(
+            String modelId,
+            String endpoint,
+            long updatedAtEpochMs
+    ) {
+    }
+
+    private enum CopilotEndpointMode {
+        CHAT_COMPLETIONS,
+        RESPONSES
     }
 
     private ChatCompletionMessageParam toParam(Message msg, ProviderRuntime runtime) {

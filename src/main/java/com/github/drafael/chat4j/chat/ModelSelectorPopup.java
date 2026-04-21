@@ -36,7 +36,7 @@ import org.apache.commons.lang3.StringUtils;
 public class ModelSelectorPopup extends JDialog {
 
     private static final Duration MODEL_REFRESH_TTL = Duration.ofHours(12);
-    private static final Duration LOCAL_PROVIDER_REFRESH_TTL = Duration.ofSeconds(20);
+    private static final Duration LOCAL_PROVIDER_REFRESH_TTL = Duration.ofMinutes(5);
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
     private static final int POPUP_MIN_WIDTH = 340;
     private static final int POPUP_MAX_WIDTH = 768;
@@ -722,12 +722,9 @@ public class ModelSelectorPopup extends JDialog {
 
     private void fetchModelsAsync() {
         entries.values().forEach(entry -> {
-            Duration ttl = LOCAL_HEALTH_GATED_PROVIDERS.contains(entry.name())
-                    ? LOCAL_PROVIDER_REFRESH_TTL
-                    : MODEL_REFRESH_TTL;
-            if (!modelCacheService.shouldRefresh(entry.name(), ttl)
-                    || !modelCacheService.tryMarkRefreshInFlight(entry.name())
-            ) {
+            Duration ttl = refreshTtl(entry.name());
+            boolean refreshRequired = modelCacheService.shouldRefresh(entry.name(), ttl);
+            if (!refreshRequired || !modelCacheService.tryMarkRefreshInFlight(entry.name())) {
                 return;
             }
 
@@ -744,6 +741,14 @@ public class ModelSelectorPopup extends JDialog {
                 }
             });
         });
+    }
+
+    static Duration refreshTtl(String providerName) {
+        if (LOCAL_HEALTH_GATED_PROVIDERS.contains(providerName)) {
+            return LOCAL_PROVIDER_REFRESH_TTL;
+        }
+
+        return MODEL_REFRESH_TTL;
     }
 
     private void refreshProvider(String providerName, List<String> models) {

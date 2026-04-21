@@ -66,6 +66,16 @@ class CredentialResolverTest {
     }
 
     @Test
+    @DisplayName("Provider credential presence check includes Google AI aliases")
+    void hasAnyProviderCredentials_whenGoogleAiAliasExists_returnsTrue() {
+        CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "google-test"));
+
+        var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
+
+        assertThat(hasCredentials).isTrue();
+    }
+
+    @Test
     @DisplayName("Required credentials check returns true when no environment variable is required")
     void hasRequiredCredentials_whenEnvVarIsNull_returnsTrue() {
         var hasCredentials = CredentialResolver.hasRequiredCredentials(null);

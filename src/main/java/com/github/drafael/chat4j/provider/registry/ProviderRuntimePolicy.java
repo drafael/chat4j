@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.registry;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -16,11 +17,22 @@ final class ProviderRuntimePolicy {
     record RuntimeConfig(boolean enabled, String baseUrl) {
     }
 
-    private static final CliOAuthRunner CLI_OAUTH_RUNNER = new CliOAuthRunner();
-    private static final Duration CLI_OAUTH_STATUS_CACHE_TTL = Duration.ofSeconds(15);
+    private static final Duration AUTH_STATUS_CACHE_TTL = Duration.ofSeconds(15);
 
+    private final CliOAuthRunner cliOAuthRunner;
+    private final CopilotAuthResolver copilotAuthResolver;
     private final ConcurrentHashMap<String, CliOauthStatusSnapshot> cliOauthStatusByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CopilotAuthStatusSnapshot> copilotAuthStatusByProvider = new ConcurrentHashMap<>();
     private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = Map.of();
+
+    ProviderRuntimePolicy() {
+        this(new CliOAuthRunner(), new CopilotAuthResolver());
+    }
+
+    ProviderRuntimePolicy(CliOAuthRunner cliOAuthRunner, CopilotAuthResolver copilotAuthResolver) {
+        this.cliOAuthRunner = cliOAuthRunner;
+        this.copilotAuthResolver = copilotAuthResolver;
+    }
 
     void applyRuntimeConfig(Map<String, RuntimeConfig> runtimeConfig) {
         runtimeConfigByProvider = runtimeConfig == null ? Map.of() : Map.copyOf(runtimeConfig);
@@ -32,34 +44,50 @@ final class ProviderRuntimePolicy {
     }
 
     boolean hasRequiredCredentials(ProviderDefinition providerDefinition) {
-        return providerDefinition.descriptor().authType() == AuthType.CLI_OAUTH
-                ? hasCliOauthCredentials(providerDefinition)
-                : CredentialResolver.hasRequiredCredentials(providerDefinition.envVar());
+        return switch (providerDefinition.descriptor().authType()) {
+            case CLI_OAUTH -> hasCliOauthCredentials(providerDefinition);
+            case COPILOT_OAUTH -> hasCopilotAuthCredentials(providerDefinition);
+            case ENV_VAR -> CredentialResolver.hasRequiredCredentials(providerDefinition.envVar());
+        };
     }
 
     private boolean hasCliOauthCredentials(ProviderDefinition providerDefinition) {
         String providerName = providerDefinition.name();
         CliOauthStatusSnapshot cached = cliOauthStatusByProvider.get(providerName);
         Instant now = Instant.now();
-        if (cached != null && now.isBefore(cached.checkedAt().plus(CLI_OAUTH_STATUS_CACHE_TTL))) {
+        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
             return cached.authorized();
         }
 
-        boolean authorized = CLI_OAUTH_RUNNER.checkStatus(providerDefinition.descriptor().oauthCliSpec()).authorized();
+        boolean authorized = cliOAuthRunner.checkStatus(providerDefinition.descriptor().oauthCliSpec()).authorized();
         cliOauthStatusByProvider.put(providerName, new CliOauthStatusSnapshot(authorized, now));
         return authorized;
     }
 
+    private boolean hasCopilotAuthCredentials(ProviderDefinition providerDefinition) {
+        String providerName = providerDefinition.name();
+        CopilotAuthStatusSnapshot cached = copilotAuthStatusByProvider.get(providerName);
+        Instant now = Instant.now();
+        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
+            return cached.authorized();
+        }
+
+        boolean authorized = copilotAuthResolver.resolveStatus().authorized();
+        copilotAuthStatusByProvider.put(providerName, new CopilotAuthStatusSnapshot(authorized, now));
+        return authorized;
+    }
+
     /**
-     * Pre-checks all CLI OAuth providers in parallel so that subsequent
+     * Pre-checks auth-dependent providers in parallel so that subsequent
      * {@link #hasRequiredCredentials} calls hit the warm cache instead of
-     * spawning processes sequentially.
+     * performing expensive checks sequentially.
      */
     void warmOAuthStatusCache(List<ProviderDefinition> providers) {
         List<CompletableFuture<Void>> futures = providers.stream()
-                .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH)
                 .filter(this::isEnabled)
-                .map(p -> CompletableFuture.runAsync(() -> hasCliOauthCredentials(p)))
+                .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH
+                        || p.descriptor().authType() == AuthType.COPILOT_OAUTH)
+                .map(p -> CompletableFuture.runAsync(() -> hasRequiredCredentials(p)))
                 .toList();
         futures.forEach(CompletableFuture::join);
     }
@@ -73,5 +101,8 @@ final class ProviderRuntimePolicy {
     }
 
     private record CliOauthStatusSnapshot(boolean authorized, Instant checkedAt) {
+    }
+
+    private record CopilotAuthStatusSnapshot(boolean authorized, Instant checkedAt) {
     }
 }

@@ -25,12 +25,6 @@ final class ProviderCatalog {
             List.of("codex", "logout"),
             emptyList());
 
-    private static final OAuthCliSpec COPILOT_OAUTH = new OAuthCliSpec(
-            List.of("gh", "auth", "status"),
-            List.of("gh", "auth", "login"),
-            List.of("gh", "auth", "logout"),
-            List.of("gh", "auth", "token"));
-
     private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(new EnvVarCredentialStrategy());
 
     private static final List<ProviderDefinition> PROVIDERS = new ArrayList<>();
@@ -49,10 +43,10 @@ final class ProviderCatalog {
                 ),
                 new OpenAiCompatibleModule(
                         "GitHub Copilot",
-                        AuthType.CLI_OAUTH,
+                        AuthType.COPILOT_OAUTH,
                         null,
                         null,
-                        COPILOT_OAUTH,
+                        null,
                         "https://api.githubcopilot.com"
                 ),
                 new OpenAiCompatibleModule("OpenAI", "OPENAI_API_KEY", null, "https://api.openai.com/v1"),

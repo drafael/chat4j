@@ -126,4 +126,24 @@ class ModelOrderingTest {
                 "llama3.10:latest"
         );
     }
+
+    @Test
+    @DisplayName("Copilot model IDs filter deprecated GPT-3.5 and dated GPT-4o aliases when canonical models exist")
+    void sanitizeAndSortByProvider_whenProviderIsCopilot_filtersLegacyAliases() {
+        List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("GitHub Copilot", List.of(
+                "gpt-4o-mini-2024-07-18",
+                "gpt-4o-2024-11-20",
+                "gpt-3.5-turbo-0613",
+                "gpt-3.5-turbo",
+                "gpt-4o-mini",
+                "gpt-4o",
+                "gpt-5.4"
+        ));
+
+        assertThat(sorted).containsExactly(
+                "gpt-5.4",
+                "gpt-4o-mini",
+                "gpt-4o"
+        );
+    }
 }

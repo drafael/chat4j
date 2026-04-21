@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.registry;
 
+import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -31,13 +32,21 @@ class ProviderCatalogTest {
     }
 
     @Test
-    @DisplayName("Provider catalog includes OAuth CLI providers for Codex and Copilot")
-    void allProviders_whenCatalogInitialized_returnsProvidersIncludingCliOauth() {
+    @DisplayName("Provider catalog keeps Codex on CLI OAuth and Copilot on Chat4J Copilot auth")
+    void allProviders_whenCatalogInitialized_mapsCodexAndCopilotAuthTypes() {
         var subject = new ProviderCatalog();
 
         assertThat(subject.allProviders())
-                .extracting(ProviderDefinition::name)
-                .contains("OpenAI Codex", "GitHub Copilot");
+                .filteredOn(providerDefinition -> "OpenAI Codex".equals(providerDefinition.name()))
+                .singleElement()
+                .extracting(providerDefinition -> providerDefinition.descriptor().authType())
+                .isEqualTo(AuthType.CLI_OAUTH);
+
+        assertThat(subject.allProviders())
+                .filteredOn(providerDefinition -> "GitHub Copilot".equals(providerDefinition.name()))
+                .singleElement()
+                .extracting(providerDefinition -> providerDefinition.descriptor().authType())
+                .isEqualTo(AuthType.COPILOT_OAUTH);
     }
 
     @Test
