@@ -22,8 +22,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
@@ -38,9 +41,12 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
+    private static final Logger LOG = Logger.getLogger(OpenAiModelCatalogClient.class.getName());
     private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+    private static final String COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.allowCustomTokenEndpoint";
     private static final String COPILOT_TOKEN_ENDPOINT_DEFAULT = "https://api.github.com/copilot_internal/v2/token";
+    private static final Set<String> TRUSTED_COPILOT_TOKEN_ENDPOINT_HOSTS = Set.of("api.github.com");
     private static final Duration COPILOT_EXCHANGE_SUCCESS_TTL = Duration.ofMinutes(10);
     private static final Duration COPILOT_EXCHANGE_FAILURE_TTL = Duration.ofMinutes(2);
     private static final Map<String, CopilotExchangedTokenSnapshot> COPILOT_EXCHANGED_TOKEN_BY_SOURCE = new ConcurrentHashMap<>();
@@ -204,7 +210,35 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private String copilotTokenEndpoint() {
-        return StringUtils.defaultIfBlank(System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY), COPILOT_TOKEN_ENDPOINT_DEFAULT);
+        String configuredEndpoint = StringUtils.defaultIfBlank(System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY), COPILOT_TOKEN_ENDPOINT_DEFAULT);
+        if (Boolean.getBoolean(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY)) {
+            return configuredEndpoint;
+        }
+
+        if (isTrustedCopilotTokenEndpoint(configuredEndpoint)) {
+            return configuredEndpoint;
+        }
+
+        LOG.warning(() -> "Ignoring untrusted Copilot token endpoint override: %s".formatted(configuredEndpoint));
+        return COPILOT_TOKEN_ENDPOINT_DEFAULT;
+    }
+
+    private boolean isTrustedCopilotTokenEndpoint(String endpoint) {
+        try {
+            URI uri = URI.create(endpoint);
+            if (!"https".equalsIgnoreCase(uri.getScheme())) {
+                return false;
+            }
+
+            String host = StringUtils.defaultString(uri.getHost()).toLowerCase(Locale.ROOT);
+            if (!TRUSTED_COPILOT_TOKEN_ENDPOINT_HOSTS.contains(host)) {
+                return false;
+            }
+
+            return "/copilot_internal/v2/token".equals(uri.getPath());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean hasModernGptModels(List<String> modelIds) {

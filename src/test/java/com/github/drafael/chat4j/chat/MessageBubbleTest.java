@@ -27,6 +27,18 @@ class MessageBubbleTest {
         assertThat(html).doesNotContain("[FALLBACK]");
     }
 
+    @Test
+    @DisplayName("External link allowlist accepts http/https/mailto and rejects unsafe schemes")
+    void isAllowedExternalLink_whenSchemeValidationRuns_allowsSafeSchemesOnly() {
+        assertThat(MessageBubble.isAllowedExternalLink("https://example.com/path")).isTrue();
+        assertThat(MessageBubble.isAllowedExternalLink("http://example.com")).isTrue();
+        assertThat(MessageBubble.isAllowedExternalLink("mailto:security@example.com")).isTrue();
+
+        assertThat(MessageBubble.isAllowedExternalLink("javascript:alert(1)")).isFalse();
+        assertThat(MessageBubble.isAllowedExternalLink("file:///etc/passwd")).isFalse();
+        assertThat(MessageBubble.isAllowedExternalLink("data:text/html;base64,PHNjcmlwdD4=")).isFalse();
+    }
+
     private String readEditorText(MessageBubble bubble) throws Exception {
         Field field = MessageBubble.class.getDeclaredField("editorPane");
         field.setAccessible(true);

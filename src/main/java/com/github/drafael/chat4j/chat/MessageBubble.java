@@ -10,11 +10,13 @@ import javax.swing.text.html.HTMLEditorKit;
 import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
 import java.net.URI;
+import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 
 public class MessageBubble extends JPanel {
 
     private static final int ARC = 16;
+    private static final Set<String> ALLOWED_EXTERNAL_LINK_SCHEMES = Set.of("http", "https", "mailto");
 
     private final Role role;
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
@@ -87,6 +89,10 @@ public class MessageBubble extends JPanel {
     }
 
     private void openExternalLink(String link) {
+        if (!isAllowedExternalLink(link)) {
+            return;
+        }
+
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
             return;
         }
@@ -95,6 +101,28 @@ public class MessageBubble extends JPanel {
             Desktop.getDesktop().browse(URI.create(link));
         } catch (Exception e) {
             // Ignore link open failures to keep chat interaction uninterrupted.
+        }
+    }
+
+    static boolean isAllowedExternalLink(String link) {
+        if (StringUtils.isBlank(link)) {
+            return false;
+        }
+
+        try {
+            URI uri = URI.create(link.trim());
+            String scheme = StringUtils.defaultString(uri.getScheme()).toLowerCase();
+            if (!ALLOWED_EXTERNAL_LINK_SCHEMES.contains(scheme)) {
+                return false;
+            }
+
+            if ("mailto".equals(scheme)) {
+                return StringUtils.isNotBlank(uri.getSchemeSpecificPart());
+            }
+
+            return StringUtils.isNotBlank(uri.getHost());
+        } catch (Exception e) {
+            return false;
         }
     }
 

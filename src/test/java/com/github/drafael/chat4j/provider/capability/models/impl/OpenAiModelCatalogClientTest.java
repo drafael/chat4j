@@ -24,9 +24,11 @@ class OpenAiModelCatalogClientTest {
 
     private static final OpenAiModelCatalogClient subject = new OpenAiModelCatalogClient();
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+    private static final String COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.allowCustomTokenEndpoint";
 
     private String originalUserHome;
     private String originalCopilotTokenEndpoint;
+    private String originalCopilotAllowCustomTokenEndpoint;
 
     @AfterEach
     void tearDown() {
@@ -39,6 +41,12 @@ class OpenAiModelCatalogClientTest {
         } else {
             System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, originalCopilotTokenEndpoint);
         }
+
+        if (originalCopilotAllowCustomTokenEndpoint == null) {
+            System.clearProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+        } else {
+            System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, originalCopilotAllowCustomTokenEndpoint);
+        }
     }
 
     @Test
@@ -49,7 +57,7 @@ class OpenAiModelCatalogClientTest {
         server.createContext("/copilot_internal/v2/token", exchange -> {
             tokenExchangeCalls.incrementAndGet();
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
-            String body = "token gho_generic_token".equals(authHeader)
+            String body = "token gho_generic_token_success".equals(authHeader)
                     ? "{\"token\":\"copilot-internal-token\"}"
                     : "{\"token\":\"\"}";
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
@@ -81,8 +89,10 @@ class OpenAiModelCatalogClientTest {
 
         try {
             originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
             int port = server.getAddress().getPort();
             System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
+            System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
 
             ProviderDescriptor descriptor = new ProviderDescriptor(
                     "GitHub Copilot",
@@ -99,7 +109,7 @@ class OpenAiModelCatalogClientTest {
                     descriptor,
                     null,
                     "http://127.0.0.1:%d".formatted(port),
-                    "gho_generic_token",
+                    "gho_generic_token_success",
                     null
             );
 
@@ -219,6 +229,70 @@ class OpenAiModelCatalogClientTest {
 
             assertThat(models).contains("gpt-4o", "gpt-4o-mini");
             assertThat(models).doesNotContain("gpt-4o-2024-11-20", "gpt-4o-mini-2024-07-18", "gpt-3.5-turbo");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing ignores untrusted token endpoint override unless explicitly allowed")
+    void fetchModels_whenCopilotTokenEndpointOverrideIsUntrusted_ignoresOverrideByDefault() throws Exception {
+        AtomicInteger tokenExchangeCalls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/copilot_internal/v2/token", exchange -> {
+            tokenExchangeCalls.incrementAndGet();
+            byte[] payload = "{\"token\":\"copilot-internal-token\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+
+        server.createContext("/models", exchange -> {
+            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            String body = "Bearer gho_generic_token_untrusted".equals(authHeader)
+                    ? "{\"data\":[{\"id\":\"gpt-4o\"}]}"
+                    : "{\"data\":[{\"id\":\"gpt-5.4\"}]}";
+
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+            int port = server.getAddress().getPort();
+            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
+            System.clearProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "gho_generic_token_untrusted",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-4o");
+            assertThat(models).doesNotContain("gpt-5.4");
+            assertThat(tokenExchangeCalls.get()).isZero();
         } finally {
             server.stop(0);
         }
