@@ -46,26 +46,27 @@ class DatabaseBootstrapTest {
         try (Connection connection = dataSource.getConnection()) {
             assertThat(tableExists(connection, "conversations")).isTrue();
             assertThat(tableExists(connection, "messages")).isTrue();
-            assertThat(tableExists(connection, "provider_configs")).isTrue();
-            assertThat(tableExists(connection, "settings")).isTrue();
+            assertThat(tableExists(connection, "provider_configs")).isFalse();
+            assertThat(tableExists(connection, "settings")).isFalse();
             assertThat(tableExists(connection, "flyway_schema_history")).isTrue();
         }
     }
 
     @Test
-    @DisplayName("Initialisation can run multiple times while keeping a single applied V1 migration")
-    void init_whenInvokedMultipleTimes_appliesInitialMigrationOnlyOnce() throws Exception {
+    @DisplayName("Initialisation can run multiple times while keeping single applied migrations")
+    void init_whenInvokedMultipleTimes_appliesMigrationsOnlyOnce() throws Exception {
         subject.init();
         subject.init();
 
         try (Connection connection = dataSource.getConnection()) {
             assertThat(appliedMigrations(connection, "1")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "3")).isEqualTo(1);
         }
     }
 
     @Test
-    @DisplayName("Initialisation baselines a non-empty legacy schema and still applies V1")
-    void init_whenLegacySchemaExistsWithoutHistoryTable_baselinesAndAppliesV1() throws Exception {
+    @DisplayName("Initialisation baselines a non-empty legacy schema and applies latest history-only schema")
+    void init_whenLegacySchemaExistsWithoutHistoryTable_baselinesAndAppliesHistoryOnlySchema() throws Exception {
         createLegacySchemaWithoutHistoryTable();
 
         subject.init();
@@ -73,10 +74,11 @@ class DatabaseBootstrapTest {
         try (Connection connection = dataSource.getConnection()) {
             assertThat(tableExists(connection, "flyway_schema_history")).isTrue();
             assertThat(appliedMigrations(connection, "1")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "3")).isEqualTo(1);
             assertThat(tableExists(connection, "conversations")).isTrue();
             assertThat(tableExists(connection, "messages")).isTrue();
-            assertThat(tableExists(connection, "provider_configs")).isTrue();
-            assertThat(tableExists(connection, "settings")).isTrue();
+            assertThat(tableExists(connection, "provider_configs")).isFalse();
+            assertThat(tableExists(connection, "settings")).isFalse();
         }
     }
 
@@ -104,7 +106,7 @@ class DatabaseBootstrapTest {
     }
 
     private boolean tableExists(Connection connection, String tableName) throws SQLException {
-        try (ResultSet tables = connection.getMetaData().getTables(null, null, null, new String[]{"TABLE"})) {
+        try (ResultSet tables = connection.getMetaData().getTables(null, "PUBLIC", null, new String[]{"TABLE"})) {
             while (tables.next()) {
                 String existingTableName = tables.getString("TABLE_NAME");
                 if (tableName.equalsIgnoreCase(existingTableName)) {

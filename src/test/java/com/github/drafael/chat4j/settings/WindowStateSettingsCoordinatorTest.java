@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
@@ -24,20 +25,20 @@ class WindowStateSettingsCoordinatorTest {
 
         subject.save(new Rectangle(10, 20, 900, 600));
 
-        assertThat(settingsRepo.get("window.x")).contains("10");
-        assertThat(settingsRepo.get("window.y")).contains("20");
-        assertThat(settingsRepo.get("window.width")).contains("900");
-        assertThat(settingsRepo.get("window.height")).contains("600");
+        assertThat(settingsRepo.get(SettingsKeys.WINDOW_X)).contains("10");
+        assertThat(settingsRepo.get(SettingsKeys.WINDOW_Y)).contains("20");
+        assertThat(settingsRepo.get(SettingsKeys.WINDOW_WIDTH)).contains("900");
+        assertThat(settingsRepo.get(SettingsKeys.WINDOW_HEIGHT)).contains("600");
     }
 
     @Test
     @DisplayName("Load returns bounds when stored window intersects visible screen")
     void loadIfVisible_whenStoredBoundsIntersectScreen_returnsBounds() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("window-state-visible");
-        settingsRepo.put("window.x", "100");
-        settingsRepo.put("window.y", "80");
-        settingsRepo.put("window.width", "800");
-        settingsRepo.put("window.height", "500");
+        settingsRepo.put(SettingsKeys.WINDOW_X, "100");
+        settingsRepo.put(SettingsKeys.WINDOW_Y, "80");
+        settingsRepo.put(SettingsKeys.WINDOW_WIDTH, "800");
+        settingsRepo.put(SettingsKeys.WINDOW_HEIGHT, "500");
 
         var subject = new WindowStateSettingsCoordinator(settingsRepo);
 
@@ -50,10 +51,10 @@ class WindowStateSettingsCoordinatorTest {
     @DisplayName("Load returns empty when stored bounds are outside visible screen")
     void loadIfVisible_whenStoredBoundsAreOutsideScreen_returnsEmpty() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("window-state-offscreen");
-        settingsRepo.put("window.x", "4000");
-        settingsRepo.put("window.y", "3000");
-        settingsRepo.put("window.width", "800");
-        settingsRepo.put("window.height", "500");
+        settingsRepo.put(SettingsKeys.WINDOW_X, "4000");
+        settingsRepo.put(SettingsKeys.WINDOW_Y, "3000");
+        settingsRepo.put(SettingsKeys.WINDOW_WIDTH, "800");
+        settingsRepo.put(SettingsKeys.WINDOW_HEIGHT, "500");
 
         var subject = new WindowStateSettingsCoordinator(settingsRepo);
 
@@ -66,7 +67,7 @@ class WindowStateSettingsCoordinatorTest {
     @DisplayName("Load returns empty when stored values are invalid")
     void loadIfVisible_whenStoredValuesAreInvalid_returnsEmpty() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("window-state-invalid");
-        settingsRepo.put("window.x", "abc");
+        settingsRepo.put(SettingsKeys.WINDOW_X, "abc");
 
         var subject = new WindowStateSettingsCoordinator(settingsRepo);
 

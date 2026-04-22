@@ -10,6 +10,8 @@ import com.github.drafael.chat4j.storage.H2DataSourceFactory;
 import com.github.drafael.chat4j.storage.ModelCache;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
+import com.github.drafael.chat4j.storage.SettingsDbToPropertiesMigrationCoordinator;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.storage.StoragePaths;
 import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTGitHubIJTheme;
@@ -75,12 +77,15 @@ public final class ApplicationBootstrap {
         DataSource dataSource = H2DataSourceFactory.create(storagePaths);
         DatabaseBootstrap databaseBootstrap = new DatabaseBootstrap(storagePaths, dataSource);
         ConversationRepo conversationRepo = new ConversationRepo(dataSource);
-        SettingsRepo settingsRepo = new SettingsRepo(dataSource);
+        SettingsRepo settingsRepo = new SettingsRepo(storagePaths);
+        SettingsDbToPropertiesMigrationCoordinator settingsMigrationCoordinator =
+                new SettingsDbToPropertiesMigrationCoordinator(dataSource, settingsRepo);
         ProviderModelCacheService providerModelCacheService =
                 new ProviderModelCacheService(new ModelCache(storagePaths));
         ModelFavoritesService modelFavoritesService = new ModelFavoritesService(settingsRepo);
 
         try {
+            settingsMigrationCoordinator.migrateIfNeeded();
             databaseBootstrap.init();
         } catch (Exception e) {
             showStartupErrorAndExit("Failed to initialize database: %s".formatted(e.getMessage()));
@@ -99,7 +104,7 @@ public final class ApplicationBootstrap {
         try {
             AppearancePanel.restoreAccentColor(settingsRepo);
 
-            String themeName = settingsRepo.get("theme", ThemeSettingsResolver.DEFAULT_THEME);
+            String themeName = settingsRepo.get(SettingsKeys.THEME_NAME, ThemeSettingsResolver.DEFAULT_THEME);
             String className = AppearancePanel.classNameForTheme(themeName);
             if (className != null) {
                 UIManager.setLookAndFeel(className);

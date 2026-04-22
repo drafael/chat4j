@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.storage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -39,7 +40,7 @@ class ModelFavoritesServiceTest {
         assertThat(firstToggle).isTrue();
         assertThat(secondToggle).isFalse();
         assertThat(subject.isFavorite("Ollama", "qwen3:14b")).isFalse();
-        assertThat(settingsRepo.countByPrefix("model.favorite.")).isZero();
+        assertThat(settingsRepo.countByPrefix(SettingsKeys.MODEL_FAVORITE_PREFIX)).isZero();
     }
 
     @Test
@@ -59,7 +60,7 @@ class ModelFavoritesServiceTest {
         private final Map<String, String> entries = new LinkedHashMap<>();
 
         private InMemorySettingsRepo() {
-            super(null);
+            super(Path.of("target", "test-model-favorites-in-memory.properties"));
         }
 
         @Override

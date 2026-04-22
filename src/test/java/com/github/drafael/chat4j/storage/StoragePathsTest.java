@@ -10,15 +10,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 class StoragePathsTest {
 
     @Test
-    @DisplayName("Default paths use XDG_CONFIG_HOME when the environment variable is configured")
-    void defaultPaths_whenXdgConfigHomeIsConfigured_usesXdgConfigHomeDirectory() {
-        var xdgConfigHome = System.getenv("XDG_CONFIG_HOME");
-        var subject = StoragePaths.defaultPaths();
+    @DisplayName("Default paths use APPDATA on Windows when environment variable is configured")
+    void defaultPaths_whenWindowsAndAppDataConfigured_usesWindowsAppDataDirectory() {
+        var subject = StoragePaths.defaultPaths("Windows 11", "/Users/me", "/xdg/ignored", "C:/Users/me/AppData/Roaming");
 
-        assertThat(xdgConfigHome).isNotBlank();
         assertThat(subject.appConfigDirectory())
-                .isEqualTo(Path.of(xdgConfigHome).resolve("chat4j"));
+                .isEqualTo(Path.of("C:/Users/me/AppData/Roaming").resolve("chat4j"));
         assertThat(subject.databaseDirectory())
-                .isEqualTo(Path.of(xdgConfigHome).resolve("chat4j").resolve("data"));
+                .isEqualTo(Path.of("C:/Users/me/AppData/Roaming").resolve("chat4j").resolve("data"));
+    }
+
+    @Test
+    @DisplayName("Default paths use AppData/Roaming fallback on Windows when APPDATA is missing")
+    void defaultPaths_whenWindowsAndAppDataMissing_usesUserHomeFallback() {
+        var subject = StoragePaths.defaultPaths("Windows 10", "C:/Users/me", null, "");
+
+        assertThat(subject.appConfigDirectory())
+                .isEqualTo(Path.of("C:/Users/me", "AppData", "Roaming").resolve("chat4j"));
+    }
+
+    @Test
+    @DisplayName("Default paths use XDG config home on non-Windows and fallback to .config")
+    void defaultPaths_whenNonWindows_usesXdgThenDotConfigFallback() {
+        var withXdg = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);
+        var fallback = StoragePaths.defaultPaths("Linux", "/home/me", null, null);
+
+        assertThat(withXdg.appConfigDirectory()).isEqualTo(Path.of("/tmp/xdg").resolve("chat4j"));
+        assertThat(fallback.appConfigDirectory()).isEqualTo(Path.of("/home/me", ".config").resolve("chat4j"));
     }
 }

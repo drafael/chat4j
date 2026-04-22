@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.apache.commons.lang3.Validate;
 
@@ -8,7 +9,7 @@ import java.sql.SQLException;
 public class ThemeSettingsResolver {
 
     public static final String DEFAULT_THEME = "GitHub";
-    private static final String KEY_THEME = "theme";
+    private static final String KEY_THEME = SettingsKeys.THEME_NAME;
 
     private final SettingsRepo settingsRepo;
 

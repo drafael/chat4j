@@ -1,13 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
+import java.nio.file.Path;
 import java.sql.SQLException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,7 +27,7 @@ class ThemeSettingsResolverTest {
     @DisplayName("Resolve selected theme returns stored value when configured")
     void resolveSelectedTheme_whenStoredValueExists_returnsStoredTheme() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("theme-settings-stored");
-        settingsRepo.put("theme", "Solarized Dark");
+        settingsRepo.put(SettingsKeys.THEME_NAME, "Solarized Dark");
 
         var subject = new ThemeSettingsResolver(settingsRepo);
 
@@ -56,37 +54,17 @@ class ThemeSettingsResolverTest {
 
         subject.persistSelectedTheme("GitHub Dark");
 
-        assertThat(settingsRepo.get("theme")).contains("GitHub Dark");
+        assertThat(settingsRepo.get(SettingsKeys.THEME_NAME)).contains("GitHub Dark");
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )
-        ) {
-            statement.execute();
-        }
+    private SettingsRepo settingsRepo(String testName) {
+        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
     }
 
     private static class ThrowingSettingsRepo extends SettingsRepo {
 
         private ThrowingSettingsRepo() {
-            super(null);
+            super(Path.of("target", "test-theme-settings-resolver-throwing.properties"));
         }
 
         @Override

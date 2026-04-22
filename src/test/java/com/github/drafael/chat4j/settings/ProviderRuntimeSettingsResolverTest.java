@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
@@ -36,8 +37,8 @@ class ProviderRuntimeSettingsResolverTest {
     @DisplayName("Resolve uses configured enabled flag and base URL")
     void resolve_whenSettingsConfigured_usesConfiguredValues() throws Exception {
         var settingsRepo = settingsRepo("resolver-configured");
-        settingsRepo.put("provider.OpenAI.enabled", "false");
-        settingsRepo.put("provider.OpenAI.baseUrl", "https://gateway.example/v1");
+        settingsRepo.put(SettingsKeys.providerEnabledKey("OpenAI"), "false");
+        settingsRepo.put(SettingsKeys.providerBaseUrlKey("OpenAI"), "https://gateway.example/v1");
 
         var subject = new ProviderRuntimeSettingsResolver(settingsRepo);
         var provider = provider("OpenAI", "https://api.openai.com/v1");
@@ -52,7 +53,7 @@ class ProviderRuntimeSettingsResolverTest {
     @DisplayName("Resolve falls back to default URL when configured URL is blank")
     void resolve_whenConfiguredBaseUrlIsBlank_usesProviderDefaultBaseUrl() throws Exception {
         var settingsRepo = settingsRepo("resolver-blank-url");
-        settingsRepo.put("provider.OpenAI.baseUrl", "   ");
+        settingsRepo.put(SettingsKeys.providerBaseUrlKey("OpenAI"), "   ");
 
         var subject = new ProviderRuntimeSettingsResolver(settingsRepo);
         var provider = provider("OpenAI", "https://api.openai.com/v1");
@@ -66,7 +67,7 @@ class ProviderRuntimeSettingsResolverTest {
     @DisplayName("Resolve all returns config entries keyed by provider name")
     void resolveAll_whenProvidersProvided_returnsConfigMapByProviderName() throws Exception {
         var settingsRepo = settingsRepo("resolver-all");
-        settingsRepo.put("provider.OpenAI.enabled", "false");
+        settingsRepo.put(SettingsKeys.providerEnabledKey("OpenAI"), "false");
 
         var subject = new ProviderRuntimeSettingsResolver(settingsRepo);
         var openAi = provider("OpenAI", "https://api.openai.com/v1");

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
@@ -35,14 +36,14 @@ public class ProviderRuntimeSettingsResolver {
 
         try {
             enabled = Boolean.parseBoolean(
-                    settingsRepo.get("provider.%s.enabled".formatted(providerDef.name()), "true")
+                    settingsRepo.get(SettingsKeys.providerEnabledKey(providerDef.name()), "true")
             );
         } catch (Exception e) {
             enabled = true;
         }
 
         try {
-            baseUrl = settingsRepo.get("provider.%s.baseUrl".formatted(providerDef.name()), providerDef.baseUrl());
+            baseUrl = settingsRepo.get(SettingsKeys.providerBaseUrlKey(providerDef.name()), providerDef.baseUrl());
         } catch (Exception e) {
             baseUrl = providerDef.baseUrl();
         }

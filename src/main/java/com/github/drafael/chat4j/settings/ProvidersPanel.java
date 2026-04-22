@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatComplet
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
@@ -1210,11 +1211,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private String providerBaseUrlKey(String providerName) {
-        return "provider.%s.baseUrl".formatted(providerName);
+        return SettingsKeys.providerBaseUrlKey(providerName);
     }
 
     private String providerEnabledKey(String providerName) {
-        return "provider.%s.enabled".formatted(providerName);
+        return SettingsKeys.providerEnabledKey(providerName);
     }
 
     private JLabel label(String text) {

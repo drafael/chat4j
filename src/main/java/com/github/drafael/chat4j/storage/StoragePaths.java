@@ -8,6 +8,7 @@ public final class StoragePaths {
 
     private static final String APP_NAME = "chat4j";
     private static final String DB_NAME = "chat4j";
+    private static final String WINDOWS_APPDATA_ENV = "APPDATA";
 
     private final Path configHome;
 
@@ -16,11 +17,27 @@ public final class StoragePaths {
     }
 
     public static StoragePaths defaultPaths() {
-        String xdgConfigHome = System.getenv("XDG_CONFIG_HOME");
+        return defaultPaths(
+                System.getProperty("os.name"),
+                System.getProperty("user.home"),
+                System.getenv("XDG_CONFIG_HOME"),
+                System.getenv(WINDOWS_APPDATA_ENV)
+        );
+    }
+
+    static StoragePaths defaultPaths(String osName, String userHome, String xdgConfigHome, String windowsAppData) {
+        if (StringUtils.containsIgnoreCase(osName, "win")) {
+            Path windowsConfigHome = StringUtils.isNotBlank(windowsAppData)
+                    ? Path.of(windowsAppData)
+                    : Path.of(userHome, "AppData", "Roaming");
+            return new StoragePaths(windowsConfigHome);
+        }
+
         if (StringUtils.isNotBlank(xdgConfigHome)) {
             return new StoragePaths(Path.of(xdgConfigHome));
         }
-        return new StoragePaths(Path.of(System.getProperty("user.home"), ".config"));
+
+        return new StoragePaths(Path.of(userHome, ".config"));
     }
 
     public Path appConfigDirectory() {
@@ -37,6 +54,10 @@ public final class StoragePaths {
 
     public Path databaseFile() {
         return databaseDirectory().resolve("%s.mv.db".formatted(DB_NAME));
+    }
+
+    public Path settingsFile() {
+        return appConfigDirectory().resolve("chat4j.properties");
     }
 
     public Path modelsCacheDirectory() {

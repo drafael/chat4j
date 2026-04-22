@@ -132,19 +132,6 @@ mvn -Pjpackage-linux package
 
 Output goes to `target/dist/`.
 
-## Project structure
-
-```text
-src/main/java/com/github/drafael/chat4j
-├── App.java
-├── MainFrame.java
-├── chat/
-├── provider/
-├── settings/
-├── sidebar/
-└── storage/
-```
-
 ## License
 
 This project is licensed under the **Apache License 2.0**.

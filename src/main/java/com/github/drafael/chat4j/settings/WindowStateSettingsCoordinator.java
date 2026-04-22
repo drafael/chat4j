@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.apache.commons.lang3.Validate;
 
@@ -8,10 +9,10 @@ import java.util.Optional;
 
 public class WindowStateSettingsCoordinator {
 
-    private static final String WINDOW_X_KEY = "window.x";
-    private static final String WINDOW_Y_KEY = "window.y";
-    private static final String WINDOW_WIDTH_KEY = "window.width";
-    private static final String WINDOW_HEIGHT_KEY = "window.height";
+    private static final String WINDOW_X_KEY = SettingsKeys.WINDOW_X;
+    private static final String WINDOW_Y_KEY = SettingsKeys.WINDOW_Y;
+    private static final String WINDOW_WIDTH_KEY = SettingsKeys.WINDOW_WIDTH;
+    private static final String WINDOW_HEIGHT_KEY = SettingsKeys.WINDOW_HEIGHT;
 
     private final SettingsRepo settingsRepo;
 

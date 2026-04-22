@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
@@ -52,7 +53,7 @@ class ProviderAvailabilityResolverTest {
     @DisplayName("Menu availability uses configured base URLs for local providers")
     void resolveMenuAvailability_whenBaseUrlConfigured_usesConfiguredUrlForReachability() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("provider-availability-configured");
-        settingsRepo.put("provider.Ollama.baseUrl", "http://127.0.0.1:11434/v1");
+        settingsRepo.put(SettingsKeys.providerBaseUrlKey("Ollama"), "http://127.0.0.1:11434/v1");
 
         var probe = new FakeLocalServiceHealthProbe();
         probe.blockingResultByUrl.put("http://127.0.0.1:11434/v1", true);
@@ -75,7 +76,7 @@ class ProviderAvailabilityResolverTest {
     @DisplayName("Menu availability falls back to default base URL when configured value is blank")
     void resolveMenuAvailability_whenConfiguredBaseUrlBlank_usesDefaultBaseUrl() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("provider-availability-blank");
-        settingsRepo.put("provider.LM Studio.baseUrl", "   ");
+        settingsRepo.put(SettingsKeys.providerBaseUrlKey("LM Studio"), "   ");
 
         var probe = new FakeLocalServiceHealthProbe();
         probe.blockingResultByUrl.put("http://localhost:1234/v1", true);

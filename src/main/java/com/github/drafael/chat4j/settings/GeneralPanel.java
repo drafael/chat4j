@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.formdev.flatlaf.util.SystemInfo;
 
@@ -10,13 +10,15 @@ import java.util.Set;
 
 public class GeneralPanel extends AbstractSettingsPanel {
 
-    private static final String KEY_SEND = "send.key";
-    private static final String KEY_AUTO_SCROLL = "auto.scroll";
-    private static final String KEY_ASSISTANT_MARKDOWN_DEFAULT = "chat.markdown.default";
-    private static final String KEY_MENU_BAR_ENABLED = "menu.bar.enabled";
+    private static final String KEY_SEND = SettingsKeys.CHAT_SEND_KEY;
+    private static final String KEY_AUTO_SCROLL = SettingsKeys.CHAT_AUTO_SCROLL;
+    private static final String KEY_ASSISTANT_MARKDOWN_DEFAULT = SettingsKeys.CHAT_RENDER_MODE;
+    private static final String KEY_MENU_BAR_ENABLED = SettingsKeys.MENU_BAR_ENABLED;
 
     private static final String SEND_ENTER = "Enter";
     private static final String SEND_CTRL_ENTER = "Ctrl+Enter";
+    private static final String MARKDOWN_MODE_PREVIEW = SettingsKeys.CHAT_RENDER_MODE_PREVIEW;
+    private static final String MARKDOWN_MODE_MARKDOWN = SettingsKeys.CHAT_RENDER_MODE_MARKDOWN;
 
     public GeneralPanel(SettingsRepo settingsRepo) {
         super(settingsRepo);
@@ -48,8 +50,8 @@ public class GeneralPanel extends AbstractSettingsPanel {
         bindCheckBox(menuBarEnabled, KEY_MENU_BAR_ENABLED, SystemInfo.isMacOS, null);
 
         JComboBox<String> markdownDefault = new JComboBox<>(new String[]{
-                AssistantRenderMode.PREVIEW.settingValue(),
-                AssistantRenderMode.MARKDOWN.settingValue()
+                MARKDOWN_MODE_PREVIEW,
+                MARKDOWN_MODE_MARKDOWN
         });
         markdownDefault.setRenderer(new DefaultListCellRenderer() {
             @Override
@@ -68,7 +70,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
                 );
 
                 if (value instanceof String modeValue) {
-                    label.setText(AssistantRenderMode.fromSettingValue(modeValue).displayName());
+                    label.setText(MARKDOWN_MODE_MARKDOWN.equalsIgnoreCase(modeValue) ? "MARKDOWN" : "PREVIEW");
                 }
                 return label;
             }
@@ -77,13 +79,10 @@ public class GeneralPanel extends AbstractSettingsPanel {
         bindComboBox(
                 markdownDefault,
                 KEY_ASSISTANT_MARKDOWN_DEFAULT,
-                AssistantRenderMode.PREVIEW.settingValue(),
+                MARKDOWN_MODE_PREVIEW,
                 Validators.oneOf(
-                        Set.of(
-                                AssistantRenderMode.PREVIEW.settingValue(),
-                                AssistantRenderMode.MARKDOWN.settingValue()
-                        ),
-                        "Invalid markdown mode"
+                        Set.of(MARKDOWN_MODE_PREVIEW, MARKDOWN_MODE_MARKDOWN),
+                        "Invalid markdown render mode"
                 ),
                 null
         );

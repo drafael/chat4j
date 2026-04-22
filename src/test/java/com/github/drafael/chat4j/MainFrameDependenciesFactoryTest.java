@@ -29,6 +29,8 @@ import com.github.drafael.chat4j.storage.PersistedMessageCounter;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
+
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -152,7 +154,7 @@ class MainFrameDependenciesFactoryTest {
 
         return new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepo(null),
-                new SettingsRepo(null),
+                new SettingsRepo(Path.of("target", "test-mainframe-dependencies-settings.properties")),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
                 new ProviderSelectableResolver(),

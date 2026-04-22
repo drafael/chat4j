@@ -10,8 +10,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class ModelFavoritesService {
 
-    private static final String FAVORITE_KEY_PREFIX = "model.favorite.";
-    private static final String KEY_DELIMITER = "::";
+    private static final String FAVORITE_KEY_PREFIX = SettingsKeys.MODEL_FAVORITE_PREFIX;
+    private static final String KEY_DELIMITER = SettingsKeys.MODEL_FAVORITE_DELIMITER;
 
     private final SettingsRepo settingsRepo;
     private final boolean persistenceEnabled;
@@ -86,7 +86,7 @@ public class ModelFavoritesService {
 
     private static String toFavoriteKey(ModelRef modelRef) {
         return FAVORITE_KEY_PREFIX
-                + encode(modelRef.providerName())
+                + modelRef.providerName()
                 + KEY_DELIMITER
                 + encode(modelRef.modelId());
     }
@@ -110,7 +110,7 @@ public class ModelFavoritesService {
             return null;
         }
 
-        String normalizedProvider = providerName.trim();
+        String normalizedProvider = SettingsKeys.providerSlug(providerName);
         String normalizedModel = modelId.trim();
         if (normalizedProvider.isEmpty() || normalizedModel.isEmpty()) {
             return null;

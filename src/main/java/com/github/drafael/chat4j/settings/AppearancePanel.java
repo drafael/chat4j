@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.*;
@@ -24,11 +25,11 @@ import java.util.stream.IntStream;
 
 public class AppearancePanel extends AbstractSettingsPanel {
 
-    private static final String KEY_THEME = "theme";
-    private static final String KEY_ACCENT_COLOR = "accentColor";
-    public static final String KEY_APP_FONT = "app.font";
-    public static final String KEY_APP_FONT_SIZE = "app.font.size";
-    public static final String KEY_CODE_FONT = "code.font";
+    private static final String KEY_THEME = SettingsKeys.THEME_NAME;
+    private static final String KEY_ACCENT_COLOR = SettingsKeys.THEME_ACCENT;
+    public static final String KEY_APP_FONT = SettingsKeys.APP_FONT_FAMILY;
+    public static final String KEY_APP_FONT_SIZE = SettingsKeys.APP_FONT_SIZE;
+    public static final String KEY_CODE_FONT = SettingsKeys.CODE_FONT_FAMILY;
 
     private static final String DEFAULT_THEME = "GitHub";
     public static final String DEFAULT_APP_FONT = "System Default";

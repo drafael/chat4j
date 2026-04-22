@@ -1,14 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.UUID;
 
@@ -26,10 +24,10 @@ class AssistantRenderModeSettingsCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Resolve default mode returns stored markdown setting")
-    void resolveDefaultMode_whenStoredMarkdown_returnsMarkdown() throws Exception {
+    @DisplayName("Resolve default mode returns markdown when global MARKDOWN value is stored")
+    void resolveDefaultMode_whenStoredMarkdownValue_returnsMarkdown() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("assistant-mode-default-markdown");
-        settingsRepo.put("chat.markdown.default", "markdown");
+        settingsRepo.put(SettingsKeys.CHAT_RENDER_MODE, SettingsKeys.CHAT_RENDER_MODE_MARKDOWN);
 
         var subject = new AssistantRenderModeSettingsCoordinator(settingsRepo);
 
@@ -48,52 +46,33 @@ class AssistantRenderModeSettingsCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Resolve conversation mode returns stored mode when present")
-    void resolveConversationMode_whenStoredValueExists_returnsStoredMode() throws Exception {
+    @DisplayName("Resolve conversation mode ignores conversation-specific values and returns provided default")
+    void resolveConversationMode_whenConversationSpecificValueExists_returnsProvidedDefault() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("assistant-mode-conv-stored");
         UUID conversationId = UUID.fromString("4ee46591-1f48-429e-8af7-3d2f6f663adc");
-        settingsRepo.put("chat.markdown.conv.%s".formatted(conversationId), "markdown");
+        settingsRepo.put("chat4j.chat.render.conversation.%s.mode".formatted(conversationId), "MARKDOWN");
 
         var subject = new AssistantRenderModeSettingsCoordinator(settingsRepo);
 
         AssistantRenderMode mode = subject.resolveConversationMode(conversationId, AssistantRenderMode.PREVIEW);
 
-        assertThat(mode).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(mode).isEqualTo(AssistantRenderMode.PREVIEW);
     }
 
     @Test
-    @DisplayName("Persist conversation mode stores value under conversation key")
-    void persistConversationMode_whenCalled_persistsSetting() throws Exception {
+    @DisplayName("Persist conversation mode stores global PREVIEW/MARKDOWN value")
+    void persistConversationMode_whenCalled_persistsGlobalSetting() throws Exception {
         SettingsRepo settingsRepo = settingsRepo("assistant-mode-persist");
         UUID conversationId = UUID.fromString("7e6be557-f45b-4e31-b6b7-43218e13f24a");
 
         var subject = new AssistantRenderModeSettingsCoordinator(settingsRepo);
         subject.persistConversationMode(conversationId, AssistantRenderMode.MARKDOWN);
 
-        assertThat(settingsRepo.get("chat.markdown.conv.%s".formatted(conversationId))).contains("markdown");
+        assertThat(settingsRepo.get(SettingsKeys.CHAT_RENDER_MODE))
+                .contains(SettingsKeys.CHAT_RENDER_MODE_MARKDOWN);
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )
-        ) {
-            statement.execute();
-        }
+    private SettingsRepo settingsRepo(String testName) {
+        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
     }
 }

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
@@ -72,7 +73,7 @@ public class ProviderAvailabilityResolver {
 
     private String readConfiguredProviderBaseUrl(String providerName, String defaultBaseUrl) {
         try {
-            String value = settingsRepo.get("provider.%s.baseUrl".formatted(providerName), defaultBaseUrl);
+            String value = settingsRepo.get(SettingsKeys.providerBaseUrlKey(providerName), defaultBaseUrl);
             return StringUtils.isBlank(value) ? defaultBaseUrl : value;
         } catch (Exception e) {
             return defaultBaseUrl;
