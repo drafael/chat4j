@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.formdev.flatlaf.util.SystemInfo;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
@@ -13,8 +14,11 @@ import java.util.List;
 
 public class SettingsDialog extends JDialog {
 
+    private static final int SIDEBAR_WIDTH = 230;
+
     private JPanel titleBarSpacer;
     private JPanel actionBar;
+    private JList<SettingsSection> sectionList;
     private final PropertyChangeListener lafChangeListener;
 
     public SettingsDialog(Frame owner, SettingsRepo settingsRepo) {
@@ -23,7 +27,7 @@ public class SettingsDialog extends JDialog {
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
 
-        add(createTabbedPane(settingsRepo), BorderLayout.CENTER);
+        add(createSettingsShell(settingsRepo), BorderLayout.CENTER);
         add(createActionBar(), BorderLayout.SOUTH);
 
         lafChangeListener = event -> {
@@ -40,8 +44,8 @@ public class SettingsDialog extends JDialog {
 
     private void configureDialog(Frame owner) {
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
-        setSize(900, 640);
-        setMinimumSize(new Dimension(760, 520));
+        setSize(980, 680);
+        setMinimumSize(new Dimension(840, 560));
         setLocationRelativeTo(owner);
         setLayout(new BorderLayout());
     }
@@ -61,9 +65,74 @@ public class SettingsDialog extends JDialog {
         add(titleBarSpacer, BorderLayout.NORTH);
     }
 
+    private JComponent createSettingsShell(SettingsRepo settingsRepo) {
+        List<SettingsSection> sections = createSections(settingsRepo);
+
+        DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
+        sections.forEach(sectionModel::addElement);
+
+        sectionList = new JList<>(sectionModel);
+        sectionList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        sectionList.setFixedCellHeight(34);
+        sectionList.setCellRenderer(new SettingsSectionRenderer());
+        sectionList.setBorder(new EmptyBorder(6, 6, 6, 6));
+        Color selectionBackground = UIManager.getColor("List.selectionBackground");
+        Color selectionForeground = UIManager.getColor("List.selectionForeground");
+        if (selectionBackground != null) {
+            sectionList.setSelectionBackground(selectionBackground);
+        }
+        if (selectionForeground != null) {
+            sectionList.setSelectionForeground(selectionForeground);
+        }
+
+        JScrollPane sidebar = new JScrollPane(sectionList);
+        sidebar.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sidebar.setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
+        sidebar.setBorder(BorderFactory.createMatteBorder(
+                0,
+                0,
+                0,
+                1,
+                UIManager.getColor("Separator.foreground")
+        ));
+
+        CardLayout cardsLayout = new CardLayout();
+        JPanel cardsPanel = new JPanel(cardsLayout);
+        sections.forEach(section -> cardsPanel.add(section.content(), section.id()));
+
+        sectionList.addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) {
+                return;
+            }
+
+            SettingsSection selected = sectionList.getSelectedValue();
+            if (selected != null) {
+                cardsLayout.show(cardsPanel, selected.id());
+            }
+        });
+        sectionList.setSelectedIndex(0);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebar, cardsPanel);
+        splitPane.setContinuousLayout(true);
+        splitPane.setDividerSize(1);
+        splitPane.setDividerLocation(SIDEBAR_WIDTH);
+        splitPane.setResizeWeight(0);
+        splitPane.setBorder(null);
+
+        return splitPane;
+    }
+
+    private List<SettingsSection> createSections(SettingsRepo settingsRepo) {
+        return List.of(
+                new SettingsSection("general", "General", new GeneralPanel(settingsRepo)),
+                new SettingsSection("appearance", "Appearance", new AppearancePanel(settingsRepo)),
+                new SettingsSection("providers", "Providers", new ProvidersPanel(settingsRepo))
+        );
+    }
+
     private JComponent createActionBar() {
         actionBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        actionBar.setBorder(BorderFactory.createEmptyBorder(0, 12, 12, 12));
+        actionBar.setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
 
         JButton closeButton = new JButton("Close");
         closeButton.addActionListener(e -> dispose());
@@ -72,37 +141,18 @@ public class SettingsDialog extends JDialog {
         return actionBar;
     }
 
-    private JTabbedPane createTabbedPane(SettingsRepo settingsRepo) {
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.putClientProperty("JTabbedPane.tabType", "underlined");
-        tabbedPane.putClientProperty("JTabbedPane.tabWidthMode", "equal");
-        tabbedPane.putClientProperty("JTabbedPane.tabHeight", 36);
-
-        for (TabSpec tab : createTabs(settingsRepo)) {
-            tabbedPane.addTab(tab.title(), tab.content());
-        }
-
-        return tabbedPane;
-    }
-
-    private List<TabSpec> createTabs(SettingsRepo settingsRepo) {
-        return List.of(
-            new TabSpec("General", new GeneralPanel(settingsRepo)),
-            new TabSpec("Appearance", new AppearancePanel(settingsRepo)),
-            new TabSpec("Providers", new ProvidersPanel(settingsRepo)));
-    }
-
     private void installEscapeCloseAction() {
         getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
                 .put(KeyStroke.getKeyStroke("ESCAPE"), "close");
         getRootPane().getActionMap().put(
-            "close",
-            new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                dispose();
-            }
-        });
+                "close",
+                new AbstractAction() {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        dispose();
+                    }
+                }
+        );
     }
 
     private void installLifecycleCleanup() {
@@ -131,6 +181,31 @@ public class SettingsDialog extends JDialog {
         }
     }
 
-    private record TabSpec(String title, JComponent content) {
+    private static final class SettingsSectionRenderer extends DefaultListCellRenderer {
+
+        @Override
+        public Component getListCellRendererComponent(
+                JList<?> list,
+                Object value,
+                int index,
+                boolean isSelected,
+                boolean cellHasFocus
+        ) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            if (value instanceof SettingsSection section) {
+                label.setText(section.title());
+                label.setIcon(null);
+            }
+            if (isSelected) {
+                label.setBackground(list.getSelectionBackground());
+                label.setForeground(list.getSelectionForeground());
+                label.setOpaque(true);
+            }
+            label.setBorder(new EmptyBorder(4, 10, 4, 10));
+            return label;
+        }
+    }
+
+    private record SettingsSection(String id, String title, JComponent content) {
     }
 }

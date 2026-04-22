@@ -51,8 +51,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final DateTimeFormatter DIAGNOSTICS_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
     private static final String CHAT4J_OAUTH_SOURCE = "Chat4J OAuth";
-    private static final int DETAIL_LABEL_COLUMN_WIDTH = 132;
-    private static final int DETAIL_COLUMN_GAP = 18;
+    private static final int DETAIL_LABEL_COLUMN_WIDTH = 156;
+    private static final int DETAIL_COLUMN_GAP = 12;
 
     private static final OAuthCliSpec CODEX_OAUTH = new OAuthCliSpec(
         List.of("codex", "login", "status"),
@@ -134,11 +134,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         FlatSVGIcon.clearSVGDocumentCache();
 
         setLayout(new BorderLayout());
-        setBorder(new EmptyBorder(20, 24, 20, 24));
+        setBorder(new EmptyBorder(16, 18, 16, 18));
 
         JLabel title = new JLabel("Providers");
-        Fonts.apply(title, Font.BOLD, Fonts.SIZE_PANEL_TITLE);
-        title.setBorder(new EmptyBorder(0, 0, 16, 0));
+        Fonts.apply(title, Font.BOLD, Fonts.SIZE_SUBTITLE);
+        title.setBorder(new EmptyBorder(0, 0, 10, 0));
         add(title, BorderLayout.NORTH);
 
         DefaultListModel<String> providerModel = new DefaultListModel<>();
@@ -146,12 +146,20 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         providerList = new JList<>(providerModel);
         providerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        providerList.setFixedCellHeight(38);
+        providerList.setFixedCellHeight(34);
         providerList.setCellRenderer(new ProviderCellRenderer());
-        providerList.setBorder(new EmptyBorder(4, 4, 4, 4));
+        providerList.setBorder(new EmptyBorder(6, 6, 6, 6));
+        Color selectionBackground = UIManager.getColor("List.selectionBackground");
+        Color selectionForeground = UIManager.getColor("List.selectionForeground");
+        if (selectionBackground != null) {
+            providerList.setSelectionBackground(selectionBackground);
+        }
+        if (selectionForeground != null) {
+            providerList.setSelectionForeground(selectionForeground);
+        }
 
         JScrollPane listScroll = new JScrollPane(providerList);
-        listScroll.setPreferredSize(new Dimension(180, 0));
+        listScroll.setPreferredSize(new Dimension(220, 0));
         listScroll.setBorder(BorderFactory.createMatteBorder(
             1,
             1,
@@ -175,7 +183,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         });
 
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listScroll, detailPanel);
-        split.setDividerLocation(180);
+        split.setDividerLocation(220);
         split.setDividerSize(1);
         split.setContinuousLayout(true);
         split.setBorder(null);
@@ -188,10 +196,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private JPanel createDetailPanel(String name, ProviderInfo info) {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(new EmptyBorder(8, 16, 8, 8));
+        panel.setBorder(new EmptyBorder(6, 14, 6, 6));
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(6, 0, 6, DETAIL_COLUMN_GAP);
+        gbc.insets = new Insets(4, 0, 4, DETAIL_COLUMN_GAP);
         gbc.anchor = GridBagConstraints.WEST;
         gbc.fill = GridBagConstraints.HORIZONTAL;
 
@@ -205,12 +213,17 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         panel.add(header, gbc);
         gbc.gridwidth = 1;
 
+        JCheckBox enabled = new JCheckBox();
+        row = addCheckBoxRow(panel, gbc, row + 1, enabled, "Enable this provider");
+        bindCheckBox(enabled, providerEnabledKey(name), true, null);
+
         String configuredBaseUrl = readString(providerBaseUrlKey(name), info.defaultBaseUrl());
         boolean localReachable = info.authType() == AuthType.ENV_VAR
                 && info.envVar() == null
                 && LocalServiceHealth.isReachable(configuredBaseUrl);
 
-        row++;
+        row = addSectionHeader(panel, gbc, row, "Connection");
+
         gbc.gridx = 0;
         gbc.gridy = row;
         gbc.weightx = 0;
@@ -241,37 +254,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             gbc.gridwidth = 1;
         }
 
-        if (info.authType() == AuthType.CLI_OAUTH || info.authType() == AuthType.COPILOT_OAUTH) {
-            row++;
-            gbc.gridx = 0;
-            gbc.gridy = row;
-            gbc.weightx = 0;
-            panel.add(label("Authentication"), gbc);
-
-            gbc.gridx = 1;
-            gbc.weightx = 1;
-            JButton authButton = new JButton("Login");
-            panel.add(authButton, gbc);
-
-            if (info.authType() == AuthType.CLI_OAUTH) {
-                configureOAuthAction(name, info, statusLabel, authButton);
-            } else {
-                configureCopilotAuthAction(name, statusLabel, authButton);
-            }
-        }
-
-        if ("GitHub Copilot".equals(name)) {
-            row++;
-            gbc.gridx = 0;
-            gbc.gridy = row;
-            gbc.weightx = 0;
-            panel.add(label("Diagnostics"), gbc);
-
-            gbc.gridx = 1;
-            gbc.weightx = 1;
-            panel.add(createCopilotEndpointDiagnosticsPanel(), gbc);
-        }
-
         row++;
         gbc.gridx = 0;
         gbc.gridy = row;
@@ -280,7 +262,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         gbc.gridx = 1;
         gbc.weightx = 1;
-        JTextField baseUrl = new JTextField();
+        JTextField baseUrl = withPreferredWidth(new JTextField(), 420);
         bindTextField(
             baseUrl,
             providerBaseUrlKey(name),
@@ -296,28 +278,48 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         );
         panel.add(baseUrl, gbc);
 
-        row++;
-        gbc.gridx = 0;
-        gbc.gridy = row;
-        gbc.weightx = 0;
-        panel.add(label("Enabled"), gbc);
+        if (info.authType() == AuthType.CLI_OAUTH || info.authType() == AuthType.COPILOT_OAUTH) {
+            row = addSectionHeader(panel, gbc, row + 1, "Authentication");
 
-        gbc.gridx = 1;
-        gbc.weightx = 1;
-        JCheckBox enabled = new JCheckBox();
-        bindCheckBox(enabled, providerEnabledKey(name), true, null);
-        panel.add(enabled, gbc);
-
-        if ("OpenRouter".equals(name)) {
-            row++;
             gbc.gridx = 0;
             gbc.gridy = row;
             gbc.weightx = 0;
-            panel.add(label("API Usage"), gbc);
+            panel.add(label("Sign in"), gbc);
 
             gbc.gridx = 1;
             gbc.weightx = 1;
+            JButton authButton = new JButton("Login");
+            panel.add(wrapLeading(authButton), gbc);
+
+            if (info.authType() == AuthType.CLI_OAUTH) {
+                configureOAuthAction(name, info, statusLabel, authButton);
+            } else {
+                configureCopilotAuthAction(name, statusLabel, authButton);
+            }
+        }
+
+        if ("GitHub Copilot".equals(name)) {
+            row = addSectionHeader(panel, gbc, row + 1, "Diagnostics");
+
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.weightx = 0;
+            panel.add(label("Endpoint"), gbc);
+
+            gbc.gridx = 1;
+            gbc.weightx = 1;
+            panel.add(createCopilotEndpointDiagnosticsPanel(), gbc);
+        }
+
+        if ("OpenRouter".equals(name)) {
+            row = addSectionHeader(panel, gbc, row + 1, "API Usage");
+
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.gridwidth = 2;
+            gbc.weightx = 1;
             panel.add(createOpenRouterUsagePanel(info), gbc);
+            gbc.gridwidth = 1;
         }
 
         row++;
@@ -695,19 +697,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         usagePanel.setLayout(new BoxLayout(usagePanel, BoxLayout.Y_AXIS));
         usagePanel.setOpaque(false);
 
-        JLabel updatedLabel = new JLabel("Updated n/a");
-        updatedLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-
-        JLabel balanceLabel = new JLabel("Balance: n/a");
-        Fonts.apply(balanceLabel, Font.BOLD, Fonts.SIZE_SUBTITLE);
-
-        JPanel headerRow = new JPanel(new BorderLayout());
-        headerRow.setOpaque(false);
-        headerRow.add(updatedLabel, BorderLayout.WEST);
-        headerRow.add(balanceLabel, BorderLayout.EAST);
-
-        JLabel limitTitleLabel = new JLabel("API key limit");
-        Fonts.apply(limitTitleLabel, Font.BOLD, Fonts.SIZE_BODY);
+        JLabel summaryLabel = new JLabel("Updated n/a");
+        Fonts.apply(summaryLabel, Font.PLAIN, Fonts.SIZE_BODY);
+        summaryLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
 
         JProgressBar usageBar = new JProgressBar(0, 100);
         usageBar.setStringPainted(false);
@@ -723,44 +715,52 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         statsRow.add(usedLabel, BorderLayout.WEST);
         statsRow.add(remainingLabel, BorderLayout.EAST);
 
+        JLabel balanceLabel = new JLabel("Balance: n/a");
+        JLabel limitLabel = new JLabel("Limit: n/a");
+
+        JPanel accountRow = new JPanel(new BorderLayout());
+        accountRow.setOpaque(false);
+        accountRow.add(balanceLabel, BorderLayout.WEST);
+        accountRow.add(limitLabel, BorderLayout.EAST);
+
         JLabel noteLabel = new JLabel("");
         noteLabel.setForeground(new Color(214, 117, 0));
 
         JButton refreshButton = new JButton("Refresh usage");
         refreshButton.addActionListener(e -> refreshOpenRouterUsage(
-            info,
-            refreshButton,
-            updatedLabel,
-            balanceLabel,
-            usageBar,
-            usedLabel,
-            remainingLabel,
-            noteLabel
+                info,
+                refreshButton,
+                summaryLabel,
+                usageBar,
+                usedLabel,
+                remainingLabel,
+                balanceLabel,
+                limitLabel,
+                noteLabel
         ));
 
-        usagePanel.add(headerRow);
+        usagePanel.add(summaryLabel);
         usagePanel.add(Box.createVerticalStrut(8));
-        usagePanel.add(new JSeparator());
-        usagePanel.add(Box.createVerticalStrut(10));
-        usagePanel.add(limitTitleLabel);
-        usagePanel.add(Box.createVerticalStrut(6));
         usagePanel.add(usageBar);
         usagePanel.add(Box.createVerticalStrut(6));
         usagePanel.add(statsRow);
+        usagePanel.add(Box.createVerticalStrut(6));
+        usagePanel.add(accountRow);
         usagePanel.add(Box.createVerticalStrut(4));
         usagePanel.add(noteLabel);
         usagePanel.add(Box.createVerticalStrut(8));
-        usagePanel.add(refreshButton);
+        usagePanel.add(wrapLeading(refreshButton));
 
         refreshOpenRouterUsage(
-            info,
-            refreshButton,
-            updatedLabel,
-            balanceLabel,
-            usageBar,
-            usedLabel,
-            remainingLabel,
-            noteLabel
+                info,
+                refreshButton,
+                summaryLabel,
+                usageBar,
+                usedLabel,
+                remainingLabel,
+                balanceLabel,
+                limitLabel,
+                noteLabel
         );
 
         return usagePanel;
@@ -769,11 +769,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private void refreshOpenRouterUsage(
         ProviderInfo info,
         JButton refreshButton,
-        JLabel updatedLabel,
-        JLabel balanceLabel,
+        JLabel summaryLabel,
         JProgressBar usageBar,
         JLabel usedLabel,
         JLabel remainingLabel,
+        JLabel balanceLabel,
+        JLabel limitLabel,
         JLabel noteLabel
     ) {
         refreshButton.setEnabled(false);
@@ -782,7 +783,16 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         Thread.startVirtualThread(() -> {
             OpenRouterUsageSnapshot snapshot = fetchOpenRouterUsage(info);
             SwingUtilities.invokeLater(() -> {
-                applyOpenRouterUsage(snapshot, updatedLabel, balanceLabel, usageBar, usedLabel, remainingLabel, noteLabel);
+                applyOpenRouterUsage(
+                        snapshot,
+                        summaryLabel,
+                        usageBar,
+                        usedLabel,
+                        remainingLabel,
+                        balanceLabel,
+                        limitLabel,
+                        noteLabel
+                );
                 refreshButton.setEnabled(true);
                 refreshButton.setText("Refresh usage");
             });
@@ -860,28 +870,26 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private void applyOpenRouterUsage(
         OpenRouterUsageSnapshot snapshot,
-        JLabel updatedLabel,
-        JLabel balanceLabel,
+        JLabel summaryLabel,
         JProgressBar usageBar,
         JLabel usedLabel,
         JLabel remainingLabel,
+        JLabel balanceLabel,
+        JLabel limitLabel,
         JLabel noteLabel
     ) {
-        updatedLabel.setText("Updated %s".formatted(formatRelativeTime(snapshot.updatedAtEpochMs())));
+        summaryLabel.setText("Updated %s".formatted(formatRelativeTime(snapshot.updatedAtEpochMs())));
 
         if (snapshot.errorMessage() != null) {
-            balanceLabel.setText("Balance: n/a");
             usedLabel.setText("Used: n/a");
             remainingLabel.setText("Remaining: n/a");
+            balanceLabel.setText("Balance: n/a");
+            limitLabel.setText("Limit: n/a");
             usageBar.setValue(0);
             noteLabel.setForeground(new Color(200, 50, 50));
             noteLabel.setText(snapshot.errorMessage());
             return;
         }
-
-        balanceLabel.setText(snapshot.balance() == null
-                ? "Balance: n/a"
-                : "Balance: %s".formatted(formatUsd(snapshot.balance())));
 
         if (snapshot.usedPercent() >= 0) {
             usageBar.setValue(snapshot.usedPercent());
@@ -891,11 +899,18 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             usedLabel.setText("Used: n/a");
         }
 
-        if (!Double.isNaN(snapshot.limit()) && !Double.isNaN(snapshot.remaining())) {
-            remainingLabel.setText("%s/%s left".formatted(formatUsd(snapshot.remaining()), formatUsd(snapshot.limit())));
+        if (!Double.isNaN(snapshot.remaining())) {
+            remainingLabel.setText("%s left".formatted(formatUsd(snapshot.remaining())));
         } else {
             remainingLabel.setText("Remaining: n/a");
         }
+
+        balanceLabel.setText(snapshot.balance() == null
+                ? "Balance: n/a"
+                : "Balance: %s".formatted(formatUsd(snapshot.balance())));
+        limitLabel.setText(Double.isNaN(snapshot.limit())
+                ? "Limit: n/a"
+                : "Limit: %s".formatted(formatUsd(snapshot.limit())));
 
         String note = snapshot.note();
         noteLabel.setForeground(new Color(214, 117, 0));
@@ -1218,9 +1233,16 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return SettingsKeys.providerEnabledKey(providerName);
     }
 
+    private JComponent wrapLeading(JComponent component) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false);
+        row.add(component);
+        return row;
+    }
+
     private JLabel label(String text) {
         JLabel label = new JLabel(text);
-        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
         Dimension preferred = label.getPreferredSize();
         Dimension alignedSize = new Dimension(DETAIL_LABEL_COLUMN_WIDTH, preferred.height);
         label.setPreferredSize(alignedSize);
@@ -1411,6 +1433,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             boolean available = info != null && isProviderAvailable(providerName, info);
             label.setText(providerName);
             label.setIcon(iconForProvider(providerName, available));
+            if (isSelected) {
+                label.setBackground(list.getSelectionBackground());
+                label.setForeground(list.getSelectionForeground());
+                label.setOpaque(true);
+            }
             return label;
         }
     }

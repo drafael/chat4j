@@ -273,69 +273,75 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
         int row = 0;
 
-        JComboBox<Object> themeCombo = createThemeSelector();
-        addRow(form, gbc, row++, "Theme", themeCombo);
+        row = addSectionHeader(form, gbc, row, "Theme");
+
+        JComboBox<Object> themeCombo = withPreferredWidth(createThemeSelector(), 320);
+        row = addFullWidthRow(form, gbc, row, themeCombo);
 
         JPanel accentPanel = createAccentPanel();
         addRow(form, gbc, row++, "Accent color", accentPanel);
+        row = addSectionHint(form, gbc, row, "Theme changes are applied immediately.");
+
+        row = addSectionHeader(form, gbc, row, "Typography");
 
         String[] availableAppFontOptions = appFontOptions();
-        JComboBox<String> appFont = createFontSelector(availableAppFontOptions);
+        JComboBox<String> appFont = withPreferredWidth(createFontSelector(availableAppFontOptions), 300);
         addRow(form, gbc, row++, "App font", appFont);
         bindComboBox(
-            appFont,
-            KEY_APP_FONT,
-            DEFAULT_APP_FONT,
-            Validators.oneOf(
-                new LinkedHashSet<>(Arrays.asList(availableAppFontOptions)),
-                "Invalid app font option"
-            ),
-            value -> {
-                int appFontSize = parseAppFontSize(readString(
-                        KEY_APP_FONT_SIZE,
-                        String.valueOf(defaultAppFontSize())));
-                applyAppFont(value, appFontSize);
-                refreshAllWindows();
-            }
+                appFont,
+                KEY_APP_FONT,
+                DEFAULT_APP_FONT,
+                Validators.oneOf(
+                        new LinkedHashSet<>(Arrays.asList(availableAppFontOptions)),
+                        "Invalid app font option"
+                ),
+                value -> {
+                    int appFontSize = parseAppFontSize(readString(
+                            KEY_APP_FONT_SIZE,
+                            String.valueOf(defaultAppFontSize())));
+                    applyAppFont(value, appFontSize);
+                    refreshAllWindows();
+                }
         );
 
         String[] availableAppFontSizeOptions = IntStream.of(appFontSizeOptions())
                 .mapToObj(String::valueOf)
                 .toArray(String[]::new);
-        JComboBox<String> appFontSize = createFontSelector(availableAppFontSizeOptions);
+        JComboBox<String> appFontSize = withPreferredWidth(createFontSelector(availableAppFontSizeOptions), 130);
         addRow(form, gbc, row++, "App font size", appFontSize);
         bindComboBox(
-            appFontSize,
-            KEY_APP_FONT_SIZE,
-            String.valueOf(normalizeAppFontSize(defaultAppFontSize())),
-            Validators.oneOf(
-                new LinkedHashSet<>(Arrays.asList(availableAppFontSizeOptions)),
-                "Invalid app font size"
-            ),
-            value -> {
-                int size = parseAppFontSize(value);
-                String family = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
-                applyAppFont(family, size);
-                refreshAllWindows();
-            }
+                appFontSize,
+                KEY_APP_FONT_SIZE,
+                String.valueOf(normalizeAppFontSize(defaultAppFontSize())),
+                Validators.oneOf(
+                        new LinkedHashSet<>(Arrays.asList(availableAppFontSizeOptions)),
+                        "Invalid app font size"
+                ),
+                value -> {
+                    int size = parseAppFontSize(value);
+                    String family = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
+                    applyAppFont(family, size);
+                    refreshAllWindows();
+                }
         );
 
         String[] availableCodeFontOptions = codeFontOptions();
-        JComboBox<String> codeFont = createFontSelector(availableCodeFontOptions);
+        JComboBox<String> codeFont = withPreferredWidth(createFontSelector(availableCodeFontOptions), 300);
         addRow(form, gbc, row++, "Code font", codeFont);
         bindComboBox(
-            codeFont,
-            KEY_CODE_FONT,
-            DEFAULT_CODE_FONT,
-            Validators.oneOf(
-                new LinkedHashSet<>(Arrays.asList(availableCodeFontOptions)),
-                "Invalid code font option"
-            ),
-            value -> {
-                applyCodeFont(value);
-                refreshAllWindows();
-            }
+                codeFont,
+                KEY_CODE_FONT,
+                DEFAULT_CODE_FONT,
+                Validators.oneOf(
+                        new LinkedHashSet<>(Arrays.asList(availableCodeFontOptions)),
+                        "Invalid code font option"
+                ),
+                value -> {
+                    applyCodeFont(value);
+                    refreshAllWindows();
+                }
         );
+        row = addSectionHint(form, gbc, row, "Font changes are applied immediately across all open windows.");
 
         addVerticalSpacer(form, gbc, row);
     }
