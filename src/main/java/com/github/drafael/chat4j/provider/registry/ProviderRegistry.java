@@ -73,8 +73,7 @@ public class ProviderRegistry {
             CATALOG.createFetcher(
                 providerDefinition.name(),
                 providerDefinition.envVar(),
-                effectiveBaseUrl,
-                providerDefinition.seedModels()
+                effectiveBaseUrl
             ));
     }
 
@@ -93,8 +92,7 @@ public class ProviderRegistry {
             CATALOG.createFetcher(
                 providerDefinition.name(),
                 providerDefinition.envVar(),
-                providerDefinition.baseUrl(),
-                providerDefinition.seedModels()
+                providerDefinition.baseUrl()
             ));
     }
 }

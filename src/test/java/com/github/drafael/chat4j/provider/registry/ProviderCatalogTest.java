@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static java.util.Collections.emptyList;
 
 class ProviderCatalogTest {
 
@@ -129,8 +128,7 @@ class ProviderCatalogTest {
             var fetcher = subject.createFetcher(
                     "Anthropic",
                     "ANTHROPIC_API_KEY",
-                    "http://127.0.0.1:%d/v1".formatted(port),
-                    emptyList());
+                    "http://127.0.0.1:%d/v1".formatted(port));
 
             List<String> models = fetcher.fetchModels();
 

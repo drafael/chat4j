@@ -36,17 +36,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
         String credentialEnvVar,
         String fallbackApiKey,
         OAuthCliSpec oauthCliSpec,
-        String defaultBaseUrl
-    ) {
-        this(providerName, authType, credentialEnvVar, fallbackApiKey, oauthCliSpec, defaultBaseUrl, new CopilotModelMetadataStore());
-    }
-
-    public OpenAiCompatibleModule(
-        String providerName,
-        AuthType authType,
-        String credentialEnvVar,
-        String fallbackApiKey,
-        OAuthCliSpec oauthCliSpec,
         String defaultBaseUrl,
         CopilotModelMetadataStore copilotModelMetadataStore
     ) {

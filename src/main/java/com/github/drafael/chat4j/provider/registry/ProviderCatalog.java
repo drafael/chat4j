@@ -153,8 +153,7 @@ final class ProviderCatalog {
 
     ModelFetcher createFetcher(String providerName,
                                String envVar,
-                               String baseUrl,
-                               List<String> seedModels
+                               String baseUrl
     ) {
         ProviderDefinition providerDefinition = findRequiredProvider(providerName);
         return () -> providerDefinition.module().createModelFetcher(
