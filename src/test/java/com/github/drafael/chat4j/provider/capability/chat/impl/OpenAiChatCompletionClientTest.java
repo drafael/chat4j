@@ -1,11 +1,15 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +17,9 @@ import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiChatCompletionClientTest {
@@ -50,6 +56,18 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("Unsupported API detection matches current Copilot Responses API wording")
+    void isUnsupportedApiForEndpoint_whenCopilotUsesResponsesApiWording_returnsTrue() throws Exception {
+        Exception exception = new IllegalStateException("request failed", new RuntimeException(
+                "model claude-sonnet-4.6 does not support Responses API."
+        ));
+
+        boolean unsupported = invokeIsUnsupportedApiForEndpoint(exception, "/responses");
+
+        assertThat(unsupported).isTrue();
+    }
+
+    @Test
     @DisplayName("Unsupported API detection ignores unrelated errors")
     void isUnsupportedApiForEndpoint_whenErrorIsUnrelated_returnsFalse() throws Exception {
         Exception exception = new IllegalStateException("rate limited");
@@ -57,6 +75,26 @@ class OpenAiChatCompletionClientTest {
         boolean unsupported = invokeIsUnsupportedApiForEndpoint(exception, "/chat/completions");
 
         assertThat(unsupported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Copilot endpoint preference uses selected model metadata when available")
+    void preferredCopilotEndpointMode_whenRuntimeIncludesChatOnlyMetadata_returnsChatCompletions() throws Exception {
+        var runtime = copilotRuntime(List.of("/chat/completions"));
+
+        Object preferredMode = invokePreferredCopilotEndpointMode(runtime);
+
+        assertThat(preferredMode).hasToString("CHAT_COMPLETIONS");
+    }
+
+    @Test
+    @DisplayName("Copilot endpoint preference does not treat websocket-only metadata as Responses API support")
+    void preferredCopilotEndpointMode_whenRuntimeIncludesWebsocketOnlyMetadata_returnsChatCompletions() throws Exception {
+        var runtime = copilotRuntime(List.of("ws:/responses"));
+
+        Object preferredMode = invokePreferredCopilotEndpointMode(runtime);
+
+        assertThat(preferredMode).hasToString("CHAT_COMPLETIONS");
     }
 
     @Test
@@ -81,6 +119,33 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedApiForEndpoint", Exception.class, String.class);
         method.setAccessible(true);
         return (boolean) method.invoke(subject, exception, endpoint);
+    }
+
+    private ProviderRuntime copilotRuntime(List<String> supportedEndpoints) {
+        return new ProviderRuntime(
+                new ProviderDescriptor(
+                        "GitHub Copilot",
+                        AuthType.COPILOT_OAUTH,
+                        null,
+                        null,
+                        null,
+                        "https://api.githubcopilot.com",
+                        emptyList(),
+                        ProviderCapabilities.chatAndModels(),
+                        UnaryOperator.identity()
+                ),
+                null,
+                "https://api.githubcopilot.com",
+                "copilot-token",
+                "claude-sonnet-4.6",
+                supportedEndpoints
+        );
+    }
+
+    private Object invokePreferredCopilotEndpointMode(ProviderRuntime runtime) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("preferredCopilotEndpointMode", ProviderRuntime.class);
+        method.setAccessible(true);
+        return method.invoke(subject, runtime);
     }
 
     private void invokeUpdateCopilotDiagnostics(String modelId, String endpoint) throws Exception {

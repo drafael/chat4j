@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -52,6 +53,8 @@ class OpenAiModelCatalogClientTest {
     @Test
     @DisplayName("Copilot model listing exchanges GitHub OAuth token and returns modern GPT models")
     void fetchModels_whenCopilotUsesGithubOAuthToken_exchangesTokenAndReturnsModernModels() throws Exception {
+        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var subject = new OpenAiModelCatalogClient(metadataStore);
         AtomicInteger tokenExchangeCalls = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/copilot_internal/v2/token", exchange -> {
@@ -120,6 +123,116 @@ class OpenAiModelCatalogClientTest {
             assertThat(firstModels).doesNotContain("gpt-3.5-turbo", "claude-messages-only");
             assertThat(secondModels).isEqualTo(firstModels);
             assertThat(tokenExchangeCalls.get()).isEqualTo(1);
+            assertThat(metadataStore.supportedEndpoints("http://127.0.0.1:%d".formatted(port), "gpt-5.4"))
+                    .containsExactly("/chat/completions");
+            assertThat(metadataStore.supportedEndpoints("http://127.0.0.1:%d".formatted(port), "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing preserves previously known endpoint metadata when degraded refresh omits endpoints")
+    void fetchModels_whenDegradedCopilotRefreshOmitsEndpoints_keepsExistingEndpointMetadata() throws Exception {
+        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var subject = new OpenAiModelCatalogClient(metadataStore);
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            String body = "{\"data\":[{\"id\":\"gpt-4o\"}]}";
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+            int port = server.getAddress().getPort();
+            String baseUrl = "http://127.0.0.1:%d".formatted(port);
+            metadataStore.update(
+                    baseUrl,
+                    List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+            );
+
+            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
+            System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
+
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    baseUrl,
+                    "gho_generic_token_failure",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-4o");
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot model listing filters websocket-only endpoint models from selection")
+    void fetchModels_whenCopilotModelIsWebsocketOnly_excludesItFromSelection() throws Exception {
+        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var subject = new OpenAiModelCatalogClient(metadataStore);
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            String body = "{\"data\":[{\"id\":\"ws-only-model\",\"supported_endpoints\":[\"ws:/responses\"]},{\"id\":\"gpt-5.4-mini\",\"supported_endpoints\":[\"/responses\"]}]}";
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "copilot-token",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).containsExactly("gpt-5.4-mini");
+            assertThat(metadataStore.supportedEndpoints("http://127.0.0.1:%d".formatted(port), "ws-only-model")).isEmpty();
         } finally {
             server.stop(0);
         }

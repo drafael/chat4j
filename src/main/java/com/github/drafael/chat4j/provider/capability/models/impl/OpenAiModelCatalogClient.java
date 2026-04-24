@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ModelFilters;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
@@ -24,6 +25,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -51,12 +53,22 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private static final Duration COPILOT_EXCHANGE_FAILURE_TTL = Duration.ofMinutes(2);
     private static final Map<String, CopilotExchangedTokenSnapshot> COPILOT_EXCHANGED_TOKEN_BY_SOURCE = new ConcurrentHashMap<>();
 
+    private final CopilotModelMetadataStore copilotModelMetadataStore;
+
+    public OpenAiModelCatalogClient() {
+        this(new CopilotModelMetadataStore());
+    }
+
+    public OpenAiModelCatalogClient(CopilotModelMetadataStore copilotModelMetadataStore) {
+        this.copilotModelMetadataStore = copilotModelMetadataStore;
+    }
+
     @Override
     public List<String> fetchModels(ProviderRuntime runtime) {
         if (isCopilotProvider(runtime)) {
-            List<String> copilotModels = fetchCopilotModels(runtime);
-            if (!copilotModels.isEmpty()) {
-                return copilotModels;
+            CatalogFetchResult copilotCatalog = fetchCopilotModels(runtime);
+            if (!copilotCatalog.modelIds().isEmpty()) {
+                return copilotCatalog.modelIds();
             }
         }
 
@@ -82,9 +94,9 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private List<String> fallbackModels(ProviderRuntime runtime) {
-        List<String> httpFallback = fetchModelsFromHttp(runtime, runtime.apiKey(), false);
-        if (!httpFallback.isEmpty()) {
-            return httpFallback;
+        CatalogFetchResult httpFallback = fetchModelsFromHttp(runtime, runtime.apiKey(), false);
+        if (!httpFallback.modelIds().isEmpty()) {
+            return httpFallback.modelIds();
         }
 
         if (runtime.descriptor().authType() != AuthType.CLI_OAUTH) {
@@ -101,31 +113,38 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return emptyList();
     }
 
-    private List<String> fetchCopilotModels(ProviderRuntime runtime) {
+    private CatalogFetchResult fetchCopilotModels(ProviderRuntime runtime) {
         String apiKey = runtime.apiKey();
         if (StringUtils.isBlank(apiKey)) {
-            return emptyList();
+            return CatalogFetchResult.empty();
         }
 
-        List<String> directModels = fetchModelsFromHttp(runtime, apiKey, true);
-        if (!directModels.isEmpty() && hasModernGptModels(directModels)) {
-            return directModels;
-        }
-
+        CatalogFetchResult directCatalog = fetchModelsFromHttp(runtime, apiKey, true);
         if (!looksLikeGitHubOAuthToken(apiKey)) {
-            return directModels;
+            persistCopilotMetadata(runtime, directCatalog);
+            return directCatalog;
+        }
+
+        if (!directCatalog.modelIds().isEmpty() && hasModernGptModels(directCatalog.modelIds())) {
+            persistCopilotMetadata(runtime, directCatalog);
+            return directCatalog;
         }
 
         String exchangedToken = exchangeCopilotTokenCached(apiKey);
         if (StringUtils.isBlank(exchangedToken)) {
-            return directModels;
+            return directCatalog;
         }
 
-        List<String> exchangedModels = fetchModelsFromHttp(runtime, exchangedToken, true);
-        return exchangedModels.isEmpty() ? directModels : exchangedModels;
+        CatalogFetchResult exchangedCatalog = fetchModelsFromHttp(runtime, exchangedToken, true);
+        if (!exchangedCatalog.modelIds().isEmpty()) {
+            persistCopilotMetadata(runtime, exchangedCatalog);
+            return exchangedCatalog;
+        }
+
+        return directCatalog;
     }
 
-    private List<String> fetchModelsFromHttp(ProviderRuntime runtime, String apiKey, boolean copilotHeadersRequired) {
+    private CatalogFetchResult fetchModelsFromHttp(ProviderRuntime runtime, String apiKey, boolean copilotHeadersRequired) {
         try {
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(modelsEndpoint(runtime.baseUrl())))
@@ -145,27 +164,32 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
             );
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return emptyList();
+                return CatalogFetchResult.empty();
             }
 
             JsonNode root = JSON.readTree(response.body());
             List<JsonNode> modelEntries = extractModelEntries(root);
             if (modelEntries.isEmpty()) {
-                return emptyList();
+                return CatalogFetchResult.empty();
             }
 
             List<JsonNode> pickerFilteredEntries = applyCopilotModelPickerFilter(runtime, modelEntries);
-
-            List<String> modelIds = pickerFilteredEntries.stream()
+            List<JsonNode> selectableEntries = pickerFilteredEntries.stream()
                     .filter(modelNode -> supportsConfiguredApiEndpoint(runtime, modelNode))
+                    .toList();
+
+            List<String> modelIds = selectableEntries.stream()
                     .map(OpenAiModelCatalogClient::modelId)
                     .filter(StringUtils::isNotBlank)
                     .filter(ModelFilters::isSupportedChatModelId)
                     .toList();
 
-            return ModelOrdering.sanitizeAndSortByProvider(runtime.descriptor().name(), modelIds);
+            return new CatalogFetchResult(
+                    ModelOrdering.sanitizeAndSortByProvider(runtime.descriptor().name(), modelIds),
+                    isCopilotProvider(runtime) ? toCopilotModelMetadata(selectableEntries) : emptyList()
+            );
         } catch (Exception e) {
-            return emptyList();
+            return CatalogFetchResult.empty();
         }
     }
 
@@ -273,8 +297,44 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private boolean isSupportedCopilotEndpoint(String endpoint) {
         return "/chat/completions".equals(endpoint)
-                || "/responses".equals(endpoint)
-                || "ws:/responses".equals(endpoint);
+                || "/responses".equals(endpoint);
+    }
+
+    private void persistCopilotMetadata(ProviderRuntime runtime, CatalogFetchResult catalog) {
+        if (!isCopilotProvider(runtime) || catalog.metadata().isEmpty()) {
+            return;
+        }
+
+        copilotModelMetadataStore.update(runtime.baseUrl(), catalog.metadata());
+    }
+
+    private List<CopilotModelMetadataStore.ModelMetadata> toCopilotModelMetadata(List<JsonNode> modelEntries) {
+        return modelEntries.stream()
+                .map(this::toCopilotModelMetadata)
+                .flatMap(Optional::stream)
+                .toList();
+    }
+
+    private Optional<CopilotModelMetadataStore.ModelMetadata> toCopilotModelMetadata(JsonNode modelNode) {
+        String id = modelId(modelNode);
+        if (StringUtils.isBlank(id)) {
+            return Optional.empty();
+        }
+
+        List<String> supportedEndpoints = extractSupportedEndpoints(modelNode);
+        return Optional.of(new CopilotModelMetadataStore.ModelMetadata(id, supportedEndpoints));
+    }
+
+    private List<String> extractSupportedEndpoints(JsonNode modelNode) {
+        JsonNode endpointsNode = modelNode.path("supported_endpoints");
+        if (!endpointsNode.isArray()) {
+            return emptyList();
+        }
+
+        return StreamSupport.stream(endpointsNode.spliterator(), false)
+                .map(endpoint -> endpoint.asText(""))
+                .filter(StringUtils::isNotBlank)
+                .toList();
     }
 
     private static String modelsEndpoint(String baseUrl) {
@@ -355,5 +415,15 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private record CopilotExchangedTokenSnapshot(String exchangedToken, long expiresAtEpochMs) {
+    }
+
+    private record CatalogFetchResult(
+            List<String> modelIds,
+            List<CopilotModelMetadataStore.ModelMetadata> metadata
+    ) {
+
+        private static CatalogFetchResult empty() {
+            return new CatalogFetchResult(emptyList(), emptyList());
+        }
     }
 }

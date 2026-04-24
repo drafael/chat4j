@@ -6,9 +6,12 @@ import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.auth.CredentialStrategy;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.util.List;
 import java.util.function.UnaryOperator;
 
 import static java.util.Collections.emptyList;
@@ -18,7 +21,7 @@ class ProviderFacadeTest {
 
     @Test
     @DisplayName("Copilot auth resolves API key from Chat4J Copilot auth resolver")
-    void resolveRuntime_whenProviderUsesCopilotAuth_usesCopilotAuthResolver() {
+    void resolveRuntime_whenProviderUsesCopilotAuth_usesCopilotAuthResolver() throws Exception {
         CredentialStrategy credentialStrategy = new CredentialStrategy() {
             @Override
             public String resolveCredentialEnvVar(String envVarExpression) {
@@ -43,7 +46,12 @@ class ProviderFacadeTest {
             }
         };
 
-        var subject = new ProviderFacade(credentialStrategy, new CliOAuthRunner(), copilotAuthResolver);
+        var subject = new ProviderFacade(
+                credentialStrategy,
+                new CliOAuthRunner(),
+                copilotAuthResolver,
+                new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
+        );
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
                 AuthType.COPILOT_OAUTH,
@@ -61,11 +69,12 @@ class ProviderFacadeTest {
 
         assertThat(runtimeWithoutModel.apiKey()).isEqualTo("copilot-token-optional");
         assertThat(runtimeWithModel.apiKey()).isEqualTo("copilot-token-required");
+        assertThat(runtimeWithModel.selectedModelSupportedEndpoints()).isEmpty();
     }
 
     @Test
     @DisplayName("Copilot auth keeps resolver token unchanged for runtime usage")
-    void resolveRuntime_whenProviderUsesCopilotAuth_keepsTokenAsResolved() {
+    void resolveRuntime_whenProviderUsesCopilotAuth_keepsTokenAsResolved() throws Exception {
         CredentialStrategy credentialStrategy = new CredentialStrategy() {
             @Override
             public String resolveCredentialEnvVar(String envVarExpression) {
@@ -90,7 +99,13 @@ class ProviderFacadeTest {
             }
         };
 
-        var subject = new ProviderFacade(credentialStrategy, new CliOAuthRunner(), copilotAuthResolver);
+        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"));
+        metadataStore.update(
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("claude-sonnet-4.6", List.of("/chat/completions")))
+        );
+
+        var subject = new ProviderFacade(credentialStrategy, new CliOAuthRunner(), copilotAuthResolver, metadataStore);
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
                 AuthType.COPILOT_OAUTH,
@@ -106,5 +121,6 @@ class ProviderFacadeTest {
         var runtime = subject.resolveRuntime(descriptor, null, null, "claude-sonnet-4.6");
 
         assertThat(runtime.apiKey()).isEqualTo("gho_source_token");
+        assertThat(runtime.selectedModelSupportedEndpoints()).containsExactly("/chat/completions");
     }
 }

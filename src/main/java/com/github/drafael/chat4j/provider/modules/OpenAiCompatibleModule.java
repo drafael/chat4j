@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.OpenAiModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 
 import static java.util.Collections.emptyList;
 
@@ -18,7 +19,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
 
     private final ProviderDescriptor descriptor;
     private final ChatCompletionClient chatCompletionClient;
-    private final ModelCatalogClient modelCatalogClient = new OpenAiModelCatalogClient();
+    private final ModelCatalogClient modelCatalogClient;
 
     public OpenAiCompatibleModule(
         String providerName,
@@ -26,7 +27,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
         String fallbackApiKey,
         String defaultBaseUrl
     ) {
-        this(providerName, AuthType.ENV_VAR, credentialEnvVar, fallbackApiKey, null, defaultBaseUrl);
+        this(providerName, AuthType.ENV_VAR, credentialEnvVar, fallbackApiKey, null, defaultBaseUrl, new CopilotModelMetadataStore());
     }
 
     public OpenAiCompatibleModule(
@@ -36,6 +37,18 @@ public class OpenAiCompatibleModule implements ProviderModule {
         String fallbackApiKey,
         OAuthCliSpec oauthCliSpec,
         String defaultBaseUrl
+    ) {
+        this(providerName, authType, credentialEnvVar, fallbackApiKey, oauthCliSpec, defaultBaseUrl, new CopilotModelMetadataStore());
+    }
+
+    public OpenAiCompatibleModule(
+        String providerName,
+        AuthType authType,
+        String credentialEnvVar,
+        String fallbackApiKey,
+        OAuthCliSpec oauthCliSpec,
+        String defaultBaseUrl,
+        CopilotModelMetadataStore copilotModelMetadataStore
     ) {
         this.descriptor = new ProviderDescriptor(
             providerName,
@@ -48,6 +61,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
             declaredCapabilities(providerName),
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
         this.chatCompletionClient = selectChatClient(providerName, authType);
+        this.modelCatalogClient = new OpenAiModelCatalogClient(copilotModelMetadataStore);
     }
 
     @Override

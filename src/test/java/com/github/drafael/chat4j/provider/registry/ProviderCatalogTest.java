@@ -1,8 +1,10 @@
 package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
+import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.sun.net.httpserver.HttpServer;
+import java.lang.reflect.Field;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,31 @@ class ProviderCatalogTest {
                 .singleElement()
                 .extracting(providerDefinition -> providerDefinition.descriptor().authType())
                 .isEqualTo(AuthType.COPILOT_OAUTH);
+    }
+
+    @Test
+    @DisplayName("Provider catalog shares Copilot metadata store between runtime resolution and model discovery")
+    void allProviders_whenCatalogInitialized_sharesCopilotMetadataStoreAcrossFacadeAndFetcher() throws Exception {
+        var subject = new ProviderCatalog();
+        var copilotProvider = subject.allProviders().stream()
+                .filter(providerDefinition -> "GitHub Copilot".equals(providerDefinition.name()))
+                .findFirst()
+                .orElseThrow();
+
+        Field providerFacadeField = ProviderCatalog.class.getDeclaredField("PROVIDER_FACADE");
+        providerFacadeField.setAccessible(true);
+        ProviderFacade providerFacade = (ProviderFacade) providerFacadeField.get(null);
+
+        Field facadeStoreField = ProviderFacade.class.getDeclaredField("copilotModelMetadataStore");
+        facadeStoreField.setAccessible(true);
+        Object facadeStore = facadeStoreField.get(providerFacade);
+
+        Object modelCatalogClient = copilotProvider.module().modelCatalogClient();
+        Field clientStoreField = modelCatalogClient.getClass().getDeclaredField("copilotModelMetadataStore");
+        clientStoreField.setAccessible(true);
+        Object modelCatalogStore = clientStoreField.get(modelCatalogClient);
+
+        assertThat(modelCatalogStore).isSameAs(facadeStore);
     }
 
     @Test

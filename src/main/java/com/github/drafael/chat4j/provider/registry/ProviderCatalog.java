@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.modules.AnthropicModule;
 import com.github.drafael.chat4j.provider.modules.OpenAiCompatibleModule;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,22 +25,34 @@ final class ProviderCatalog {
             List.of("codex", "login"),
             List.of("codex", "logout"),
             emptyList());
-
-    private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(new EnvVarCredentialStrategy());
+    private static final CopilotModelMetadataStore COPILOT_MODEL_METADATA_STORE = new CopilotModelMetadataStore();
+    private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(
+            new EnvVarCredentialStrategy(),
+            COPILOT_MODEL_METADATA_STORE
+    );
 
     private static final List<ProviderDefinition> PROVIDERS = new ArrayList<>();
 
     static {
         List<ProviderModule> modules = List.of(
                 new AnthropicModule("Anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com"),
-                new OpenAiCompatibleModule("Google AI", GOOGLE_AI_ENV_VARS, null, "https://generativelanguage.googleapis.com/v1beta/openai"),
+                new OpenAiCompatibleModule(
+                        "Google AI",
+                        AuthType.ENV_VAR,
+                        GOOGLE_AI_ENV_VARS,
+                        null,
+                        null,
+                        "https://generativelanguage.googleapis.com/v1beta/openai",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
                 new OpenAiCompatibleModule(
                         "OpenAI Codex",
                         AuthType.CLI_OAUTH,
                         null,
                         null,
                         CODEX_OAUTH,
-                        "https://api.openai.com/v1"
+                        "https://api.openai.com/v1",
+                        COPILOT_MODEL_METADATA_STORE
                 ),
                 new OpenAiCompatibleModule(
                         "GitHub Copilot",
@@ -47,16 +60,81 @@ final class ProviderCatalog {
                         null,
                         null,
                         null,
-                        "https://api.githubcopilot.com"
+                        "https://api.githubcopilot.com",
+                        COPILOT_MODEL_METADATA_STORE
                 ),
-                new OpenAiCompatibleModule("OpenAI", "OPENAI_API_KEY", null, "https://api.openai.com/v1"),
-                new OpenAiCompatibleModule("OpenRouter", "OPENROUTER_API_KEY", null, "https://openrouter.ai/api/v1"),
-                new OpenAiCompatibleModule("Groq", "GROQ_API_KEY", null, "https://api.groq.com/openai/v1"),
-                new OpenAiCompatibleModule("DeepSeek", "DEEPSEEK_API_KEY", null, "https://api.deepseek.com"),
-                new OpenAiCompatibleModule("Mistral", "MISTRAL_API_KEY", null, "https://api.mistral.ai/v1"),
-                new OpenAiCompatibleModule("xAI", "XAI_API_KEY", null, "https://api.x.ai/v1"),
-                new OpenAiCompatibleModule("LM Studio", null, "lmstudio", "http://localhost:1234/v1"),
-                new OpenAiCompatibleModule("Ollama", null, "ollama", "http://localhost:11434/v1"));
+                new OpenAiCompatibleModule(
+                        "OpenAI",
+                        AuthType.ENV_VAR,
+                        "OPENAI_API_KEY",
+                        null,
+                        null,
+                        "https://api.openai.com/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "OpenRouter",
+                        AuthType.ENV_VAR,
+                        "OPENROUTER_API_KEY",
+                        null,
+                        null,
+                        "https://openrouter.ai/api/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "Groq",
+                        AuthType.ENV_VAR,
+                        "GROQ_API_KEY",
+                        null,
+                        null,
+                        "https://api.groq.com/openai/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "DeepSeek",
+                        AuthType.ENV_VAR,
+                        "DEEPSEEK_API_KEY",
+                        null,
+                        null,
+                        "https://api.deepseek.com",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "Mistral",
+                        AuthType.ENV_VAR,
+                        "MISTRAL_API_KEY",
+                        null,
+                        null,
+                        "https://api.mistral.ai/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "xAI",
+                        AuthType.ENV_VAR,
+                        "XAI_API_KEY",
+                        null,
+                        null,
+                        "https://api.x.ai/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "LM Studio",
+                        AuthType.ENV_VAR,
+                        null,
+                        "lmstudio",
+                        null,
+                        "http://localhost:1234/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "Ollama",
+                        AuthType.ENV_VAR,
+                        null,
+                        "ollama",
+                        null,
+                        "http://localhost:11434/v1",
+                        COPILOT_MODEL_METADATA_STORE
+                ));
 
         modules.stream()
                 .map(module -> new ProviderDefinition(module.descriptor(), module))

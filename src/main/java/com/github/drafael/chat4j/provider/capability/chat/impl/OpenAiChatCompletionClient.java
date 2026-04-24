@@ -45,7 +45,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final String CHAT_COMPLETIONS_ENDPOINT = "/chat/completions";
     private static final String RESPONSES_ENDPOINT = "/responses";
-    private static final Map<String, CopilotEndpointMode> COPILOT_ENDPOINT_BY_MODEL = new ConcurrentHashMap<>();
+    private static final Map<CopilotModelKey, CopilotEndpointMode> COPILOT_ENDPOINT_BY_MODEL = new ConcurrentHashMap<>();
     private static final AtomicReference<String> LAST_COPILOT_MODEL_ID = new AtomicReference<>(null);
     private static final AtomicReference<String> LAST_COPILOT_ENDPOINT = new AtomicReference<>(null);
     private static final AtomicLong LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS = new AtomicLong(0L);
@@ -86,7 +86,8 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             Runnable clearActiveStream
     ) throws Exception {
         String modelId = runtime.selectedModel();
-        CopilotEndpointMode mode = COPILOT_ENDPOINT_BY_MODEL.getOrDefault(modelId, CopilotEndpointMode.RESPONSES);
+        CopilotModelKey modelKey = new CopilotModelKey(runtime.baseUrl(), modelId);
+        CopilotEndpointMode mode = COPILOT_ENDPOINT_BY_MODEL.getOrDefault(modelKey, preferredCopilotEndpointMode(runtime));
 
         if (mode == CopilotEndpointMode.RESPONSES) {
             try {
@@ -97,7 +98,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 if (!isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
                     throw e;
                 }
-                COPILOT_ENDPOINT_BY_MODEL.put(modelId, CopilotEndpointMode.CHAT_COMPLETIONS);
+                COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
                 streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
                 return;
@@ -111,7 +112,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
                 throw e;
             }
-            COPILOT_ENDPOINT_BY_MODEL.put(modelId, CopilotEndpointMode.RESPONSES);
+            COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
             streamWithResponses(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
         }
@@ -234,7 +235,13 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         String normalizedEndpoint = endpoint.toLowerCase();
         return message.contains("unsupported_api_for_model")
                 || message.contains("not accessible via the %s endpoint".formatted(normalizedEndpoint))
-                || message.contains("not accessible via the %s".formatted(normalizedEndpoint));
+                || message.contains("not accessible via the %s".formatted(normalizedEndpoint))
+                || (RESPONSES_ENDPOINT.equals(normalizedEndpoint)
+                        && (message.contains("does not support responses api")
+                        || message.contains("is not supported via responses api")))
+                || (CHAT_COMPLETIONS_ENDPOINT.equals(normalizedEndpoint)
+                        && (message.contains("does not support chat completions api")
+                        || message.contains("is not supported via chat completions api")));
     }
 
     private String flattenErrorMessage(Throwable throwable) {
@@ -250,6 +257,23 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             current = current.getCause();
         }
         return builder.toString();
+    }
+
+    private CopilotEndpointMode preferredCopilotEndpointMode(ProviderRuntime runtime) {
+        List<String> supportedEndpoints = runtime.selectedModelSupportedEndpoints();
+        if (supportedEndpoints.isEmpty()) {
+            return CopilotEndpointMode.RESPONSES;
+        }
+
+        if (supportedEndpoints.contains(RESPONSES_ENDPOINT)) {
+            return CopilotEndpointMode.RESPONSES;
+        }
+
+        if (supportedEndpoints.contains(CHAT_COMPLETIONS_ENDPOINT)) {
+            return CopilotEndpointMode.CHAT_COMPLETIONS;
+        }
+
+        return CopilotEndpointMode.CHAT_COMPLETIONS;
     }
 
     private void updateCopilotDiagnostics(String modelId, String endpoint) {
@@ -276,6 +300,9 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private enum CopilotEndpointMode {
         CHAT_COMPLETIONS,
         RESPONSES
+    }
+
+    private record CopilotModelKey(String baseUrl, String modelId) {
     }
 
     private ChatCompletionMessageParam toParam(Message msg, ProviderRuntime runtime) {

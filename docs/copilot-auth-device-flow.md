@@ -51,12 +51,13 @@ OAuth scopes:
 
 ## Model and endpoint behavior
 
-- Model catalog accepts Copilot models supporting:
+- Model catalog accepts Copilot models supporting HTTP chat endpoints:
   - `/chat/completions`
   - `/responses`
-  - `ws:/responses`
-- Chat runtime is responses-capable and caches endpoint mode per model.
-- Current default strategy is **responses-first**, with automatic fallback when endpoint is unsupported.
+- Websocket-only declarations such as `ws:/responses` are filtered out from selectable models and are not treated as runnable endpoints.
+- Chat4J persists Copilot `supported_endpoints` metadata from `/models` and carries it into runtime model selection.
+- Chat runtime prefers the endpoint declared by Copilot for the selected model, then caches observed fallback results per model.
+- Automatic fallback remains in place when runtime metadata is missing or stale.
 
 ## Diagnostics and evidence
 
