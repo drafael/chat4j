@@ -22,8 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProviderCatalogSectionAppenderTest {
 
     @Test
-    @DisplayName("Append renders provider headers and non-favorite model items")
-    void append_whenProvidersHaveModels_addsHeadersAndNonFavoriteItems() throws Exception {
+    @DisplayName("Append renders non-favorite model items without provider headers when models are available")
+    void append_whenProvidersHaveModels_addsModelsWithoutHeaders() throws Exception {
         var favoritesService = ModelFavoritesService.createInMemory();
         favoritesService.setFavorite("OpenAI", "gpt-4.1", true);
 
@@ -49,7 +49,7 @@ class ProviderCatalogSectionAppenderTest {
         Map<String, Boolean> providerSelectable = Map.of("OpenAI", true, "Ollama", false);
         AtomicReference<String> selectedModelKey = new AtomicReference<>();
 
-        subject.append(
+        boolean appended = subject.append(
                 modelsMenu,
                 group,
                 modelMenuItemsByKey,
@@ -60,9 +60,8 @@ class ProviderCatalogSectionAppenderTest {
                 selectedModelKey::set
         );
 
-        assertThat(providerHeaderItemsByName).containsOnlyKeys("OpenAI", "Ollama");
-        assertThat(providerHeaderItemsByName.get("OpenAI").getText()).isEqualTo("OpenAI");
-        assertThat(providerHeaderItemsByName.get("Ollama").getText()).isEqualTo("Ollama (offline)");
+        assertThat(appended).isTrue();
+        assertThat(providerHeaderItemsByName).isEmpty();
 
         assertThat(modelMenuItemsByKey)
                 .containsKeys("OpenAI > gpt-4.1-mini", "Ollama > llama3.2")
@@ -79,8 +78,43 @@ class ProviderCatalogSectionAppenderTest {
     }
 
     @Test
-    @DisplayName("Append adds no-models placeholder when provider has only favorite models")
-    void append_whenProviderHasOnlyFavoriteModels_addsNoModelsItem() throws Exception {
+    @DisplayName("Append keeps only an offline provider header when no models are available")
+    void append_whenProviderHasNoModels_addsOfflineHeaderAndEmptyState() {
+        var subject = new ProviderCatalogSectionAppender(
+                new ProviderAvailabilityLabelFormatter(),
+                new ProviderHeaderMenuItemFactory((providerName, item, enabled) -> null),
+                new ProviderFavoritesResolver(ModelFavoritesService.createInMemory()),
+                new ProviderMenuEmptyStateFactory(),
+                new ProviderModelMenuItemFactory(
+                        new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), ProviderCatalogSectionAppenderTest.class)
+                )
+        );
+
+        JMenu modelsMenu = new JMenu("Model");
+        Map<String, JMenuItem> providerHeaderItemsByName = new LinkedHashMap<>();
+
+        boolean appended = subject.append(
+                modelsMenu,
+                new ButtonGroup(),
+                new LinkedHashMap<>(),
+                providerHeaderItemsByName,
+                List.of(provider("Ollama")),
+                Map.of("Ollama", emptyList()),
+                Map.of("Ollama", false),
+                modelKey -> {
+                }
+        );
+
+        assertThat(appended).isTrue();
+        assertThat(providerHeaderItemsByName).containsOnlyKeys("Ollama");
+        assertThat(providerHeaderItemsByName.get("Ollama").getText()).isEqualTo("Ollama (offline)");
+        assertThat(modelsMenu.getItem(1).getText()).isEqualTo("No models available");
+        assertThat(modelsMenu.getItem(1).isEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Append omits catalog content when provider models are already shown in favorites")
+    void append_whenProviderHasOnlyFavoriteModels_addsNothing() throws Exception {
         var favoritesService = ModelFavoritesService.createInMemory();
         favoritesService.setFavorite("OpenAI", "gpt-4.1", true);
 
@@ -96,7 +130,7 @@ class ProviderCatalogSectionAppenderTest {
 
         JMenu modelsMenu = new JMenu("Model");
 
-        subject.append(
+        boolean appended = subject.append(
                 modelsMenu,
                 new ButtonGroup(),
                 new LinkedHashMap<>(),
@@ -108,9 +142,8 @@ class ProviderCatalogSectionAppenderTest {
                 }
         );
 
-        JMenuItem noModelsItem = modelsMenu.getItem(1);
-        assertThat(noModelsItem.getText()).isEqualTo("No models available");
-        assertThat(noModelsItem.isEnabled()).isFalse();
+        assertThat(appended).isFalse();
+        assertThat(modelsMenu.getItemCount()).isZero();
     }
 
     private ProviderRegistry.ProviderDef provider(String name) {

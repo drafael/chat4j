@@ -50,7 +50,7 @@ public class ProviderMenuStructureRebuilder {
         ProviderMenuDataResolver.ProviderMenuData menuData = providerMenuDataResolver.resolve(providers);
 
         ButtonGroup group = new ButtonGroup();
-        providerFavoritesSectionAppender.append(
+        boolean favoritesAppended = providerFavoritesSectionAppender.append(
                 modelsMenu,
                 group,
                 modelMenuItemsByKey,
@@ -58,7 +58,7 @@ public class ProviderMenuStructureRebuilder {
                 menuData.providerSelectable(),
                 onModelSelected
         );
-        providerCatalogSectionAppender.append(
+        boolean catalogAppended = providerCatalogSectionAppender.append(
                 modelsMenu,
                 group,
                 modelMenuItemsByKey,
@@ -68,5 +68,12 @@ public class ProviderMenuStructureRebuilder {
                 menuData.providerSelectable(),
                 onModelSelected
         );
+
+        if (favoritesAppended && !catalogAppended && modelsMenu.getMenuComponentCount() > 0) {
+            int lastIndex = modelsMenu.getMenuComponentCount() - 1;
+            if (modelsMenu.getMenuComponent(lastIndex) instanceof javax.swing.JSeparator) {
+                modelsMenu.remove(lastIndex);
+            }
+        }
     }
 }

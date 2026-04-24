@@ -1,7 +1,5 @@
 package com.github.drafael.chat4j.chat;
 
-import com.github.drafael.chat4j.util.Fonts;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -85,11 +83,12 @@ final class MarkdownInlineRenderer {
     }
 
     private static String inlineCodeHtml(String code, Palette palette) {
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
         return "<code style=\"background-color: %s; border: 1px solid %s; padding: 1px 4px; font-size: %dpx;\"><font face=\"%s\" color=\"%s\">%s</font></code>"
                 .formatted(
                         palette.inlineCodeBg(),
                         palette.codeBorder(),
-                        Fonts.scale(Fonts.SIZE_SMALL),
+                        codeFontSize,
                         palette.monoFontFamilyAttr(),
                         palette.codeText(),
                         code

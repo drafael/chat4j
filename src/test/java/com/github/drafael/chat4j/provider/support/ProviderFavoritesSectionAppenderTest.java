@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec.ModelSelection;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
 import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JSeparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,11 +19,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProviderFavoritesSectionAppenderTest {
 
     @Test
-    @DisplayName("Append adds favorites header and favorite model items")
-    void append_whenFavoritesExist_addsHeaderAndFavoriteItems() {
+    @DisplayName("Append adds favorite model items without a favorites header")
+    void append_whenFavoritesExist_addsFavoriteItemsWithoutHeader() {
         var iconResolver = new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), ProviderFavoritesSectionAppenderTest.class);
         var itemFactory = new ProviderModelMenuItemFactory(iconResolver);
-        var subject = new ProviderFavoritesSectionAppender(new MenuSectionHeaderFactory(), itemFactory);
+        var subject = new ProviderFavoritesSectionAppender(itemFactory);
 
         JMenu modelsMenu = new JMenu("Model");
         ButtonGroup group = new ButtonGroup();
@@ -42,8 +42,9 @@ class ProviderFavoritesSectionAppenderTest {
         );
 
         assertThat(appended).isTrue();
-        assertThat(modelsMenu.getItem(0).getText()).isEqualTo("★ Favorites");
-        assertThat(modelsMenu.getItem(0).isEnabled()).isFalse();
+        assertThat(modelsMenu.getItem(0).getText()).isEqualTo("gpt-4.1");
+        assertThat(modelsMenu.getItem(0).isEnabled()).isTrue();
+        assertThat(modelsMenu.getMenuComponent(1)).isInstanceOf(JSeparator.class);
         assertThat(menuItemsByKey).containsKey("OpenAI > gpt-4.1");
 
         menuItemsByKey.get("OpenAI > gpt-4.1").doClick();
@@ -55,7 +56,7 @@ class ProviderFavoritesSectionAppenderTest {
     void append_whenFavoritesEmpty_returnsFalseAndLeavesMenuUnchanged() {
         var iconResolver = new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), ProviderFavoritesSectionAppenderTest.class);
         var itemFactory = new ProviderModelMenuItemFactory(iconResolver);
-        var subject = new ProviderFavoritesSectionAppender(new MenuSectionHeaderFactory(), itemFactory);
+        var subject = new ProviderFavoritesSectionAppender(itemFactory);
 
         JMenu modelsMenu = new JMenu("Model");
         ButtonGroup group = new ButtonGroup();

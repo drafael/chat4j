@@ -50,7 +50,7 @@ public class ProviderCatalogSectionAppender {
         );
     }
 
-    public void append(
+    public boolean append(
             JMenu modelsMenu,
             ButtonGroup group,
             Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
@@ -69,45 +69,47 @@ public class ProviderCatalogSectionAppender {
         Validate.notNull(providerSelectable, "providerSelectable must not be null");
         Validate.notNull(onModelSelected, "onModelSelected must not be null");
 
-        boolean firstProvider = true;
+        boolean appended = false;
         for (ProviderRegistry.ProviderDef provider : providers) {
-            if (!firstProvider) {
+            List<String> availableModels = modelsByProvider.getOrDefault(provider.name(), emptyList());
+            List<String> models = providerFavoritesResolver.excludeFavorites(provider.name(), availableModels);
+            if (models.isEmpty() && !availableModels.isEmpty()) {
+                continue;
+            }
+
+            if (appended) {
                 modelsMenu.addSeparator();
             }
 
             boolean providerEnabled = providerSelectable.getOrDefault(provider.name(), true);
-            String providerLabel = providerAvailabilityLabelFormatter.format(provider.name(), providerEnabled);
-
-            JMenuItem providerHeader = providerHeaderMenuItemFactory.create(
-                    provider.name(),
-                    providerLabel,
-                    providerEnabled
-            );
-            modelsMenu.add(providerHeader);
-            providerHeaderItemsByName.put(provider.name(), providerHeader);
-
-            List<String> models = providerFavoritesResolver.excludeFavorites(
-                    provider.name(),
-                    modelsByProvider.getOrDefault(provider.name(), emptyList())
-            );
-
-            if (models.isEmpty()) {
+            if (availableModels.isEmpty()) {
+                String providerLabel = providerAvailabilityLabelFormatter.format(provider.name(), providerEnabled);
+                JMenuItem providerHeader = providerHeaderMenuItemFactory.create(
+                        provider.name(),
+                        providerLabel,
+                        providerEnabled
+                );
+                modelsMenu.add(providerHeader);
+                providerHeaderItemsByName.put(provider.name(), providerHeader);
                 modelsMenu.add(providerMenuEmptyStateFactory.noModelsAvailableItem());
-            } else {
-                models.forEach(model -> {
-                    ProviderModelMenuItemFactory.CreatedModelItem createdItem = providerModelMenuItemFactory.create(
-                            provider.name(),
-                            model,
-                            providerEnabled,
-                            onModelSelected
-                    );
-                    group.add(createdItem.item());
-                    modelsMenu.add(createdItem.item());
-                    modelMenuItemsByKey.put(createdItem.modelKey(), createdItem.item());
-                });
+                appended = true;
+                continue;
             }
 
-            firstProvider = false;
+            models.forEach(model -> {
+                ProviderModelMenuItemFactory.CreatedModelItem createdItem = providerModelMenuItemFactory.create(
+                        provider.name(),
+                        model,
+                        providerEnabled,
+                        onModelSelected
+                );
+                group.add(createdItem.item());
+                modelsMenu.add(createdItem.item());
+                modelMenuItemsByKey.put(createdItem.modelKey(), createdItem.item());
+            });
+            appended = true;
         }
+
+        return appended;
     }
 }

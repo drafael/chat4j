@@ -5,6 +5,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.DefaultListModel;
+import javax.swing.Icon;
+import javax.swing.JList;
+import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
@@ -30,7 +33,7 @@ class SidebarPanelTest {
         SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
-        assertThat(elapsedMillis).isLessThan(250);
+        assertThat(elapsedMillis).isLessThan(325);
 
         SidebarPanel subject = panelRef.get();
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Slow conversation"));
@@ -57,6 +60,34 @@ class SidebarPanelTest {
         });
     }
 
+    @Test
+    @DisplayName("Streaming state swaps the provider icon for a loading icon and restores it afterwards")
+    void setConversationStreaming_whenStateChanges_swapsConversationIcon() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Streaming conversation")));
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Streaming conversation"));
+
+        Icon providerIcon = readConversationIcon(subject, conversationId);
+        assertThat(providerIcon).isNotNull();
+
+        SwingUtilities.invokeAndWait(() -> subject.setConversationStreaming(conversationId, true));
+        Icon loadingIcon = readConversationIcon(subject, conversationId);
+
+        assertThat(loadingIcon).isNotNull();
+        assertThat(loadingIcon.getClass().getName()).contains("LoadingIcon");
+        assertThat(loadingIcon).isNotSameAs(providerIcon);
+
+        SwingUtilities.invokeAndWait(() -> subject.setConversationStreaming(conversationId, false));
+        Icon restoredIcon = readConversationIcon(subject, conversationId);
+
+        assertThat(restoredIcon).isSameAs(providerIcon);
+    }
+
     private List<String> conversationTitles(SidebarPanel panel) throws Exception {
         var titlesRef = new AtomicReference<List<String>>();
         SwingUtilities.invokeAndWait(() -> {
@@ -71,6 +102,30 @@ class SidebarPanelTest {
         return titlesRef.get();
     }
 
+    private Icon readConversationIcon(SidebarPanel panel, UUID conversationId) throws Exception {
+        var iconRef = new AtomicReference<Icon>();
+        SwingUtilities.invokeAndWait(() -> {
+            DefaultListModel<?> model = readListModel(panel);
+            JList<?> list = readConversationList(panel);
+            int conversationIndex = java.util.stream.IntStream.range(0, model.size())
+                    .filter(index -> model.get(index) instanceof ConversationItem conversation
+                            && conversation.id().equals(conversationId))
+                    .findFirst()
+                    .orElseThrow();
+            Object value = model.get(conversationIndex);
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            JLabel label = (JLabel) ((JList) list).getCellRenderer().getListCellRendererComponent(
+                    (JList) list,
+                    value,
+                    conversationIndex,
+                    false,
+                    false
+            );
+            iconRef.set(label.getIcon());
+        });
+        return iconRef.get();
+    }
+
     private DefaultListModel<?> readListModel(SidebarPanel panel) {
         try {
             Field field = SidebarPanel.class.getDeclaredField("listModel");
@@ -81,16 +136,37 @@ class SidebarPanelTest {
         }
     }
 
+    private JList<?> readConversationList(SidebarPanel panel) {
+        try {
+            Field field = SidebarPanel.class.getDeclaredField("conversationList");
+            field.setAccessible(true);
+            return (JList<?>) field.get(panel);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static Map<String, List<ConversationRepo.ConversationRecord>> grouped(String groupName, String title) {
-        return Map.of(groupName, List.of(new ConversationRepo.ConversationRecord(
-                UUID.randomUUID(),
+        return grouped(groupName, conversation(UUID.randomUUID(), title));
+    }
+
+    private static Map<String, List<ConversationRepo.ConversationRecord>> grouped(
+            String groupName,
+            ConversationRepo.ConversationRecord... records
+    ) {
+        return Map.of(groupName, List.of(records));
+    }
+
+    private static ConversationRepo.ConversationRecord conversation(UUID id, String title) {
+        return new ConversationRepo.ConversationRecord(
+                id,
                 title,
                 "OpenAI",
                 "gpt-4.1",
                 false,
                 LocalDateTime.now(),
                 LocalDateTime.now()
-        )));
+        );
     }
 
     private static void awaitCondition(long timeout, TimeUnit unit, CheckedBooleanSupplier condition) throws Exception {

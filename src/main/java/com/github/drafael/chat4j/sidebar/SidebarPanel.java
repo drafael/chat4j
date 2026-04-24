@@ -20,14 +20,17 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.ListSelectionEvent;
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -40,6 +43,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
@@ -55,6 +59,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
 import java.util.stream.IntStream;
 
 public class SidebarPanel extends JPanel {
@@ -74,6 +79,7 @@ public class SidebarPanel extends JPanel {
     private static final int HOVER_BACKGROUND_PADDING = 8;
     private static final int HOVER_BACKGROUND_FADE_WIDTH = 16;
     private static final int PROVIDER_ICON_SIZE = 16;
+    private static final int LOADING_ICON_FRAME_DELAY_MILLIS = 100;
 
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
         Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
@@ -99,6 +105,12 @@ public class SidebarPanel extends JPanel {
     private final JScrollPane conversationScrollPane;
     private final ConversationRepo conversationRepo;
     private final Set<String> collapsedGroups = new HashSet<>();
+    private final Set<UUID> streamingConversationIds = new HashSet<>();
+
+    private int loadingIconFrame;
+
+    private final Timer loadingIconTimer = new Timer(LOADING_ICON_FRAME_DELAY_MILLIS, event -> advanceLoadingIconFrame());
+    private final Icon loadingIcon = new LoadingIcon(() -> loadingIconFrame);
 
     private Consumer<UUID> onConversationSelected;
     private Runnable onNewChat;
@@ -116,6 +128,7 @@ public class SidebarPanel extends JPanel {
         applyScrollPaneStyles();
 
         add(conversationScrollPane, BorderLayout.CENTER);
+        loadingIconTimer.setRepeats(true);
         refresh();
     }
 
@@ -126,19 +139,24 @@ public class SidebarPanel extends JPanel {
         applyScrollPaneStyles();
     }
 
+    @Override
+    public void removeNotify() {
+        loadingIconTimer.stop();
+        super.removeNotify();
+    }
+
     public void refresh() {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(this::refresh);
             return;
         }
 
-        UUID selectedConversationId = selectedConversationId().orElse(null);
         long refreshRequestId = refreshRequestCounter.incrementAndGet();
 
         Thread.startVirtualThread(() -> {
             try {
                 Map<String, List<ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
-                SwingUtilities.invokeLater(() -> applyRefreshResult(refreshRequestId, grouped, selectedConversationId));
+                SwingUtilities.invokeLater(() -> applyRefreshResult(refreshRequestId, grouped));
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> applyRefreshFailure(refreshRequestId, e));
             }
@@ -154,6 +172,36 @@ public class SidebarPanel extends JPanel {
         pendingSelectionConversationId = id;
         expandGroupContaining(id);
         withSelectionSuppressed(this::applyPendingSelection);
+    }
+
+    public void clearSelection() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::clearSelection);
+            return;
+        }
+
+        pendingSelectionConversationId = null;
+        withSelectionSuppressed(conversationList::clearSelection);
+    }
+
+    public void setConversationStreaming(UUID conversationId, boolean streaming) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> setConversationStreaming(conversationId, streaming));
+            return;
+        }
+        if (conversationId == null) {
+            return;
+        }
+
+        boolean changed = streaming
+                ? streamingConversationIds.add(conversationId)
+                : streamingConversationIds.remove(conversationId);
+        if (!changed) {
+            return;
+        }
+
+        updateLoadingAnimationState();
+        repaintConversation(conversationId);
     }
 
     public void setOnConversationSelected(Consumer<UUID> handler) {
@@ -424,10 +472,14 @@ public class SidebarPanel extends JPanel {
         });
     }
 
-    private void applyRefreshResult(long refreshRequestId, Map<String, List<ConversationRecord>> grouped, UUID selectedConversationId) {
+    private void applyRefreshResult(long refreshRequestId, Map<String, List<ConversationRecord>> grouped) {
         if (refreshRequestId != refreshRequestCounter.get()) {
             return;
         }
+
+        UUID selectedConversationId = pendingSelectionConversationId != null
+                ? pendingSelectionConversationId
+                : selectedConversationId().orElse(null);
 
         withSelectionSuppressed(() -> {
             int restoreIndex = rebuildConversationList(grouped, selectedConversationId);
@@ -527,12 +579,48 @@ public class SidebarPanel extends JPanel {
     }
 
     private void promptRename(ConversationItem conversation) {
-        String newTitle = JOptionPane.showInputDialog(this, "New title:", conversation.title());
+        String newTitle = showThemedInputDialog("New title:", conversation.title());
         if (StringUtils.isBlank(newTitle)) {
             return;
         }
 
         renameConversation(conversation, newTitle.trim());
+    }
+
+    private String showThemedInputDialog(String message, String initialValue) {
+        var textField = new JTextField(StringUtils.defaultString(initialValue), 24);
+        textField.selectAll();
+
+        var content = new JPanel(new BorderLayout(0, 8));
+        content.setOpaque(false);
+        content.add(new JLabel(message), BorderLayout.NORTH);
+        content.add(textField, BorderLayout.CENTER);
+
+        var pane = new JOptionPane(content, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        var dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setContentPane(pane);
+        pane.addPropertyChangeListener(event -> {
+            if (dialog.isVisible()
+                && event.getSource() == pane
+                && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
+                dialog.setVisible(false);
+            }
+        });
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        SwingUtilities.invokeLater(() -> {
+            textField.requestFocusInWindow();
+            textField.selectAll();
+        });
+        dialog.setVisible(true);
+        dialog.dispose();
+
+        Object value = pane.getValue();
+        if (!Objects.equals(value, JOptionPane.OK_OPTION)) {
+            return null;
+        }
+        return textField.getText();
     }
 
     private int showThemedConfirmDialog(String message, String title) {
@@ -681,6 +769,26 @@ public class SidebarPanel extends JPanel {
         Rectangle bounds = conversationList.getCellBounds(index, index);
         if (bounds != null) {
             conversationList.repaint(bounds);
+        }
+    }
+
+    private void repaintConversation(UUID conversationId) {
+        findConversationIndex(conversationId).ifPresent(this::repaintCell);
+    }
+
+    private void advanceLoadingIconFrame() {
+        loadingIconFrame = (loadingIconFrame + 1) % LoadingIcon.SEGMENT_COUNT;
+        streamingConversationIds.forEach(this::repaintConversation);
+    }
+
+    private void updateLoadingAnimationState() {
+        if (streamingConversationIds.isEmpty()) {
+            loadingIconTimer.stop();
+            return;
+        }
+        if (!loadingIconTimer.isRunning()) {
+            loadingIconFrame = 0;
+            loadingIconTimer.start();
         }
     }
 
@@ -842,7 +950,98 @@ public class SidebarPanel extends JPanel {
         void run() throws Exception;
     }
 
-    private static final class ConversationCellRenderer extends DefaultListCellRenderer {
+    private static final class LoadingIcon implements Icon {
+
+        private static final int SEGMENT_COUNT = 10;
+        private static final int SIZE = 14;
+        private static final float STROKE_WIDTH = 1.4f;
+        private static final float INNER_RADIUS = 2.9f;
+        private static final float OUTER_RADIUS = 5.4f;
+
+        private final IntSupplier frameSupplier;
+
+        private LoadingIcon(IntSupplier frameSupplier) {
+            this.frameSupplier = frameSupplier;
+        }
+
+        @Override
+        public void paintIcon(Component component, Graphics graphics, int x, int y) {
+            Graphics2D graphics2d = (Graphics2D) graphics.create();
+            graphics2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics2d.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+            graphics2d.setStroke(new BasicStroke(STROKE_WIDTH, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+
+            Color baseColor = resolveBaseColor(component);
+            boolean darkText = isDarkText(component);
+            float centerX = x + SIZE / 2f;
+            float centerY = y + SIZE / 2f;
+            int frame = Math.floorMod(frameSupplier.getAsInt(), SEGMENT_COUNT);
+
+            for (int offset = 0; offset < SEGMENT_COUNT; offset++) {
+                int segment = Math.floorMod(frame + offset, SEGMENT_COUNT);
+                double angle = Math.toRadians(segment * (360d / SEGMENT_COUNT) - 90d);
+                float alpha = darkText
+                        ? 0.20f + (SEGMENT_COUNT - offset) / (float) SEGMENT_COUNT * 0.60f
+                        : 0.12f + (SEGMENT_COUNT - offset) / (float) SEGMENT_COUNT * 0.50f;
+                graphics2d.setColor(new Color(
+                        baseColor.getRed(),
+                        baseColor.getGreen(),
+                        baseColor.getBlue(),
+                        Math.round(alpha * 255)
+                ));
+                int x1 = Math.round(centerX + (float) Math.cos(angle) * INNER_RADIUS);
+                int y1 = Math.round(centerY + (float) Math.sin(angle) * INNER_RADIUS);
+                int x2 = Math.round(centerX + (float) Math.cos(angle) * OUTER_RADIUS);
+                int y2 = Math.round(centerY + (float) Math.sin(angle) * OUTER_RADIUS);
+                graphics2d.drawLine(x1, y1, x2, y2);
+            }
+
+            graphics2d.dispose();
+        }
+
+        private static Color resolveBaseColor(Component component) {
+            Color foreground = component != null ? component.getForeground() : null;
+            if (foreground != null && perceivedBrightness(foreground) < 150) {
+                return new Color(100, 106, 114);
+            }
+
+            Color selectionForeground = UIManager.getColor("List.selectionForeground");
+            if (selectionForeground != null && selectionForeground.equals(foreground)) {
+                return new Color(218, 223, 229);
+            }
+
+            Color color = UIManager.getColor("Label.disabledForeground");
+            if (color != null) {
+                return new Color(
+                        Math.max(0, color.getRed() - 6),
+                        Math.max(0, color.getGreen() - 4),
+                        Math.max(0, color.getBlue())
+                );
+            }
+            return new Color(136, 140, 146);
+        }
+
+        private static boolean isDarkText(Component component) {
+            Color foreground = component != null ? component.getForeground() : null;
+            return foreground != null && perceivedBrightness(foreground) < 150;
+        }
+
+        private static int perceivedBrightness(Color color) {
+            return (color.getRed() * 299 + color.getGreen() * 587 + color.getBlue() * 114) / 1000;
+        }
+
+        @Override
+        public int getIconWidth() {
+            return SIZE;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return SIZE;
+        }
+    }
+
+    private final class ConversationCellRenderer extends DefaultListCellRenderer {
 
         @Override
         public Component getListCellRendererComponent(
@@ -874,7 +1073,9 @@ public class SidebarPanel extends JPanel {
                 );
                 label.setBorder(new EmptyBorder(6, 14, 6, 10));
                 Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
-                label.setIcon(providerIcon(conversation.provider()));
+                label.setIcon(streamingConversationIds.contains(conversation.id())
+                        ? loadingIcon
+                        : providerIcon(conversation.provider()));
                 label.setIconTextGap(8);
 
                 if (isSelected) {

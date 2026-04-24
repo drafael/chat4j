@@ -8,6 +8,8 @@ final class MarkdownCssBuilder {
     }
 
     static String build(Palette palette) {
+        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
         return """
             body {
                 font-family: %s;
@@ -66,10 +68,11 @@ final class MarkdownCssBuilder {
             }
             code, pre {
                 font-family: %s;
+                font-size: %dpx;
             }
             """.formatted(
                 palette.baseFontFamily(),
-                Fonts.scale(Fonts.SIZE_SMALL),
+                bodyFontSize,
                 palette.textColor(),
                 palette.textColor(),
                 Fonts.scale(Fonts.SIZE_SUBTITLE),
@@ -84,6 +87,7 @@ final class MarkdownCssBuilder {
                 palette.surfaceBg(),
                 palette.textColor(),
                 palette.codeBorder(),
-                palette.monoFontFamily());
+                palette.monoFontFamily(),
+                codeFontSize);
     }
 }

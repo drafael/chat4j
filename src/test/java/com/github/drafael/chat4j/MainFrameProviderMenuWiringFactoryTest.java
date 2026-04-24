@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
 import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
@@ -45,7 +44,7 @@ class MainFrameProviderMenuWiringFactoryTest {
         var providerMenuEmptyStateFactory = new ProviderMenuEmptyStateFactory();
         var providerModelMenuItemFactory = new ProviderModelMenuItemFactory(providerMenuIconResolver);
         var providerFavoritesSectionAppender =
-                new ProviderFavoritesSectionAppender(new MenuSectionHeaderFactory(), providerModelMenuItemFactory);
+                new ProviderFavoritesSectionAppender(providerModelMenuItemFactory);
 
         MainFrameProviderMenuWiringFactory.ProviderMenuWiring wiring = subject.create(
                 settingsRepo,
@@ -88,7 +87,7 @@ class MainFrameProviderMenuWiringFactoryTest {
         var providerMenuEmptyStateFactory = new ProviderMenuEmptyStateFactory();
         var providerModelMenuItemFactory = new ProviderModelMenuItemFactory(providerMenuIconResolver);
         var providerFavoritesSectionAppender =
-                new ProviderFavoritesSectionAppender(new MenuSectionHeaderFactory(), providerModelMenuItemFactory);
+                new ProviderFavoritesSectionAppender(providerModelMenuItemFactory);
 
         assertThatThrownBy(() -> subject.create(
                 null,

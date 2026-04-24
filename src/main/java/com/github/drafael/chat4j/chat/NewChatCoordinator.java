@@ -9,6 +9,7 @@ public class NewChatCoordinator {
             Runnable clearCurrentConversationId,
             Runnable clearPendingUnsavedConversationRenderMode,
             Runnable clearActiveConversationId,
+            Runnable clearSidebarSelection,
             Runnable clearChatView,
             AssistantRenderMode defaultAssistantRenderMode,
             RenderModeApplier renderModeApplier,
@@ -21,6 +22,7 @@ public class NewChatCoordinator {
                 "clearPendingUnsavedConversationRenderMode must not be null"
         );
         Validate.notNull(clearActiveConversationId, "clearActiveConversationId must not be null");
+        Validate.notNull(clearSidebarSelection, "clearSidebarSelection must not be null");
         Validate.notNull(clearChatView, "clearChatView must not be null");
         Validate.notNull(defaultAssistantRenderMode, "defaultAssistantRenderMode must not be null");
         Validate.notNull(renderModeApplier, "renderModeApplier must not be null");
@@ -30,6 +32,7 @@ public class NewChatCoordinator {
         clearCurrentConversationId.run();
         clearPendingUnsavedConversationRenderMode.run();
         clearActiveConversationId.run();
+        clearSidebarSelection.run();
         clearChatView.run();
         renderModeApplier.apply(defaultAssistantRenderMode, true);
         requestInputFocus.run();

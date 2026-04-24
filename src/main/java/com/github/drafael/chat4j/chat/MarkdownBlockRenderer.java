@@ -229,7 +229,7 @@ final class MarkdownBlockRenderer {
 
     private static void appendCodeBlock(StringBuilder html, String code, String lang, Palette palette) {
         int languageFontSize = Fonts.scale(Fonts.SIZE_MICRO);
-        int codeFontSize = Fonts.scale(Fonts.SIZE_SMALL);
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
 
         html.append("<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");

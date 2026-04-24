@@ -243,6 +243,64 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Showing bubble action buttons keeps message spacing stable")
+    void loadHistory_whenBubbleActionButtonsBecomeVisible_keepsWrapperHeightStable() throws Exception {
+        subject.loadHistory(List.of(
+                Message.user("hello"),
+                Message.assistant("hi")
+        ));
+        flushEdt();
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        MessageBubble userBubble = findComponents(messagesPanel, MessageBubble.class).stream()
+                .filter(bubble -> bubble.getRole() == Role.USER)
+                .findFirst()
+                .orElseThrow();
+        Container hoverGroup = userBubble.getParent();
+        List<JButton> buttons = findComponents(hoverGroup, JButton.class);
+
+        Dimension before = hoverGroup.getPreferredSize();
+        SwingUtilities.invokeAndWait(() -> buttons.forEach(button -> button.setVisible(true)));
+        Dimension after = hoverGroup.getPreferredSize();
+
+        assertThat(buttons).hasSize(2);
+        assertThat(after.height).isEqualTo(before.height);
+    }
+
+    @Test
+    @DisplayName("Completing a stream emits sidebar streaming state changes for the active conversation")
+    void onSend_whenStreamCompletes_notifiesConversationStreamingChanges() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var events = new ArrayList<ChatPanel.ConversationStreamingEvent>();
+        var callbacks = new CountDownLatch(2);
+
+        subject.setActiveConversationId(conversationId);
+        subject.setConversationIdSupplier(() -> conversationId);
+        subject.setOnConversationStreamingChanged(event -> {
+            synchronized (events) {
+                events.add(event);
+            }
+            callbacks.countDown();
+        });
+
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        synchronized (events) {
+            assertThat(events).containsExactly(
+                    new ChatPanel.ConversationStreamingEvent(conversationId, true),
+                    new ChatPanel.ConversationStreamingEvent(conversationId, false)
+            );
+        }
+    }
+
+    @Test
     @DisplayName("Completing a stream triggers save callback for both user and assistant messages")
     void onSend_whenStreamCompletes_notifiesMessageSubmittedForAssistantResponse() throws Exception {
         var callbackCount = new AtomicInteger();

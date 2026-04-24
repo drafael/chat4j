@@ -43,6 +43,7 @@ import java.net.URL;
 import javax.imageio.ImageIO;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +68,9 @@ public class ChatPanel extends JPanel {
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
     private static final int CHAT_MENU_ICON_SIZE = 14;
+    private static final int BUBBLE_ACTION_BUTTON_SIZE = 20;
+    private static final int BUBBLE_ACTION_BAR_HEIGHT = 22;
+    private static final int BUBBLE_ACTION_BAR_WIDTH = BUBBLE_ACTION_BUTTON_SIZE * 2 + 2;
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
     private static final int COMPOSER_FADE_HEIGHT = 48;
     private static final Integer COMPOSER_FADE_LAYER = 50;
@@ -97,6 +101,7 @@ public class ChatPanel extends JPanel {
     private Runnable messageSubmittedListener;
     private AssistantMessagePersistenceListener assistantMessageCompletedListener;
     private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
+    private Consumer<ConversationStreamingEvent> conversationStreamingListener;
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
 
@@ -416,7 +421,7 @@ public class ChatPanel extends JPanel {
                 owner,
                 modelCacheService,
                 modelFavoritesService,
-                (providerName, modelId) -> selectModel(providerName, modelId),
+                this::selectModel,
                 this::notifyModelFavoritesChanged,
                 this::notifyModelCatalogChanged
             );
@@ -905,7 +910,6 @@ public class ChatPanel extends JPanel {
             hoverGroup.setOpaque(false);
             hoverGroup.add(bubble, BorderLayout.CENTER);
             JComponent actionBar = createBubbleActionBar(bubble, role);
-            actionBar.setVisible(false);
             hoverGroup.add(actionBar, BorderLayout.SOUTH);
             installActionBarHoverListener(hoverGroup, actionBar);
 
@@ -928,8 +932,13 @@ public class ChatPanel extends JPanel {
         JPanel bar = new JPanel(new FlowLayout(alignment, 2, 0));
         bar.setOpaque(false);
         bar.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
+        Dimension size = new Dimension(BUBBLE_ACTION_BAR_WIDTH, BUBBLE_ACTION_BAR_HEIGHT);
+        bar.setPreferredSize(size);
+        bar.setMinimumSize(size);
+        bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, BUBBLE_ACTION_BAR_HEIGHT));
         bar.add(createCopyMessageButton(bubble));
         bar.add(createRegenerateButton(bubble));
+        setBubbleActionButtonsVisible(bar, false);
         return bar;
     }
 
@@ -959,24 +968,22 @@ public class ChatPanel extends JPanel {
         MouseAdapter adapter = new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
-                if (!actionBar.isVisible()) {
-                    actionBar.setVisible(true);
-                    hoverGroup.revalidate();
-                    hoverGroup.repaint();
-                }
+                setBubbleActionButtonsVisible(actionBar, true);
+                actionBar.revalidate();
+                actionBar.repaint();
             }
 
             @Override
             public void mouseExited(MouseEvent e) {
-                if (!actionBar.isVisible() || !hoverGroup.isShowing()) {
+                if (!hoverGroup.isShowing()) {
                     return;
                 }
                 Point screenPoint = new Point(e.getXOnScreen(), e.getYOnScreen());
                 SwingUtilities.convertPointFromScreen(screenPoint, hoverGroup);
                 if (!hoverGroup.contains(screenPoint)) {
-                    actionBar.setVisible(false);
-                    hoverGroup.revalidate();
-                    hoverGroup.repaint();
+                    setBubbleActionButtonsVisible(actionBar, false);
+                    actionBar.revalidate();
+                    actionBar.repaint();
                 }
             }
         };
@@ -992,6 +999,10 @@ public class ChatPanel extends JPanel {
         }
     }
 
+    private void setBubbleActionButtonsVisible(JComponent actionBar, boolean visible) {
+        Arrays.stream(actionBar.getComponents()).forEach(component -> component.setVisible(visible));
+    }
+
     private JButton createBubbleActionButton(Icon icon, String tooltip, Runnable action) {
         JButton button = new JButton();
         button.putClientProperty("JButton.buttonType", "toolBarButton");
@@ -1000,8 +1011,9 @@ public class ChatPanel extends JPanel {
         button.setToolTipText(tooltip);
         button.setFocusable(false);
         button.setMargin(new Insets(0, 0, 0, 0));
-        button.setPreferredSize(new Dimension(22, 22));
-        button.setMinimumSize(new Dimension(22, 22));
+        Dimension size = new Dimension(BUBBLE_ACTION_BUTTON_SIZE, BUBBLE_ACTION_BUTTON_SIZE);
+        button.setPreferredSize(size);
+        button.setMinimumSize(size);
         if (action != null) {
             button.addActionListener(e -> action.run());
         }
@@ -1619,6 +1631,10 @@ public class ChatPanel extends JPanel {
         this.historyTruncatedListener = listener;
     }
 
+    public void setOnConversationStreamingChanged(Consumer<ConversationStreamingEvent> listener) {
+        this.conversationStreamingListener = listener;
+    }
+
     public void setConversationIdSupplier(Supplier<UUID> supplier) {
         this.conversationIdSupplier = supplier;
     }
@@ -1664,6 +1680,12 @@ public class ChatPanel extends JPanel {
     private void notifyMessageSubmitted() {
         if (messageSubmittedListener != null) {
             messageSubmittedListener.run();
+        }
+    }
+
+    private void notifyConversationStreamingChanged(UUID conversationId, boolean streaming) {
+        if (conversationStreamingListener != null && conversationId != null) {
+            conversationStreamingListener.accept(new ConversationStreamingEvent(conversationId, streaming));
         }
     }
 
@@ -1787,6 +1809,9 @@ public class ChatPanel extends JPanel {
             }
             session.finished = true;
             activeSessions.remove(session.sessionId);
+            if (!hasLiveStreamingSession(session.conversationId)) {
+                notifyConversationStreamingChanged(session.conversationId, false);
+            }
             finishSendJobByStreamSession(session.sessionId);
         }
 
@@ -1805,6 +1830,7 @@ public class ChatPanel extends JPanel {
         long streamSessionId = streamSessionCounter.incrementAndGet();
         StreamingSession session = new StreamingSession(streamSessionId, conversationId, provider);
         activeSessions.put(streamSessionId, session);
+        notifyConversationStreamingChanged(conversationId, true);
         if (isVisibleConversation(conversationId)) {
             activeStreamSessionId = streamSessionId;
             streaming = true;
@@ -1821,6 +1847,9 @@ public class ChatPanel extends JPanel {
 
         session.finished = true;
         activeSessions.remove(session.sessionId);
+        if (!hasLiveStreamingSession(session.conversationId)) {
+            notifyConversationStreamingChanged(session.conversationId, false);
+        }
 
         if (activeStreamSessionId == session.sessionId) {
             autoScrollQueued = false;
@@ -1873,6 +1902,11 @@ public class ChatPanel extends JPanel {
 
     private boolean isVisibleConversationStreaming() {
         return visibleStreamingSession() != null;
+    }
+
+    private boolean hasLiveStreamingSession(UUID conversationId) {
+        return activeSessions.values().stream()
+                .anyMatch(session -> session.isLive() && Objects.equals(session.conversationId, conversationId));
     }
 
     private SendJob visiblePreparingJob() {
@@ -1930,6 +1964,9 @@ public class ChatPanel extends JPanel {
     }
 
     public record HistoryTruncatedEvent(UUID conversationId, int keepMessageCount) {
+    }
+
+    public record ConversationStreamingEvent(UUID conversationId, boolean streaming) {
     }
 
     @FunctionalInterface

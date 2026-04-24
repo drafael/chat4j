@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
+import static java.util.stream.Collectors.joining;
+
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.util.Fonts;
 
@@ -218,9 +220,9 @@ public class MessageBubble extends JPanel {
         String escaped = escapeHtml(text).replace("\n", "<br>");
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
-        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
+        int fontSize = monospaced ? CodeFontResolver.resolveCodeFontSize() : Fonts.scale(Fonts.SIZE_SMALL);
         return "<html><head><style>body { font-family: %s; font-size: %dpx; line-height: 1.4; color: %s; margin: 0; padding: 0; }</style></head><body>%s</body></html>"
-                .formatted(fontFamily, bodyFontSize, palette.textColor(), escaped);
+                .formatted(fontFamily, fontSize, palette.textColor(), escaped);
     }
 
     private String toUserHtml(String text, Palette palette, boolean isDark) {
@@ -231,7 +233,7 @@ public class MessageBubble extends JPanel {
 
         String body = text.lines()
                 .map(line -> toUserLineHtml(line, badgeBackground, badgeText, fallbackBackground, fallbackText))
-                .collect(java.util.stream.Collectors.joining());
+                .collect(joining());
 
         int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
         int badgeFontSize = Fonts.scale(Fonts.SIZE_BADGE);

@@ -233,10 +233,11 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     public static void applyCodeFont(String fontFamily) {
         Font base = resolveLookAndFeelDefaultCodeFont();
-        int size = base != null ? base.getSize() : FALLBACK_FONT_SIZE;
+        Font appFont = resolveLookAndFeelDefaultAppFont();
+        int size = appFont != null ? appFont.getSize() : (base != null ? base.getSize() : FALLBACK_FONT_SIZE);
 
         String family = fontFamily;
-        if (family == null || family.isBlank() || DEFAULT_CODE_FONT.equals(family)) {
+        if (family == null || family.isBlank() || DEFAULT_CODE_FONT.equals(fontFamily)) {
             family = base != null ? base.getFamily() : Font.MONOSPACED;
         }
 
@@ -273,10 +274,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
         int row = 0;
 
-        row = addSectionHeader(form, gbc, row, "Theme");
-
         JComboBox<Object> themeCombo = withPreferredWidth(createThemeSelector(), 320);
-        row = addFullWidthRow(form, gbc, row, themeCombo);
+        addRow(form, gbc, row++, "Theme", themeCombo);
 
         JPanel accentPanel = createAccentPanel();
         addRow(form, gbc, row++, "Accent color", accentPanel);

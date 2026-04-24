@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec.ModelSelection;
 import org.apache.commons.lang3.Validate;
 
@@ -13,16 +12,9 @@ import java.util.function.Consumer;
 
 public class ProviderFavoritesSectionAppender {
 
-    private static final String FAVORITES_HEADER = "★ Favorites";
-
-    private final MenuSectionHeaderFactory menuSectionHeaderFactory;
     private final ProviderModelMenuItemFactory providerModelMenuItemFactory;
 
-    public ProviderFavoritesSectionAppender(
-            MenuSectionHeaderFactory menuSectionHeaderFactory,
-            ProviderModelMenuItemFactory providerModelMenuItemFactory
-    ) {
-        this.menuSectionHeaderFactory = Validate.notNull(menuSectionHeaderFactory, "menuSectionHeaderFactory must not be null");
+    public ProviderFavoritesSectionAppender(ProviderModelMenuItemFactory providerModelMenuItemFactory) {
         this.providerModelMenuItemFactory = Validate.notNull(
                 providerModelMenuItemFactory,
                 "providerModelMenuItemFactory must not be null"
@@ -47,8 +39,6 @@ public class ProviderFavoritesSectionAppender {
         if (favorites.isEmpty()) {
             return false;
         }
-
-        modelsMenu.add(menuSectionHeaderFactory.create(FAVORITES_HEADER));
 
         favorites.forEach(selection -> {
             boolean selectable = providerSelectable.getOrDefault(selection.provider(), true);

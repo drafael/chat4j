@@ -14,7 +14,8 @@ public class CurrentConversationSaveUiApplyCoordinator {
             Consumer<AssistantRenderMode> setPendingUnsavedConversationRenderMode,
             Consumer<UUID> setActiveConversationId,
             Runnable refreshSidebar,
-            Consumer<UUID> selectConversation
+            Consumer<UUID> selectConversation,
+            boolean selectCreatedConversation
     ) {
         Validate.notNull(saveResult, "saveResult must not be null");
         Validate.notNull(setCurrentConversationId, "setCurrentConversationId must not be null");
@@ -38,7 +39,9 @@ public class CurrentConversationSaveUiApplyCoordinator {
         }
 
         refreshSidebar.run();
-        selectConversation.accept(conversationId);
+        if (selectCreatedConversation && saveResult.createdConversation()) {
+            selectConversation.accept(conversationId);
+        }
         return true;
     }
 }

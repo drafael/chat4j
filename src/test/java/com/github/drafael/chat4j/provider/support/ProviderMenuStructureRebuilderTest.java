@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.ModelCache;
@@ -201,12 +200,9 @@ class ProviderMenuStructureRebuilderTest {
         private Map<String, Boolean> lastProviderSelectable;
 
         private StubProviderFavoritesSectionAppender() {
-            super(
-                    new MenuSectionHeaderFactory(),
-                    new ProviderModelMenuItemFactory(
-                            new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), StubProviderFavoritesSectionAppender.class)
-                    )
-            );
+            super(new ProviderModelMenuItemFactory(
+                    new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), StubProviderFavoritesSectionAppender.class)
+            ));
         }
 
         @Override
@@ -245,7 +241,7 @@ class ProviderMenuStructureRebuilderTest {
         }
 
         @Override
-        public void append(
+        public boolean append(
                 JMenu modelsMenu,
                 ButtonGroup group,
                 Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
@@ -259,6 +255,7 @@ class ProviderMenuStructureRebuilderTest {
             lastProviders = providers;
             lastModelsByProvider = modelsByProvider;
             lastProviderSelectable = providerSelectable;
+            return true;
         }
     }
 

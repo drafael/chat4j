@@ -220,7 +220,7 @@ public class MainFrame extends JFrame {
     private final ProviderHeaderMenuItemFactory providerHeaderMenuItemFactory =
             new ProviderHeaderMenuItemFactory(providerMenuIconResolver::resolveHeaderIcon);
     private final ProviderFavoritesSectionAppender providerFavoritesSectionAppender =
-            new ProviderFavoritesSectionAppender(menuSectionHeaderFactory, providerModelMenuItemFactory);
+            new ProviderFavoritesSectionAppender(providerModelMenuItemFactory);
     private final ProviderCatalogSectionAppender providerCatalogSectionAppender;
     private final ProviderMenuStructureRebuilder providerMenuStructureRebuilder;
     private final ModelMenuStructureRebuildCoordinator modelMenuStructureRebuildCoordinator;
@@ -466,7 +466,7 @@ public class MainFrame extends JFrame {
         chatPanel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
-        chatPanel.setOnMessageSubmitted(this::saveCurrentConversation);
+        chatPanel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
         chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
         chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         chatPanel.setActiveConversationId(conversationState.currentConversationId());
@@ -526,6 +526,8 @@ public class MainFrame extends JFrame {
 
         add(titleBar, BorderLayout.NORTH);
         sidebarPanel = new SidebarPanel(conversationRepo);
+        chatPanel.setOnConversationStreamingChanged(event ->
+                sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
 
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
@@ -584,10 +586,11 @@ public class MainFrame extends JFrame {
 
     private void newChat() {
         newChatCoordinator.start(
-                this::saveCurrentConversation,
+                () -> saveCurrentConversation(false),
                 conversationState::clearCurrentConversationId,
                 conversationState::clearPendingUnsavedConversationRenderMode,
                 () -> chatPanel.setActiveConversationId(null),
+                sidebarPanel::clearSelection,
                 chatPanel::clearChatView,
                 assistantRenderModeState.defaultAssistantRenderMode(),
                 chatPanel::setAssistantRenderMode,
@@ -598,7 +601,7 @@ public class MainFrame extends JFrame {
     private void loadConversation(UUID id) {
         conversationLoadStartCoordinator.start(
                 id,
-                this::saveCurrentConversation,
+                () -> saveCurrentConversation(false),
                 conversationState::setCurrentConversationId,
                 conversationState::clearPendingUnsavedConversationRenderMode,
                 chatPanel::setActiveConversationId,
@@ -608,7 +611,7 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void saveCurrentConversation() {
+    private void saveCurrentConversation(boolean selectCreatedConversation) {
         currentConversationSaveDispatchCoordinator.save(
                 conversationState.currentConversationId(),
                 conversationState.pendingUnsavedConversationRenderMode(),
@@ -622,7 +625,8 @@ public class MainFrame extends JFrame {
                         conversationState::setPendingUnsavedConversationRenderMode,
                         chatPanel::setActiveConversationId,
                         sidebarPanel::refresh,
-                        sidebarPanel::selectConversation
+                        sidebarPanel::selectConversation,
+                        selectCreatedConversation
                 ),
                 error -> LOG.log(Level.WARNING, "Failed to persist current conversation", error)
         );

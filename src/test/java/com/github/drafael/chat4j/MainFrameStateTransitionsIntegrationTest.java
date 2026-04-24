@@ -45,6 +45,7 @@ class MainFrameStateTransitionsIntegrationTest {
                     flowCalls.add("clear-active");
                     activeConversationId.set(null);
                 },
+                () -> flowCalls.add("clear-sidebar-selection"),
                 () -> flowCalls.add("clear-chat-view"),
                 assistantRenderModeState.defaultAssistantRenderMode(),
                 (mode, userInitiated) -> {
@@ -63,6 +64,7 @@ class MainFrameStateTransitionsIntegrationTest {
                 "clear-current",
                 "clear-pending",
                 "clear-active",
+                "clear-sidebar-selection",
                 "clear-chat-view",
                 "apply-render-mode",
                 "focus"

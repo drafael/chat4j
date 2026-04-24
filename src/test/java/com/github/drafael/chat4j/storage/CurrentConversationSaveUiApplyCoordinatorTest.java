@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CurrentConversationSaveUiApplyCoordinatorTest {
 
     @Test
-    @DisplayName("Apply updates MainFrame state/sidebar when conversation was saved")
-    void apply_whenSaved_updatesStateAndSidebar() {
+    @DisplayName("Apply refreshes sidebar and selects the conversation when save created a new conversation")
+    void apply_whenConversationCreated_refreshesSidebarAndSelectsConversation() {
         var subject = new CurrentConversationSaveUiApplyCoordinator();
         UUID conversationId = UUID.randomUUID();
         var saveResult = new CurrentConversationSaveCoordinator.SaveResult(
@@ -46,7 +46,8 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                     activeConversationId.set(value);
                 },
                 () -> calls.add("sidebar-refresh"),
-                value -> calls.add("sidebar-select:%s".formatted(value))
+                value -> calls.add("sidebar-select:%s".formatted(value)),
+                true
         );
 
         assertThat(applied).isTrue();
@@ -59,6 +60,40 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 "set-active",
                 "sidebar-refresh",
                 "sidebar-select:%s".formatted(conversationId)
+        );
+    }
+
+    @Test
+    @DisplayName("Apply refreshes sidebar without selecting when caller suppresses selection for a created conversation")
+    void apply_whenSelectionSuppressed_refreshesSidebarWithoutSelectingConversation() {
+        var subject = new CurrentConversationSaveUiApplyCoordinator();
+        UUID conversationId = UUID.randomUUID();
+        var saveResult = new CurrentConversationSaveCoordinator.SaveResult(
+                true,
+                conversationId,
+                AssistantRenderMode.MARKDOWN,
+                true
+        );
+
+        var calls = new ArrayList<String>();
+        var activeConversationId = new AtomicReference<UUID>();
+
+        boolean applied = subject.apply(
+                saveResult,
+                value -> calls.add("set-current"),
+                value -> calls.add("set-pending"),
+                activeConversationId::set,
+                () -> calls.add("sidebar-refresh"),
+                value -> calls.add("sidebar-select"),
+                false
+        );
+
+        assertThat(applied).isTrue();
+        assertThat(activeConversationId.get()).isEqualTo(conversationId);
+        assertThat(calls).containsExactly(
+                "set-current",
+                "set-pending",
+                "sidebar-refresh"
         );
     }
 
@@ -81,7 +116,8 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 value -> calls.add("set-pending"),
                 value -> calls.add("set-active"),
                 () -> calls.add("sidebar-refresh"),
-                value -> calls.add("sidebar-select")
+                value -> calls.add("sidebar-select"),
+                true
         );
 
         assertThat(applied).isFalse();
@@ -110,7 +146,8 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 () -> {
                 },
                 value -> {
-                }
+                },
+                true
         ))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("saveResult must not be null");
@@ -125,7 +162,8 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 () -> {
                 },
                 value -> {
-                }
+                },
+                true
         ))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("setCurrentConversationId must not be null");

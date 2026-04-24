@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
 import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
@@ -117,7 +116,6 @@ class MainFrameDependenciesFactoryTest {
                         new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), MainFrame.class)
                 ),
                 new ProviderFavoritesSectionAppender(
-                        new MenuSectionHeaderFactory(),
                         new ProviderModelMenuItemFactory(
                                 new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), MainFrame.class)
                         )
@@ -163,7 +161,7 @@ class MainFrameDependenciesFactoryTest {
                 new ProviderHeaderMenuItemFactory(providerMenuIconResolver::resolveHeaderIcon),
                 new ProviderMenuEmptyStateFactory(),
                 providerModelMenuItemFactory,
-                new ProviderFavoritesSectionAppender(new MenuSectionHeaderFactory(), providerModelMenuItemFactory),
+                new ProviderFavoritesSectionAppender(providerModelMenuItemFactory),
                 new AssistantRenderModeSelectionResolver(),
                 new AssistantRenderModeChangeUiApplyCoordinator(),
                 new GeneralSettingsUiApplyCoordinator(),
