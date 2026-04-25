@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.core;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
@@ -32,7 +33,9 @@ public class CapabilityProviderService implements ProviderService {
     @Override
     public void streamCompletion(
         List<Message> history,
+        ReasoningLevel reasoningLevel,
         Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
         Runnable onComplete,
         Consumer<Exception> onError,
         BooleanSupplier isCancelled
@@ -41,7 +44,9 @@ public class CapabilityProviderService implements ProviderService {
             chatCompletionClient.streamCompletion(
                 runtime,
                 history,
+                reasoningLevel,
                 onToken,
+                onThinkingToken,
                 isCancelled,
                 this::registerActiveStream,
                 this::clearActiveStream

@@ -10,7 +10,9 @@ public interface ProviderService {
 
     void streamCompletion(
         List<Message> history,
+        ReasoningLevel reasoningLevel,
         Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
         Runnable onComplete,
         Consumer<Exception> onError,
         BooleanSupplier isCancelled

@@ -81,15 +81,18 @@ class MarkdownRendererTest {
     }
 
     @Test
-    @DisplayName("Fenced code blocks render escaped code and optional language header")
-    void toHtml_whenMarkdownContainsFencedCode_rendersCodeBlockWithOptionalLanguageHeader() {
+    @DisplayName("Fenced code blocks render escaped code with compact optional language header")
+    void toHtml_whenMarkdownContainsFencedCode_rendersCodeBlockWithCompactHeader() {
         String body = renderBody("```java\nint x = 1;\n```\n```\n<tag>\n```");
 
         assertThat(body)
                 .contains("java</font>")
                 .contains("int x = 1;")
                 .contains("&lt;tag&gt;")
-                .contains("<pre style=\"margin: 0;\">");
+                .contains("padding: 2px 8px")
+                .contains("<pre style=\"margin: 0;\">")
+                .doesNotContain("copy-code:")
+                .doesNotContain("code-copy-link");
     }
 
     @Test
@@ -98,7 +101,7 @@ class MarkdownRendererTest {
         String body = renderBody("| Name | Age |\n| --- | --- |\n| Ana | 30 |");
 
         assertThat(body)
-                .contains("<table width=\"100%\"")
+                .contains("<table class=\"md-table\" width=\"100%\"")
                 .contains("<b>Name</b>")
                 .contains("<b>Age</b>")
                 .contains(">Ana</td>")

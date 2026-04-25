@@ -5,6 +5,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
@@ -59,6 +60,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
 
@@ -74,6 +76,11 @@ public class ChatPanel extends JPanel {
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
     private static final int COMPOSER_FADE_HEIGHT = 48;
     private static final Integer COMPOSER_FADE_LAYER = 50;
+    private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
+    private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
+    private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\u001B\\[[;\\d]*[ -/]*[@-~]");
+    private static final Pattern NON_PRINTABLE_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\r\\n\\t]]");
+    private static final Pattern UNICODE_FORMAT_PATTERN = Pattern.compile("\\p{Cf}");
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
@@ -91,6 +98,7 @@ public class ChatPanel extends JPanel {
     private final ModelFavoritesService modelFavoritesService;
     private final AttachmentStager attachmentStager = new AttachmentStager();
     private final List<MessageBubble> assistantBubbles = new ArrayList<>();
+    private final List<ThinkingBubble> thinkingBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
@@ -110,6 +118,7 @@ public class ChatPanel extends JPanel {
     private String selectedProviderName;
     private String selectedModelId;
     private ProviderService currentProvider;
+    private ThinkingBubble currentAssistantThinkingBubble;
     private MessageBubble currentAssistantBubble;
     private final AtomicLong sendJobCounter = new AtomicLong();
     private final AtomicLong streamSessionCounter = new AtomicLong();
@@ -398,6 +407,7 @@ public class ChatPanel extends JPanel {
         selectedModelId = null;
         currentProvider = null;
         modelSelectorBtn.setSelection("", "");
+        inputBar.setThinkingAvailable(false);
     }
 
     private void toggleModelPopup() {
@@ -450,6 +460,8 @@ public class ChatPanel extends JPanel {
             currentProvider = providerDef.factory().create(modelId);
         }
 
+        updateThinkingToggleAvailability();
+
         if (selectedModelChangedListener != null) {
             selectedModelChangedListener.accept(getSelectedModel());
         }
@@ -476,7 +488,8 @@ public class ChatPanel extends JPanel {
                 sendJobId,
                 resolveConversationId(),
                 provider,
-                new ArrayList<>(history)
+                new ArrayList<>(history),
+                inputBar.getReasoningLevel()
         );
         activeSendJobs.put(sendJobId, sendJob);
 
@@ -528,6 +541,11 @@ public class ChatPanel extends JPanel {
         streamHistory.add(userMessage);
 
         if (visibleConversation) {
+            currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+            currentAssistantThinkingBubble.setStreaming(true);
+            currentAssistantThinkingBubble.setVisible(false);
+            addThinkingBubble(currentAssistantThinkingBubble, null);
+
             currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
             addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         }
@@ -569,7 +587,8 @@ public class ChatPanel extends JPanel {
                 sendJobCounter.incrementAndGet(),
                 conversationId,
                 provider,
-                new ArrayList<>(history)
+                new ArrayList<>(history),
+                inputBar.getReasoningLevel()
         );
         activeSendJobs.put(sendJob.jobId, sendJob);
         startAssistantStream(sendJob, new ArrayList<>(history));
@@ -582,8 +601,9 @@ public class ChatPanel extends JPanel {
 
         session.worker = Thread.startVirtualThread(() -> {
             session.provider.streamCompletion(
-                requestHistory,
-                token -> {
+                    requestHistory,
+                    sendJob.reasoningLevel,
+                    token -> {
                         if (!session.isLive()) {
                             return;
                         }
@@ -599,18 +619,50 @@ public class ChatPanel extends JPanel {
                             scrollToBottom();
                         });
                     },
-                () -> SwingUtilities.invokeLater(() -> {
+                    thinkingToken -> {
+                        if (!session.isLive() || !sendJob.reasoningLevel.enabled()) {
+                            return;
+                        }
+
+                        String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
+                        if (normalizedThinkingToken.isEmpty()) {
+                            return;
+                        }
+
+                        appendAssistantThinking(session, normalizedThinkingToken);
+                        SwingUtilities.invokeLater(() -> {
+                            if (!session.isLive() || !isVisibleConversation(session.conversationId)) {
+                                return;
+                            }
+
+                            if (currentAssistantThinkingBubble == null) {
+                                currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+                                currentAssistantThinkingBubble.setStreaming(true);
+                                addThinkingBubble(currentAssistantThinkingBubble, null);
+                            }
+
+                            currentAssistantThinkingBubble.setVisible(true);
+                            currentAssistantThinkingBubble.appendText(normalizedThinkingToken);
+                            scrollToBottom();
+                        });
+                    },
+                    () -> SwingUtilities.invokeLater(() -> {
                         if (!session.isLive()) {
                             return;
                         }
                         persistAssistantResponse(session, true);
                         if (isVisibleConversation(session.conversationId)) {
+                            if (currentAssistantThinkingBubble != null) {
+                                currentAssistantThinkingBubble.setStreaming(false);
+                            }
+                            removeCurrentThinkingBubbleIfBlank();
+                            currentAssistantThinkingBubble = null;
                             currentAssistantBubble = null;
                         }
                         finishStreamingSession(session);
                         finishSendJob(sendJob);
                     }),
-                error -> {
+                    error -> {
                         if (!session.isLive()) {
                             return;
                         }
@@ -626,13 +678,18 @@ public class ChatPanel extends JPanel {
                             }
                             persistAssistantResponse(session, false);
                             if (isVisibleConversation(session.conversationId)) {
+                                if (currentAssistantThinkingBubble != null) {
+                                    currentAssistantThinkingBubble.setStreaming(false);
+                                }
+                                removeCurrentThinkingBubbleIfBlank();
+                                currentAssistantThinkingBubble = null;
                                 currentAssistantBubble = null;
                             }
                             finishStreamingSession(session);
                             finishSendJob(sendJob);
                         });
                     },
-                session.cancelled::get
+                    session.cancelled::get
             );
         });
     }
@@ -742,6 +799,60 @@ public class ChatPanel extends JPanel {
         }
 
         return "%s (%s) uses text-only fallback for file attachments.".formatted(providerLabel, modelLabel);
+    }
+
+    private void updateThinkingToggleAvailability() {
+        ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
+        if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
+            inputBar.setThinkingAvailable(false);
+            return;
+        }
+
+        boolean fallbackSupportsThinking = ProviderCapabilityResolver.supportsReasoning(
+                providerDef.capabilities(),
+                providerDef.name(),
+                selectedModelId
+        );
+        inputBar.setThinkingAvailable(fallbackSupportsThinking);
+
+        if (StringUtils.isBlank(providerDef.baseUrl())) {
+            return;
+        }
+
+        String providerNameSnapshot = providerDef.name();
+        String modelIdSnapshot = selectedModelId;
+        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
+        String baseUrlSnapshot = providerDef.baseUrl();
+        String envVarSnapshot = providerDef.envVar();
+
+        Thread.startVirtualThread(() -> {
+            try {
+                String apiKey = CredentialResolver.resolveApiKey(envVarSnapshot, null);
+                boolean resolvedSupportsThinking = ProviderCapabilityResolver.supportsReasoning(
+                        capabilitiesSnapshot,
+                        providerNameSnapshot,
+                        modelIdSnapshot,
+                        baseUrlSnapshot,
+                        apiKey
+                );
+
+                SwingUtilities.invokeLater(() -> {
+                    if (!StringUtils.equals(selectedProviderName, providerNameSnapshot)
+                            || !StringUtils.equals(selectedModelId, modelIdSnapshot)
+                    ) {
+                        return;
+                    }
+
+                    inputBar.setThinkingAvailable(resolvedSupportsThinking);
+                });
+            } catch (Exception e) {
+                LOG.log(
+                        Level.FINE,
+                        "Failed to refresh thinking capability for %s::%s".formatted(providerNameSnapshot, modelIdSnapshot),
+                        e
+                );
+            }
+        });
     }
 
     private ProviderSelectionSnapshot captureProviderSelection() {
@@ -1068,6 +1179,11 @@ public class ChatPanel extends JPanel {
             historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
         }
 
+        currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+        currentAssistantThinkingBubble.setStreaming(true);
+        currentAssistantThinkingBubble.setVisible(false);
+        addThinkingBubble(currentAssistantThinkingBubble, null);
+
         currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         startAssistantStream(conversationId, currentProvider);
@@ -1078,25 +1194,9 @@ public class ChatPanel extends JPanel {
             history.remove(history.size() - 1);
         }
 
-        List<Component> wrappers = new ArrayList<>();
-        for (Component child : messagesPanel.getComponents()) {
-            if (!"filler".equals(child.getName())) {
-                wrappers.add(child);
-            }
-        }
-        for (int i = wrappers.size() - 1; i >= keepCount; i--) {
-            messagesPanel.remove(wrappers.get(i));
-        }
-
-        List<MessageBubble> remaining = collectBubbles();
-        assistantBubbles.retainAll(remaining);
-        if (currentAssistantBubble != null && !remaining.contains(currentAssistantBubble)) {
-            currentAssistantBubble = null;
-        }
-
-        addBottomFiller();
-        messagesPanel.revalidate();
-        messagesPanel.repaint();
+        loadHistory(new ArrayList<>(history));
+        currentAssistantThinkingBubble = null;
+        currentAssistantBubble = null;
     }
 
     private void addMessageWrapper(JPanel wrapper) {
@@ -1226,6 +1326,22 @@ public class ChatPanel extends JPanel {
 
         installBubbleContextMenu(bubble);
         addMessageComponent(role, bubble, null);
+    }
+
+    private void addThinkingBubble(ThinkingBubble bubble, String text) {
+        bubble.setAssistantRenderMode(assistantRenderMode);
+        thinkingBubbles.add(bubble);
+
+        if (text != null) {
+            bubble.setText(text);
+        }
+
+        JPanel secondaryInfoWrapper = new JPanel(new BorderLayout());
+        secondaryInfoWrapper.setOpaque(false);
+        secondaryInfoWrapper.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 16));
+        secondaryInfoWrapper.add(bubble, BorderLayout.CENTER);
+
+        addMessageComponent(Role.ASSISTANT, secondaryInfoWrapper, null);
     }
 
     private void addBottomFiller() {
@@ -1511,9 +1627,11 @@ public class ChatPanel extends JPanel {
             cancelStreaming();
         }
 
+        currentAssistantThinkingBubble = null;
         currentAssistantBubble = null;
         history.clear();
         assistantBubbles.clear();
+        thinkingBubbles.clear();
         messagesPanel.removeAll();
         messageRow = 0;
         messagesPanel.revalidate();
@@ -1527,13 +1645,29 @@ public class ChatPanel extends JPanel {
 
     public void loadHistory(List<Message> messages) {
         clearChat(false);
-        for (Message msg : messages) {
+
+        List<Message> normalizedMessages = normalizeLoadedHistory(messages);
+        for (Message msg : normalizedMessages) {
             history.add(msg);
             if (msg.role() == Role.USER) {
                 addUserBubble(msg);
-            } else {
-                addBubble(new MessageBubble(msg.role()), msg.content(), msg.role());
+                continue;
             }
+
+            if (msg.role() == Role.ASSISTANT) {
+                String assistantThinking = normalizeThinkingText(msg.meta() == null
+                        ? ""
+                        : StringUtils.defaultString(msg.meta().assistantThinking()));
+                if (hasVisibleThinkingContent(assistantThinking)) {
+                    addThinkingBubble(new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY), assistantThinking);
+                }
+
+                if (StringUtils.isBlank(msg.content())) {
+                    continue;
+                }
+            }
+
+            addBubble(new MessageBubble(msg.role()), msg.content(), msg.role());
         }
     }
 
@@ -1594,6 +1728,7 @@ public class ChatPanel extends JPanel {
 
         if (rerenderAssistantBubbles) {
             assistantBubbles.forEach(bubble -> bubble.setAssistantRenderMode(mode));
+            thinkingBubbles.forEach(bubble -> bubble.setAssistantRenderMode(mode));
             messagesPanel.revalidate();
             messagesPanel.repaint();
         }
@@ -1713,18 +1848,47 @@ public class ChatPanel extends JPanel {
         }
     }
 
+    private void appendAssistantThinking(StreamingSession session, String text) {
+        if (session == null || !session.isLive()) {
+            return;
+        }
+
+        String normalized = normalizeThinkingText(text);
+        if (normalized.isEmpty()) {
+            return;
+        }
+
+        synchronized (session.thinking) {
+            session.thinking.append(normalized);
+        }
+    }
+
     private void persistAssistantResponse(StreamingSession session, boolean allowBlankContent) {
         String assistantText;
         synchronized (session.response) {
             assistantText = session.response.toString();
         }
 
-        boolean hasContent = !assistantText.isBlank();
+        String assistantThinking;
+        synchronized (session.thinking) {
+            assistantThinking = normalizeThinkingText(session.thinking.toString());
+        }
+
+        boolean hasContent = StringUtils.isNotBlank(assistantText) || hasVisibleThinkingContent(assistantThinking);
         if (!allowBlankContent && !hasContent) {
             return;
         }
 
-        Message assistantMessage = Message.assistant(assistantText);
+        if (!session.persisted.compareAndSet(false, true)) {
+            return;
+        }
+
+        Message assistantMessage = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart(assistantText)),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", assistantThinking)
+        );
         UUID conversationId = session.conversationId;
         if (isVisibleConversation(conversationId)) {
             history.add(assistantMessage);
@@ -1737,6 +1901,119 @@ public class ChatPanel extends JPanel {
         if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
             notifyMessageSubmitted();
         }
+    }
+
+    private void removeCurrentThinkingBubbleIfBlank() {
+        if (currentAssistantThinkingBubble == null || hasVisibleThinkingContent(currentAssistantThinkingBubble.getFullText())) {
+            return;
+        }
+
+        removeMessageComponentFromPanel(currentAssistantThinkingBubble);
+    }
+
+    private boolean hasVisibleThinkingContent(String text) {
+        return StringUtils.isNotBlank(normalizeThinkingText(text));
+    }
+
+    private List<Message> normalizeLoadedHistory(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return emptyList();
+        }
+
+        List<Message> normalized = new ArrayList<>();
+        int index = 0;
+        while (index < messages.size()) {
+            Message message = messages.get(index);
+            if (message.role() != Role.ASSISTANT) {
+                normalized.add(message);
+                index++;
+                continue;
+            }
+
+            int cursor = index;
+            List<Message> assistantRun = new ArrayList<>();
+            while (cursor < messages.size() && messages.get(cursor).role() == Role.ASSISTANT) {
+                assistantRun.add(messages.get(cursor));
+                cursor++;
+            }
+
+            normalized.add(mergeAssistantRun(assistantRun));
+            index = cursor;
+        }
+
+        return normalized;
+    }
+
+    private Message mergeAssistantRun(List<Message> assistantRun) {
+        if (assistantRun == null || assistantRun.isEmpty()) {
+            return Message.assistant("");
+        }
+
+        if (assistantRun.size() == 1) {
+            return assistantRun.getFirst();
+        }
+
+        Message primary = assistantRun.stream()
+                .filter(candidate -> StringUtils.isNotBlank(candidate.content()))
+                .reduce((first, second) -> second)
+                .orElse(assistantRun.getLast());
+
+        String mergedThinking = assistantRun.stream()
+                .map(candidate -> normalizeThinkingText(candidate.meta() == null
+                        ? ""
+                        : StringUtils.defaultString(candidate.meta().assistantThinking())))
+                .filter(this::hasVisibleThinkingContent)
+                .collect(Collectors.joining("\n\n"));
+
+        MessageMeta meta = primary.meta() == null ? MessageMeta.empty() : primary.meta();
+        MessageMeta mergedMeta = new MessageMeta(
+                meta.activeSkills(),
+                meta.fallbackNotices(),
+                meta.cancelled(),
+                meta.error(),
+                mergedThinking
+        );
+
+        return new Message(primary.role(), primary.parts(), primary.timestamp(), mergedMeta);
+    }
+
+    private String normalizeThinkingText(String text) {
+        if (text == null) {
+            return "";
+        }
+
+        String withoutAnsi = ANSI_ESCAPE_PATTERN.matcher(text).replaceAll("");
+        String normalizedLineEndings = withoutAnsi
+                .replace("\r\n", "\n")
+                .replace('\r', '\n');
+        String withoutInvisible = normalizedLineEndings.replace('\u00A0', ' ');
+        String withoutFormatting = UNICODE_FORMAT_PATTERN.matcher(withoutInvisible).replaceAll("");
+
+        return NON_PRINTABLE_PATTERN.matcher(withoutFormatting).replaceAll("");
+    }
+
+    private void removeMessageComponentFromPanel(JComponent component) {
+        if (component == null) {
+            return;
+        }
+
+        Component current = component;
+        while (current != null && current.getParent() != messagesPanel) {
+            current = current.getParent();
+        }
+
+        if (current == null) {
+            return;
+        }
+
+        if (component instanceof ThinkingBubble thinkingBubble) {
+            thinkingBubbles.remove(thinkingBubble);
+        }
+
+        messagesPanel.remove(current);
+        addBottomFiller();
+        messagesPanel.revalidate();
+        messagesPanel.repaint();
     }
 
     private void updateRenderModeToggleSelection() {
@@ -1798,6 +2075,7 @@ public class ChatPanel extends JPanel {
                     currentAssistantBubble.appendText(cancelledMarker);
                 }
                 persistAssistantResponse(session, false);
+                removeCurrentThinkingBubbleIfBlank();
             }
 
             if (session.provider != null) {
@@ -1818,6 +2096,8 @@ public class ChatPanel extends JPanel {
         autoScrollQueued = false;
         activeStreamSessionId = -1L;
         streaming = false;
+        removeCurrentThinkingBubbleIfBlank();
+        currentAssistantThinkingBubble = null;
         currentAssistantBubble = null;
         updateGenerationIndicator();
         SwingUtilities.invokeLater(() -> {
@@ -1993,17 +2273,24 @@ public class ChatPanel extends JPanel {
         volatile UUID conversationId;
         final ProviderService provider;
         final List<Message> historySnapshot;
+        final ReasoningLevel reasoningLevel;
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         volatile SendPhase phase = SendPhase.PREPARING;
         volatile Thread worker;
         volatile boolean finished;
         volatile Long streamSessionId;
 
-        SendJob(long jobId, UUID conversationId, ProviderService provider, List<Message> historySnapshot) {
+        SendJob(long jobId,
+                UUID conversationId,
+                ProviderService provider,
+                List<Message> historySnapshot,
+                ReasoningLevel reasoningLevel
+        ) {
             this.jobId = jobId;
             this.conversationId = conversationId;
             this.provider = provider;
             this.historySnapshot = List.copyOf(historySnapshot);
+            this.reasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
         }
 
         boolean isLive() {
@@ -2028,7 +2315,9 @@ public class ChatPanel extends JPanel {
         final UUID conversationId;
         final ProviderService provider;
         final AtomicBoolean cancelled = new AtomicBoolean(false);
+        final AtomicBoolean persisted = new AtomicBoolean(false);
         final StringBuilder response = new StringBuilder();
+        final StringBuilder thinking = new StringBuilder();
         volatile Thread worker;
         volatile boolean finished = false;
 

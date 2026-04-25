@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +47,26 @@ class InputBarValidationTest {
         Files.deleteIfExists(markdown);
     }
 
+    @Test
+    @DisplayName("Thinking toggle visibility follows model thinking capability")
+    void setThinkingAvailable_whenCapabilityChanges_updatesToggleVisibilityAndState() throws Exception {
+        InputBar subject = new InputBar();
+        JButton thinkingButton = readThinkingButton(subject);
+
+        subject.setThinkingAvailable(true);
+        subject.setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
+
+        assertThat(thinkingButton.isVisible()).isTrue();
+        assertThat(subject.isThinkingEnabled()).isTrue();
+        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+
+        subject.setThinkingAvailable(false);
+
+        assertThat(thinkingButton.isVisible()).isFalse();
+        assertThat(subject.isThinkingEnabled()).isFalse();
+        assertThat(subject.getReasoningLevel()).isEqualTo(ReasoningLevel.OFF);
+    }
+
     @SuppressWarnings("unchecked")
     private Optional<?> invokeToComposerAttachment(InputBar inputBar, Path path) throws Exception {
         Method method = InputBar.class.getDeclaredMethod("toComposerAttachment", Path.class);
@@ -57,5 +78,11 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("validationLabel");
         field.setAccessible(true);
         return (JLabel) field.get(inputBar);
+    }
+
+    private JButton readThinkingButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("thinkingButton");
+        field.setAccessible(true);
+        return (JButton) field.get(inputBar);
     }
 }

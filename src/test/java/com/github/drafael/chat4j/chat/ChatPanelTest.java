@@ -1,25 +1,31 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +66,46 @@ class ChatPanelTest {
         subject.setSelectedModel("UnavailableProvider > some-model");
 
         assertThat(readCurrentProvider(subject)).isNull();
+    }
+
+    @Test
+    @DisplayName("Thinking toggle is visible only for models with reasoning capability")
+    void setSelectedModel_whenReasoningCapabilityChanges_updatesThinkingToggleVisibility() throws Exception {
+        ProviderRegistry.ProviderDef reasoningProvider = new ProviderRegistry.ProviderDef(
+                "OpenRouter",
+                "OPENROUTER_API_KEY",
+                null,
+                List.of("claude-3.7-sonnet"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
+                "LocalTest",
+                "LOCAL_TEST_API_KEY",
+                null,
+                List.of("basic-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
+        customProviders.put(reasoningProvider.name(), reasoningProvider);
+        customProviders.put(plainProvider.name(), plainProvider);
+        setField(subject, "providerMap", customProviders);
+
+        JButton thinkingButton = readThinkingButton(subject.getInputBar());
+
+        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+        assertThat(thinkingButton.isVisible()).isTrue();
+
+        subject.getInputBar().setThinkingEnabled(true);
+        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+
+        subject.setSelectedModel("LocalTest > basic-model");
+        assertThat(thinkingButton.isVisible()).isFalse();
+        assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
     }
 
     @Test
@@ -314,7 +360,9 @@ class ChatPanelTest {
             @Override
             public void streamCompletion(
                     List<Message> history,
+                    ReasoningLevel reasoningLevel,
                     Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
                     Runnable onComplete,
                     Consumer<Exception> onError,
                     BooleanSupplier isCancelled
@@ -349,6 +397,502 @@ class ChatPanelTest {
         assertThat(subject.getHistory()).hasSize(2);
         assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
         assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
+    }
+
+    @Test
+    @DisplayName("Thinking bubble is created only when thinking tokens are emitted")
+    void onSend_whenProviderDoesNotEmitThinking_doesNotRenderThinkingBubble() throws Exception {
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Loading history skips thinking bubbles when thinking text has no visible content")
+    void loadHistory_whenAssistantThinkingIsInvisible_doesNotRenderThinkingBubble() throws Exception {
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "\u200B\u200C\u200D\uFEFF")
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Thinking bubbles loaded from history are collapsed by default")
+    void loadHistory_whenAssistantThinkingExists_rendersCollapsedThinkingBubbleByDefault() throws Exception {
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "## Plan\n- Step 1\n- Step 2")
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+        assertThat(thinkingBubbles.getFirst().isCollapsed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Consecutive assistant artifacts in history are merged into a single assistant message")
+    void loadHistory_whenHistoryContainsConsecutiveAssistantArtifacts_mergesAssistantRun() throws Exception {
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("first answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "first thinking")
+                ),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "artifact thinking")
+                ),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("final answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "final thinking")
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+
+        assertThat(subject.getHistory()).hasSize(2);
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).isEqualTo("final answer");
+        assertThat(assistant.meta().assistantThinking()).contains("first thinking");
+        assertThat(assistant.meta().assistantThinking()).contains("artifact thinking");
+        assertThat(assistant.meta().assistantThinking()).contains("final thinking");
+    }
+
+    @Test
+    @DisplayName("Thinking bubble keeps rendered content visible in preview mode")
+    void loadHistory_whenThinkingContainsMarkdown_rendersVisiblePreviewText() throws Exception {
+        String thinking = "Here's a thinking process:\n\n1. **Step one**\n2. **Step two**";
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", thinking)
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.loadHistory(messages);
+            subject.setAssistantRenderMode(AssistantRenderMode.PREVIEW, true);
+        });
+        flushEdt();
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+
+        List<JEditorPane> panes = findComponents(thinkingBubbles.getFirst(), JEditorPane.class);
+        assertThat(panes).isNotEmpty();
+        assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(1);
+    }
+
+    @Test
+    @DisplayName("Thinking bubble renders without nested inner scroll containers")
+    void onSend_whenProviderEmitsThinking_usesSingleRenderedPath() throws Exception {
+        subject.getInputBar().setThinkingEnabled(true);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("Thinking step one\n\n- detail");
+                onToken.accept("final answer");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+
+        ThinkingBubble thinkingBubble = thinkingBubbles.getFirst();
+        assertThat(findComponents(thinkingBubble, JScrollPane.class)).isEmpty();
+
+        List<JEditorPane> panes = findComponents(thinkingBubble, JEditorPane.class);
+        assertThat(panes).isNotEmpty();
+        assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(5);
+    }
+
+    @Test
+    @DisplayName("Thinking bubble copy button appears on hover")
+    void loadHistory_whenThinkingBubbleHovered_showsCopyButton() throws Exception {
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "reasoning text")
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        ThinkingBubble thinkingBubble = findComponents(messagesPanel, ThinkingBubble.class).getFirst();
+        JButton copyButton = findComponents(thinkingBubble, JButton.class).stream()
+                .filter(button -> "Copy thinking".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(copyButton.isVisible()).isFalse();
+
+        MouseEvent hoverEvent = new MouseEvent(
+                thinkingBubble,
+                MouseEvent.MOUSE_ENTERED,
+                System.currentTimeMillis(),
+                0,
+                2,
+                2,
+                0,
+                false
+        );
+        for (var listener : thinkingBubble.getMouseListeners()) {
+            listener.mouseEntered(hoverEvent);
+        }
+
+        assertThat(copyButton.isVisible()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Clicking thinking title toggles collapse state")
+    void loadHistory_whenThinkingTitleClicked_togglesCollapsedState() throws Exception {
+        List<Message> messages = List.of(
+                Message.user("question"),
+                new Message(
+                        Role.ASSISTANT,
+                        List.of(new TextPart("answer")),
+                        Instant.now(),
+                        new MessageMeta(List.of(), List.of(), false, "", "reasoning text")
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        ThinkingBubble thinkingBubble = findComponents(messagesPanel, ThinkingBubble.class).getFirst();
+        JLabel titleLabel = findComponents(thinkingBubble, JLabel.class).stream()
+                .filter(label -> "Thinking".equals(label.getText()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(thinkingBubble.isCollapsed()).isTrue();
+
+        MouseEvent clickEvent = new MouseEvent(
+                titleLabel,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                2,
+                2,
+                1,
+                false
+        );
+        for (var listener : titleLabel.getMouseListeners()) {
+            listener.mouseClicked(clickEvent);
+        }
+
+        awaitCondition(1, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return !thinkingBubble.isCollapsed();
+        });
+        assertThat(thinkingBubble.isCollapsed()).isFalse();
+
+        for (var listener : titleLabel.getMouseListeners()) {
+            listener.mouseClicked(clickEvent);
+        }
+
+        awaitCondition(1, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return thinkingBubble.isCollapsed();
+        });
+        assertThat(thinkingBubble.isCollapsed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Thinking tokens are ignored when thinking toggle is off")
+    void onSend_whenThinkingToggleIsOff_ignoresThinkingTokens() throws Exception {
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("internal reasoning");
+                onToken.accept("final answer");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).contains("final answer");
+        assertThat(assistant.meta().assistantThinking()).isEmpty();
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Thinking stream ignores non-visible control tokens and keeps visible text")
+    void onSend_whenThinkingIncludesControlSequences_keepsVisibleThinkingText() throws Exception {
+        subject.getInputBar().setThinkingEnabled(true);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("First visible part");
+                onThinkingToken.accept("\u001B[2J\u001B[H\u200B\u200C");
+                onThinkingToken.accept(" and second visible part");
+                onToken.accept("final answer");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.meta().assistantThinking()).contains("First visible part");
+        assertThat(assistant.meta().assistantThinking()).contains("second visible part");
+        assertThat(assistant.meta().assistantThinking()).doesNotContain("\u001B");
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+        assertThat(thinkingBubbles.getFirst().getFullText()).contains("First visible part");
+        assertThat(thinkingBubbles.getFirst().getFullText()).contains("second visible part");
+    }
+
+    @Test
+    @DisplayName("Assistant response is persisted only once even when provider emits late error after complete")
+    void onSend_whenProviderSignalsCompleteThenError_persistsAssistantOnce() throws Exception {
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("analysis");
+                onToken.accept("final");
+                onComplete.run();
+                onError.accept(new RuntimeException("late error"));
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        subject.getInputBar().setThinkingEnabled(true);
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        long assistantCount = subject.getHistory().stream()
+                .filter(message -> message.role() == Role.ASSISTANT)
+                .count();
+        assertThat(assistantCount).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
+    void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersThinkingBubble() throws Exception {
+        subject.getInputBar().setThinkingEnabled(true);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("We should compare enum features.");
+                onToken.accept("Java enums are classes; TypeScript enums compile to JS objects.");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("compare java and ts enums"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).contains("Java enums are classes");
+        assertThat(assistant.meta().assistantThinking()).contains("compare enum features");
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+        assertThat(thinkingBubbles.getFirst().getFullText()).contains("compare enum features");
     }
 
     @Test
@@ -493,7 +1037,9 @@ class ChatPanelTest {
             @Override
             public void streamCompletion(
                     List<Message> history,
+                    ReasoningLevel reasoningLevel,
                     Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
                     Runnable onComplete,
                     Consumer<Exception> onError,
                     BooleanSupplier isCancelled
@@ -546,7 +1092,9 @@ class ChatPanelTest {
             @Override
             public void streamCompletion(
                     List<Message> history,
+                    ReasoningLevel reasoningLevel,
                     Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
                     Runnable onComplete,
                     Consumer<Exception> onError,
                     BooleanSupplier isCancelled
@@ -576,6 +1124,12 @@ class ChatPanelTest {
         Field field = InputBar.class.getDeclaredField("validationLabel");
         field.setAccessible(true);
         return (JLabel) field.get(inputBar);
+    }
+
+    private static JButton readThinkingButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("thinkingButton");
+        field.setAccessible(true);
+        return (JButton) field.get(inputBar);
     }
 
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {

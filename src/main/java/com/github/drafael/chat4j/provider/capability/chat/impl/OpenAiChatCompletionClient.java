@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
@@ -11,8 +12,11 @@ import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.core.JsonValue;
 import com.openai.core.http.StreamResponse;
 import com.openai.models.ChatModel;
+import com.openai.models.Reasoning;
+import com.openai.models.ReasoningEffort;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.chat.completions.ChatCompletionContentPart;
@@ -32,6 +36,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -54,11 +59,14 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     public void streamCompletion(
         ProviderRuntime runtime,
         List<Message> history,
+        ReasoningLevel reasoningLevel,
         Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
         BooleanSupplier isCancelled,
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
+        ReasoningLevel normalizedReasoningLevel = normalizeReasoningLevel(reasoningLevel);
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
                 .baseUrl(runtime.baseUrl());
@@ -69,18 +77,20 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
         OpenAIClient client = builder.build();
         if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
-            streamCopilotCompletion(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            streamCopilotCompletion(runtime, history, client, normalizedReasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
             return;
         }
 
-        streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+        streamWithChatCompletions(runtime, history, client, normalizedReasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
     }
 
     private void streamCopilotCompletion(
             ProviderRuntime runtime,
             List<Message> history,
             OpenAIClient client,
+            ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
+            Consumer<String> onThinkingToken,
             BooleanSupplier isCancelled,
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
@@ -91,7 +101,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
         if (mode == CopilotEndpointMode.RESPONSES) {
             try {
-                streamWithResponses(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+                streamWithResponses(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
                 return;
             } catch (Exception e) {
@@ -99,21 +109,21 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     throw e;
                 }
                 COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
-                streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+                streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
                 return;
             }
         }
 
         try {
-            streamWithChatCompletions(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
         } catch (Exception e) {
             if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
                 throw e;
             }
             COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
-            streamWithResponses(runtime, history, client, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            streamWithResponses(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
         }
     }
@@ -122,7 +132,9 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             ProviderRuntime runtime,
             List<Message> history,
             OpenAIClient client,
+            ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
+            Consumer<String> onThinkingToken,
             BooleanSupplier isCancelled,
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
@@ -131,28 +143,41 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 .map(message -> toParam(message, runtime))
                 .toList();
 
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(ChatModel.of(runtime.selectedModel()))
-                .messages(messages)
-                .build();
+        List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
+        for (int attemptIndex = 0; attemptIndex < attempts.size(); attemptIndex++) {
+            ReasoningLevel attemptLevel = attempts.get(attemptIndex);
+            ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
+                    .model(ChatModel.of(runtime.selectedModel()))
+                    .messages(messages);
+            applyChatCompletionsThinkingHints(paramsBuilder, runtime, attemptLevel);
+            ChatCompletionCreateParams params = paramsBuilder.build();
 
-        try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
-            registerActiveStream.accept(stream);
-            Iterator<ChatCompletionChunk> iterator = stream.stream().iterator();
-            while (iterator.hasNext()) {
-                if (shouldStop(isCancelled)) {
-                    return;
-                }
-                ChatCompletionChunk chunk = iterator.next();
-                for (ChatCompletionChunk.Choice choice : chunk.choices()) {
+            try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
+                registerActiveStream.accept(stream);
+                Iterator<ChatCompletionChunk> iterator = stream.stream().iterator();
+                while (iterator.hasNext()) {
                     if (shouldStop(isCancelled)) {
                         return;
                     }
-                    choice.delta().content().ifPresent(onToken);
+                    ChatCompletionChunk chunk = iterator.next();
+                    for (ChatCompletionChunk.Choice choice : chunk.choices()) {
+                        if (shouldStop(isCancelled)) {
+                            return;
+                        }
+                        choice.delta().content().ifPresent(onToken);
+                        if (attemptLevel.enabled()) {
+                            emitChatCompletionsThinkingDelta(choice, onThinkingToken);
+                        }
+                    }
                 }
+                return;
+            } catch (Exception e) {
+                if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
+                    throw e;
+                }
+            } finally {
+                clearActiveStream.run();
             }
-        } finally {
-            clearActiveStream.run();
         }
     }
 
@@ -160,37 +185,217 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             ProviderRuntime runtime,
             List<Message> history,
             OpenAIClient client,
+            ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
+            Consumer<String> onThinkingToken,
             BooleanSupplier isCancelled,
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
         String input = StringUtils.defaultIfBlank(toResponsesInput(history), "Continue.");
-        ResponseCreateParams params = ResponseCreateParams.builder()
-                .model(runtime.selectedModel())
-                .input(input)
-                .build();
 
-        try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {
-            registerActiveStream.accept(stream);
-            Iterator<ResponseStreamEvent> iterator = stream.stream().iterator();
-            while (iterator.hasNext()) {
-                if (shouldStop(isCancelled)) {
-                    return;
+        List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
+        for (int attemptIndex = 0; attemptIndex < attempts.size(); attemptIndex++) {
+            ReasoningLevel attemptLevel = attempts.get(attemptIndex);
+            ResponseCreateParams.Builder paramsBuilder = ResponseCreateParams.builder()
+                    .model(runtime.selectedModel())
+                    .input(input);
+            applyResponsesReasoningHints(paramsBuilder, attemptLevel);
+            ResponseCreateParams params = paramsBuilder.build();
+
+            try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {
+                registerActiveStream.accept(stream);
+                boolean emittedReasoningSummary = false;
+                Iterator<ResponseStreamEvent> iterator = stream.stream().iterator();
+                while (iterator.hasNext()) {
+                    if (shouldStop(isCancelled)) {
+                        return;
+                    }
+
+                    ResponseStreamEvent event = iterator.next();
+                    event.outputTextDelta()
+                            .map(ResponseTextDeltaEvent::delta)
+                            .filter(StringUtils::isNotBlank)
+                            .ifPresent(onToken);
+
+                    if (attemptLevel.enabled()) {
+                        String reasoningSummaryDelta = event.reasoningSummaryTextDelta()
+                                .map(summaryDelta -> summaryDelta.delta())
+                                .filter(Objects::nonNull)
+                                .orElse(null);
+                        if (reasoningSummaryDelta != null) {
+                            emittedReasoningSummary = true;
+                            onThinkingToken.accept(reasoningSummaryDelta);
+                        }
+
+                        if (!emittedReasoningSummary) {
+                            event.reasoningTextDelta()
+                                    .map(reasoningDelta -> reasoningDelta.delta())
+                                    .filter(Objects::nonNull)
+                                    .ifPresent(onThinkingToken);
+                        }
+                    }
+
+                    if (event.error().isPresent()) {
+                        throw new IllegalStateException(event.error().get().message());
+                    }
                 }
-
-                ResponseStreamEvent event = iterator.next();
-                event.outputTextDelta()
-                        .map(ResponseTextDeltaEvent::delta)
-                        .filter(StringUtils::isNotBlank)
-                        .ifPresent(onToken);
-
-                if (event.error().isPresent()) {
-                    throw new IllegalStateException(event.error().get().message());
+                return;
+            } catch (Exception e) {
+                if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
+                    throw e;
                 }
+            } finally {
+                clearActiveStream.run();
             }
-        } finally {
-            clearActiveStream.run();
+        }
+    }
+
+    private void applyChatCompletionsThinkingHints(
+            ChatCompletionCreateParams.Builder paramsBuilder,
+            ProviderRuntime runtime,
+            ReasoningLevel reasoningLevel
+    ) {
+        if (!reasoningLevel.enabled()) {
+            return;
+        }
+
+        if (shouldEnableOllamaThinking(runtime)) {
+            paramsBuilder.putAdditionalBodyProperty("think", JsonValue.from(true));
+            return;
+        }
+
+        toOpenAiReasoningEffort(reasoningLevel).ifPresent(paramsBuilder::reasoningEffort);
+    }
+
+    private void applyResponsesReasoningHints(ResponseCreateParams.Builder paramsBuilder, ReasoningLevel reasoningLevel) {
+        if (!reasoningLevel.enabled()) {
+            return;
+        }
+
+        Reasoning.Builder reasoningBuilder = Reasoning.builder().summary(Reasoning.Summary.DETAILED);
+        toOpenAiReasoningEffort(reasoningLevel).ifPresent(reasoningBuilder::effort);
+        paramsBuilder.reasoning(reasoningBuilder.build());
+    }
+
+    private Optional<ReasoningEffort> toOpenAiReasoningEffort(ReasoningLevel reasoningLevel) {
+        return switch (reasoningLevel) {
+            case OFF -> Optional.empty();
+            case LOW -> Optional.of(ReasoningEffort.LOW);
+            case MEDIUM -> Optional.of(ReasoningEffort.MEDIUM);
+            case HIGH -> Optional.of(ReasoningEffort.HIGH);
+            case EXTRA_HIGH -> Optional.of(ReasoningEffort.XHIGH);
+        };
+    }
+
+    private List<ReasoningLevel> reasoningAttempts(ReasoningLevel reasoningLevel) {
+        return switch (reasoningLevel) {
+            case OFF -> List.of(ReasoningLevel.OFF);
+            case LOW -> List.of(ReasoningLevel.LOW, ReasoningLevel.OFF);
+            case MEDIUM -> List.of(ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
+            case HIGH -> List.of(ReasoningLevel.HIGH, ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
+            case EXTRA_HIGH -> List.of(
+                    ReasoningLevel.EXTRA_HIGH,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.OFF
+            );
+        };
+    }
+
+    private boolean shouldRetryWithLowerReasoning(List<ReasoningLevel> attempts, int attemptIndex, Exception exception) {
+        if (attemptIndex >= attempts.size() - 1) {
+            return false;
+        }
+
+        return isUnsupportedReasoningEffort(exception);
+    }
+
+    private boolean isUnsupportedReasoningEffort(Exception exception) {
+        String message = flattenErrorMessage(exception).toLowerCase();
+        boolean mentionsReasoning = message.contains("reasoning_effort")
+                || message.contains("reasoning.effort")
+                || message.contains("reasoning effort")
+                || message.contains("reasoning");
+
+        if (!mentionsReasoning) {
+            return false;
+        }
+
+        return message.contains("unsupported")
+                || message.contains("not supported")
+                || message.contains("invalid")
+                || message.contains("unknown");
+    }
+
+    private ReasoningLevel normalizeReasoningLevel(ReasoningLevel reasoningLevel) {
+        return reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+    }
+
+    private boolean shouldEnableOllamaThinking(ProviderRuntime runtime) {
+        if (!StringUtils.equals(runtime.descriptor().name(), "Ollama")) {
+            return false;
+        }
+
+        return ProviderCapabilityResolver.supportsReasoning(
+                runtime.descriptor().capabilities(),
+                runtime.descriptor().name(),
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.apiKey()
+        );
+    }
+
+    private void emitChatCompletionsThinkingDelta(ChatCompletionChunk.Choice choice, Consumer<String> onThinkingToken) {
+        if (choice == null || onThinkingToken == null) {
+            return;
+        }
+
+        boolean emitted = emitThinkingDeltaFromProperties(choice.delta()._additionalProperties(), onThinkingToken);
+        if (!emitted) {
+            emitThinkingDeltaFromProperties(choice._additionalProperties(), onThinkingToken);
+        }
+    }
+
+    private boolean emitThinkingDeltaFromProperties(Map<String, JsonValue> properties, Consumer<String> onThinkingToken) {
+        if (properties == null || properties.isEmpty()) {
+            return false;
+        }
+
+        List<String> keys = List.of("reasoning_content", "reasoning", "thinking", "thought");
+        for (String key : keys) {
+            JsonValue value = properties.get(key);
+            String text = thinkingText(value);
+            if (StringUtils.isBlank(text)) {
+                continue;
+            }
+
+            onThinkingToken.accept(text);
+            return true;
+        }
+
+        return false;
+    }
+
+    private String thinkingText(JsonValue value) {
+        if (value == null) {
+            return null;
+        }
+
+        try {
+            String text = value.convert(String.class);
+            return text == null ? null : text;
+        } catch (Exception e) {
+            String raw = value.toString();
+            if (raw == null) {
+                return null;
+            }
+
+            if (raw.startsWith("\"") && raw.endsWith("\"") && raw.length() >= 2) {
+                return raw.substring(1, raw.length() - 1);
+            }
+            return raw;
         }
     }
 

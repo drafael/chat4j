@@ -4,18 +4,21 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.openai.models.ReasoningEffort;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.UnaryOperator;
 
@@ -109,6 +112,38 @@ class OpenAiChatCompletionClientTest {
         assertThat(snapshot.updatedAtEpochMs()).isPositive();
     }
 
+    @Test
+    @DisplayName("Reasoning attempts degrade progressively from extra high to off")
+    void reasoningAttempts_whenExtraHighSelected_degradesToOff() throws Exception {
+        List<ReasoningLevel> attempts = invokeReasoningAttempts(ReasoningLevel.EXTRA_HIGH);
+
+        assertThat(attempts).containsExactly(
+                ReasoningLevel.EXTRA_HIGH,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.LOW,
+                ReasoningLevel.OFF
+        );
+    }
+
+    @Test
+    @DisplayName("OpenAI reasoning effort maps extra high to xhigh")
+    void toOpenAiReasoningEffort_whenExtraHighSelected_returnsXhigh() throws Exception {
+        Optional<ReasoningEffort> effort = invokeToOpenAiReasoningEffort(ReasoningLevel.EXTRA_HIGH);
+
+        assertThat(effort).contains(ReasoningEffort.XHIGH);
+    }
+
+    @Test
+    @DisplayName("Unsupported reasoning effort detection matches invalid reasoning parameter errors")
+    void isUnsupportedReasoningEffort_whenReasoningEffortIsInvalid_returnsTrue() throws Exception {
+        Exception exception = new IllegalStateException("invalid reasoning_effort: xhigh");
+
+        boolean unsupportedReasoningEffort = invokeIsUnsupportedReasoningEffort(exception);
+
+        assertThat(unsupportedReasoningEffort).isTrue();
+    }
+
     private String invokeToResponsesInputLine(Message message) throws Exception {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("toResponsesInputLine", Message.class);
         method.setAccessible(true);
@@ -119,6 +154,26 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedApiForEndpoint", Exception.class, String.class);
         method.setAccessible(true);
         return (boolean) method.invoke(subject, exception, endpoint);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ReasoningLevel> invokeReasoningAttempts(ReasoningLevel reasoningLevel) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("reasoningAttempts", ReasoningLevel.class);
+        method.setAccessible(true);
+        return (List<ReasoningLevel>) method.invoke(subject, reasoningLevel);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<ReasoningEffort> invokeToOpenAiReasoningEffort(ReasoningLevel reasoningLevel) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("toOpenAiReasoningEffort", ReasoningLevel.class);
+        method.setAccessible(true);
+        return (Optional<ReasoningEffort>) method.invoke(subject, reasoningLevel);
+    }
+
+    private boolean invokeIsUnsupportedReasoningEffort(Exception exception) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedReasoningEffort", Exception.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, exception);
     }
 
     private ProviderRuntime copilotRuntime(List<String> supportedEndpoints) {

@@ -26,6 +26,7 @@ import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import com.github.drafael.chat4j.util.TitleBarUiSupport;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
@@ -133,6 +134,7 @@ import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.PersistedMessageCounter;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
+import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
@@ -467,6 +469,7 @@ public class MainFrame extends JFrame {
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         chatPanel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
+        chatPanel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
         chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
         chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         chatPanel.setActiveConversationId(conversationState.currentConversationId());
@@ -812,6 +815,29 @@ public class MainFrame extends JFrame {
                 defaultAssistantRenderMode,
                 assistantRenderModeState::setDefaultAssistantRenderMode
         );
+
+        applyReasoningLevelSetting();
+    }
+
+    private void applyReasoningLevelSetting() {
+        try {
+            String settingValue = settingsRepo.get(
+                    SettingsKeys.CHAT_REASONING_LEVEL,
+                    ReasoningLevel.OFF.toSettingValue()
+            );
+            ReasoningLevel reasoningLevel = ReasoningLevel.fromSettingValue(settingValue, ReasoningLevel.OFF);
+            chatPanel.getInputBar().setReasoningLevel(reasoningLevel);
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Failed to resolve reasoning level setting", e);
+        }
+    }
+
+    private void persistReasoningLevel(ReasoningLevel reasoningLevel) {
+        try {
+            settingsRepo.put(SettingsKeys.CHAT_REASONING_LEVEL, reasoningLevel.toSettingValue());
+        } catch (Exception e) {
+            LOG.log(Level.FINE, "Failed to persist reasoning level setting", e);
+        }
     }
 
     private void applyMenuBarSetting(boolean enabled) {

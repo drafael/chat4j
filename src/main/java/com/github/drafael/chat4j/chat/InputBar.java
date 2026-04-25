@@ -4,6 +4,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatFileViewFileIcon;
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
 
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import static java.util.Collections.emptyList;
 
@@ -41,6 +43,7 @@ public class InputBar extends JPanel {
     private static final int SHELL_ARC = 20;
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
+    private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_BUTTON_SIZE = 24;
     private static final int MENU_ICON_SIZE = 14;
@@ -53,6 +56,9 @@ public class InputBar extends JPanel {
     private final JPanel chipsPanel;
     private final JPanel composerShell;
     private final JButton attachButton;
+    private final JButton thinkingButton;
+    private final JPopupMenu reasoningLevelMenu = new JPopupMenu();
+    private final Map<ReasoningLevel, JRadioButtonMenuItem> reasoningLevelItems = new LinkedHashMap<>();
     private final JLabel validationLabel;
     private JButton cancelGenerationButton;
     private final JPopupMenu slashPopup = new JPopupMenu();
@@ -64,7 +70,10 @@ public class InputBar extends JPanel {
     private final AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
     private final List<ActionListener> sendListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
+    private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
+    private ReasoningLevel reasoningLevel = ReasoningLevel.OFF;
+    private boolean thinkingAvailable = false;
     private int slashTokenStart = -1;
 
     public InputBar() {
@@ -140,9 +149,21 @@ public class InputBar extends JPanel {
         attachButton.setMinimumSize(new Dimension(24, 24));
         attachButton.addActionListener(e -> openAttachmentPicker());
 
+        thinkingButton = new JButton();
+        thinkingButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        thinkingButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        thinkingButton.setFocusable(false);
+        thinkingButton.setRolloverEnabled(true);
+        thinkingButton.setMargin(new Insets(0, 0, 0, 0));
+        thinkingButton.setPreferredSize(new Dimension(24, 24));
+        thinkingButton.setMinimumSize(new Dimension(24, 24));
+        thinkingButton.addActionListener(e -> toggleReasoningSelector());
+        initializeReasoningLevelMenu();
+
         JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(attachButton);
+        actionsPanel.add(thinkingButton);
 
         validationLabel = new JLabel();
         Fonts.apply(validationLabel, Font.PLAIN, Fonts.SIZE_SMALL);
@@ -244,6 +265,7 @@ public class InputBar extends JPanel {
         super.setEnabled(enabled);
         textArea.setEnabled(enabled);
         attachButton.setEnabled(enabled);
+        thinkingButton.setEnabled(enabled);
     }
 
     public void addSendListener(ActionListener listener) {
@@ -256,6 +278,95 @@ public class InputBar extends JPanel {
 
     public void addCancelGenerationListener(ActionListener listener) {
         cancelGenerationListeners.add(listener);
+    }
+
+    public void addReasoningLevelListener(Consumer<ReasoningLevel> listener) {
+        if (listener != null) {
+            reasoningLevelListeners.add(listener);
+        }
+    }
+
+    public boolean isThinkingEnabled() {
+        return reasoningLevel.enabled();
+    }
+
+    public void setThinkingEnabled(boolean thinkingEnabled) {
+        setReasoningLevel(thinkingEnabled ? ReasoningLevel.MEDIUM : ReasoningLevel.OFF);
+    }
+
+    public ReasoningLevel getReasoningLevel() {
+        return reasoningLevel;
+    }
+
+    public void setReasoningLevel(ReasoningLevel reasoningLevel) {
+        ReasoningLevel normalized = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+        if (this.reasoningLevel == normalized) {
+            return;
+        }
+
+        this.reasoningLevel = normalized;
+        updateThinkingTogglePresentation();
+    }
+
+    public void setThinkingAvailable(boolean thinkingAvailable) {
+        this.thinkingAvailable = thinkingAvailable;
+        if (!thinkingAvailable) {
+            this.reasoningLevel = ReasoningLevel.OFF;
+        }
+        updateThinkingTogglePresentation();
+    }
+
+    public boolean isThinkingAvailable() {
+        return thinkingAvailable;
+    }
+
+    private void initializeReasoningLevelMenu() {
+        ButtonGroup buttonGroup = new ButtonGroup();
+
+        reasoningLevelItems.clear();
+        for (ReasoningLevel level : List.of(
+                ReasoningLevel.OFF,
+                ReasoningLevel.LOW,
+                ReasoningLevel.MEDIUM,
+                ReasoningLevel.HIGH,
+                ReasoningLevel.EXTRA_HIGH
+        )) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(reasoningLabel(level));
+            item.addActionListener(e -> {
+                ReasoningLevel previousLevel = this.reasoningLevel;
+                setReasoningLevel(level);
+                if (previousLevel != this.reasoningLevel) {
+                    notifyReasoningLevelChanged(this.reasoningLevel);
+                }
+            });
+            buttonGroup.add(item);
+            reasoningLevelItems.put(level, item);
+            reasoningLevelMenu.add(item);
+        }
+    }
+
+    private void toggleReasoningSelector() {
+        if (!thinkingAvailable) {
+            return;
+        }
+
+        if (reasoningLevelMenu.isVisible()) {
+            reasoningLevelMenu.setVisible(false);
+            return;
+        }
+
+        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
+        reasoningLevelMenu.show(thinkingButton, 0, -reasoningLevelMenu.getPreferredSize().height - 4);
+    }
+
+    private String reasoningLabel(ReasoningLevel level) {
+        return switch (level) {
+            case OFF -> "Off";
+            case LOW -> "Low";
+            case MEDIUM -> "Medium";
+            case HIGH -> "High";
+            case EXTRA_HIGH -> "Extra High";
+        };
     }
 
     public void requestInputFocus() {
@@ -291,6 +402,12 @@ public class InputBar extends JPanel {
         var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "cancelGeneration");
         for (ActionListener l : cancelGenerationListeners) {
             l.actionPerformed(event);
+        }
+    }
+
+    private void notifyReasoningLevelChanged(ReasoningLevel level) {
+        for (Consumer<ReasoningLevel> listener : reasoningLevelListeners) {
+            listener.accept(level);
         }
     }
 
@@ -937,6 +1054,11 @@ public class InputBar extends JPanel {
             attachButton.setIcon(attachIcon(attachColor));
         }
 
+        if (thinkingButton != null) {
+            thinkingButton.setForeground(attachColor);
+            updateThinkingTogglePresentation();
+        }
+
         if (cancelGenerationButton != null) {
             cancelGenerationButton.setForeground(attachColor);
             cancelGenerationButton.setIcon(stopIcon(attachColor));
@@ -1305,6 +1427,94 @@ public class InputBar extends JPanel {
         }
     }
 
+    private void updateThinkingTogglePresentation() {
+        if (thinkingButton == null) {
+            return;
+        }
+
+        boolean reasoningEnabled = reasoningLevel.enabled();
+
+        thinkingButton.setVisible(thinkingAvailable);
+        if (!thinkingAvailable) {
+            thinkingButton.setSelected(false);
+            thinkingButton.setToolTipText(null);
+            reasoningLevelMenu.setVisible(false);
+            revalidate();
+            repaint();
+            return;
+        }
+
+        Color inactive = UIManager.getColor("Label.foreground");
+        if (inactive == null) {
+            inactive = new Color(120, 120, 120);
+        }
+
+        Color tint = reasoningEnabled ? resolveThinkingActiveTint(inactive) : inactive;
+        thinkingButton.setSelected(reasoningEnabled);
+        thinkingButton.setIcon(thinkingIcon(tint));
+        thinkingButton.setToolTipText("Reasoning");
+        reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
+        revalidate();
+        repaint();
+    }
+
+    private Color resolveThinkingActiveTint(Color inactiveTint) {
+        Color preferred = UIManager.getColor("Button.toolbar.selectedForeground");
+        if (preferred == null) {
+            preferred = UIManager.getColor("ToggleButton.selectedForeground");
+        }
+        if (preferred == null) {
+            preferred = UIManager.getColor("Button.selectedForeground");
+        }
+        if (preferred == null) {
+            preferred = UIManager.getColor("Component.accentColor");
+        }
+        if (preferred == null) {
+            preferred = new Color(84, 142, 255);
+        }
+
+        Color selectedBackground = resolveThinkingSelectedBackground();
+        if (selectedBackground == null) {
+            return preferred;
+        }
+
+        Color candidate = preferred;
+        double bestContrast = contrastRatio(candidate, selectedBackground);
+
+        double inactiveContrast = contrastRatio(inactiveTint, selectedBackground);
+        if (inactiveContrast > bestContrast) {
+            candidate = inactiveTint;
+            bestContrast = inactiveContrast;
+        }
+
+        double whiteContrast = contrastRatio(Color.WHITE, selectedBackground);
+        if (whiteContrast > bestContrast) {
+            candidate = Color.WHITE;
+            bestContrast = whiteContrast;
+        }
+
+        double blackContrast = contrastRatio(Color.BLACK, selectedBackground);
+        if (blackContrast > bestContrast) {
+            candidate = Color.BLACK;
+        }
+
+        return candidate;
+    }
+
+    private Color resolveThinkingSelectedBackground() {
+        Color background = UIManager.getColor("Button.toolbar.selectedBackground");
+        if (background == null) {
+            background = UIManager.getColor("ToggleButton.selectedBackground");
+        }
+        if (background == null) {
+            background = UIManager.getColor("Button.selectedBackground");
+        }
+        if (background == null) {
+            background = UIManager.getColor("Component.accentColor");
+        }
+        return background;
+    }
+
     private Icon chipIcon(String path, Color tint) {
         return svgIcon(path, CHIP_ICON_SIZE, tint);
     }
@@ -1312,6 +1522,11 @@ public class InputBar extends JPanel {
     private Icon attachIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/paperclip.svg", ATTACH_ICON_SIZE, tint);
         return icon != null ? icon : new FlatFileViewFileIcon();
+    }
+
+    private Icon thinkingIcon(Color tint) {
+        Icon icon = svgIcon("/icons/sidebar/brain.svg", THINKING_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.questionIcon");
     }
 
     private Icon stopIcon(Color tint) {

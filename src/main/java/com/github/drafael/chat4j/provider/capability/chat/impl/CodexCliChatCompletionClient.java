@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.capability.chat.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
@@ -56,7 +57,9 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     @Override
     public void streamCompletion(ProviderRuntime runtime,
                                  List<Message> history,
+                                 ReasoningLevel reasoningLevel,
                                  Consumer<String> onToken,
+                                 Consumer<String> onThinkingToken,
                                  BooleanSupplier isCancelled,
                                  Consumer<AutoCloseable> registerActiveStream,
                                  Runnable clearActiveStream

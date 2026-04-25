@@ -56,12 +56,12 @@ final class MarkdownCssBuilder {
                 background: %s;
                 color: %s;
             }
-            table {
+            table.md-table {
                 border-collapse: collapse;
                 margin: 6px 0;
                 width: 100%%;
             }
-            th, td {
+            table.md-table th, table.md-table td {
                 border-bottom: 1px solid %s;
                 padding: 6px 10px;
                 word-wrap: break-word;

@@ -12,6 +12,7 @@ import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
@@ -37,7 +38,9 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
     public void streamCompletion(
         ProviderRuntime runtime,
         List<Message> history,
+        ReasoningLevel reasoningLevel,
         Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
         BooleanSupplier isCancelled,
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
@@ -62,6 +65,10 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                 .findFirst()
                 .ifPresent(message -> paramsBuilder.system(message.content()));
 
+        if (reasoningLevel.enabled() && supportsReasoning(runtime)) {
+            paramsBuilder.enabledThinking(reasoningBudget(reasoningLevel));
+        }
+
         MessageCreateParams params = paramsBuilder.build();
 
         try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
@@ -72,10 +79,22 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                     return;
                 }
                 RawMessageStreamEvent event = iterator.next();
-                if (event.isContentBlockDelta()
-                        && event.asContentBlockDelta().delta().isText()
-                ) {
-                    onToken.accept(event.asContentBlockDelta().delta().asText().text());
+                if (!event.isContentBlockDelta()) {
+                    continue;
+                }
+
+                if (event.asContentBlockDelta().delta().isText()) {
+                    String delta = event.asContentBlockDelta().delta().asText().text();
+                    if (delta != null && !delta.isEmpty()) {
+                        onToken.accept(delta);
+                    }
+                }
+
+                if (reasoningLevel.enabled() && event.asContentBlockDelta().delta().isThinking()) {
+                    String delta = event.asContentBlockDelta().delta().asThinking().thinking();
+                    if (delta != null && !delta.isEmpty()) {
+                        onThinkingToken.accept(delta);
+                    }
                 }
             }
         } finally {
@@ -170,6 +189,26 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
     private boolean supportsNativeImages(ProviderRuntime runtime) {
         return ProviderCapabilityResolver.supportsImageInput(
+                runtime.descriptor().capabilities(),
+                runtime.descriptor().name(),
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.apiKey()
+        );
+    }
+
+    private int reasoningBudget(ReasoningLevel reasoningLevel) {
+        return switch (reasoningLevel) {
+            case OFF -> 0;
+            case LOW -> 1024;
+            case MEDIUM -> 2048;
+            case HIGH -> 4096;
+            case EXTRA_HIGH -> 8192;
+        };
+    }
+
+    private boolean supportsReasoning(ProviderRuntime runtime) {
+        return ProviderCapabilityResolver.supportsReasoning(
                 runtime.descriptor().capabilities(),
                 runtime.descriptor().name(),
                 runtime.selectedModel(),

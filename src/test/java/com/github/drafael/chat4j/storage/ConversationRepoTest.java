@@ -1,8 +1,10 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
+import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +15,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -76,6 +79,33 @@ class ConversationRepoTest {
         assertThat(countRows(dataSource, "messages")).isEqualTo(1);
         assertThat(countRows(dataSource, "attachments")).isEqualTo(1);
         assertThat(countRows(dataSource, "message_attachments")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Assistant thinking metadata is serialized into message meta JSON")
+    void addMessage_whenAssistantContainsThinking_persistsAssistantThinkingMeta() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-thinking-meta");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+
+        ConversationRepo subject = new ConversationRepo(dataSource);
+
+        Message message = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                Instant.now(),
+                new MessageMeta(List.of(), List.of(), false, "", "Thinking trace")
+        );
+
+        subject.addMessage(conversationId, message);
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT meta_json FROM messages LIMIT 1");
+             ResultSet rs = statement.executeQuery()
+        ) {
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getString(1)).contains("\"assistantThinking\":\"Thinking trace\"");
+        }
     }
 
     private static DataSource createDataSource(String dbName) {

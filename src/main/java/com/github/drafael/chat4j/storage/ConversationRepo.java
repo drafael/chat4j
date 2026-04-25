@@ -448,6 +448,7 @@ public class ConversationRepo {
 
         node.put("cancelled", value.cancelled());
         node.put("error", value.error());
+        node.put("assistantThinking", value.assistantThinking());
         return node.toString();
     }
 
@@ -532,7 +533,8 @@ public class ConversationRepo {
                     activeSkills,
                     fallbackNotices,
                     node.path("cancelled").asBoolean(false),
-                    node.path("error").asText("")
+                    node.path("error").asText(""),
+                    node.path("assistantThinking").asText("")
             );
         } catch (Exception e) {
             return MessageMeta.empty();

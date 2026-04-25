@@ -133,7 +133,7 @@ final class MarkdownBlockRenderer {
             tableLines.add(cursor.next().trim());
         }
 
-        state.html.append("<table width=\"100%\" cellpadding=\"6\" cellspacing=\"0\" border=\"0\"")
+        state.html.append("<table class=\"md-table\" width=\"100%\" cellpadding=\"6\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
         boolean headerDone = false;
@@ -228,25 +228,26 @@ final class MarkdownBlockRenderer {
     }
 
     private static void appendCodeBlock(StringBuilder html, String code, String lang, Palette palette) {
-        int languageFontSize = Fonts.scale(Fonts.SIZE_MICRO);
+        int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
         int codeFontSize = CodeFontResolver.resolveCodeFontSize();
+        String blockBorder = palette.hrColor();
 
         html.append("<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
         if (lang != null && !lang.isEmpty()) {
             html.append("<tr><td bgcolor=\"").append(palette.codeHeaderBg()).append("\"")
-                    .append(" style=\"border: 1px solid ").append(palette.codeBorder())
-                    .append("; border-bottom: none; padding: 4px 10px; font-size: ").append(languageFontSize).append("px;\">");
+                    .append(" style=\"border: 1px solid ").append(blockBorder)
+                    .append("; border-bottom: none; padding: 2px 8px; font-size: ").append(languageFontSize).append("px;\">");
             html.append("<font face=\"").append(palette.baseFontFamilyAttr()).append("\" color=\"")
-                    .append(palette.langColor()).append("\">")
+                    .append(palette.mutedTextColor()).append("\">")
                     .append(lang)
                     .append("</font>");
             html.append("</td></tr>");
         }
 
         html.append("<tr><td bgcolor=\"").append(palette.codeBg()).append("\"")
-                .append(" style=\"border: 1px solid ").append(palette.codeBorder())
+                .append(" style=\"border: 1px solid ").append(blockBorder)
                 .append("; padding: 8px 12px;\">");
         html.append("<pre style=\"margin: 0;\"><font face=\"")
                 .append(palette.monoFontFamilyAttr()).append("\" color=\"")
