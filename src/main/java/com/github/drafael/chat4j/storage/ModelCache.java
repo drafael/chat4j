@@ -1,9 +1,12 @@
 package com.github.drafael.chat4j.storage;
 
+import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import com.github.drafael.chat4j.provider.support.ModelOrdering;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -13,6 +16,7 @@ import java.util.Optional;
 
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class ModelCache {
 
     private final Path cacheDir;
@@ -36,6 +40,7 @@ public class ModelCache {
         try {
             List<String> lines = Files.readAllLines(file);
             if (lines.size() < 2) {
+                log.warn("Model cache file is malformed for provider {}", providerName);
                 return Optional.empty();
             }
 
@@ -43,12 +48,14 @@ public class ModelCache {
             try {
                 fetchedAt = Instant.parse(lines.getFirst());
             } catch (DateTimeParseException e) {
+                log.warn("Model cache timestamp is invalid for provider {}: {}", providerName, ExceptionUtils.getMessage(e));
                 return Optional.empty();
             }
 
             List<String> models = sanitizeModels(providerName, lines.subList(1, lines.size()));
             return Optional.of(new CacheSnapshot(fetchedAt, models));
         } catch (IOException e) {
+            log.warn("Failed to read model cache for provider {}: {}", providerName, ExceptionUtils.getMessage(e));
             return Optional.empty();
         }
     }
@@ -66,7 +73,7 @@ public class ModelCache {
             lines.addAll(sanitizeModels(providerName, models));
             Files.write(file, lines);
         } catch (IOException e) {
-            // Cache write failure is non-critical
+            log.warn("Failed to write model cache for provider {}: {}", providerName, ExceptionUtils.getMessage(e));
         }
     }
 

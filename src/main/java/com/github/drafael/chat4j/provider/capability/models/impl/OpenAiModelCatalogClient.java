@@ -11,6 +11,9 @@ import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.models.models.Model;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -27,14 +30,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
-
-import org.apache.commons.lang3.StringUtils;
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private static final Pattern CODEX_SLUG_PATTERN = Pattern.compile("\\\"slug\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
@@ -42,7 +43,6 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
-    private static final Logger LOG = Logger.getLogger(OpenAiModelCatalogClient.class.getName());
     private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
     private static final String COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.allowCustomTokenEndpoint";
@@ -94,6 +94,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
             return models;
         } catch (Exception e) {
+            log.debug("Primary model listing failed for {}: {}",
+                    runtime.descriptor().name(), ExceptionUtils.getMessage(e));
             return fallbackModels(runtime);
         }
     }
@@ -101,13 +103,21 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private List<String> fallbackModels(ProviderRuntime runtime) {
         CatalogFetchResult httpFallback = fetchModelsFromHttp(runtime, runtime.apiKey(), false);
         if (!httpFallback.modelIds().isEmpty()) {
+            log.info("Recovered model listing for {} via HTTP fallback ({} models)",
+                    runtime.descriptor().name(), httpFallback.modelIds().size());
             return httpFallback.modelIds();
         }
 
         if ("OpenAI Codex".equals(runtime.descriptor().name())) {
-            return readCodexModelsFromCache();
+            List<String> codexCachedModels = readCodexModelsFromCache();
+            if (!codexCachedModels.isEmpty()) {
+                log.info("Recovered model listing for OpenAI Codex via local cache ({} models)",
+                        codexCachedModels.size());
+                return codexCachedModels;
+            }
         }
 
+        log.warn("No models available for {} after fallback attempts", runtime.descriptor().name());
         return emptyList();
     }
 
@@ -187,6 +197,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     isCopilotProvider(runtime) ? toCopilotModelMetadata(selectableEntries) : emptyList()
             );
         } catch (Exception e) {
+            log.debug("HTTP model listing failed for {}: {}",
+                    runtime.descriptor().name(), ExceptionUtils.getMessage(e));
             return CatalogFetchResult.empty();
         }
     }
@@ -227,6 +239,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             String token = root.path("token").asText("");
             return StringUtils.isBlank(token) ? null : token.trim();
         } catch (Exception e) {
+            log.debug("Copilot token exchange failed: {}", ExceptionUtils.getMessage(e));
             return null;
         }
     }
@@ -241,7 +254,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             return configuredEndpoint;
         }
 
-        LOG.warning(() -> "Ignoring untrusted Copilot token endpoint override: %s".formatted(configuredEndpoint));
+        log.warn("Ignoring untrusted Copilot token endpoint override: {}", configuredEndpoint);
         return COPILOT_TOKEN_ENDPOINT_DEFAULT;
     }
 
@@ -408,6 +421,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
             return ModelOrdering.sanitizeAndSortByRecency(slugs.stream().toList());
         } catch (Exception e) {
+            log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
             return emptyList();
         }
     }

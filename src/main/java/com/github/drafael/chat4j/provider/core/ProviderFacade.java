@@ -7,12 +7,14 @@ import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
 
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class ProviderFacade {
 
     private final CredentialStrategy credentialStrategy;
@@ -119,6 +121,13 @@ public class ProviderFacade {
             case CODEX_OAUTH -> resolveCodexAuthApiKey(selectedModel);
             case ENV_VAR -> credentialStrategy.resolveApiKey(effectiveEnvVar, descriptor.fallbackApiKey());
         };
+
+        log.debug("Resolved provider runtime: provider={} authType={} selectedModel={} baseUrl={} credentialReady={}",
+                descriptor.name(),
+                descriptor.authType(),
+                StringUtils.defaultIfBlank(selectedModel, "none"),
+                baseUrl,
+                StringUtils.isNotBlank(apiKey));
 
         return new ProviderRuntime(
             descriptor,

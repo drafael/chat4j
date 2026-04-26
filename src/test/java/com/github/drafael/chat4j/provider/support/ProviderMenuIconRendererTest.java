@@ -1,15 +1,23 @@
 package com.github.drafael.chat4j.provider.support;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.Icon;
+import javax.swing.ImageIcon;
 import java.awt.Color;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ProviderMenuIconRendererTest {
+
+    @AfterEach
+    void tearDown() {
+        System.clearProperty("apple.laf.useScreenMenuBar");
+        ProviderMenuIconRenderer.clearCache();
+    }
 
     @Test
     @DisplayName("Resolve returns null for unknown provider")
@@ -35,6 +43,16 @@ class ProviderMenuIconRendererTest {
         assertThatThrownBy(() -> ProviderMenuIconRenderer.resolve("OpenAI", 0, Color.GRAY, ProviderMenuIconRenderer.class))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("size must be positive");
+    }
+
+    @Test
+    @DisplayName("Resolve returns retina-friendly image icon when screen menu bar is enabled")
+    void resolve_whenScreenMenuBarEnabled_returnsImageIcon() {
+        System.setProperty("apple.laf.useScreenMenuBar", "true");
+
+        Icon icon = ProviderMenuIconRenderer.resolve("OpenAI", 16, Color.GRAY, ProviderMenuIconRendererTest.class);
+
+        assertThat(icon).isInstanceOf(ImageIcon.class);
     }
 
     @Test

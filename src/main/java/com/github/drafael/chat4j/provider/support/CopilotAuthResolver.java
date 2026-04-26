@@ -2,7 +2,9 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+@Slf4j
 public class CopilotAuthResolver {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -113,11 +116,13 @@ public class CopilotAuthResolver {
     }
 
     public CopilotAuthActionResult login() {
+        log.debug("Starting GitHub Copilot OAuth login");
         try {
             CopilotLoginChallenge challenge = beginLogin();
             return completeLogin(challenge);
         } catch (Exception e) {
-            return CopilotAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("GitHub Copilot OAuth login failed: {}", ExceptionUtils.getMessage(e));
+            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
@@ -162,9 +167,11 @@ public class CopilotAuthResolver {
             }
 
             storeChat4jToken(accessToken, deviceCode.oauthScopes());
+            log.info("GitHub Copilot OAuth login completed");
             return CopilotAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
         } catch (Exception e) {
-            return CopilotAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("GitHub Copilot OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
+            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
@@ -176,9 +183,11 @@ public class CopilotAuthResolver {
             }
 
             Files.delete(tokenFile);
+            log.info("GitHub Copilot OAuth logout completed");
             return CopilotAuthActionResult.success("Logged out from Chat4J OAuth session.");
         } catch (Exception e) {
-            return CopilotAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("GitHub Copilot OAuth logout failed: {}", ExceptionUtils.getMessage(e));
+            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 

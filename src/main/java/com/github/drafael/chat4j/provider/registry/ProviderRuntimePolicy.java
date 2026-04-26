@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 
+@Slf4j
 final class ProviderRuntimePolicy {
 
     record RuntimeConfig(boolean enabled, String baseUrl) {
@@ -105,14 +107,22 @@ final class ProviderRuntimePolicy {
      * performing expensive checks sequentially.
      */
     void warmOAuthStatusCache(List<ProviderDefinition> providers) {
-        List<CompletableFuture<Void>> futures = providers.stream()
+        List<ProviderDefinition> oauthProviders = providers.stream()
                 .filter(this::isEnabled)
                 .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH
                         || p.descriptor().authType() == AuthType.COPILOT_OAUTH
                         || p.descriptor().authType() == AuthType.CODEX_OAUTH)
+                .toList();
+
+        List<CompletableFuture<Void>> futures = oauthProviders.stream()
                 .map(p -> CompletableFuture.runAsync(() -> hasRequiredCredentials(p)))
                 .toList();
         futures.forEach(CompletableFuture::join);
+
+        long authorizedCount = oauthProviders.stream()
+                .filter(this::hasRequiredCredentials)
+                .count();
+        log.debug("Warmed OAuth status cache: providers={} authorized={}", oauthProviders.size(), authorizedCount);
     }
 
     String effectiveBaseUrl(ProviderDefinition providerDefinition) {

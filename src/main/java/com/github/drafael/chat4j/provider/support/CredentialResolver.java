@@ -48,6 +48,10 @@ public final class CredentialResolver {
                 .anyMatch(StringUtils::isNotBlank);
     }
 
+    public static List<String> supportedProviderEnvVars() {
+        return SUPPORTED_PROVIDER_ENV_VARS;
+    }
+
     public static boolean hasRequiredCredentials(String envVar) {
         if (envVar == null) {
             return true;

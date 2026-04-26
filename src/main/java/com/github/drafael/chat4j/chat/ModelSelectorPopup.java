@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import lombok.extern.slf4j.Slf4j;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 
 import javax.swing.*;
@@ -32,7 +33,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiConsumer;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
+@Slf4j
 public class ModelSelectorPopup extends JDialog {
 
     private static final Duration MODEL_REFRESH_TTL = Duration.ofHours(12);
@@ -734,7 +737,8 @@ public class ModelSelectorPopup extends JDialog {
                     List<String> fetched = sanitizeModels(entry.name(), modelCacheService.getModels(entry.name()));
                     SwingUtilities.invokeLater(() -> refreshProvider(entry.name(), fetched));
                 } catch (Exception e) {
-                    // Fetch failed — keep showing cached/seed models
+                    log.warn("Failed to refresh models for provider {}. Keeping cached/seed models: {}",
+                            entry.name(), ExceptionUtils.getMessage(e));
                 } finally {
                     modelCacheService.clearRefreshInFlight(entry.name());
                     modelCacheService.logMetricsSnapshot("refresh-complete:%s".formatted(entry.name()));

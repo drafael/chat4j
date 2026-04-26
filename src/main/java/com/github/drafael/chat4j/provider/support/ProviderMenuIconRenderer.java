@@ -5,14 +5,21 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.Icon;
+import javax.swing.ImageIcon;
 import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.RenderingHints;
+import java.awt.image.BaseMultiResolutionImage;
+import java.awt.image.BufferedImage;
 import java.net.URL;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class ProviderMenuIconRenderer {
 
-    private static final int PROVIDER_ICON_ALPHA_MIN = 210;
+    private static final String SCREEN_MENU_BAR_PROPERTY = "apple.laf.useScreenMenuBar";
+
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
@@ -43,7 +50,13 @@ public final class ProviderMenuIconRenderer {
         }
 
         Color effectiveTint = opaqueColor(tintColor, new Color(60, 60, 60));
-        ProviderMenuIconKey cacheKey = new ProviderMenuIconKey(iconPath, size, effectiveTint.getRGB());
+        boolean screenMenuBarEnabled = Boolean.parseBoolean(System.getProperty(SCREEN_MENU_BAR_PROPERTY, "false"));
+        ProviderMenuIconKey cacheKey = new ProviderMenuIconKey(
+                iconPath,
+                size,
+                effectiveTint.getRGB(),
+                screenMenuBarEnabled
+        );
         return PROVIDER_ICON_CACHE.computeIfAbsent(cacheKey, key -> {
             URL url = resourceAnchor.getResource(key.path());
             if (url == null) {
@@ -51,12 +64,12 @@ public final class ProviderMenuIconRenderer {
             }
 
             Color iconColor = new Color(key.fallbackRgb(), true);
-            FlatSVGIcon icon = new FlatSVGIcon(url).derive(key.size(), key.size());
-            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                int alpha = color.getAlpha() == 0 ? 0 : Math.max(color.getAlpha(), PROVIDER_ICON_ALPHA_MIN);
-                return new Color(iconColor.getRed(), iconColor.getGreen(), iconColor.getBlue(), alpha);
-            }));
-            return icon.hasFound() ? icon : null;
+            if (key.screenMenuBarEnabled()) {
+                return multiResolutionIcon(url, key.size(), iconColor);
+            }
+
+            FlatSVGIcon icon = svgIcon(url, key.size(), iconColor);
+            return icon != null && icon.hasFound() ? icon : null;
         });
     }
 
@@ -70,6 +83,51 @@ public final class ProviderMenuIconRenderer {
         PROVIDER_ICON_CACHE.clear();
     }
 
-    private record ProviderMenuIconKey(String path, int size, int fallbackRgb) {
+    private static Icon multiResolutionIcon(URL url, int size, Color iconColor) {
+        BufferedImage oneX = renderImage(url, size, iconColor);
+        if (oneX == null) {
+            return null;
+        }
+
+        BufferedImage twoX = renderImage(url, size * 2, iconColor);
+        if (twoX == null) {
+            return new ImageIcon(oneX);
+        }
+
+        Image image = new BaseMultiResolutionImage(oneX, twoX);
+        return new ImageIcon(image);
+    }
+
+    private static BufferedImage renderImage(URL url, int size, Color iconColor) {
+        FlatSVGIcon icon = svgIcon(url, size, iconColor);
+        if (icon == null || !icon.hasFound()) {
+            return null;
+        }
+
+        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            icon.paintIcon(null, graphics, 0, 0);
+        } finally {
+            graphics.dispose();
+        }
+
+        return image;
+    }
+
+    private static FlatSVGIcon svgIcon(URL url, int size, Color iconColor) {
+        FlatSVGIcon icon = new FlatSVGIcon(url).derive(size, size);
+        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> new Color(
+                iconColor.getRed(),
+                iconColor.getGreen(),
+                iconColor.getBlue(),
+                color.getAlpha())
+        ));
+        return icon;
+    }
+
+    private record ProviderMenuIconKey(String path, int size, int fallbackRgb, boolean screenMenuBarEnabled) {
     }
 }

@@ -53,6 +53,8 @@ import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
 import com.formdev.flatlaf.util.SystemInfo;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
 import com.github.drafael.chat4j.settings.AppearancePanel;
@@ -139,20 +141,21 @@ import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.desktop.QuitResponse;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
+import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.toMap;
+
+@Slf4j
 public class MainFrame extends JFrame {
-
-    private static final Logger LOG = Logger.getLogger(MainFrame.class.getName());
     private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
 
     private final ChatPanel chatPanel;
@@ -559,7 +562,7 @@ public class MainFrame extends JFrame {
             }
             desktop.setQuitHandler((e, response) -> {
                 response.cancelQuit();
-                requestQuit(response);
+                requestWindowClose();
             });
         }
 
@@ -631,7 +634,7 @@ public class MainFrame extends JFrame {
                         sidebarPanel::selectConversation,
                         selectCreatedConversation
                 ),
-                error -> LOG.log(Level.WARNING, "Failed to persist current conversation", error)
+                error -> warnWithoutStack("Failed to persist current conversation", error)
         );
     }
 
@@ -642,34 +645,46 @@ public class MainFrame extends JFrame {
         });
     }
 
-    private void requestQuit(QuitResponse quitResponse) {
-        runShutdownFlow(quitResponse::performQuit);
-    }
-
     private void runShutdownFlow(Runnable finishAction) {
-        shutdownFlowCoordinator.request(
-                shutdownState::shutdownInProgress,
-                () -> shutdownState.setShutdownInProgress(true),
-                SHUTDOWN_SAVE_TIMEOUT_MILLIS,
-                () -> {
-                    UIManager.removePropertyChangeListener(lookAndFeelListener);
-                    chatPanel.cancelStreaming();
-                    saveWindowState();
-                },
-                () -> {
-                    ShutdownSaveSnapshot saveSnapshot = captureShutdownSaveSnapshot();
-                    return () -> currentConversationSaveCoordinator.save(
-                            saveSnapshot.currentConversationId(),
-                            saveSnapshot.pendingUnsavedConversationRenderMode(),
-                            saveSnapshot.history(),
-                            saveSnapshot.selectedModelKey(),
-                            saveSnapshot.currentAssistantRenderMode()
-                    );
-                },
-                finishAction,
-                () -> LOG.warning("Timed out persisting current conversation during shutdown"),
-                error -> LOG.log(Level.WARNING, "Failed to persist current conversation during shutdown", error)
-        );
+        try {
+            shutdownFlowCoordinator.request(
+                    shutdownState::shutdownInProgress,
+                    () -> shutdownState.setShutdownInProgress(true),
+                    SHUTDOWN_SAVE_TIMEOUT_MILLIS,
+                    () -> {
+                        try {
+                            UIManager.removePropertyChangeListener(lookAndFeelListener);
+                            chatPanel.cancelStreaming();
+                            saveWindowState();
+                        } catch (Exception e) {
+                            warnWithoutStack("Failed during pre-shutdown actions", e);
+                        }
+                    },
+                    () -> {
+                        try {
+                            ShutdownSaveSnapshot saveSnapshot = captureShutdownSaveSnapshot();
+                            return () -> currentConversationSaveCoordinator.save(
+                                    saveSnapshot.currentConversationId(),
+                                    saveSnapshot.pendingUnsavedConversationRenderMode(),
+                                    saveSnapshot.history(),
+                                    saveSnapshot.selectedModelKey(),
+                                    saveSnapshot.currentAssistantRenderMode()
+                            );
+                        } catch (Exception e) {
+                            warnWithoutStack("Failed to capture shutdown save snapshot", e);
+                            return () -> {
+                            };
+                        }
+                    },
+                    finishAction,
+                    () -> log.warn("Timed out persisting current conversation during shutdown"),
+                    error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
+            );
+        } catch (Exception e) {
+            shutdownState.setShutdownInProgress(false);
+            warnWithoutStack("Shutdown flow setup failed, exiting without persistence", e);
+            finishAction.run();
+        }
     }
 
     private ShutdownSaveSnapshot captureShutdownSaveSnapshot() {
@@ -733,11 +748,11 @@ public class MainFrame extends JFrame {
                         sidebarPanel::refresh,
                         sidebarPanel::selectConversation
                 ),
-                (conversationId, error) -> LOG.log(
-                        Level.WARNING,
-                        "Failed to persist assistant message for conversation %s".formatted(conversationId),
-                        error
-                )
+                (conversationId, error) -> {
+                    String message = "Failed to persist assistant message for conversation %s"
+                            .formatted(conversationId);
+                    warnWithoutStack(message, error);
+                }
         );
     }
 
@@ -790,11 +805,158 @@ public class MainFrame extends JFrame {
     }
 
     private void applyProviderSettings() {
-        providerSettingsApplyCoordinator.apply(
-                ProviderRegistry.allProviders(),
-                chatPanel::refreshProviders,
-                this::markModelsMenuDirty
+        List<ProviderRegistry.ProviderDef> allProviders = ProviderRegistry.allProviders();
+
+        try {
+            providerSettingsApplyCoordinator.apply(
+                    allProviders,
+                    chatPanel::refreshProviders,
+                    this::markModelsMenuDirty
+            );
+            logProviderAndModelSummary();
+        } catch (Exception e) {
+            warnWithoutStack("Failed to apply provider settings", e);
+            throw e;
+        }
+    }
+
+    private void logProviderAndModelSummary() {
+        try {
+            List<ProviderRegistry.ProviderStatus> statuses = ProviderRegistry.providerStatuses().stream()
+                    .sorted((left, right) -> left.name().compareToIgnoreCase(right.name()))
+                    .toList();
+            List<ProviderRegistry.ProviderDef> availableProviders = ProviderRegistry.availableProviders();
+            Map<String, Boolean> localAvailabilityByProvider =
+                    providerAvailabilityResolver.resolveMenuAvailability(ProviderRegistry.allProviders());
+            List<ProviderRegistry.ProviderStatus> effectiveStatuses = statuses.stream()
+                    .map(status -> new ProviderRegistry.ProviderStatus(
+                            status.name(),
+                            status.enabled(),
+                            status.credentialReady(),
+                            localAvailabilityByProvider.getOrDefault(status.name(), status.available())
+                    ))
+                    .toList();
+            List<String> availableProviderNames = effectiveStatuses.stream()
+                    .filter(ProviderRegistry.ProviderStatus::available)
+                    .map(ProviderRegistry.ProviderStatus::name)
+                    .toList();
+
+            Map<String, List<String>> modelsByProvider = providerModelsResolver.resolve(availableProviders);
+            Map<String, Integer> modelCountByProvider = effectiveStatuses.stream()
+                    .collect(toMap(
+                            ProviderRegistry.ProviderStatus::name,
+                            status -> modelsByProvider.getOrDefault(status.name(), emptyList()).size(),
+                            (existing, replacement) -> existing,
+                            LinkedHashMap::new
+                    ));
+
+            long authenticatedCount = effectiveStatuses.stream()
+                    .filter(ProviderRegistry.ProviderStatus::credentialReady)
+                    .count();
+            long availableCount = effectiveStatuses.stream()
+                    .filter(ProviderRegistry.ProviderStatus::available)
+                    .count();
+            int totalModels = modelsByProvider.values().stream()
+                    .mapToInt(List::size)
+                    .sum();
+
+            log.info(
+                    "Provider/model snapshot: resolved={} authenticated={} available={} totalModels={}",
+                    statuses.size(),
+                    authenticatedCount,
+                    availableCount,
+                    totalModels
+            );
+            log.info("\n{}", buildProviderStatusTable(effectiveStatuses, modelCountByProvider));
+            log.info("\n{}", buildModelCountTable(modelsByProvider));
+
+            List<String> availableWithoutModels = availableProviderNames.stream()
+                    .filter(providerName -> modelsByProvider.getOrDefault(providerName, emptyList()).isEmpty())
+                    .toList();
+            if (!availableWithoutModels.isEmpty()) {
+                log.warn("Available providers without models: {}", joinNames(availableWithoutModels));
+            }
+        } catch (Exception e) {
+            warnWithoutStack("Failed to build provider/model summary", e);
+        }
+    }
+
+    private static String buildProviderStatusTable(
+            List<ProviderRegistry.ProviderStatus> statuses,
+            Map<String, Integer> modelCountByProvider
+    ) {
+        int providerWidth = Math.max(
+                "Provider".length(),
+                statuses.stream()
+                        .map(ProviderRegistry.ProviderStatus::name)
+                        .mapToInt(String::length)
+                        .max()
+                        .orElse("Provider".length())
         );
+        String rowPattern = "| %-" + providerWidth + "s | %-7s | %-13s | %-9s | %6s |";
+        String separator = "+-" + "-".repeat(providerWidth) + "-+---------+---------------+-----------+--------+";
+
+        String rows = statuses.stream()
+                .map(status -> rowPattern.formatted(
+                        status.name(),
+                        yesNo(status.enabled()),
+                        yesNo(status.credentialReady()),
+                        yesNo(status.available()),
+                        modelCountByProvider.getOrDefault(status.name(), 0)
+                ))
+                .reduce((left, right) -> "%s\n%s".formatted(left, right))
+                .orElse("");
+
+        String header = rowPattern.formatted("Provider", "Enabled", "Authenticated", "Available", "Models");
+        return rows.isBlank()
+                ? "%s\n%s\n%s".formatted(separator, header, separator)
+                : "%s\n%s\n%s\n%s\n%s".formatted(separator, header, separator, rows, separator);
+    }
+
+    private static String buildModelCountTable(Map<String, List<String>> modelsByProvider) {
+        List<Map.Entry<String, List<String>>> entries = modelsByProvider.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
+                .toList();
+
+        int providerWidth = Math.max(
+                "Provider".length(),
+                entries.stream()
+                        .map(Map.Entry::getKey)
+                        .mapToInt(String::length)
+                        .max()
+                        .orElse("Provider".length())
+        );
+        int modelWidth = Math.max(
+                "Models".length(),
+                entries.stream()
+                        .map(entry -> String.valueOf(entry.getValue().size()))
+                        .mapToInt(String::length)
+                        .max()
+                        .orElse("Models".length())
+        );
+
+        String rowPattern = "| %-" + providerWidth + "s | %" + modelWidth + "s |";
+        String separator = "+-" + "-".repeat(providerWidth) + "-+-" + "-".repeat(modelWidth) + "-+";
+        String header = rowPattern.formatted("Provider", "Models");
+
+        String rows = entries.stream()
+                .map(entry -> rowPattern.formatted(entry.getKey(), entry.getValue().size()))
+                .reduce((left, right) -> "%s\n%s".formatted(left, right))
+                .orElse(rowPattern.formatted("none", 0));
+
+        return "%s\n%s\n%s\n%s\n%s".formatted(separator, header, separator, rows, separator);
+    }
+
+    private static String yesNo(boolean value) {
+        return value ? "yes" : "no";
+    }
+
+    private void warnWithoutStack(String message, Exception e) {
+        log.warn("{}: {}", message, ExceptionUtils.getMessage(e));
+    }
+
+    private static String joinNames(List<String> names) {
+        return names.isEmpty() ? "none" : String.join(", ", names);
     }
 
     private void applyGeneralSettings() {
@@ -828,7 +990,7 @@ public class MainFrame extends JFrame {
             ReasoningLevel reasoningLevel = ReasoningLevel.fromSettingValue(settingValue, ReasoningLevel.OFF);
             chatPanel.getInputBar().setReasoningLevel(reasoningLevel);
         } catch (Exception e) {
-            LOG.log(Level.FINE, "Failed to resolve reasoning level setting", e);
+            log.debug("Failed to resolve reasoning level setting", e);
         }
     }
 
@@ -836,7 +998,7 @@ public class MainFrame extends JFrame {
         try {
             settingsRepo.put(SettingsKeys.CHAT_REASONING_LEVEL, reasoningLevel.toSettingValue());
         } catch (Exception e) {
-            LOG.log(Level.FINE, "Failed to persist reasoning level setting", e);
+            log.debug("Failed to persist reasoning level setting", e);
         }
     }
 

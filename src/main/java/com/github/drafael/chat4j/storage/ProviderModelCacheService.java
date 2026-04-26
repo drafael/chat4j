@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.time.Clock;
@@ -11,12 +12,11 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Logger;
+
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class ProviderModelCacheService {
-
-    private static final Logger LOG = Logger.getLogger(ProviderModelCacheService.class.getName());
     private static final Duration DEFAULT_REFRESH_TTL = Duration.ofHours(12);
     private static final String METRICS_LOG_PROPERTY = "chat4j.modelCache.metrics";
 
@@ -141,8 +141,8 @@ public class ProviderModelCacheService {
         metrics.updates.incrementAndGet();
 
         if (metricsLoggingEnabled) {
-            LOG.info(() -> "[model-cache] updated provider=%s size=%d metrics=%s"
-                    .formatted(providerName, sanitizedModels.size(), metricsSnapshot()));
+            log.info("[model-cache] updated provider={} size={} metrics={}",
+                    providerName, sanitizedModels.size(), metricsSnapshot());
         }
     }
 
@@ -169,7 +169,7 @@ public class ProviderModelCacheService {
             return;
         }
 
-        LOG.info(() -> "[model-cache] snapshot(%s) %s".formatted(reason, metricsSnapshot()));
+        log.info("[model-cache] snapshot({}) {}", reason, metricsSnapshot());
     }
 
     private CacheEntry getOrLoadEntry(String providerName) {

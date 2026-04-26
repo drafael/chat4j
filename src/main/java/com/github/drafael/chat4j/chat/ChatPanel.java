@@ -21,7 +21,9 @@ import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
@@ -58,15 +60,12 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class ChatPanel extends JPanel {
-
-    private static final Logger LOG = Logger.getLogger(ChatPanel.class.getName());
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
     private static final int CHAT_MENU_ICON_SIZE = 14;
@@ -666,7 +665,12 @@ public class ChatPanel extends JPanel {
                         if (!session.isLive()) {
                             return;
                         }
-                        String details = StringUtils.defaultIfBlank(error.getMessage(), "Unknown error");
+                        String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(error), "Unknown error");
+                        log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
+                                selectedProviderName,
+                                selectedModelId,
+                                session.conversationId,
+                                details);
                         String errorText = "\n\n[Error: %s]".formatted(details);
                         appendAssistantResponse(session, errorText);
                         SwingUtilities.invokeLater(() -> {
@@ -846,11 +850,8 @@ public class ChatPanel extends JPanel {
                     inputBar.setThinkingAvailable(resolvedSupportsThinking);
                 });
             } catch (Exception e) {
-                LOG.log(
-                        Level.FINE,
-                        "Failed to refresh thinking capability for %s::%s".formatted(providerNameSnapshot, modelIdSnapshot),
-                        e
-                );
+                log.debug("Failed to refresh thinking capability for {}::{}",
+                        providerNameSnapshot, modelIdSnapshot, e);
             }
         });
     }
@@ -2235,7 +2236,7 @@ public class ChatPanel extends JPanel {
         try {
             return assistantMessageCompletedListener.persist(event);
         } catch (Exception e) {
-            LOG.log(Level.WARNING, "Assistant message persistence listener failed", e);
+            log.warn("Assistant message persistence listener failed: {}", ExceptionUtils.getMessage(e));
             return false;
         }
     }

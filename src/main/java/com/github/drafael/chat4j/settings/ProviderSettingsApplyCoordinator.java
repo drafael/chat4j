@@ -1,11 +1,13 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
 
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 public class ProviderSettingsApplyCoordinator {
 
     private final RuntimeSettingsResolver runtimeSettingsResolver;
@@ -34,6 +36,13 @@ public class ProviderSettingsApplyCoordinator {
         Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider =
                 runtimeSettingsResolver.resolve(providers);
         runtimeConfigApplier.apply(runtimeConfigByProvider);
+        long enabledCount = runtimeConfigByProvider.values().stream()
+                .filter(ProviderRegistry.ProviderRuntimeConfig::enabled)
+                .count();
+        log.info("Applied provider runtime config: providers={} enabled={} disabled={}",
+                runtimeConfigByProvider.size(),
+                enabledCount,
+                runtimeConfigByProvider.size() - enabledCount);
         refreshProviders.run();
         markModelsMenuDirty.run();
     }

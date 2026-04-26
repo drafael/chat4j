@@ -82,9 +82,10 @@ ProcessBuilder pb = new ProcessBuilder(shell, "-l", "-i", "-c", "env");
 | `-i` | Interactive shell | Sources `.zshrc` — **where most users set API keys** |
 | `-c "env"` | Run command | Prints all environment variables as `KEY=VALUE` lines |
 
-**Critical:** Using only `-l` without `-i` was the initial implementation, and it **did not work** because `.zshrc` (where API keys are typically exported) is only sourced for interactive shells. The `-i` flag is essential.
+**Critical:** Using only `-l` without `-i` was the initial implementation, and it **did not work** because `.zshrc` (where API keys are typically exported) is only sourced for interactive shells. The loader now tries `-l -i` first, then falls back to `-l` if interactive shell loading fails.
 
-**Timeout:** 3 seconds. Typical execution is ~100-200ms. On timeout, the process is killed and an empty map is returned.
+**Timeout:** 5 seconds by default (`-Dchat4j.shellEnvTimeoutSeconds=<n>` to override).
+Typical execution is ~100-200ms. On timeout, the process is killed and the loader falls back to a login-only shell attempt.
 
 **Parsing:** Each line is split on the first `=` character. Lines without `=` are skipped. Multi-line values are not supported (edge case, not relevant for API keys).
 
@@ -127,7 +128,7 @@ If `ShellEnvironmentLoader` returns an empty map **and no known provider API key
 
 - Title: "Environment Warning"
 - Explains that API keys could not be loaded from the shell profile
-- Suggests alternatives: run from terminal, use `launchctl setenv`, or use Ollama
+- Suggests alternatives: run from terminal, use `launchctl setenv`, use Ollama, or run startup diagnostics (`chat4j-doctor`)
 - Non-blocking — the app continues to launch (Ollama and any manually configured providers still work)
 
 ## Files
@@ -176,7 +177,21 @@ See also: [`docs/startup-architecture.md`](startup-architecture.md)
 
 ### Shell subprocess hangs
 
-Some `.zshrc` configurations start interactive tools (e.g., `tmux`, `ssh-agent` prompts) that wait for input. The 3-second timeout kills the subprocess, and the app falls back to an empty env with a warning dialog.
+Some `.zshrc` configurations start interactive tools (e.g., `tmux`, `ssh-agent` prompts) that wait for input. The 5-second timeout kills the subprocess, and the app falls back to an empty env with a warning dialog.
+
+### App does not open at all (Gatekeeper/signing/quarantine)
+
+If the app fails before the JVM starts, in-app logs are not available. Run manual diagnostics:
+
+```bash
+bash "/Applications/Chat4J.app/Contents/app/classes/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
+```
+
+The report is written to:
+
+- `~/.config/chat4j/logs/doctor/doctor-<timestamp>.md`
+
+Use `--strict` to require identity metadata (`appleTeamId`, `appleBundleId`) in build metadata.
 
 ### Alternative: `launchctl setenv`
 
@@ -188,7 +203,10 @@ launchctl setenv ANTHROPIC_API_KEY "sk-..."
 
 This persists until logout. To make it permanent, add it to a launch agent plist.
 
-## Future Enhancements
+## Startup diagnostics fallback log
 
-- **Config file fallback**: read API keys from `~/.config/chat4j/env` or similar when shell loading fails
-- **Settings UI**: allow entering API keys directly in the Settings dialog and persisting them to the database
+If startup fails after the process begins, Chat4J writes emergency bootstrap diagnostics to:
+
+- `~/.config/chat4j/logs/bootstrap-fallback.log`
+
+This fallback log is written before SLF4J/Logback is fully initialized and includes a direct `chat4j-doctor` command hint.

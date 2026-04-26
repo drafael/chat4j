@@ -27,6 +27,14 @@ public class ProviderRegistry {
     ) {
     }
 
+    public record ProviderStatus(
+            String name,
+            boolean enabled,
+            boolean credentialReady,
+            boolean available
+    ) {
+    }
+
     private static final ProviderCatalog CATALOG = new ProviderCatalog();
     private static final ProviderRuntimePolicy RUNTIME_POLICY = new ProviderRuntimePolicy();
 
@@ -58,6 +66,24 @@ public class ProviderRegistry {
                 .filter(RUNTIME_POLICY::isEnabled)
                 .filter(RUNTIME_POLICY::hasRequiredCredentials)
                 .map(ProviderRegistry::toEffectiveProvider)
+                .toList();
+    }
+
+    public static List<ProviderStatus> providerStatuses() {
+        List<ProviderDefinition> all = CATALOG.allProviders();
+        RUNTIME_POLICY.warmOAuthStatusCache(all);
+
+        return all.stream()
+                .map(providerDefinition -> {
+                    boolean enabled = RUNTIME_POLICY.isEnabled(providerDefinition);
+                    boolean credentialReady = RUNTIME_POLICY.hasRequiredCredentials(providerDefinition);
+                    return new ProviderStatus(
+                            providerDefinition.name(),
+                            enabled,
+                            credentialReady,
+                            enabled && credentialReady
+                    );
+                })
                 .toList();
     }
 

@@ -29,7 +29,9 @@ import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import com.openai.models.responses.ResponseCreateParams;
 import com.openai.models.responses.ResponseStreamEvent;
 import com.openai.models.responses.ResponseTextDeltaEvent;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -45,6 +47,7 @@ import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
 
+@Slf4j
 public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
@@ -108,6 +111,11 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 if (!isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
                     throw e;
                 }
+                log.info("Switching Copilot endpoint for model {} from {} to {} after failure: {}",
+                        StringUtils.defaultIfBlank(modelId, "unknown"),
+                        RESPONSES_ENDPOINT,
+                        CHAT_COMPLETIONS_ENDPOINT,
+                        ExceptionUtils.getMessage(e));
                 COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
                 streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
@@ -122,6 +130,11 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
                 throw e;
             }
+            log.info("Switching Copilot endpoint for model {} from {} to {} after failure: {}",
+                    StringUtils.defaultIfBlank(modelId, "unknown"),
+                    CHAT_COMPLETIONS_ENDPOINT,
+                    RESPONSES_ENDPOINT,
+                    ExceptionUtils.getMessage(e));
             COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
             streamWithResponses(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
@@ -175,6 +188,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
+                log.info("Retrying {} model {} with lower reasoning effort ({} -> {}) after failure: {}",
+                        runtime.descriptor().name(),
+                        runtime.selectedModel(),
+                        attempts.get(attemptIndex),
+                        attempts.get(attemptIndex + 1),
+                        ExceptionUtils.getMessage(e));
             } finally {
                 clearActiveStream.run();
             }
@@ -245,6 +264,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
+                log.info("Retrying {} model {} with lower reasoning effort ({} -> {}) after failure: {}",
+                        runtime.descriptor().name(),
+                        runtime.selectedModel(),
+                        attempts.get(attemptIndex),
+                        attempts.get(attemptIndex + 1),
+                        ExceptionUtils.getMessage(e));
             } finally {
                 clearActiveStream.run();
             }

@@ -3,14 +3,17 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 public class ProviderAvailabilityResolver {
 
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
@@ -76,6 +79,7 @@ public class ProviderAvailabilityResolver {
             String value = settingsRepo.get(SettingsKeys.providerBaseUrlKey(providerName), defaultBaseUrl);
             return StringUtils.isBlank(value) ? defaultBaseUrl : value;
         } catch (Exception e) {
+            log.warn("Failed to resolve configured base URL for {}: {}", providerName, ExceptionUtils.getMessage(e));
             return defaultBaseUrl;
         }
     }

@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.4.2</version>
+    <version>26.4.3</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -23,8 +23,13 @@
         <flyway.version>11.8.2</flyway.version>
         <junit.version>5.12.2</junit.version>
         <assertj.version>3.27.6</assertj.version>
+        <slf4j.version>2.0.17</slf4j.version>
+        <logback.version>1.5.20</logback.version>
         <chat4j.copilot.oauth.client.id></chat4j.copilot.oauth.client.id>
         <chat4j.codex.oauth.client.id></chat4j.codex.oauth.client.id>
+        <chat4j.apple.team.id></chat4j.apple.team.id>
+        <chat4j.apple.bundle.id></chat4j.apple.bundle.id>
+        <chat4j.apple.signer.cn></chat4j.apple.signer.cn>
     </properties>
 
     <dependencies>
@@ -71,6 +76,18 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
             <version>${commons-lang3.version}</version>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
         </dependency>
 
         <dependency>
@@ -261,9 +278,9 @@
     <profiles>
         <!--
             jpackage profiles — run on the target OS:
-              macOS:   mvn -Pjpackage-mac package
-              Windows: mvn -Pjpackage-win package
-              Linux:   mvn -Pjpackage-linux package
+              macOS:   mvn -Pjpackage-mac verify
+              Windows: mvn -Pjpackage-win verify
+              Linux:   mvn -Pjpackage-linux verify
         -->
         <profile>
             <id>jpackage-mac</id>
@@ -276,7 +293,7 @@
                         <executions>
                             <execution>
                                 <id>jpackage</id>
-                                <phase>package</phase>
+                                <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
@@ -325,7 +342,7 @@
                         <executions>
                             <execution>
                                 <id>jpackage</id>
-                                <phase>package</phase>
+                                <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
@@ -373,7 +390,7 @@
                         <executions>
                             <execution>
                                 <id>jpackage</id>
-                                <phase>package</phase>
+                                <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>

@@ -1,9 +1,12 @@
 package com.github.drafael.chat4j.storage;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.UUID;
 
+@Slf4j
 public class ConversationLoadFailureCoordinator {
 
     public boolean handle(
@@ -22,6 +25,7 @@ public class ConversationLoadFailureCoordinator {
             return false;
         }
 
+        log.warn("Failed to load conversation {}: {}", failedConversationId, ExceptionUtils.getMessage(error));
         errorPresenter.show("Failed to load conversation: %s".formatted(error.getMessage()));
         return true;
     }

@@ -15,6 +15,7 @@ import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import lombok.extern.slf4j.Slf4j;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -38,7 +39,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
+@Slf4j
 public class ProvidersPanel extends AbstractSettingsPanel {
 
     private static final CliOAuthRunner CLI_OAUTH_RUNNER = new CliOAuthRunner();
@@ -529,7 +532,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             Desktop.getDesktop().browse(URI.create(url));
             setStatusInfo("Opened: %s".formatted(url));
         } catch (Exception e) {
-            setStatusError("Failed to open URL: %s".formatted(firstLine(e.getMessage())));
+            log.warn("Failed to open URL {}: {}", url, ExceptionUtils.getMessage(e));
+            setStatusError("Failed to open URL: %s".formatted(firstLine(ExceptionUtils.getMessage(e))));
         }
     }
 
@@ -565,7 +569,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
         applyCopilotAuthControls(providerName, statusLabel, authButton, status, null);
 
-        authButton.addActionListener(e -> {
+        authButton.addActionListener(event -> {
             authButton.setEnabled(false);
             authButton.setText("Working...");
 
@@ -580,8 +584,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                         CopilotAuthResolver.CopilotLoginChallenge challenge = COPILOT_AUTH_RESOLVER.beginLogin();
                         SwingUtilities.invokeLater(() -> showCopilotAuthLoginProgress(statusLabel, challenge));
                         actionResult = COPILOT_AUTH_RESOLVER.completeLogin(challenge);
-                    } catch (Exception ex) {
-                        actionResult = CopilotAuthResolver.CopilotAuthActionResult.failure(firstLine(ex.getMessage()));
+                    } catch (Exception e) {
+                        log.warn("Copilot OAuth action failed: {}", ExceptionUtils.getMessage(e));
+                        actionResult = CopilotAuthResolver.CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
                     }
                 }
 
@@ -603,7 +608,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
         applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
 
-        authButton.addActionListener(e -> {
+        authButton.addActionListener(event -> {
             authButton.setEnabled(false);
             authButton.setText("Working...");
 
@@ -618,8 +623,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                         CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
                         SwingUtilities.invokeLater(() -> showCodexAuthLoginProgress(statusLabel, challenge));
                         actionResult = CODEX_AUTH_RESOLVER.completeLogin(challenge);
-                    } catch (Exception ex) {
-                        actionResult = CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ex.getMessage()));
+                    } catch (Exception e) {
+                        log.warn("Codex OAuth action failed: {}", ExceptionUtils.getMessage(e));
+                        actionResult = CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
                     }
                 }
 

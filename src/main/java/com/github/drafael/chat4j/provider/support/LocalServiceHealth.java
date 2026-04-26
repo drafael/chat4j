@@ -1,5 +1,9 @@
 package com.github.drafael.chat4j.provider.support;
 
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+
 import javax.swing.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -12,8 +16,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.commons.lang3.StringUtils;
 
+@Slf4j
 public final class LocalServiceHealth {
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofMillis(350);
@@ -70,7 +74,7 @@ public final class LocalServiceHealth {
         }
 
         triggerRefresh(baseUrl);
-        return cached == null || cached.reachable();
+        return cached != null && cached.reachable();
     }
 
     private static boolean probeFast(String baseUrl) {
@@ -115,6 +119,7 @@ public final class LocalServiceHealth {
                 return true;
             }
         } catch (Exception e) {
+            log.debug("Socket reachability check failed for {}: {}", endpoint, ExceptionUtils.getMessage(e));
             return false;
         }
     }
@@ -132,6 +137,7 @@ public final class LocalServiceHealth {
             HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
             return response.statusCode() < 500;
         } catch (Exception e) {
+            log.debug("Endpoint reachability check failed for {}: {}", endpoint, ExceptionUtils.getMessage(e));
             return false;
         }
     }

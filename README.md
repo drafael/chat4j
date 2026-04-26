@@ -126,6 +126,7 @@ mvn test
 - [docs/codex-auth-device-flow.md](docs/codex-auth-device-flow.md) — current Codex auth/runtime behavior
 - [docs/copilot-integration-header-behavior.md](docs/copilot-integration-header-behavior.md) — Copilot header-routing evidence and curl proofs
 - [docs/calver.md](docs/calver.md) — Current CalVer format, pre-commit bump behavior, and hook setup
+- [docs/logging.md](docs/logging.md) — Current logging stack, level resolution, and operational logging behavior
 
 ## Configuration and data storage
 
@@ -155,16 +156,24 @@ Native installers are built with `jpackage` via Maven profiles. Each profile mus
 
 ```bash
 # macOS (.dmg)
-mvn -Pjpackage-mac package
+mvn -Pjpackage-mac verify
 
 # Windows (.msi) — requires WiX Toolset 3.x
-mvn -Pjpackage-win package
+mvn -Pjpackage-win verify
 
 # Linux (.deb) — requires dpkg; use --type rpm in pom.xml for RPM
-mvn -Pjpackage-linux package
+mvn -Pjpackage-linux verify
 ```
 
 Output goes to `target/dist/`.
+
+If a macOS app bundle fails to open, run diagnostics manually:
+
+```bash
+bash "/Applications/Chat4J.app/Contents/app/classes/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
+```
+
+Reports are written to `~/.config/chat4j/logs/doctor/`.
 
 ## License
 

@@ -2,7 +2,9 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+@Slf4j
 public class CodexAuthResolver {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -121,11 +124,13 @@ public class CodexAuthResolver {
     }
 
     public CodexAuthActionResult login() {
+        log.debug("Starting OpenAI Codex OAuth login");
         try {
             CodexLoginChallenge challenge = beginLogin();
             return completeLogin(challenge);
         } catch (Exception e) {
-            return CodexAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("OpenAI Codex OAuth login failed: {}", ExceptionUtils.getMessage(e));
+            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
@@ -170,9 +175,11 @@ public class CodexAuthResolver {
             }
 
             storeChat4jToken(accessToken, deviceCode.oauthScopes());
+            log.info("OpenAI Codex OAuth login completed");
             return CodexAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
         } catch (Exception e) {
-            return CodexAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("OpenAI Codex OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
+            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
@@ -184,9 +191,11 @@ public class CodexAuthResolver {
             }
 
             Files.delete(tokenFile);
+            log.info("OpenAI Codex OAuth logout completed");
             return CodexAuthActionResult.success("Logged out from Chat4J OAuth session.");
         } catch (Exception e) {
-            return CodexAuthActionResult.failure(firstLine(e.getMessage()));
+            log.warn("OpenAI Codex OAuth logout failed: {}", ExceptionUtils.getMessage(e));
+            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 

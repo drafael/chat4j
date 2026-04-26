@@ -1,7 +1,9 @@
 package com.github.drafael.chat4j.storage;
 
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.sql.DataSource;
 import java.net.URLDecoder;
@@ -12,11 +14,9 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.logging.Logger;
 
+@Slf4j
 public class SettingsDbToPropertiesMigrationCoordinator {
-
-    private static final Logger LOG = Logger.getLogger(SettingsDbToPropertiesMigrationCoordinator.class.getName());
     private static final String LEGACY_SETTINGS_TABLE = "settings";
 
     private final DataSource dataSource;
@@ -59,10 +59,10 @@ public class SettingsDbToPropertiesMigrationCoordinator {
             }
 
             settingsRepo.put(SettingsKeys.SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER, "v1");
-            LOG.info("Migrated %d DB settings to properties (%d skipped: already present)"
-                    .formatted(migratedCount, skippedCount));
+            log.info("Migrated {} DB settings to properties ({} skipped: already present)",
+                    migratedCount, skippedCount);
         } catch (Exception e) {
-            LOG.warning(() -> "Settings DB->properties migration failed: %s".formatted(e.getMessage()));
+            log.warn("Settings DB->properties migration failed: {}", ExceptionUtils.getMessage(e));
         }
     }
 

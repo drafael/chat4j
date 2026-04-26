@@ -6,6 +6,8 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -13,6 +15,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class CapabilityProviderService implements ProviderService {
 
     private final ProviderRuntime runtime;
@@ -56,6 +59,7 @@ public class CapabilityProviderService implements ProviderService {
             }
         } catch (Exception e) {
             if (!shouldStop(isCancelled)) {
+                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
                 onError.accept(ProviderExceptionMapper.map(e));
             }
         }
@@ -70,6 +74,7 @@ public class CapabilityProviderService implements ProviderService {
         try {
             return modelCatalogClient.fetchModels(runtime);
         } catch (Exception e) {
+            log.debug("Model listing failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
             return emptyList();
         }
     }

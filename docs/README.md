@@ -31,3 +31,6 @@
 
 - [calver.md](calver.md)
   - Current CalVer versioning, pre-commit bump flow, and packaging alignment.
+
+- [logging.md](logging.md)
+  - Current logging stack, level resolution, and operational logging behavior.

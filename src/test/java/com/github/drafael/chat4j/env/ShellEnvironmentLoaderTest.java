@@ -8,6 +8,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ShellEnvironmentLoaderTest {
 
     @Test
+    @DisplayName("Interactive shell command includes -i to load zshrc-style exports")
+    void shellEnvCommand_whenInteractive_includesInteractiveFlag() {
+        var command = ShellEnvironmentLoader.shellEnvCommand("/bin/zsh", true);
+
+        assertThat(command).containsExactly("/bin/zsh", "-l", "-i", "-c", "env");
+    }
+
+    @Test
+    @DisplayName("Login-only shell command omits -i for fallback execution")
+    void shellEnvCommand_whenLoginOnly_omitsInteractiveFlag() {
+        var command = ShellEnvironmentLoader.shellEnvCommand("/bin/zsh", false);
+
+        assertThat(command).containsExactly("/bin/zsh", "-l", "-c", "env");
+    }
+
+    @Test
     @DisplayName("Environment parser keeps key-value pairs and preserves values containing equals signs")
     void parseEnvOutput_whenValueContainsEquals_preservesFullValue() {
         var output = "PATH=/usr/bin\nTOKEN=abc=def==\nLANG=en_US.UTF-8";
@@ -42,5 +58,27 @@ class ShellEnvironmentLoaderTest {
         assertThat(parsed)
                 .containsOnlyKeys("OPENAI_API_KEY")
                 .containsEntry("OPENAI_API_KEY", "second");
+    }
+
+    @Test
+    @DisplayName("Provider credential summary lists present key names without exposing values")
+    void summarizeProviderCredentialNames_whenKnownKeysPresent_returnsSortedKeyNames() {
+        var env = java.util.Map.of(
+                "OPENAI_API_KEY", "sk-openai",
+                "ANTHROPIC_API_KEY", "sk-anthropic",
+                "UNRELATED", "value"
+        );
+
+        var summary = ShellEnvironmentLoader.summarizeProviderCredentialNames(env);
+
+        assertThat(summary).isEqualTo("ANTHROPIC_API_KEY, OPENAI_API_KEY");
+    }
+
+    @Test
+    @DisplayName("Provider credential summary returns none when no known keys are present")
+    void summarizeProviderCredentialNames_whenNoKnownKeysPresent_returnsNone() {
+        var summary = ShellEnvironmentLoader.summarizeProviderCredentialNames(java.util.Map.of("UNRELATED", "value"));
+
+        assertThat(summary).isEqualTo("none");
     }
 }
