@@ -76,10 +76,29 @@ mvn clean package
 Then run:
 
 ```bash
-java --enable-preview -jar target/chat4j-1.0-SNAPSHOT.jar
+java --enable-preview -jar target/chat4j-<version>.jar
 ```
 
 > Note: `--enable-preview` is kept for consistency with project build config.
+
+## CalVer and Git hooks
+
+Chat4J uses CalVer in `YY.M.N` format (example: `26.4.0`).
+
+- `YY` = 2-digit year
+- `M` = month (`1-12`)
+- `N` = monthly build counter
+- Counter resets monthly and starts at `0`
+
+A pre-commit hook updates `pom.xml` and `.buildnumber` on every commit.
+
+Set up hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+> If you bypass hooks with `--no-verify`, builds or CI checks may fail due to invalid or stale version values.
 
 ## Tests
 
@@ -92,6 +111,7 @@ mvn test
 - [docs/README.md](docs/README.md) — documentation index
 - [docs/copilot-auth-device-flow.md](docs/copilot-auth-device-flow.md) — current Copilot auth/runtime behavior
 - [docs/copilot-integration-header-behavior.md](docs/copilot-integration-header-behavior.md) — Copilot header-routing evidence and curl proofs
+- [docs/calver.md](docs/calver.md) — Current CalVer format, pre-commit bump behavior, and hook setup
 
 ## Configuration and data storage
 

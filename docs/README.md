@@ -25,3 +25,6 @@
 
 - [code-review-remediation-plan.md](code-review-remediation-plan.md)
   - Active remediation backlog and acceptance criteria for remaining quality work.
+
+- [calver.md](calver.md)
+  - Current CalVer versioning, pre-commit bump flow, and packaging alignment.
