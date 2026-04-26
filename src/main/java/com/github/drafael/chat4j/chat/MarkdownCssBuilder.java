@@ -70,6 +70,13 @@ final class MarkdownCssBuilder {
                 font-family: %s;
                 font-size: %dpx;
             }
+            code.md-latex-inline {
+                background-color: %s;
+                border: 1px dashed %s;
+                border-radius: 3px;
+                padding: 1px 4px;
+                font-style: italic;
+            }
             """.formatted(
                 palette.baseFontFamily(),
                 bodyFontSize,
@@ -88,6 +95,8 @@ final class MarkdownCssBuilder {
                 palette.textColor(),
                 palette.codeBorder(),
                 palette.monoFontFamily(),
-                codeFontSize);
+                codeFontSize,
+                palette.inlineCodeBg(),
+                palette.codeBorder());
     }
 }

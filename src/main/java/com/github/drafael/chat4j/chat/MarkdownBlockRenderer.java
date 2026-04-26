@@ -47,6 +47,11 @@ final class MarkdownBlockRenderer {
             return;
         }
 
+        if (trimmed.startsWith("$$")) {
+            handleDisplayMathBlock(line, cursor, state, palette);
+            return;
+        }
+
         if (line.matches("^-{3,}$") || line.matches("^\\*{3,}$") || line.matches("^_{3,}$")) {
             handleHorizontalRule(state);
             return;
@@ -108,6 +113,54 @@ final class MarkdownBlockRenderer {
             state.codeBuffer.append("\n");
         }
         state.codeBuffer.append(line);
+    }
+
+    private static void handleDisplayMathBlock(String firstLine, LineCursor cursor, RenderState state, Palette palette) {
+        state.closeListIfOpen();
+
+        String trimmedFirstLine = firstLine.trim();
+        String afterOpen = trimmedFirstLine.substring(2);
+        if (afterOpen.contains("$$")) {
+            handleParagraph(trimmedFirstLine, state, palette);
+            return;
+        }
+
+        StringBuilder math = new StringBuilder();
+        if (!afterOpen.isBlank()) {
+            math.append(afterOpen.stripLeading());
+        }
+
+        String trailingAfterClose = "";
+        while (cursor.hasNext()) {
+            String line = cursor.next();
+            int closeIndex = line.indexOf("$$");
+            if (closeIndex >= 0) {
+                if (closeIndex > 0) {
+                    if (math.length() > 0) {
+                        math.append("\n");
+                    }
+                    math.append(line, 0, closeIndex);
+                }
+                trailingAfterClose = line.substring(closeIndex + 2).trim();
+                break;
+            }
+
+            if (math.length() > 0) {
+                math.append("\n");
+            }
+            math.append(line);
+        }
+
+        String fallbackMathCode = math.toString().stripTrailing();
+        if (fallbackMathCode.isBlank()) {
+            handleParagraph(trimmedFirstLine, state, palette);
+        } else {
+            appendCodeBlock(state.html, fallbackMathCode, "latex", palette);
+        }
+
+        if (!trailingAfterClose.isBlank()) {
+            handleParagraph(trailingAfterClose, state, palette);
+        }
     }
 
     private static void handleHorizontalRule(RenderState state) {
@@ -231,13 +284,17 @@ final class MarkdownBlockRenderer {
         int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
         int codeFontSize = CodeFontResolver.resolveCodeFontSize();
         String blockBorder = palette.hrColor();
+        boolean latexFallback = lang != null && "latex".equalsIgnoreCase(lang.trim());
+        String borderStyle = latexFallback ? "dashed" : "solid";
+        String tableClass = latexFallback ? "md-code-block md-latex-block" : "md-code-block";
+        String headerBackground = latexFallback ? palette.inlineCodeBg() : palette.codeHeaderBg();
 
-        html.append("<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
+        html.append("<table class=\"").append(tableClass).append("\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
         if (lang != null && !lang.isEmpty()) {
-            html.append("<tr><td bgcolor=\"").append(palette.codeHeaderBg()).append("\"")
-                    .append(" style=\"border: 1px solid ").append(blockBorder)
+            html.append("<tr><td bgcolor=\"").append(headerBackground).append("\"")
+                    .append(" style=\"border: 1px ").append(borderStyle).append(" ").append(blockBorder)
                     .append("; border-bottom: none; padding: 2px 8px; font-size: ").append(languageFontSize).append("px;\">");
             html.append("<font face=\"").append(palette.baseFontFamilyAttr()).append("\" color=\"")
                     .append(palette.mutedTextColor()).append("\">")
@@ -247,7 +304,7 @@ final class MarkdownBlockRenderer {
         }
 
         html.append("<tr><td bgcolor=\"").append(palette.codeBg()).append("\"")
-                .append(" style=\"border: 1px solid ").append(blockBorder)
+                .append(" style=\"border: 1px ").append(borderStyle).append(" ").append(blockBorder)
                 .append("; padding: 8px 12px;\">");
         html.append("<pre style=\"margin: 0;\"><font face=\"")
                 .append(palette.monoFontFamilyAttr()).append("\" color=\"")

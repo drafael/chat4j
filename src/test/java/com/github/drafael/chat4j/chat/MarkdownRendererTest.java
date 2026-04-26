@@ -123,6 +123,30 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Inline LaTeX fallback renders math expression as inline code")
+    void toHtml_whenMarkdownContainsInlineLatex_rendersInlineCodeFallback() {
+        String body = renderBody("Faraday law uses $\\mathcal{E}$ as electromotive force.");
+
+        assertThat(body)
+                .contains("<code class=\"md-latex-inline\"")
+                .contains("$\\mathcal{E}$")
+                .doesNotContain("<i>\\mathcal{E}</i>");
+    }
+
+    @Test
+    @DisplayName("Display LaTeX fallback renders math block as highlighted code block")
+    void toHtml_whenMarkdownContainsDisplayLatexBlock_rendersCodeBlockFallback() {
+        String body = renderBody("$$\n\\mathcal{E} = - \\frac{d\\Phi_B}{dt}\n$$");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-latex-block\"")
+                .contains("border: 1px dashed")
+                .contains("latex</font>")
+                .contains("<pre style=\"margin: 0;\">")
+                .contains("\\mathcal{E} = - \\frac{d\\Phi_B}{dt}");
+    }
+
+    @Test
     @DisplayName("Blank lines produce line breaks between paragraphs")
     void toHtml_whenMarkdownContainsBlankLines_rendersLineBreakBetweenParagraphs() {
         String body = renderBody("first\n\nsecond");

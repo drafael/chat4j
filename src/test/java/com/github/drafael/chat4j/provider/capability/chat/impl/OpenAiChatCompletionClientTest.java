@@ -144,6 +144,22 @@ class OpenAiChatCompletionClientTest {
         assertThat(unsupportedReasoningEffort).isTrue();
     }
 
+    @Test
+    @DisplayName("Responses output delta emission keeps newline tokens")
+    void shouldEmitOutputDelta_whenDeltaContainsOnlyNewline_returnsTrue() throws Exception {
+        boolean shouldEmit = invokeShouldEmitOutputDelta("\n");
+
+        assertThat(shouldEmit).isTrue();
+    }
+
+    @Test
+    @DisplayName("Responses output delta emission skips empty tokens")
+    void shouldEmitOutputDelta_whenDeltaIsEmpty_returnsFalse() throws Exception {
+        boolean shouldEmit = invokeShouldEmitOutputDelta("");
+
+        assertThat(shouldEmit).isFalse();
+    }
+
     private String invokeToResponsesInputLine(Message message) throws Exception {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("toResponsesInputLine", Message.class);
         method.setAccessible(true);
@@ -174,6 +190,12 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedReasoningEffort", Exception.class);
         method.setAccessible(true);
         return (boolean) method.invoke(subject, exception);
+    }
+
+    private boolean invokeShouldEmitOutputDelta(String delta) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("shouldEmitOutputDelta", String.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, delta);
     }
 
     private ProviderRuntime copilotRuntime(List<String> supportedEndpoints) {

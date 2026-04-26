@@ -9,6 +9,9 @@ final class MarkdownInlineRenderer {
 
     private static final Pattern INLINE_CODE_PATTERN = Pattern.compile("`([^`]+?)`");
     private static final Pattern INLINE_CODE_TOKEN_PATTERN = Pattern.compile("@@INLINE_CODE_(\\d+)@@");
+    private static final Pattern DISPLAY_MATH_PATTERN = Pattern.compile("(?s)(?<!\\\\)\\$\\$(.+?)(?<!\\\\)\\$\\$");
+    private static final Pattern INLINE_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?!\\$)(.+?)(?<!\\\\)\\$(?!\\$)");
+    private static final Pattern MATH_TOKEN_PATTERN = Pattern.compile("@@MATH_(\\d+)@@");
     private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\(((?:https?|mailto):[^)\\s]+)\\)");
     private static final Pattern AUTO_LINK_PATTERN = Pattern.compile("&lt;((?:https?|mailto):[^\\s]+?)&gt;");
     private static final Pattern HTML_BREAK_PATTERN = Pattern.compile("(?i)&lt;br\\s*/?&gt;");
@@ -25,10 +28,12 @@ final class MarkdownInlineRenderer {
         escaped = normalizeMalformedFenceMarkers(escaped);
 
         CodeExtraction codeExtraction = extractInlineCode(escaped);
-        String rendered = applyInlineFormatting(codeExtraction.text());
+        MathExtraction mathExtraction = extractMathSegments(codeExtraction.text());
+        String rendered = applyInlineFormatting(mathExtraction.text());
 
         rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2);
         rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1);
+        rendered = restoreMathSegments(rendered, mathExtraction.mathSegments(), palette);
 
         return restoreInlineCode(rendered, codeExtraction.codeSegments(), palette);
     }
@@ -70,12 +75,43 @@ final class MarkdownInlineRenderer {
         });
     }
 
+    private static MathExtraction extractMathSegments(String text) {
+        List<String> mathSegments = new ArrayList<>();
+
+        String withDisplayMathTokens = DISPLAY_MATH_PATTERN.matcher(text).replaceAll(matchResult -> {
+            mathSegments.add(matchResult.group());
+            return mathToken(mathSegments.size() - 1);
+        });
+
+        String withAllMathTokens = INLINE_MATH_PATTERN.matcher(withDisplayMathTokens).replaceAll(matchResult -> {
+            mathSegments.add(matchResult.group());
+            return mathToken(mathSegments.size() - 1);
+        });
+
+        return new MathExtraction(withAllMathTokens, List.copyOf(mathSegments));
+    }
+
+    private static String restoreMathSegments(String text, List<String> mathSegments, Palette palette) {
+        return MATH_TOKEN_PATTERN.matcher(text).replaceAll(matchResult -> {
+            int index = Integer.parseInt(matchResult.group(1));
+            if (index < 0 || index >= mathSegments.size()) {
+                return matchResult.group();
+            }
+
+            return Matcher.quoteReplacement(inlineMathHtml(mathSegments.get(index), palette));
+        });
+    }
+
     private static String renderAnchors(String text, Pattern pattern, int labelGroup, int hrefGroup) {
         return pattern.matcher(text).replaceAll(matchResult -> Matcher.quoteReplacement(
                 "<a href=\"%s\">%s</a>".formatted(
                         matchResult.group(hrefGroup),
                         matchResult.group(labelGroup)
                 )));
+    }
+
+    private static String mathToken(int index) {
+        return "@@MATH_%d@@".formatted(index);
     }
 
     private static String inlineCodeToken(int index) {
@@ -95,6 +131,20 @@ final class MarkdownInlineRenderer {
                 );
     }
 
+    private static String inlineMathHtml(String math, Palette palette) {
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
+        return "<code class=\"md-latex-inline\" style=\"font-size: %dpx;\"><font face=\"%s\" color=\"%s\">%s</font></code>"
+                .formatted(
+                        codeFontSize,
+                        palette.monoFontFamilyAttr(),
+                        palette.codeText(),
+                        math
+                );
+    }
+
     private record CodeExtraction(String text, List<String> codeSegments) {
+    }
+
+    private record MathExtraction(String text, List<String> mathSegments) {
     }
 }

@@ -234,7 +234,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     ResponseStreamEvent event = iterator.next();
                     event.outputTextDelta()
                             .map(ResponseTextDeltaEvent::delta)
-                            .filter(StringUtils::isNotBlank)
+                            .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
                             .ifPresent(onToken);
 
                     if (attemptLevel.enabled()) {
@@ -356,6 +356,10 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private ReasoningLevel normalizeReasoningLevel(ReasoningLevel reasoningLevel) {
         return reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+    }
+
+    private static boolean shouldEmitOutputDelta(String delta) {
+        return StringUtils.isNotEmpty(delta);
     }
 
     private boolean shouldEnableOllamaThinking(ProviderRuntime runtime) {
