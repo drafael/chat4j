@@ -44,8 +44,8 @@ public class InputBar extends JPanel {
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
-    private static final int STOP_ICON_SIZE = ATTACH_ICON_SIZE;
-    private static final int STOP_BUTTON_SIZE = 24;
+    private static final int STOP_ICON_SIZE = 24;
+    private static final int STOP_BUTTON_SIZE = 28;
     private static final int MENU_ICON_SIZE = 14;
     private static final float CHIP_HOVER_BG_DELTA = 0.09f;
     private static final float CHIP_HOVER_BORDER_DELTA = 0.12f;

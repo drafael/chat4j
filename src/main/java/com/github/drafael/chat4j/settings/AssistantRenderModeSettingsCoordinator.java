@@ -3,10 +3,8 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
-import java.util.Locale;
 import java.util.UUID;
 
 public class AssistantRenderModeSettingsCoordinator {
@@ -21,7 +19,10 @@ public class AssistantRenderModeSettingsCoordinator {
 
     public AssistantRenderMode resolveDefaultMode() {
         try {
-            String stored = settingsRepo.get(KEY_ASSISTANT_MARKDOWN_DEFAULT, SettingsKeys.CHAT_RENDER_MODE_PREVIEW);
+            String stored = settingsRepo.get(
+                    KEY_ASSISTANT_MARKDOWN_DEFAULT,
+                    AssistantRenderMode.PREVIEW.settingValue()
+            );
             return toRenderMode(stored);
         } catch (Exception e) {
             return AssistantRenderMode.PREVIEW;
@@ -46,25 +47,10 @@ public class AssistantRenderModeSettingsCoordinator {
     }
 
     private AssistantRenderMode toRenderMode(String stored) {
-        if (StringUtils.isBlank(stored)) {
-            return AssistantRenderMode.PREVIEW;
-        }
-
-        String normalized = stored.trim().toUpperCase(Locale.ROOT);
-        if (SettingsKeys.CHAT_RENDER_MODE_MARKDOWN.equals(normalized)) {
-            return AssistantRenderMode.MARKDOWN;
-        }
-
-        if (SettingsKeys.CHAT_RENDER_MODE_PREVIEW.equals(normalized)) {
-            return AssistantRenderMode.PREVIEW;
-        }
-
-        return AssistantRenderMode.PREVIEW;
+        return AssistantRenderMode.fromSettingValue(stored);
     }
 
     private String toSettingValue(AssistantRenderMode mode) {
-        return mode == AssistantRenderMode.MARKDOWN
-                ? SettingsKeys.CHAT_RENDER_MODE_MARKDOWN
-                : SettingsKeys.CHAT_RENDER_MODE_PREVIEW;
+        return mode.settingValue();
     }
 }
