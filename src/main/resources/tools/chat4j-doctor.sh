@@ -258,11 +258,15 @@ else
   record_check "Launcher executable" "CRITICAL" "Launcher missing or not executable: ${LAUNCHER_PATH}" "Reinstall Chat4J from a trusted release artifact."
 fi
 
-BUILD_PROPERTIES_PATH="${APP_PATH}/Contents/app/classes/build.properties"
+BUILD_PROPERTIES_PATH="${APP_PATH}/Contents/app/build.properties"
+if [ ! -f "$BUILD_PROPERTIES_PATH" ]; then
+  BUILD_PROPERTIES_PATH="${APP_PATH}/Contents/app/classes/build.properties"
+fi
+
 if [ -f "$BUILD_PROPERTIES_PATH" ]; then
   record_check "Build metadata file" "PASS" "Found build metadata at ${BUILD_PROPERTIES_PATH}"
 else
-  record_check "Build metadata file" "WARN" "Build metadata not found at ${BUILD_PROPERTIES_PATH}" "Identity checks will run in compatibility mode."
+  record_check "Build metadata file" "WARN" "Build metadata not found in Contents/app or Contents/app/classes" "Identity checks will run in compatibility mode."
 fi
 
 CODESIGN_VERIFY_OUTPUT="$(mktemp "${REPORT_DIR}/codesign-verify-XXXXXX")"

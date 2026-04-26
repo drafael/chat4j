@@ -167,10 +167,12 @@ mvn -Pjpackage-linux verify
 
 Output goes to `target/dist/`.
 
+macOS packages include a bundled runtime image (`Contents/runtime`) built automatically during `-Pjpackage-mac verify`.
+
 If a macOS app bundle fails to open, run diagnostics manually:
 
 ```bash
-bash "/Applications/Chat4J.app/Contents/app/classes/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
+bash "/Applications/Chat4J.app/Contents/app/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
 ```
 
 Reports are written to `~/.config/chat4j/logs/doctor/`.

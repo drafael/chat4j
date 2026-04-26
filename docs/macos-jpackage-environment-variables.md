@@ -144,6 +144,14 @@ If `ShellEnvironmentLoader` returns an empty map **and no known provider API key
 
 See also: [`docs/startup-architecture.md`](startup-architecture.md)
 
+## Runtime bundling
+
+The macOS jpackage build bundles a runtime image into the app:
+
+- `Chat4J.app/Contents/runtime`
+
+This is created automatically by Maven during `mvn -Pjpackage-mac verify`.
+
 ## Platform Behavior
 
 | Platform | jpackage env vars | Shell loading needed |
@@ -184,7 +192,7 @@ Some `.zshrc` configurations start interactive tools (e.g., `tmux`, `ssh-agent` 
 If the app fails before the JVM starts, in-app logs are not available. Run manual diagnostics:
 
 ```bash
-bash "/Applications/Chat4J.app/Contents/app/classes/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
+bash "/Applications/Chat4J.app/Contents/app/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
 ```
 
 The report is written to:

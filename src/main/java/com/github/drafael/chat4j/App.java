@@ -14,7 +14,7 @@ import java.nio.file.Path;
 public class App {
 
     private static final String APP_PATH_PROPERTY = "jpackage.app-path";
-    private static final String DOCTOR_SCRIPT_RELATIVE_PATH = "Contents/app/classes/tools/chat4j-doctor.sh";
+    private static final String DOCTOR_SCRIPT_RELATIVE_PATH = "Contents/app/tools/chat4j-doctor.sh";
 
     public static void main(String[] args) {
         StartupFallbackLogger.info("Chat4J startup entrypoint invoked");

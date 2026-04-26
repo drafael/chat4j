@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.4.3</version>
+    <version>26.4.4</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -30,6 +30,8 @@
         <chat4j.apple.team.id></chat4j.apple.team.id>
         <chat4j.apple.bundle.id></chat4j.apple.bundle.id>
         <chat4j.apple.signer.cn></chat4j.apple.signer.cn>
+        <chat4j.jpackage.input.dir>${project.build.directory}/jpackage-input</chat4j.jpackage.input.dir>
+        <chat4j.jpackage.runtime.dir>${project.build.directory}/jpackage-runtime</chat4j.jpackage.runtime.dir>
     </properties>
 
     <dependencies>
@@ -287,10 +289,58 @@
             <build>
                 <plugins>
                     <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-jpackage-input</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete dir="${chat4j.jpackage.input.dir}"/>
+                                        <delete dir="${chat4j.jpackage.runtime.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.outputDirectory}/build.properties"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
+                                              tofile="${chat4j.jpackage.input.dir}/tools/chat4j-doctor.sh"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <version>3.4.1</version>
                         <executions>
+                            <execution>
+                                <id>create-runtime-image</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <executable>${java.home}/bin/jlink</executable>
+                                    <arguments>
+                                        <argument>--output</argument>
+                                        <argument>${chat4j.jpackage.runtime.dir}</argument>
+                                        <argument>--add-modules</argument>
+                                        <argument>java.se,jdk.crypto.ec,jdk.unsupported</argument>
+                                        <argument>--strip-debug</argument>
+                                        <argument>--no-man-pages</argument>
+                                        <argument>--no-header-files</argument>
+                                        <argument>--compress=zip-6</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
                             <execution>
                                 <id>jpackage</id>
                                 <phase>verify</phase>
@@ -301,7 +351,9 @@
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
-                                        <argument>${project.build.directory}</argument>
+                                        <argument>${chat4j.jpackage.input.dir}</argument>
+                                        <argument>--runtime-image</argument>
+                                        <argument>${chat4j.jpackage.runtime.dir}</argument>
                                         <argument>--name</argument>
                                         <argument>Chat4J</argument>
                                         <argument>--main-jar</argument>
@@ -336,6 +388,33 @@
             <build>
                 <plugins>
                     <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-jpackage-input</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete dir="${chat4j.jpackage.input.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.outputDirectory}/build.properties"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
+                                              tofile="${chat4j.jpackage.input.dir}/tools/chat4j-doctor.sh"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <version>3.4.1</version>
@@ -350,7 +429,7 @@
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
-                                        <argument>${project.build.directory}</argument>
+                                        <argument>${chat4j.jpackage.input.dir}</argument>
                                         <argument>--name</argument>
                                         <argument>Chat4J</argument>
                                         <argument>--main-jar</argument>
@@ -384,6 +463,33 @@
             <build>
                 <plugins>
                     <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>prepare-jpackage-input</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <delete dir="${chat4j.jpackage.input.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}"/>
+                                        <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
+                                        <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.outputDirectory}/build.properties"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
+                                              tofile="${chat4j.jpackage.input.dir}/tools/chat4j-doctor.sh"/>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
                         <version>3.4.1</version>
@@ -398,7 +504,7 @@
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
-                                        <argument>${project.build.directory}</argument>
+                                        <argument>${chat4j.jpackage.input.dir}</argument>
                                         <argument>--name</argument>
                                         <argument>chat4j</argument>
                                         <argument>--main-jar</argument>

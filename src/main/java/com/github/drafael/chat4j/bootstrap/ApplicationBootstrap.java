@@ -173,7 +173,7 @@ public final class ApplicationBootstrap {
                 \u2022 Run Chat4J from the terminal: java --enable-preview -jar chat4j.jar
                 \u2022 Set keys via: launchctl setenv ANTHROPIC_API_KEY sk-...
                 \u2022 Use a local provider like LM Studio or Ollama (no API key required)
-                \u2022 Run diagnostics: bash "/Applications/Chat4J.app/Contents/app/classes/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
+                \u2022 Run diagnostics: bash "/Applications/Chat4J.app/Contents/app/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
                 """,
             "Environment Warning",
             JOptionPane.WARNING_MESSAGE
