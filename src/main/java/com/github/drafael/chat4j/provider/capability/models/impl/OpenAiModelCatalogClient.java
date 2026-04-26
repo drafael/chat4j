@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.provider.capability.models.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
@@ -78,7 +77,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     .baseUrl(runtime.baseUrl())
                     .build();
 
-            return client.models().list().data().stream()
+            List<String> models = client.models().list().data().stream()
                     .filter(model -> ModelFilters.isSupportedChatModelId(model.id()))
                     .sorted((left, right) -> {
                         int byRecency = ModelOrdering.compareByRecency(left.id(), right.id());
@@ -88,6 +87,12 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     })
                     .map(Model::id)
                     .toList();
+
+            if (models.isEmpty() && "OpenAI Codex".equals(runtime.descriptor().name())) {
+                return readCodexModelsFromCache();
+            }
+
+            return models;
         } catch (Exception e) {
             return fallbackModels(runtime);
         }
@@ -99,15 +104,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             return httpFallback.modelIds();
         }
 
-        if (runtime.descriptor().authType() != AuthType.CLI_OAUTH) {
-            return emptyList();
-        }
-
         if ("OpenAI Codex".equals(runtime.descriptor().name())) {
-            List<String> codexModels = readCodexModelsFromCache();
-            if (!codexModels.isEmpty()) {
-                return codexModels;
-            }
+            return readCodexModelsFromCache();
         }
 
         return emptyList();

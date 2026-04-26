@@ -33,7 +33,7 @@ class ProviderCatalogTest {
     }
 
     @Test
-    @DisplayName("Provider catalog keeps Codex on CLI OAuth and Copilot on Chat4J Copilot auth")
+    @DisplayName("Provider catalog keeps Codex and Copilot on Chat4J OAuth auth types")
     void allProviders_whenCatalogInitialized_mapsCodexAndCopilotAuthTypes() {
         var subject = new ProviderCatalog();
 
@@ -41,7 +41,7 @@ class ProviderCatalogTest {
                 .filteredOn(providerDefinition -> "OpenAI Codex".equals(providerDefinition.name()))
                 .singleElement()
                 .extracting(providerDefinition -> providerDefinition.descriptor().authType())
-                .isEqualTo(AuthType.CLI_OAUTH);
+                .isEqualTo(AuthType.CODEX_OAUTH);
 
         assertThat(subject.allProviders())
                 .filteredOn(providerDefinition -> "GitHub Copilot".equals(providerDefinition.name()))

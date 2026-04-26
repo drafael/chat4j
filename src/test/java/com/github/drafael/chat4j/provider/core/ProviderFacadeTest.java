@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.auth.CredentialStrategy;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import org.junit.jupiter.api.DisplayName;
@@ -122,5 +123,70 @@ class ProviderFacadeTest {
 
         assertThat(runtime.apiKey()).isEqualTo("gho_source_token");
         assertThat(runtime.selectedModelSupportedEndpoints()).containsExactly("/chat/completions");
+    }
+
+    @Test
+    @DisplayName("Codex auth resolves API key from Chat4J Codex auth resolver")
+    void resolveRuntime_whenProviderUsesCodexAuth_usesCodexAuthResolver() throws Exception {
+        CredentialStrategy credentialStrategy = new CredentialStrategy() {
+            @Override
+            public String resolveCredentialEnvVar(String envVarExpression) {
+                return null;
+            }
+
+            @Override
+            public String resolveApiKey(String envVarExpression, String fallbackApiKey) {
+                return "unexpected";
+            }
+        };
+
+        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver() {
+            @Override
+            public String resolveBearerToken() {
+                return "copilot-token";
+            }
+
+            @Override
+            public String resolveBearerTokenOrNull() {
+                return "copilot-token";
+            }
+        };
+
+        CodexAuthResolver codexAuthResolver = new CodexAuthResolver() {
+            @Override
+            public String resolveBearerToken() {
+                return "codex-token-required";
+            }
+
+            @Override
+            public String resolveBearerTokenOrNull() {
+                return "codex-token-optional";
+            }
+        };
+
+        var subject = new ProviderFacade(
+                credentialStrategy,
+                new CliOAuthRunner(),
+                copilotAuthResolver,
+                codexAuthResolver,
+                new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
+        );
+        var descriptor = new ProviderDescriptor(
+                "OpenAI Codex",
+                AuthType.CODEX_OAUTH,
+                null,
+                null,
+                null,
+                "https://api.openai.com/v1",
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                UnaryOperator.identity()
+        );
+
+        var runtimeWithoutModel = subject.resolveRuntime(descriptor, null, null, null);
+        var runtimeWithModel = subject.resolveRuntime(descriptor, null, null, "codex-mini-latest");
+
+        assertThat(runtimeWithoutModel.apiKey()).isEqualTo("codex-token-optional");
+        assertThat(runtimeWithModel.apiKey()).isEqualTo("codex-token-required");
     }
 }

@@ -8,15 +8,11 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import static java.util.Collections.emptyList;
 
 public class CliOAuthRunner {
@@ -79,10 +75,6 @@ public class CliOAuthRunner {
 
             String token = firstNonBlankLine(result.output());
             return token == null ? null : stripBearerPrefix(token);
-        }
-
-        if (isCodexSpec(spec)) {
-            return readCodexTokenFromAuthJson();
         }
 
         return null;
@@ -151,11 +143,6 @@ public class CliOAuthRunner {
                 || output.contains("please login");
     }
 
-    private boolean isCodexSpec(OAuthCliSpec spec) {
-        return !spec.statusCommand().isEmpty()
-                && "codex".equalsIgnoreCase(spec.statusCommand().getFirst());
-    }
-
     private boolean isCommandMissing(Exception error) {
         if (!(error instanceof IOException ioException)) {
             return false;
@@ -192,32 +179,6 @@ public class CliOAuthRunner {
         }
 
         return executable.trim();
-    }
-
-    private String readCodexTokenFromAuthJson() {
-        try {
-            Path authJson = Path.of(System.getProperty("user.home"), ".codex", "auth.json");
-            if (!Files.exists(authJson)) {
-                return null;
-            }
-
-            String content = Files.readString(authJson, StandardCharsets.UTF_8);
-            String accessToken = extractJsonField(content, "access_token");
-            if (StringUtils.isNotBlank(accessToken)) {
-                return accessToken;
-            }
-
-            String apiKey = extractJsonField(content, "OPENAI_API_KEY");
-            return StringUtils.isBlank(apiKey) ? null : apiKey;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String extractJsonField(String content, String fieldName) {
-        Pattern pattern = Pattern.compile("\"%s\"\\s*:\\s*\"([^\"]+)\"".formatted(Pattern.quote(fieldName)));
-        Matcher matcher = pattern.matcher(content);
-        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
     private String stripBearerPrefix(String token) {

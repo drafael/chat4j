@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ModelFetcher;
-import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
 import com.github.drafael.chat4j.provider.capability.auth.impl.EnvVarCredentialStrategy;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
@@ -14,17 +13,11 @@ import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 
 import java.util.ArrayList;
 import java.util.List;
-import static java.util.Collections.emptyList;
 
 final class ProviderCatalog {
 
     private static final String GOOGLE_AI_ENV_VARS = "GEMINI_API_KEY|GOOGLEAI_API_KEY|GOOGLE_AI_API_KEY";
 
-    private static final OAuthCliSpec CODEX_OAUTH = new OAuthCliSpec(
-            List.of("codex", "login", "status"),
-            List.of("codex", "login"),
-            List.of("codex", "logout"),
-            emptyList());
     private static final CopilotModelMetadataStore COPILOT_MODEL_METADATA_STORE = new CopilotModelMetadataStore();
     private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(
             new EnvVarCredentialStrategy(),
@@ -47,10 +40,10 @@ final class ProviderCatalog {
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI Codex",
-                        AuthType.CLI_OAUTH,
+                        AuthType.CODEX_OAUTH,
                         null,
                         null,
-                        CODEX_OAUTH,
+                        null,
                         "https://api.openai.com/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ),

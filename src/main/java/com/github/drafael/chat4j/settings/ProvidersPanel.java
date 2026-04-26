@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
@@ -37,12 +38,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.lang3.StringUtils;
-import static java.util.Collections.emptyList;
 
 public class ProvidersPanel extends AbstractSettingsPanel {
 
     private static final CliOAuthRunner CLI_OAUTH_RUNNER = new CliOAuthRunner();
     private static final CopilotAuthResolver COPILOT_AUTH_RESOLVER = new CopilotAuthResolver();
+    private static final CodexAuthResolver CODEX_AUTH_RESOLVER = new CodexAuthResolver();
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
@@ -53,12 +54,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final String CHAT4J_OAUTH_SOURCE = "Chat4J OAuth";
     private static final int DETAIL_LABEL_COLUMN_WIDTH = 156;
     private static final int DETAIL_COLUMN_GAP = 12;
-
-    private static final OAuthCliSpec CODEX_OAUTH = new OAuthCliSpec(
-        List.of("codex", "login", "status"),
-        List.of("codex", "login"),
-        List.of("codex", "logout"),
-        emptyList());
 
     private final CardLayout detailCardLayout = new CardLayout();
     private final JPanel detailPanel = new JPanel(detailCardLayout);
@@ -109,12 +104,13 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private final Map<String, CliOauthAvailabilitySnapshot> cliOauthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> cliOauthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final JList<String> providerList;
 
     static {
         PROVIDERS.put("Anthropic", ProviderInfo.envVar("ANTHROPIC_API_KEY", "https://api.anthropic.com"));
         PROVIDERS.put("OpenAI", ProviderInfo.envVar("OPENAI_API_KEY", "https://api.openai.com/v1"));
-        PROVIDERS.put("OpenAI Codex", ProviderInfo.cliOAuth("https://api.openai.com/v1", CODEX_OAUTH));
+        PROVIDERS.put("OpenAI Codex", ProviderInfo.codexOAuth("https://api.openai.com/v1"));
         PROVIDERS.put("GitHub Copilot", ProviderInfo.copilotOAuth("https://api.githubcopilot.com"));
         PROVIDERS.put("Google AI", ProviderInfo.envVar("GEMINI_API_KEY|GOOGLEAI_API_KEY|GOOGLE_AI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai"));
         PROVIDERS.put("OpenRouter", ProviderInfo.envVar("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"));
@@ -278,7 +274,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         );
         panel.add(baseUrl, gbc);
 
-        if (info.authType() == AuthType.CLI_OAUTH || info.authType() == AuthType.COPILOT_OAUTH) {
+        if (info.authType() == AuthType.CLI_OAUTH
+                || info.authType() == AuthType.COPILOT_OAUTH
+                || info.authType() == AuthType.CODEX_OAUTH) {
             row = addSectionHeader(panel, gbc, row + 1, "Authentication");
 
             gbc.gridx = 0;
@@ -293,8 +291,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             if (info.authType() == AuthType.CLI_OAUTH) {
                 configureOAuthAction(name, info, statusLabel, authButton);
-            } else {
+            } else if (info.authType() == AuthType.COPILOT_OAUTH) {
                 configureCopilotAuthAction(name, statusLabel, authButton);
+            } else {
+                configureCodexAuthAction(name, statusLabel, authButton);
             }
         }
 
@@ -347,6 +347,13 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             CopilotAuthResolver.CopilotAuthStatus copilotAuthStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
             cacheCopilotAuthAvailability(providerName, copilotAuthStatus.authorized());
             applyCopilotAuthStatus(status, copilotAuthStatus);
+            return status;
+        }
+
+        if (info.authType() == AuthType.CODEX_OAUTH) {
+            CodexAuthResolver.CodexAuthStatus codexAuthStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+            cacheCodexAuthAvailability(providerName, codexAuthStatus.authorized());
+            applyCodexAuthStatus(status, codexAuthStatus);
             return status;
         }
 
@@ -592,7 +599,52 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         });
     }
 
+    private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
+        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
+
+        authButton.addActionListener(e -> {
+            authButton.setEnabled(false);
+            authButton.setText("Working...");
+
+            Thread.startVirtualThread(() -> {
+                CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+                CodexAuthResolver.CodexAuthActionResult actionResult;
+
+                if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
+                    actionResult = CODEX_AUTH_RESOLVER.logout();
+                } else {
+                    try {
+                        CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
+                        SwingUtilities.invokeLater(() -> showCodexAuthLoginProgress(statusLabel, challenge));
+                        actionResult = CODEX_AUTH_RESOLVER.completeLogin(challenge);
+                    } catch (Exception ex) {
+                        actionResult = CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ex.getMessage()));
+                    }
+                }
+
+                CodexAuthResolver.CodexAuthStatus updatedStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+                CodexAuthResolver.CodexAuthActionResult finalActionResult = actionResult;
+                SwingUtilities.invokeLater(() -> applyCodexAuthControls(
+                        providerName,
+                        statusLabel,
+                        authButton,
+                        updatedStatus,
+                        finalActionResult.success() ? null : finalActionResult.message()
+                ));
+            });
+        });
+    }
+
     private void showCopilotAuthLoginProgress(JLabel statusLabel, CopilotAuthResolver.CopilotLoginChallenge challenge) {
+        String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
+                .formatted(challenge.userCode(), challenge.verificationUri());
+        statusLabel.setText(message);
+        statusLabel.setForeground(new Color(214, 117, 0));
+        setStatusInfo(message);
+    }
+
+    private void showCodexAuthLoginProgress(JLabel statusLabel, CodexAuthResolver.CodexLoginChallenge challenge) {
         String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
                 .formatted(challenge.userCode(), challenge.verificationUri());
         statusLabel.setText(message);
@@ -682,12 +734,64 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         providerList.repaint();
     }
 
+    private void applyCodexAuthControls(
+            String providerName,
+            JLabel statusLabel,
+            JButton authButton,
+            CodexAuthResolver.CodexAuthStatus status,
+            String failureMessage
+    ) {
+        cacheCodexAuthAvailability(providerName, status.authorized());
+        applyCodexAuthStatus(statusLabel, status);
+
+        boolean chat4jSession = status.authorized() && StringUtils.equals(status.source(), CHAT4J_OAUTH_SOURCE);
+        boolean oauthClientConfigured = CODEX_AUTH_RESOLVER.isOAuthClientConfigured();
+
+        authButton.setOpaque(true);
+        if (chat4jSession) {
+            authButton.setText("Log out");
+            authButton.setEnabled(true);
+            authButton.setForeground(Color.WHITE);
+            authButton.setBackground(new Color(229, 57, 53));
+            authButton.setToolTipText("Sign out Chat4J OAuth session");
+        } else if (!oauthClientConfigured) {
+            authButton.setText("Configure OAuth App");
+            authButton.setEnabled(false);
+            authButton.setForeground(UIManager.getColor("Button.foreground"));
+            authButton.setBackground(UIManager.getColor("Button.background"));
+            authButton.setToolTipText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
+
+            if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
+                statusLabel.setText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
+                statusLabel.setForeground(new Color(214, 117, 0));
+            }
+        } else {
+            authButton.setText("Login");
+            authButton.setEnabled(true);
+            authButton.setForeground(UIManager.getColor("Button.foreground"));
+            authButton.setBackground(UIManager.getColor("Button.background"));
+            authButton.setToolTipText("Sign in OpenAI for Chat4J");
+        }
+
+        if (StringUtils.isNotBlank(failureMessage)) {
+            statusLabel.setText(failureMessage);
+            statusLabel.setForeground(new Color(200, 50, 50));
+        }
+
+        providerList.repaint();
+    }
+
     private void applyOAuthStatus(JLabel statusLabel, CliOAuthRunner.OAuthStatus status) {
         statusLabel.setText(status.message());
         statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
     }
 
     private void applyCopilotAuthStatus(JLabel statusLabel, CopilotAuthResolver.CopilotAuthStatus status) {
+        statusLabel.setText(status.message());
+        statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
+    }
+
+    private void applyCodexAuthStatus(JLabel statusLabel, CodexAuthResolver.CodexAuthStatus status) {
         statusLabel.setText(status.message());
         statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
     }
@@ -1115,6 +1219,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return isCopilotAuthAvailable(providerName);
         }
 
+        if (info.authType() == AuthType.CODEX_OAUTH) {
+            return isCodexAuthAvailable(providerName);
+        }
+
         if (info.envVar() == null) {
             String configuredBaseUrl = readString(providerBaseUrlKey(providerName), info.defaultBaseUrl());
             return LocalServiceHealth.isReachable(configuredBaseUrl);
@@ -1146,12 +1254,28 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return status.authorized();
     }
 
+    private boolean isCodexAuthAvailable(String providerName) {
+        Instant now = Instant.now();
+        CodexAuthAvailabilitySnapshot cached = codexAuthAvailabilityByProvider.get(providerName);
+        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_AVAILABILITY_TTL))) {
+            return cached.authorized();
+        }
+
+        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+        cacheCodexAuthAvailability(providerName, status.authorized());
+        return status.authorized();
+    }
+
     private void cacheCliOauthAvailability(String providerName, boolean authorized) {
         cliOauthAvailabilityByProvider.put(providerName, new CliOauthAvailabilitySnapshot(authorized, Instant.now()));
     }
 
     private void cacheCopilotAuthAvailability(String providerName, boolean authorized) {
         copilotAuthAvailabilityByProvider.put(providerName, new CopilotAuthAvailabilitySnapshot(authorized, Instant.now()));
+    }
+
+    private void cacheCodexAuthAvailability(String providerName, boolean authorized) {
+        codexAuthAvailabilityByProvider.put(providerName, new CodexAuthAvailabilitySnapshot(authorized, Instant.now()));
     }
 
     private void triggerCliOauthAvailabilityRefresh(String providerName, OAuthCliSpec oauthCliSpec) {
@@ -1287,6 +1411,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private record CopilotAuthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
     }
 
+    private record CodexAuthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
+    }
+
     record ProviderInfo(String envVar, String defaultBaseUrl, AuthType authType, OAuthCliSpec oauthCliSpec) {
 
         static ProviderInfo envVar(String envVar, String baseUrl) {
@@ -1303,6 +1430,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         static ProviderInfo copilotOAuth(String baseUrl) {
             return new ProviderInfo(null, baseUrl, AuthType.COPILOT_OAUTH, null);
+        }
+
+        static ProviderInfo codexOAuth(String baseUrl) {
+            return new ProviderInfo(null, baseUrl, AuthType.CODEX_OAUTH, null);
         }
     }
 

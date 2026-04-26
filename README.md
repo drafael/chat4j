@@ -34,7 +34,7 @@ Enable one or more providers by setting API keys in your environment:
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
-- **OpenAI Codex** via `codex` CLI OAuth
+- **OpenAI Codex** via Chat4J OAuth device login
 - **GitHub Copilot** via Chat4J OAuth device login (no `gh auth` dependency)
 - **LM Studio** — local OpenAI-compatible server at `localhost:1234`, no API key needed
 - **Ollama** — local models at `localhost:11434`, no API key needed
@@ -52,6 +52,19 @@ Chat4J Copilot login requires a GitHub OAuth App client ID. Configure one of:
 Optional scope override (default is least-privilege `read:user user:email`):
 
 - JVM property: `chat4j.copilot.oauthScopes`
+
+### OpenAI Codex OAuth setup
+
+Chat4J Codex login requires an OAuth client ID. Configure one of:
+
+- JVM property: `chat4j.codex.oauthClientId`
+- Environment variable: `CHAT4J_CODEX_OAUTH_CLIENT_ID`
+- Build property resource key: `codexOAuthClientId` (from `build.properties`)
+
+Optional overrides:
+
+- OAuth issuer: `chat4j.codex.oauthIssuer` (default: `https://auth.openai.com`)
+- OAuth scopes: `chat4j.codex.oauthScopes`
 
 ## Requirements
 
@@ -110,6 +123,7 @@ mvn test
 
 - [docs/README.md](docs/README.md) — documentation index
 - [docs/copilot-auth-device-flow.md](docs/copilot-auth-device-flow.md) — current Copilot auth/runtime behavior
+- [docs/codex-auth-device-flow.md](docs/codex-auth-device-flow.md) — current Codex auth/runtime behavior
 - [docs/copilot-integration-header-behavior.md](docs/copilot-integration-header-behavior.md) — Copilot header-routing evidence and curl proofs
 - [docs/calver.md](docs/calver.md) — Current CalVer format, pre-commit bump behavior, and hook setup
 

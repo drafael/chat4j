@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.auth.CredentialStrategy;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import org.apache.commons.lang3.StringUtils;
@@ -17,18 +18,37 @@ public class ProviderFacade {
     private final CredentialStrategy credentialStrategy;
     private final CliOAuthRunner cliOAuthRunner;
     private final CopilotAuthResolver copilotAuthResolver;
+    private final CodexAuthResolver codexAuthResolver;
     private final CopilotModelMetadataStore copilotModelMetadataStore;
 
     public ProviderFacade(CredentialStrategy credentialStrategy) {
-        this(credentialStrategy, new CliOAuthRunner(), new CopilotAuthResolver(), new CopilotModelMetadataStore());
+        this(
+                credentialStrategy,
+                new CliOAuthRunner(),
+                new CopilotAuthResolver(),
+                new CodexAuthResolver(),
+                new CopilotModelMetadataStore()
+        );
     }
 
     public ProviderFacade(CredentialStrategy credentialStrategy, CliOAuthRunner cliOAuthRunner) {
-        this(credentialStrategy, cliOAuthRunner, new CopilotAuthResolver(), new CopilotModelMetadataStore());
+        this(
+                credentialStrategy,
+                cliOAuthRunner,
+                new CopilotAuthResolver(),
+                new CodexAuthResolver(),
+                new CopilotModelMetadataStore()
+        );
     }
 
     public ProviderFacade(CredentialStrategy credentialStrategy, CopilotModelMetadataStore copilotModelMetadataStore) {
-        this(credentialStrategy, new CliOAuthRunner(), new CopilotAuthResolver(), copilotModelMetadataStore);
+        this(
+                credentialStrategy,
+                new CliOAuthRunner(),
+                new CopilotAuthResolver(),
+                new CodexAuthResolver(),
+                copilotModelMetadataStore
+        );
     }
 
     ProviderFacade(
@@ -36,7 +56,13 @@ public class ProviderFacade {
             CliOAuthRunner cliOAuthRunner,
             CopilotAuthResolver copilotAuthResolver
     ) {
-        this(credentialStrategy, cliOAuthRunner, copilotAuthResolver, new CopilotModelMetadataStore());
+        this(
+                credentialStrategy,
+                cliOAuthRunner,
+                copilotAuthResolver,
+                new CodexAuthResolver(),
+                new CopilotModelMetadataStore()
+        );
     }
 
     ProviderFacade(
@@ -45,9 +71,26 @@ public class ProviderFacade {
             CopilotAuthResolver copilotAuthResolver,
             CopilotModelMetadataStore copilotModelMetadataStore
     ) {
+        this(
+                credentialStrategy,
+                cliOAuthRunner,
+                copilotAuthResolver,
+                new CodexAuthResolver(),
+                copilotModelMetadataStore
+        );
+    }
+
+    ProviderFacade(
+            CredentialStrategy credentialStrategy,
+            CliOAuthRunner cliOAuthRunner,
+            CopilotAuthResolver copilotAuthResolver,
+            CodexAuthResolver codexAuthResolver,
+            CopilotModelMetadataStore copilotModelMetadataStore
+    ) {
         this.credentialStrategy = credentialStrategy;
         this.cliOAuthRunner = cliOAuthRunner;
         this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
         this.copilotModelMetadataStore = copilotModelMetadataStore;
     }
 
@@ -73,6 +116,7 @@ public class ProviderFacade {
                     ? nullableToEmpty(cliOAuthRunner.resolveBearerTokenOrNull(descriptor.oauthCliSpec()))
                     : cliOAuthRunner.resolveBearerToken(descriptor.oauthCliSpec());
             case COPILOT_OAUTH -> resolveCopilotAuthApiKey(selectedModel);
+            case CODEX_OAUTH -> resolveCodexAuthApiKey(selectedModel);
             case ENV_VAR -> credentialStrategy.resolveApiKey(effectiveEnvVar, descriptor.fallbackApiKey());
         };
 
@@ -102,6 +146,16 @@ public class ProviderFacade {
         String token = selectedModel == null
                 ? copilotAuthResolver.resolveBearerTokenOrNull()
                 : copilotAuthResolver.resolveBearerToken();
+
+        return selectedModel == null
+                ? nullableToEmpty(token)
+                : token;
+    }
+
+    private String resolveCodexAuthApiKey(String selectedModel) {
+        String token = selectedModel == null
+                ? codexAuthResolver.resolveBearerTokenOrNull()
+                : codexAuthResolver.resolveBearerToken();
 
         return selectedModel == null
                 ? nullableToEmpty(token)

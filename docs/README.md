@@ -20,6 +20,9 @@
 - [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
   - Current GitHub Copilot authentication and runtime behavior in Chat4J.
 
+- [codex-auth-device-flow.md](codex-auth-device-flow.md)
+  - Current OpenAI Codex authentication and runtime behavior in Chat4J.
+
 - [copilot-integration-header-behavior.md](copilot-integration-header-behavior.md)
   - Header-routing evidence, curl proofs, and upstream reference links for Copilot model behavior.
 

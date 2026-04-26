@@ -49,7 +49,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
             emptyList(),
             declaredCapabilities(providerName),
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
-        this.chatCompletionClient = selectChatClient(providerName, authType);
+        this.chatCompletionClient = selectChatClient(providerName);
         this.modelCatalogClient = new OpenAiModelCatalogClient(copilotModelMetadataStore);
     }
 
@@ -63,8 +63,8 @@ public class OpenAiCompatibleModule implements ProviderModule {
         return chatCompletionClient;
     }
 
-    private ChatCompletionClient selectChatClient(String providerName, AuthType authType) {
-        return authType == AuthType.CLI_OAUTH && "OpenAI Codex".equals(providerName)
+    private ChatCompletionClient selectChatClient(String providerName) {
+        return "OpenAI Codex".equals(providerName)
                 ? new CodexCliChatCompletionClient()
                 : new OpenAiChatCompletionClient();
     }

@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 
@@ -21,17 +22,24 @@ final class ProviderRuntimePolicy {
 
     private final CliOAuthRunner cliOAuthRunner;
     private final CopilotAuthResolver copilotAuthResolver;
+    private final CodexAuthResolver codexAuthResolver;
     private final ConcurrentHashMap<String, CliOauthStatusSnapshot> cliOauthStatusByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CopilotAuthStatusSnapshot> copilotAuthStatusByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CodexAuthStatusSnapshot> codexAuthStatusByProvider = new ConcurrentHashMap<>();
     private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = Map.of();
 
     ProviderRuntimePolicy() {
-        this(new CliOAuthRunner(), new CopilotAuthResolver());
+        this(new CliOAuthRunner(), new CopilotAuthResolver(), new CodexAuthResolver());
     }
 
     ProviderRuntimePolicy(CliOAuthRunner cliOAuthRunner, CopilotAuthResolver copilotAuthResolver) {
+        this(cliOAuthRunner, copilotAuthResolver, new CodexAuthResolver());
+    }
+
+    ProviderRuntimePolicy(CliOAuthRunner cliOAuthRunner, CopilotAuthResolver copilotAuthResolver, CodexAuthResolver codexAuthResolver) {
         this.cliOAuthRunner = cliOAuthRunner;
         this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
     }
 
     void applyRuntimeConfig(Map<String, RuntimeConfig> runtimeConfig) {
@@ -47,6 +55,7 @@ final class ProviderRuntimePolicy {
         return switch (providerDefinition.descriptor().authType()) {
             case CLI_OAUTH -> hasCliOauthCredentials(providerDefinition);
             case COPILOT_OAUTH -> hasCopilotAuthCredentials(providerDefinition);
+            case CODEX_OAUTH -> hasCodexAuthCredentials(providerDefinition);
             case ENV_VAR -> CredentialResolver.hasRequiredCredentials(providerDefinition.envVar());
         };
     }
@@ -77,6 +86,19 @@ final class ProviderRuntimePolicy {
         return authorized;
     }
 
+    private boolean hasCodexAuthCredentials(ProviderDefinition providerDefinition) {
+        String providerName = providerDefinition.name();
+        CodexAuthStatusSnapshot cached = codexAuthStatusByProvider.get(providerName);
+        Instant now = Instant.now();
+        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
+            return cached.authorized();
+        }
+
+        boolean authorized = codexAuthResolver.resolveStatus().authorized();
+        codexAuthStatusByProvider.put(providerName, new CodexAuthStatusSnapshot(authorized, now));
+        return authorized;
+    }
+
     /**
      * Pre-checks auth-dependent providers in parallel so that subsequent
      * {@link #hasRequiredCredentials} calls hit the warm cache instead of
@@ -86,7 +108,8 @@ final class ProviderRuntimePolicy {
         List<CompletableFuture<Void>> futures = providers.stream()
                 .filter(this::isEnabled)
                 .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH
-                        || p.descriptor().authType() == AuthType.COPILOT_OAUTH)
+                        || p.descriptor().authType() == AuthType.COPILOT_OAUTH
+                        || p.descriptor().authType() == AuthType.CODEX_OAUTH)
                 .map(p -> CompletableFuture.runAsync(() -> hasRequiredCredentials(p)))
                 .toList();
         futures.forEach(CompletableFuture::join);
@@ -104,5 +127,8 @@ final class ProviderRuntimePolicy {
     }
 
     private record CopilotAuthStatusSnapshot(boolean authorized, Instant checkedAt) {
+    }
+
+    private record CodexAuthStatusSnapshot(boolean authorized, Instant checkedAt) {
     }
 }

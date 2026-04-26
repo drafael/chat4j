@@ -432,7 +432,7 @@ class OpenAiModelCatalogClientTest {
 
         ProviderDescriptor descriptor = new ProviderDescriptor(
                 "OpenAI Codex",
-                AuthType.CLI_OAUTH,
+                AuthType.CODEX_OAUTH,
                 null,
                 null,
                 null,
