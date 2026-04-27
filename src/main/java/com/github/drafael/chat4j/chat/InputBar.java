@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.formdev.flatlaf.icons.FlatFileViewDirectoryIcon;
 import com.formdev.flatlaf.icons.FlatFileViewFileIcon;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -17,11 +18,16 @@ import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.io.File;
@@ -35,6 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static java.util.Collections.emptyList;
 
@@ -44,8 +51,11 @@ public class InputBar extends JPanel {
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int AGENT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_ICON_SIZE = 24;
     private static final int STOP_BUTTON_SIZE = 28;
+    private static final int PROJECT_ROOT_BUTTON_HEIGHT = 24;
+    private static final int PROJECT_ROOT_BUTTON_MIN_WIDTH = 72;
     private static final int MENU_ICON_SIZE = 14;
     private static final float CHIP_HOVER_BG_DELTA = 0.09f;
     private static final float CHIP_HOVER_BORDER_DELTA = 0.12f;
@@ -57,8 +67,13 @@ public class InputBar extends JPanel {
     private final JPanel composerShell;
     private final JButton attachButton;
     private final JButton thinkingButton;
+    private final JToggleButton agentModeButton;
     private final JPopupMenu reasoningLevelMenu = new JPopupMenu();
     private final Map<ReasoningLevel, JRadioButtonMenuItem> reasoningLevelItems = new LinkedHashMap<>();
+    private final JPanel projectRootRowPanel;
+    private final JLabel projectRootIconLabel;
+    private final JButton projectRootButton;
+    private final JLabel agentAccessLabel;
     private final JLabel validationLabel;
     private JButton cancelGenerationButton;
     private final JPopupMenu slashPopup = new JPopupMenu();
@@ -71,10 +86,18 @@ public class InputBar extends JPanel {
     private final List<ActionListener> sendListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
+    private final List<Consumer<Boolean>> agentModeListeners = new ArrayList<>();
+    private final List<Consumer<Path>> agentProjectRootListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
     private ReasoningLevel reasoningLevel = ReasoningLevel.OFF;
     private boolean thinkingAvailable = false;
+    private boolean agentModeAvailable = false;
+    private boolean agentModeEnabled = false;
+    private boolean agentModeRequested = false;
+    private Path agentProjectRoot;
     private int slashTokenStart = -1;
+    private Function<Component, Optional<Path>> projectRootChooser =
+            parent -> showProjectRootChooser(parent, null);
 
     public InputBar() {
         setLayout(new BorderLayout());
@@ -160,27 +183,18 @@ public class InputBar extends JPanel {
         thinkingButton.addActionListener(e -> toggleReasoningSelector());
         initializeReasoningLevelMenu();
 
-        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
-        actionsPanel.setOpaque(false);
-        actionsPanel.add(attachButton);
-        actionsPanel.add(thinkingButton);
-
-        validationLabel = new JLabel();
-        Fonts.apply(validationLabel, Font.PLAIN, Fonts.SIZE_SMALL);
-        validationLabel.setVisible(false);
-
-        JPanel composerBottomPanel = new JPanel(new BorderLayout(0, 4));
-        composerBottomPanel.setOpaque(false);
-        composerBottomPanel.add(actionsPanel, BorderLayout.WEST);
-        composerBottomPanel.add(validationLabel, BorderLayout.CENTER);
-
-        composerShell = new ComposerShellPanel();
-        composerShell.setLayout(new BorderLayout(0, 6));
-        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
-        composerShell.setTransferHandler(new FileDropTransferHandler());
-        composerShell.add(chipsPanel, BorderLayout.NORTH);
-        composerShell.add(scrollPane, BorderLayout.CENTER);
-        composerShell.add(composerBottomPanel, BorderLayout.SOUTH);
+        agentModeButton = new JToggleButton();
+        agentModeButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        agentModeButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        agentModeButton.setFocusable(false);
+        agentModeButton.setRolloverEnabled(true);
+        agentModeButton.setMargin(new Insets(0, 0, 0, 0));
+        agentModeButton.setPreferredSize(new Dimension(24, 24));
+        agentModeButton.setMinimumSize(new Dimension(24, 24));
+        agentModeButton.setMaximumSize(new Dimension(24, 24));
+        agentModeButton.setToolTipText("Agent Mode");
+        agentModeButton.setVisible(false);
+        agentModeButton.addActionListener(e -> onAgentModeButtonClicked());
 
         cancelGenerationButton = new JButton();
         cancelGenerationButton.putClientProperty("JButton.buttonType", "toolBarButton");
@@ -199,16 +213,80 @@ public class InputBar extends JPanel {
         cancelGenerationButton.setVisible(false);
         cancelGenerationButton.addActionListener(e -> fireCancelGeneration());
 
+        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        actionsPanel.setOpaque(false);
+        actionsPanel.add(attachButton);
+        actionsPanel.add(thinkingButton);
+        actionsPanel.add(agentModeButton);
+
         JPanel cancelPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         cancelPanel.setOpaque(false);
         cancelPanel.add(cancelGenerationButton);
-        composerBottomPanel.add(cancelPanel, BorderLayout.EAST);
+
+        JPanel actionsRow = new JPanel(new BorderLayout(0, 0));
+        actionsRow.setOpaque(false);
+        actionsRow.add(actionsPanel, BorderLayout.WEST);
+        actionsRow.add(cancelPanel, BorderLayout.EAST);
+
+        projectRootIconLabel = new JLabel(new FlatFileViewDirectoryIcon());
+        projectRootIconLabel.setVisible(false);
+
+        projectRootButton = new JButton();
+        projectRootButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        projectRootButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:8");
+        projectRootButton.setFocusable(false);
+        projectRootButton.setHorizontalAlignment(SwingConstants.LEFT);
+        projectRootButton.setMargin(new Insets(0, 6, 0, 6));
+        projectRootButton.setPreferredSize(new Dimension(PROJECT_ROOT_BUTTON_MIN_WIDTH, PROJECT_ROOT_BUTTON_HEIGHT));
+        projectRootButton.setVisible(false);
+        projectRootButton.addActionListener(e -> onProjectRootButtonClicked());
+
+        agentAccessLabel = new JLabel("Full access");
+        Fonts.apply(agentAccessLabel, Font.PLAIN, Fonts.SIZE_SMALL);
+        agentAccessLabel.setVisible(false);
+
+        projectRootRowPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        projectRootRowPanel.setOpaque(false);
+        projectRootRowPanel.add(projectRootIconLabel);
+        projectRootRowPanel.add(projectRootButton);
+        projectRootRowPanel.add(agentAccessLabel);
+        projectRootRowPanel.setVisible(false);
+
+        validationLabel = new JLabel();
+        Fonts.apply(validationLabel, Font.PLAIN, Fonts.SIZE_SMALL);
+        validationLabel.setVisible(false);
+        validationLabel.setAlignmentX(LEFT_ALIGNMENT);
+
+        JPanel composerBottomPanel = new JPanel();
+        composerBottomPanel.setOpaque(false);
+        composerBottomPanel.setLayout(new BoxLayout(composerBottomPanel, BoxLayout.Y_AXIS));
+        actionsRow.setAlignmentX(LEFT_ALIGNMENT);
+        projectRootRowPanel.setAlignmentX(LEFT_ALIGNMENT);
+        composerBottomPanel.add(actionsRow);
+        composerBottomPanel.add(Box.createVerticalStrut(4));
+        composerBottomPanel.add(projectRootRowPanel);
+        composerBottomPanel.add(validationLabel);
+
+        composerShell = new ComposerShellPanel();
+        composerShell.setLayout(new BorderLayout(0, 6));
+        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        composerShell.setTransferHandler(new FileDropTransferHandler());
+        composerShell.add(chipsPanel, BorderLayout.NORTH);
+        composerShell.add(scrollPane, BorderLayout.CENTER);
+        composerShell.add(composerBottomPanel, BorderLayout.SOUTH);
 
         configureSlashPopup();
         refreshSkills();
 
         applyThemeStyles();
         add(composerShell, BorderLayout.CENTER);
+
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                updateProjectRootPresentation();
+            }
+        });
     }
 
     @Override
@@ -266,6 +344,10 @@ public class InputBar extends JPanel {
         textArea.setEnabled(enabled);
         attachButton.setEnabled(enabled);
         thinkingButton.setEnabled(enabled);
+        agentModeButton.setEnabled(enabled && agentModeAvailable);
+        if (projectRootButton != null) {
+            projectRootButton.setEnabled(enabled && agentModeAvailable && agentModeEnabled);
+        }
     }
 
     public void addSendListener(ActionListener listener) {
@@ -287,7 +369,7 @@ public class InputBar extends JPanel {
     }
 
     public boolean isThinkingEnabled() {
-        return reasoningLevel.enabled();
+        return getEffectiveReasoningLevel().enabled();
     }
 
     public void setThinkingEnabled(boolean thinkingEnabled) {
@@ -296,6 +378,10 @@ public class InputBar extends JPanel {
 
     public ReasoningLevel getReasoningLevel() {
         return reasoningLevel;
+    }
+
+    public ReasoningLevel getEffectiveReasoningLevel() {
+        return thinkingAvailable ? reasoningLevel : ReasoningLevel.OFF;
     }
 
     public void setReasoningLevel(ReasoningLevel reasoningLevel) {
@@ -310,14 +396,78 @@ public class InputBar extends JPanel {
 
     public void setThinkingAvailable(boolean thinkingAvailable) {
         this.thinkingAvailable = thinkingAvailable;
-        if (!thinkingAvailable) {
-            this.reasoningLevel = ReasoningLevel.OFF;
-        }
         updateThinkingTogglePresentation();
     }
 
     public boolean isThinkingAvailable() {
         return thinkingAvailable;
+    }
+
+    public boolean isAgentModeAvailable() {
+        return agentModeAvailable;
+    }
+
+    public void setAgentModeAvailable(boolean agentModeAvailable) {
+        if (this.agentModeAvailable == agentModeAvailable) {
+            return;
+        }
+
+        this.agentModeAvailable = agentModeAvailable;
+        updateAgentModeEffectiveState();
+    }
+
+    public boolean isAgentModeEnabled() {
+        return agentModeEnabled;
+    }
+
+    public boolean isAgentModeRequested() {
+        return agentModeRequested;
+    }
+
+    public void setAgentModeEnabled(boolean enabled) {
+        this.agentModeRequested = enabled;
+        updateAgentModeEffectiveState();
+    }
+
+    public Path getAgentProjectRoot() {
+        return agentProjectRoot;
+    }
+
+    public void setAgentProjectRoot(Path projectRoot) {
+        Path normalized = projectRoot == null ? null : projectRoot.normalize();
+        if (normalized != null && !Files.isDirectory(normalized)) {
+            showValidationMessage("Selected project folder no longer exists.");
+            normalized = null;
+        }
+
+        if ((agentProjectRoot == null && normalized == null)
+                || (agentProjectRoot != null && agentProjectRoot.equals(normalized))
+        ) {
+            updateProjectRootPresentation();
+            return;
+        }
+
+        agentProjectRoot = normalized;
+        updateAgentModeEffectiveState();
+        notifyAgentProjectRootChanged(normalized);
+    }
+
+    public void addAgentModeListener(Consumer<Boolean> listener) {
+        if (listener != null) {
+            agentModeListeners.add(listener);
+        }
+    }
+
+    public void addAgentProjectRootListener(Consumer<Path> listener) {
+        if (listener != null) {
+            agentProjectRootListeners.add(listener);
+        }
+    }
+
+    void setProjectRootChooserForTests(Function<Component, Optional<Path>> chooser) {
+        if (chooser != null) {
+            this.projectRootChooser = chooser;
+        }
     }
 
     private void initializeReasoningLevelMenu() {
@@ -369,6 +519,216 @@ public class InputBar extends JPanel {
         };
     }
 
+    private void onAgentModeButtonClicked() {
+        if (!agentModeAvailable) {
+            setAgentModeEnabled(false);
+            return;
+        }
+
+        if (agentModeEnabled) {
+            setAgentModeEnabled(false);
+            clearValidationMessage();
+            return;
+        }
+
+        Path projectRoot = agentProjectRoot;
+        if (projectRoot == null || !Files.isDirectory(projectRoot)) {
+            Optional<Path> selectedProjectRoot = chooseProjectRoot();
+            if (selectedProjectRoot.isEmpty()) {
+                showValidationMessage("Select a project folder to enable Agent Mode.");
+                setAgentModeEnabled(false);
+                return;
+            }
+
+            setAgentProjectRoot(selectedProjectRoot.get());
+        }
+
+        clearValidationMessage();
+        setAgentModeEnabled(true);
+    }
+
+    private void onProjectRootButtonClicked() {
+        if (!agentModeAvailable) {
+            return;
+        }
+
+        Optional<Path> selectedProjectRoot = chooseProjectRoot();
+        if (selectedProjectRoot.isEmpty()) {
+            return;
+        }
+
+        clearValidationMessage();
+        setAgentProjectRoot(selectedProjectRoot.get());
+    }
+
+    private Optional<Path> chooseProjectRoot() {
+        return projectRootChooser.apply(this)
+                .map(Path::normalize)
+                .filter(Files::isDirectory);
+    }
+
+    private Optional<Path> showProjectRootChooser(Component parent, Path initialDirectory) {
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setDialogTitle("Select project folder");
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        chooser.setMultiSelectionEnabled(false);
+        chooser.setAcceptAllFileFilterUsed(false);
+        chooser.setFileHidingEnabled(false);
+
+        File initialDirFile = initialDirectory == null
+                ? null
+                : initialDirectory.toFile();
+        if (initialDirFile != null && initialDirFile.isDirectory()) {
+            chooser.setCurrentDirectory(initialDirFile);
+            chooser.setSelectedFile(initialDirFile);
+        }
+
+        int result = chooser.showOpenDialog(parent);
+        if (result != SystemFileChooser.APPROVE_OPTION) {
+            return Optional.empty();
+        }
+
+        File selectedFile = chooser.getSelectedFile();
+        if (selectedFile == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(selectedFile.toPath());
+    }
+
+    private void updateAgentModeEffectiveState() {
+        boolean effectiveEnabled = agentModeRequested && agentModeAvailable && agentProjectRoot != null;
+        if (this.agentModeEnabled != effectiveEnabled) {
+            this.agentModeEnabled = effectiveEnabled;
+            notifyAgentModeChanged(effectiveEnabled);
+        }
+
+        updateAgentModePresentation();
+    }
+
+    private void updateAgentModePresentation() {
+        if (agentModeButton == null) {
+            return;
+        }
+
+        agentModeButton.setVisible(agentModeAvailable);
+        agentModeButton.setEnabled(isEnabled() && agentModeAvailable);
+        agentModeButton.setSelected(agentModeAvailable && agentModeEnabled);
+        agentModeButton.setToolTipText(agentModeAvailable ? "Agent Mode" : null);
+        updateProjectRootPresentation();
+        revalidate();
+        repaint();
+    }
+
+    private void updateProjectRootPresentation() {
+        if (projectRootButton == null) {
+            return;
+        }
+
+        boolean showProjectRoot = agentModeAvailable && agentModeEnabled && agentProjectRoot != null;
+        if (!showProjectRoot) {
+            if (projectRootRowPanel != null) {
+                projectRootRowPanel.setVisible(false);
+            }
+            if (projectRootIconLabel != null) {
+                projectRootIconLabel.setVisible(false);
+                projectRootIconLabel.setToolTipText(null);
+            }
+            projectRootButton.setVisible(false);
+            projectRootButton.setText("");
+            projectRootButton.setToolTipText(null);
+            if (agentAccessLabel != null) {
+                agentAccessLabel.setVisible(false);
+                agentAccessLabel.setToolTipText(null);
+            }
+            return;
+        }
+
+        String folderName = StringUtils.defaultIfBlank(agentProjectRoot.getFileName().toString(), agentProjectRoot.toString());
+        String absolutePath = agentProjectRoot.toAbsolutePath().toString();
+
+        if (projectRootRowPanel != null) {
+            projectRootRowPanel.setVisible(true);
+        }
+
+        if (projectRootIconLabel != null) {
+            projectRootIconLabel.setVisible(true);
+            projectRootIconLabel.setToolTipText(absolutePath);
+        }
+
+        int maxButtonWidth = resolveProjectRootButtonMaxWidth();
+        String displayName = abbreviateToWidth(folderName, projectRootButton, maxButtonWidth);
+        int buttonWidth = measureButtonWidth(displayName, projectRootButton, maxButtonWidth);
+
+        projectRootButton.setText(displayName);
+        projectRootButton.setToolTipText("Selected folder: %s\nClick to change folder".formatted(absolutePath));
+        projectRootButton.setPreferredSize(new Dimension(buttonWidth, PROJECT_ROOT_BUTTON_HEIGHT));
+        projectRootButton.setMinimumSize(new Dimension(PROJECT_ROOT_BUTTON_MIN_WIDTH, PROJECT_ROOT_BUTTON_HEIGHT));
+        projectRootButton.setMaximumSize(new Dimension(maxButtonWidth, PROJECT_ROOT_BUTTON_HEIGHT));
+        projectRootButton.setVisible(true);
+        projectRootButton.setEnabled(isEnabled() && agentModeAvailable);
+
+        if (agentAccessLabel != null) {
+            agentAccessLabel.setVisible(agentModeEnabled);
+            agentAccessLabel.setToolTipText(agentModeEnabled
+                    ? "Agent has full access to files and commands in the selected folder."
+                    : null);
+        }
+    }
+
+    private int resolveProjectRootButtonMaxWidth() {
+        int referenceWidth = Math.max(getWidth(), composerShell == null ? 0 : composerShell.getWidth());
+        if (referenceWidth <= 0) {
+            referenceWidth = Math.max(getPreferredSize().width, 360);
+        }
+
+        return Math.max(PROJECT_ROOT_BUTTON_MIN_WIDTH, referenceWidth / 2);
+    }
+
+    private int measureButtonWidth(String text, JButton button, int maxButtonWidth) {
+        FontMetrics metrics = button.getFontMetrics(button.getFont());
+        int textWidth = metrics.stringWidth(StringUtils.defaultString(text));
+        Insets insets = button.getInsets();
+        int horizontalInsets = Math.max(12, insets.left + insets.right + 8);
+        int targetWidth = textWidth + horizontalInsets;
+        targetWidth = Math.max(PROJECT_ROOT_BUTTON_MIN_WIDTH, targetWidth);
+        return Math.min(targetWidth, maxButtonWidth);
+    }
+
+    private String abbreviateToWidth(String text, JButton button, int maxButtonWidth) {
+        String normalized = StringUtils.defaultString(text);
+        FontMetrics metrics = button.getFontMetrics(button.getFont());
+        Insets insets = button.getInsets();
+        int horizontalInsets = Math.max(12, insets.left + insets.right + 8);
+        int maxTextWidth = Math.max(10, maxButtonWidth - horizontalInsets);
+
+        if (metrics.stringWidth(normalized) <= maxTextWidth) {
+            return normalized;
+        }
+
+        String ellipsis = "…";
+        int ellipsisWidth = metrics.stringWidth(ellipsis);
+        if (ellipsisWidth >= maxTextWidth) {
+            return ellipsis;
+        }
+
+        int low = 1;
+        int high = normalized.length();
+        int best = 1;
+        while (low <= high) {
+            int mid = (low + high) >>> 1;
+            String candidate = normalized.substring(0, mid) + ellipsis;
+            if (metrics.stringWidth(candidate) <= maxTextWidth) {
+                best = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        return normalized.substring(0, best) + ellipsis;
+    }
+
     public void requestInputFocus() {
         textArea.requestFocusInWindow();
     }
@@ -408,6 +768,18 @@ public class InputBar extends JPanel {
     private void notifyReasoningLevelChanged(ReasoningLevel level) {
         for (Consumer<ReasoningLevel> listener : reasoningLevelListeners) {
             listener.accept(level);
+        }
+    }
+
+    private void notifyAgentModeChanged(boolean enabled) {
+        for (Consumer<Boolean> listener : agentModeListeners) {
+            listener.accept(enabled);
+        }
+    }
+
+    private void notifyAgentProjectRootChanged(Path projectRoot) {
+        for (Consumer<Path> listener : agentProjectRootListeners) {
+            listener.accept(projectRoot);
         }
     }
 
@@ -528,14 +900,14 @@ public class InputBar extends JPanel {
         JButton remove = createChipRemoveButton(onRemove);
         chip.add(remove);
 
-        chip.addMouseListener(new java.awt.event.MouseAdapter() {
+        chip.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseEntered(java.awt.event.MouseEvent e) {
+            public void mouseEntered(MouseEvent e) {
                 chip.setHovered(true);
             }
 
             @Override
-            public void mouseExited(java.awt.event.MouseEvent e) {
+            public void mouseExited(MouseEvent e) {
                 chip.setHovered(false);
             }
         });
@@ -582,14 +954,14 @@ public class InputBar extends JPanel {
         JButton remove = createChipRemoveButton(onRemove);
         chip.add(remove);
 
-        chip.addMouseListener(new java.awt.event.MouseAdapter() {
+        chip.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseEntered(java.awt.event.MouseEvent e) {
+            public void mouseEntered(MouseEvent e) {
                 chip.setHovered(true);
             }
 
             @Override
-            public void mouseExited(java.awt.event.MouseEvent e) {
+            public void mouseExited(MouseEvent e) {
                 chip.setHovered(false);
             }
         });
@@ -627,14 +999,14 @@ public class InputBar extends JPanel {
         JButton remove = createChipRemoveButton(onRemove);
         chip.add(remove);
 
-        chip.addMouseListener(new java.awt.event.MouseAdapter() {
+        chip.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseEntered(java.awt.event.MouseEvent e) {
+            public void mouseEntered(MouseEvent e) {
                 chip.setHovered(true);
             }
 
             @Override
-            public void mouseExited(java.awt.event.MouseEvent e) {
+            public void mouseExited(MouseEvent e) {
                 chip.setHovered(false);
             }
         });
@@ -782,9 +1154,9 @@ public class InputBar extends JPanel {
             return row;
         });
 
-        slashSuggestionsList.addMouseListener(new java.awt.event.MouseAdapter() {
+        slashSuggestionsList.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
+            public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() >= 2) {
                     applySelectedSlashSkill();
                 }
@@ -1059,9 +1431,37 @@ public class InputBar extends JPanel {
             updateThinkingTogglePresentation();
         }
 
+        if (agentModeButton != null) {
+            agentModeButton.setForeground(attachColor);
+            Color iconTint = agentModeButton.isSelected() ? resolveThinkingActiveTint(attachColor) : attachColor;
+            agentModeButton.setIcon(agentModeIcon(iconTint));
+            updateAgentModePresentation();
+        }
+
         if (cancelGenerationButton != null) {
             cancelGenerationButton.setForeground(attachColor);
             cancelGenerationButton.setIcon(stopIcon(attachColor));
+        }
+
+        Color mutedText = UIManager.getColor("Label.disabledForeground");
+        if (mutedText == null) {
+            mutedText = attachColor;
+        }
+
+        if (projectRootIconLabel != null) {
+            projectRootIconLabel.setForeground(mutedText);
+        }
+
+        if (projectRootButton != null) {
+            projectRootButton.setForeground(mutedText);
+        }
+
+        if (agentAccessLabel != null) {
+            Color accessColor = UIManager.getColor("Component.warning.focusedBorderColor");
+            if (accessColor == null) {
+                accessColor = new Color(226, 97, 22);
+            }
+            agentAccessLabel.setForeground(accessColor);
         }
 
         if (validationLabel != null) {
@@ -1529,6 +1929,11 @@ public class InputBar extends JPanel {
         return icon != null ? icon : UIManager.getIcon("OptionPane.questionIcon");
     }
 
+    private Icon agentModeIcon(Color tint) {
+        Icon icon = svgIcon("/icons/input/agent.svg", AGENT_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
+    }
+
     private Icon stopIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/stop-circle.svg", STOP_ICON_SIZE, tint);
         if (icon != null) {
@@ -1577,7 +1982,7 @@ public class InputBar extends JPanel {
             if (c instanceof JTextComponent textComponent) {
                 String selected = textComponent.getSelectedText();
                 if (selected != null && !selected.isEmpty()) {
-                    return new java.awt.datatransfer.StringSelection(selected);
+                    return new StringSelection(selected);
                 }
             }
             return null;
@@ -1604,9 +2009,9 @@ public class InputBar extends JPanel {
         public boolean importData(TransferSupport support) {
             if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
                 try {
-                    List<java.io.File> files = (List<java.io.File>) support.getTransferable()
+                    List<File> files = (List<File>) support.getTransferable()
                             .getTransferData(DataFlavor.javaFileListFlavor);
-                    List<Path> paths = files.stream().map(java.io.File::toPath).toList();
+                    List<Path> paths = files.stream().map(File::toPath).toList();
                     addAttachments(paths);
                     return true;
                 } catch (Exception e) {

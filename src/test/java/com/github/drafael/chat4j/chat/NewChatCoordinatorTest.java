@@ -23,6 +23,7 @@ class NewChatCoordinatorTest {
                 () -> calls.add("clear-active"),
                 () -> calls.add("clear-sidebar-selection"),
                 () -> calls.add("clear-chat-view"),
+                () -> calls.add("reset-agent-state"),
                 AssistantRenderMode.PREVIEW,
                 (mode, userInitiated) -> calls.add("render-mode:%s:%s".formatted(mode, userInitiated)),
                 () -> calls.add("focus")
@@ -35,6 +36,7 @@ class NewChatCoordinatorTest {
                 "clear-active",
                 "clear-sidebar-selection",
                 "clear-chat-view",
+                "reset-agent-state",
                 "render-mode:PREVIEW:true",
                 "focus"
         );
@@ -57,6 +59,8 @@ class NewChatCoordinatorTest {
                 },
                 () -> {
                 },
+                () -> {
+                },
                 AssistantRenderMode.PREVIEW,
                 (mode, userInitiated) -> {
                 },
@@ -67,6 +71,8 @@ class NewChatCoordinatorTest {
                 .hasMessageContaining("saveCurrentConversation must not be null");
 
         assertThatThrownBy(() -> subject.start(
+                () -> {
+                },
                 () -> {
                 },
                 () -> {

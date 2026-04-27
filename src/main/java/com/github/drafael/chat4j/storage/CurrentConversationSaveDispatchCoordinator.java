@@ -2,8 +2,10 @@ package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.Validate;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -15,6 +17,9 @@ public class CurrentConversationSaveDispatchCoordinator {
             List<Message> history,
             String selectedModelKey,
             AssistantRenderMode currentAssistantRenderMode,
+            ReasoningLevel reasoningLevel,
+            boolean agentModeEnabled,
+            Path agentProjectRoot,
             SaveAction saveAction,
             UiApplyAction uiApplyAction,
             FailureHandler failureHandler
@@ -31,7 +36,10 @@ public class CurrentConversationSaveDispatchCoordinator {
                     pendingUnsavedConversationRenderMode,
                     history,
                     selectedModelKey,
-                    currentAssistantRenderMode
+                    currentAssistantRenderMode,
+                    reasoningLevel,
+                    agentModeEnabled,
+                    agentProjectRoot
             );
             return uiApplyAction.apply(saveResult);
         } catch (Exception e) {
@@ -47,7 +55,10 @@ public class CurrentConversationSaveDispatchCoordinator {
                 AssistantRenderMode pendingUnsavedConversationRenderMode,
                 List<Message> history,
                 String selectedModelKey,
-                AssistantRenderMode currentAssistantRenderMode
+                AssistantRenderMode currentAssistantRenderMode,
+                ReasoningLevel reasoningLevel,
+                boolean agentModeEnabled,
+                Path agentProjectRoot
         ) throws Exception;
     }
 

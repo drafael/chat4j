@@ -20,6 +20,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.stream.StreamSupport;
+
+import static java.util.stream.Collectors.toSet;
 import org.apache.commons.lang3.StringUtils;
 
 public final class ProviderCapabilityResolver {
@@ -131,6 +133,89 @@ public final class ProviderCapabilityResolver {
             "non_reasoning",
             "reasoning-disabled"
     );
+    private static final Set<String> TOOL_PROVIDER_HINTS = Set.of(
+            "anthropic",
+            "openai",
+            "openrouter",
+            "google ai",
+            "google",
+            "gemini",
+            "groq",
+            "mistral",
+            "xai",
+            "deepseek",
+            "copilot"
+    );
+    private static final Set<String> TOOL_MODEL_ALLOW_HINTS = Set.of(
+            "gpt-4",
+            "gpt-5",
+            "o1",
+            "o3",
+            "o4",
+            "claude",
+            "sonnet",
+            "opus",
+            "haiku",
+            "gemini",
+            "grok",
+            "deepseek-chat",
+            "codex",
+            "mistral",
+            "ministral",
+            "devstral"
+    );
+    private static final Set<String> TOOL_MODEL_DENY_HINTS = Set.of(
+            "embedding",
+            "whisper",
+            "moderation",
+            "transcribe",
+            "tts",
+            "speech",
+            "image",
+            "vision"
+    );
+    private static final Set<String> DYNAMIC_TOOL_HINTS = Set.of(
+            "tool",
+            "tool_use",
+            "tool-use",
+            "function",
+            "function_calling",
+            "function-calling",
+            "tool_choice",
+            "tool-choice",
+            "parallel_tool_calls",
+            "parallel-tool-calls",
+            "computer_use",
+            "computer-use",
+            "web_search",
+            "web-search"
+    );
+    private static final Set<String> DYNAMIC_NON_TOOL_HINTS = Set.of(
+            "no-tools",
+            "no_tools",
+            "without-tools",
+            "without_tools",
+            "tool-disabled",
+            "tools-disabled",
+            "none"
+    );
+    private static final Set<String> TOOL_BOOLEAN_FIELDS = Set.of(
+            "tools",
+            "supports_tools",
+            "supportsTools",
+            "tool_use",
+            "toolUse",
+            "supports_tool_use",
+            "supportsToolUse",
+            "function_calling",
+            "functionCalling",
+            "supports_function_calling",
+            "supportsFunctionCalling",
+            "tool_calling",
+            "toolCalling",
+            "supports_tool_calling",
+            "supportsToolCalling"
+    );
     private static final Set<String> CAPABILITY_BOOLEAN_FIELDS = Set.of(
             "vision",
             "supports_vision",
@@ -170,6 +255,7 @@ public final class ProviderCapabilityResolver {
             .build();
     private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_IMAGE_SUPPORT_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_REASONING_SUPPORT_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_TOOL_SUPPORT_CACHE = new ConcurrentHashMap<>();
 
     private ProviderCapabilityResolver() {
     }
@@ -255,6 +341,49 @@ public final class ProviderCapabilityResolver {
         }
 
         return !model.isBlank() && containsAny(model, REASONING_MODEL_ALLOW_HINTS);
+    }
+
+    public static boolean supportsToolInvocation(ProviderCapabilities capabilities, String providerName, String modelId) {
+        return supportsToolInvocation(capabilities, providerName, modelId, null, null);
+    }
+
+    public static boolean supportsToolInvocation(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
+            String baseUrl
+    ) {
+        return supportsToolInvocation(capabilities, providerName, modelId, baseUrl, null);
+    }
+
+    public static boolean supportsToolInvocation(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        String provider = normalize(providerName);
+        String model = normalize(modelId);
+
+        if (containsAny(model, TOOL_MODEL_DENY_HINTS)) {
+            return false;
+        }
+
+        Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicToolSupport(provider, modelId, baseUrl, apiKey);
+        if (dynamicallyResolvedSupport.isPresent()) {
+            return dynamicallyResolvedSupport.get();
+        }
+
+        if (containsAny(provider, OLLAMA_PROVIDER_HINTS) || containsAny(provider, LM_STUDIO_PROVIDER_HINTS)) {
+            return !model.isBlank();
+        }
+
+        if (!containsAny(provider, TOOL_PROVIDER_HINTS)) {
+            return false;
+        }
+
+        return !model.isBlank() && containsAny(model, TOOL_MODEL_ALLOW_HINTS);
     }
 
     public static boolean supportsFileInput(ProviderCapabilities capabilities, String providerName, String modelId) {
@@ -357,6 +486,137 @@ public final class ProviderCapabilityResolver {
 
         resolvedSupport.ifPresent(value -> DYNAMIC_REASONING_SUPPORT_CACHE.put(key, value));
         return resolvedSupport;
+    }
+
+    private static Optional<Boolean> resolveDynamicToolSupport(
+            String provider,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        if (StringUtils.isBlank(baseUrl)) {
+            return Optional.empty();
+        }
+
+        String resolvedModelId = modelId == null ? "" : modelId.trim();
+        if (resolvedModelId.isBlank()) {
+            return Optional.empty();
+        }
+
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        ModelCapabilityKey key = new ModelCapabilityKey(
+                normalize(provider),
+                normalizedBaseUrl,
+                normalize(resolvedModelId),
+                authFingerprint(apiKey)
+        );
+
+        Boolean cachedSupport = DYNAMIC_TOOL_SUPPORT_CACHE.get(key);
+        if (cachedSupport != null) {
+            return Optional.of(cachedSupport);
+        }
+
+        Optional<Boolean> resolvedSupport;
+        if (containsAny(provider, OLLAMA_PROVIDER_HINTS)) {
+            resolvedSupport = probeOllamaToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey)
+                    .or(() -> probeLmStudioToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey))
+                    .or(() -> probeModelCatalogToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey));
+        } else if (containsAny(provider, LM_STUDIO_PROVIDER_HINTS)) {
+            resolvedSupport = probeLmStudioToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey)
+                    .or(() -> probeModelCatalogToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey));
+        } else if (containsAny(provider, GOOGLE_AI_PROVIDER_HINTS)) {
+            resolvedSupport = probeGoogleAiToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey)
+                    .or(() -> probeModelCatalogToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey));
+        } else {
+            resolvedSupport = probeModelCatalogToolSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey);
+        }
+
+        resolvedSupport.ifPresent(value -> DYNAMIC_TOOL_SUPPORT_CACHE.put(key, value));
+        return resolvedSupport;
+    }
+
+    private static Optional<Boolean> probeModelCatalogToolSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        Optional<Boolean> fromModelEndpoint = fetchJson(
+                modelEndpoint(normalizedBaseUrl, modelId),
+                provider,
+                apiKey
+        ).flatMap(ProviderCapabilityResolver::resolveToolSupportFromNode);
+
+        if (fromModelEndpoint.isPresent()) {
+            return fromModelEndpoint;
+        }
+
+        return fetchJson(modelsEndpoint(normalizedBaseUrl), provider, apiKey)
+                .flatMap(root -> resolveToolSupportFromModelsList(root, modelId));
+    }
+
+    private static Optional<Boolean> probeLmStudioToolSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        return fetchJson(lmStudioModelsEndpoint(normalizedBaseUrl), provider, apiKey)
+                .flatMap(root -> resolveLmStudioModelNode(root, modelId))
+                .flatMap(ProviderCapabilityResolver::resolveToolSupportFromNode);
+    }
+
+    private static Optional<Boolean> probeGoogleAiToolSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        return resolveGoogleAiModelNode(normalizedBaseUrl, modelId, provider, apiKey)
+                .flatMap(modelNode -> {
+                    Optional<Boolean> resolved = resolveToolSupportFromNode(modelNode);
+                    if (resolved.isPresent()) {
+                        return resolved;
+                    }
+
+                    String description = normalize(modelNode.path("description").asText(""));
+                    if (description.contains("tool") || description.contains("function calling")) {
+                        return Optional.of(true);
+                    }
+
+                    return Optional.empty();
+                });
+    }
+
+    private static Optional<Boolean> probeOllamaToolSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        try {
+            String requestJson = JSON.writeValueAsString(Map.of("name", modelId));
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(ollamaShowEndpoint(normalizedBaseUrl)))
+                    .timeout(Duration.ofSeconds(2))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestJson, StandardCharsets.UTF_8));
+
+            applyAuthHeaders(requestBuilder, provider, apiKey);
+
+            HttpResponse<String> response = HTTP_CLIENT.send(
+                    requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+            );
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return Optional.empty();
+            }
+
+            JsonNode root = JSON.readTree(response.body());
+            return resolveToolSupportFromNode(root);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
     }
 
     private static Optional<Boolean> probeModelCatalogImageSupport(
@@ -557,7 +817,7 @@ public final class ProviderCapabilityResolver {
             String apiKey
     ) {
         try {
-            String requestJson = JSON.writeValueAsString(Map.of("model", modelId));
+            String requestJson = JSON.writeValueAsString(Map.of("name", modelId));
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(ollamaShowEndpoint(normalizedBaseUrl)))
                     .timeout(Duration.ofSeconds(2))
@@ -597,7 +857,7 @@ public final class ProviderCapabilityResolver {
             String apiKey
     ) {
         try {
-            String requestJson = JSON.writeValueAsString(Map.of("model", modelId));
+            String requestJson = JSON.writeValueAsString(Map.of("name", modelId));
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(ollamaShowEndpoint(normalizedBaseUrl)))
                     .timeout(Duration.ofSeconds(2))
@@ -675,6 +935,22 @@ public final class ProviderCapabilityResolver {
                 .findFirst();
     }
 
+    private static Optional<Boolean> resolveToolSupportFromModelsList(JsonNode root, String modelId) {
+        JsonNode dataNode = root.path("data");
+        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
+        if (!modelsNode.isArray()) {
+            return Optional.empty();
+        }
+
+        String normalizedModelId = normalize(modelId);
+        return StreamSupport.stream(modelsNode.spliterator(), false)
+                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
+                .map(ProviderCapabilityResolver::resolveToolSupportFromNode)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .findFirst();
+    }
+
     private static Optional<Boolean> resolveImageSupportFromNode(JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull()) {
             return Optional.empty();
@@ -719,6 +995,29 @@ public final class ProviderCapabilityResolver {
         }
 
         return resolveReasoningSupportFromSingleNode(node.path("architecture"));
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromNode(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return Optional.empty();
+        }
+
+        Optional<Boolean> directResolution = resolveToolSupportFromSingleNode(node);
+        if (directResolution.isPresent()) {
+            return directResolution;
+        }
+
+        Optional<Boolean> metaResolution = resolveToolSupportFromSingleNode(node.path("meta"));
+        if (metaResolution.isPresent()) {
+            return metaResolution;
+        }
+
+        Optional<Boolean> detailsResolution = resolveToolSupportFromSingleNode(node.path("details"));
+        if (detailsResolution.isPresent()) {
+            return detailsResolution;
+        }
+
+        return resolveToolSupportFromSingleNode(node.path("architecture"));
     }
 
     private static Optional<Boolean> resolveImageSupportFromSingleNode(JsonNode node) {
@@ -818,6 +1117,51 @@ public final class ProviderCapabilityResolver {
         return resolveReasoningSupportFromStringArray(node.path("supported_generation_methods"));
     }
 
+    private static Optional<Boolean> resolveToolSupportFromSingleNode(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return Optional.empty();
+        }
+
+        Optional<Boolean> booleanResolution = resolveToolSupportFromBooleanFields(node);
+        if (booleanResolution.isPresent()) {
+            return booleanResolution;
+        }
+
+        Optional<Boolean> capabilitiesResolution = resolveToolSupportFromCapabilitiesField(node.path("capabilities"));
+        if (capabilitiesResolution.isPresent()) {
+            return capabilitiesResolution;
+        }
+
+        Optional<Boolean> directFieldsResolution = resolveToolSupportFromKnownFields(node);
+        if (directFieldsResolution.isPresent()) {
+            return directFieldsResolution;
+        }
+
+        Optional<Boolean> supportedParametersResolution = resolveToolSupportFromSupportedParameters(
+                node.path("supported_parameters"));
+        if (supportedParametersResolution.isPresent()) {
+            return supportedParametersResolution;
+        }
+
+        Optional<Boolean> supportedParametersCamelResolution = resolveToolSupportFromSupportedParameters(
+                node.path("supportedParameters"));
+        if (supportedParametersCamelResolution.isPresent()) {
+            return supportedParametersCamelResolution;
+        }
+
+        Optional<Boolean> tagsResolution = resolveToolSupportFromStringArray(node.path("tags"));
+        if (tagsResolution.isPresent()) {
+            return tagsResolution;
+        }
+
+        Optional<Boolean> featuresResolution = resolveToolSupportFromStringArray(node.path("features"));
+        if (featuresResolution.isPresent()) {
+            return featuresResolution;
+        }
+
+        return resolveToolSupportFromSingleNode(node.path("architecture"));
+    }
+
     private static Optional<Boolean> resolveImageSupportFromBooleanFields(JsonNode node) {
         return CAPABILITY_BOOLEAN_FIELDS.stream()
                 .map(field -> booleanField(node, field))
@@ -837,6 +1181,24 @@ public final class ProviderCapabilityResolver {
         }
 
         boolean supported = REASONING_BOOLEAN_FIELDS.stream()
+                .map(field -> booleanField(node, field))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .reduce((left, right) -> left || right)
+                .orElse(false);
+
+        return Optional.of(supported);
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromBooleanFields(JsonNode node) {
+        boolean hasToolField = TOOL_BOOLEAN_FIELDS.stream()
+                .map(field -> booleanField(node, field))
+                .anyMatch(Optional::isPresent);
+        if (!hasToolField) {
+            return Optional.empty();
+        }
+
+        boolean supported = TOOL_BOOLEAN_FIELDS.stream()
                 .map(field -> booleanField(node, field))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
@@ -937,12 +1299,58 @@ public final class ProviderCapabilityResolver {
         return Optional.empty();
     }
 
+    private static Optional<Boolean> resolveToolSupportFromCapabilitiesField(JsonNode capabilitiesNode) {
+        if (capabilitiesNode == null || capabilitiesNode.isMissingNode() || capabilitiesNode.isNull()) {
+            return Optional.empty();
+        }
+
+        if (capabilitiesNode.isArray()) {
+            return resolveToolSupportFromStringArray(capabilitiesNode);
+        }
+
+        if (capabilitiesNode.isObject()) {
+            Optional<Boolean> booleanResolution = resolveToolSupportFromBooleanFields(capabilitiesNode);
+            if (booleanResolution.isPresent()) {
+                return booleanResolution;
+            }
+
+            Optional<Boolean> directFieldsResolution = resolveToolSupportFromKnownFields(capabilitiesNode);
+            if (directFieldsResolution.isPresent()) {
+                return directFieldsResolution;
+            }
+
+            Optional<Boolean> tagsResolution = resolveToolSupportFromStringArray(capabilitiesNode.path("tags"));
+            if (tagsResolution.isPresent()) {
+                return tagsResolution;
+            }
+
+            Optional<Boolean> featuresResolution = resolveToolSupportFromStringArray(capabilitiesNode.path("features"));
+            if (featuresResolution.isPresent()) {
+                return featuresResolution;
+            }
+
+            Optional<Boolean> supportedParametersResolution = resolveToolSupportFromSupportedParameters(
+                    capabilitiesNode.path("supported_parameters"));
+            if (supportedParametersResolution.isPresent()) {
+                return supportedParametersResolution;
+            }
+
+            return resolveToolSupportFromSupportedParameters(capabilitiesNode.path("supportedParameters"));
+        }
+
+        return resolveToolSupportFromFieldValue(capabilitiesNode);
+    }
+
     private static Optional<Boolean> resolveImageSupportFromStringArray(JsonNode arrayNode) {
         return resolveSupportFromStringArray(arrayNode, DYNAMIC_IMAGE_HINTS, DYNAMIC_TEXT_ONLY_HINTS);
     }
 
     private static Optional<Boolean> resolveReasoningSupportFromStringArray(JsonNode arrayNode) {
         return resolveSupportFromStringArray(arrayNode, DYNAMIC_REASONING_HINTS, DYNAMIC_NON_REASONING_HINTS);
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromStringArray(JsonNode arrayNode) {
+        return resolveSupportFromStringArray(arrayNode, DYNAMIC_TOOL_HINTS, DYNAMIC_NON_TOOL_HINTS);
     }
 
     private static Optional<Boolean> resolveImageSupportFromModalityText(JsonNode modalityNode) {
@@ -968,6 +1376,96 @@ public final class ProviderCapabilityResolver {
 
     private static Optional<Boolean> resolveReasoningSupportFromSupportedParameters(JsonNode parametersNode) {
         return resolveReasoningSupportFromStringArray(parametersNode);
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromSupportedParameters(JsonNode parametersNode) {
+        return resolveToolSupportFromStringArray(parametersNode);
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromKnownFields(JsonNode node) {
+        return StreamSupport.stream(List.of(
+                        node.path("tools"),
+                        node.path("tool_use"),
+                        node.path("toolUse"),
+                        node.path("function_calling"),
+                        node.path("functionCalling"),
+                        node.path("tool_calling"),
+                        node.path("toolCalling")
+                ).spliterator(), false)
+                .map(ProviderCapabilityResolver::resolveToolSupportFromFieldValue)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .findFirst();
+    }
+
+    private static Optional<Boolean> resolveToolSupportFromFieldValue(JsonNode fieldNode) {
+        if (fieldNode == null || fieldNode.isMissingNode() || fieldNode.isNull()) {
+            return Optional.empty();
+        }
+
+        if (fieldNode.isBoolean()) {
+            return Optional.of(fieldNode.asBoolean());
+        }
+
+        if (fieldNode.isTextual()) {
+            String normalized = normalize(fieldNode.asText(""));
+            if (normalized.isBlank()) {
+                return Optional.empty();
+            }
+
+            if (containsAny(normalized, DYNAMIC_TOOL_HINTS)
+                    || "enabled".equals(normalized)
+                    || "supported".equals(normalized)
+                    || "required".equals(normalized)
+            ) {
+                return Optional.of(true);
+            }
+
+            if (containsAny(normalized, DYNAMIC_NON_TOOL_HINTS)
+                    || "disabled".equals(normalized)
+                    || "unsupported".equals(normalized)
+            ) {
+                return Optional.of(false);
+            }
+
+            return Optional.empty();
+        }
+
+        if (fieldNode.isArray()) {
+            if (fieldNode.isEmpty()) {
+                return Optional.of(false);
+            }
+
+            Optional<Boolean> textualResolution = resolveToolSupportFromStringArray(fieldNode);
+            if (textualResolution.isPresent()) {
+                return textualResolution;
+            }
+
+            return Optional.of(true);
+        }
+
+        if (fieldNode.isObject()) {
+            Optional<Boolean> enabledResolution = booleanField(fieldNode, "enabled");
+            if (enabledResolution.isPresent()) {
+                return enabledResolution;
+            }
+
+            Optional<Boolean> supportedResolution = booleanField(fieldNode, "supported");
+            if (supportedResolution.isPresent()) {
+                return supportedResolution;
+            }
+
+            Optional<Boolean> allowResolution = booleanField(fieldNode, "allow");
+            if (allowResolution.isPresent()) {
+                return allowResolution;
+            }
+
+            return fieldNode.fieldNames().hasNext()
+                    ? Optional.of(true)
+                    : Optional.of(false);
+        }
+
+        return Optional.empty();
     }
 
     private static Optional<Boolean> booleanField(JsonNode node, String expectedFieldName) {
@@ -1006,7 +1504,7 @@ public final class ProviderCapabilityResolver {
         Set<String> values = StreamSupport.stream(arrayNode.spliterator(), false)
                 .map(node -> normalize(node.asText("")))
                 .filter(value -> !value.isBlank())
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(toSet());
 
         if (values.isEmpty()) {
             return Optional.empty();

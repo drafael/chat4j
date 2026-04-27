@@ -2,6 +2,9 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
+import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
@@ -14,6 +17,8 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
@@ -43,6 +48,8 @@ import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import javax.imageio.ImageIO;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -63,6 +70,7 @@ import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 @Slf4j
 public class ChatPanel extends JPanel {
@@ -96,6 +104,10 @@ public class ChatPanel extends JPanel {
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
     private final AttachmentStager attachmentStager = new AttachmentStager();
+    private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
+    private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
+    private volatile AgentOrchestrator agentOrchestrator;
+    private volatile String agentSystemPromptAppend = "";
     private final List<MessageBubble> assistantBubbles = new ArrayList<>();
     private final List<ThinkingBubble> thinkingBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
@@ -113,7 +125,7 @@ public class ChatPanel extends JPanel {
     private ModelSelectorPopup modelPopup;
 
     private final List<Message> history = new ArrayList<>();
-    private Map<String, ProviderRegistry.ProviderDef> providerMap = Map.of();
+    private Map<String, ProviderRegistry.ProviderDef> providerMap = emptyMap();
     private String selectedProviderName;
     private String selectedModelId;
     private ProviderService currentProvider;
@@ -144,6 +156,7 @@ public class ChatPanel extends JPanel {
     public ChatPanel(ProviderModelCacheService modelCacheService, ModelFavoritesService modelFavoritesService) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
+        this.agentOrchestrator = AgentOrchestrator.createDefault();
         setLayout(new BorderLayout());
 
         modelSelectorBtn = new ModelSelectorButton();
@@ -407,6 +420,7 @@ public class ChatPanel extends JPanel {
         currentProvider = null;
         modelSelectorBtn.setSelection("", "");
         inputBar.setThinkingAvailable(false);
+        inputBar.setAgentModeAvailable(false);
     }
 
     private void toggleModelPopup() {
@@ -460,6 +474,7 @@ public class ChatPanel extends JPanel {
         }
 
         updateThinkingToggleAvailability();
+        updateAgentToggleAvailability();
 
         if (selectedModelChangedListener != null) {
             selectedModelChangedListener.accept(getSelectedModel());
@@ -482,17 +497,31 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        boolean agentModeEnabled = inputBar.isAgentModeEnabled();
+        Path agentProjectRoot = inputBar.getAgentProjectRoot();
+        if (agentModeEnabled && (agentProjectRoot == null || !Files.isDirectory(agentProjectRoot))) {
+            inputBar.showValidationMessage("Select a valid project folder to enable Agent Mode.");
+            return;
+        }
+
+        ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
+
         long sendJobId = sendJobCounter.incrementAndGet();
         SendJob sendJob = new SendJob(
                 sendJobId,
                 resolveConversationId(),
+                selectedProviderName,
+                selectedModelId,
+                providerSnapshot.baseUrl(),
+                providerSnapshot.apiKey(),
                 provider,
                 new ArrayList<>(history),
-                inputBar.getReasoningLevel()
+                inputBar.getEffectiveReasoningLevel(),
+                agentModeEnabled,
+                agentProjectRoot,
+                agentSystemPromptAppend
         );
         activeSendJobs.put(sendJobId, sendJob);
-
-        ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
         beginPreparing(sendJob);
 
         sendJob.worker = Thread.startVirtualThread(() -> {
@@ -582,12 +611,20 @@ public class ChatPanel extends JPanel {
     }
 
     private void startAssistantStream(UUID conversationId, ProviderService provider) {
+        ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
         SendJob sendJob = new SendJob(
                 sendJobCounter.incrementAndGet(),
                 conversationId,
+                selectedProviderName,
+                selectedModelId,
+                providerSnapshot.baseUrl(),
+                providerSnapshot.apiKey(),
                 provider,
                 new ArrayList<>(history),
-                inputBar.getReasoningLevel()
+                inputBar.getEffectiveReasoningLevel(),
+                inputBar.isAgentModeEnabled(),
+                inputBar.getAgentProjectRoot(),
+                agentSystemPromptAppend
         );
         activeSendJobs.put(sendJob.jobId, sendJob);
         startAssistantStream(sendJob, new ArrayList<>(history));
@@ -598,58 +635,86 @@ public class ChatPanel extends JPanel {
         StreamingSession session = beginStreamingSession(sendJob.conversationId, sendJob.provider);
         sendJob.streamSessionId = session.sessionId;
 
-        session.worker = Thread.startVirtualThread(() -> {
-            session.provider.streamCompletion(
-                    requestHistory,
-                    sendJob.reasoningLevel,
-                    token -> {
+        AgentRunCallbacks callbacks = new AgentRunCallbacks(
+                token -> {
+                    if (!session.isLive()) {
+                        return;
+                    }
+                    appendAssistantResponse(session, token);
+                    SwingUtilities.invokeLater(() -> {
+                        if (!session.isLive()
+                                || currentAssistantBubble == null
+                                || !isVisibleConversation(session.conversationId)
+                        ) {
+                            return;
+                        }
+                        currentAssistantBubble.appendText(token);
+                        scrollToBottom();
+                    });
+                },
+                thinkingToken -> {
+                    if (!session.isLive() || !sendJob.reasoningLevel.enabled()) {
+                        return;
+                    }
+
+                    String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
+                    if (normalizedThinkingToken.isEmpty()) {
+                        return;
+                    }
+
+                    appendAssistantThinking(session, normalizedThinkingToken);
+                    SwingUtilities.invokeLater(() -> {
+                        if (!session.isLive() || !isVisibleConversation(session.conversationId)) {
+                            return;
+                        }
+
+                        if (currentAssistantThinkingBubble == null) {
+                            currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+                            currentAssistantThinkingBubble.setStreaming(true);
+                            addThinkingBubble(currentAssistantThinkingBubble, null);
+                        }
+
+                        currentAssistantThinkingBubble.setVisible(true);
+                        currentAssistantThinkingBubble.appendText(normalizedThinkingToken);
+                        scrollToBottom();
+                    });
+                },
+                () -> SwingUtilities.invokeLater(() -> {
+                    if (!session.isLive()) {
+                        return;
+                    }
+                    persistAssistantResponse(session, true);
+                    if (isVisibleConversation(session.conversationId)) {
+                        if (currentAssistantThinkingBubble != null) {
+                            currentAssistantThinkingBubble.setStreaming(false);
+                        }
+                        removeCurrentThinkingBubbleIfBlank();
+                        currentAssistantThinkingBubble = null;
+                        currentAssistantBubble = null;
+                    }
+                    finishStreamingSession(session);
+                    finishSendJob(sendJob);
+                }),
+                error -> {
+                    if (!session.isLive()) {
+                        return;
+                    }
+                    String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(error), "Unknown error");
+                    log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
+                            sendJob.providerName,
+                            sendJob.modelId,
+                            session.conversationId,
+                            details);
+                    String errorText = "\n\n[Error: %s]".formatted(details);
+                    appendAssistantResponse(session, errorText);
+                    SwingUtilities.invokeLater(() -> {
                         if (!session.isLive()) {
                             return;
                         }
-                        appendAssistantResponse(session, token);
-                        SwingUtilities.invokeLater(() -> {
-                            if (!session.isLive()
-                                    || currentAssistantBubble == null
-                                    || !isVisibleConversation(session.conversationId)
-                            ) {
-                                return;
-                            }
-                            currentAssistantBubble.appendText(token);
-                            scrollToBottom();
-                        });
-                    },
-                    thinkingToken -> {
-                        if (!session.isLive() || !sendJob.reasoningLevel.enabled()) {
-                            return;
+                        if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
+                            currentAssistantBubble.appendText(errorText);
                         }
-
-                        String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
-                        if (normalizedThinkingToken.isEmpty()) {
-                            return;
-                        }
-
-                        appendAssistantThinking(session, normalizedThinkingToken);
-                        SwingUtilities.invokeLater(() -> {
-                            if (!session.isLive() || !isVisibleConversation(session.conversationId)) {
-                                return;
-                            }
-
-                            if (currentAssistantThinkingBubble == null) {
-                                currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
-                                currentAssistantThinkingBubble.setStreaming(true);
-                                addThinkingBubble(currentAssistantThinkingBubble, null);
-                            }
-
-                            currentAssistantThinkingBubble.setVisible(true);
-                            currentAssistantThinkingBubble.appendText(normalizedThinkingToken);
-                            scrollToBottom();
-                        });
-                    },
-                    () -> SwingUtilities.invokeLater(() -> {
-                        if (!session.isLive()) {
-                            return;
-                        }
-                        persistAssistantResponse(session, true);
+                        persistAssistantResponse(session, false);
                         if (isVisibleConversation(session.conversationId)) {
                             if (currentAssistantThinkingBubble != null) {
                                 currentAssistantThinkingBubble.setStreaming(false);
@@ -660,39 +725,39 @@ public class ChatPanel extends JPanel {
                         }
                         finishStreamingSession(session);
                         finishSendJob(sendJob);
-                    }),
-                    error -> {
-                        if (!session.isLive()) {
-                            return;
-                        }
-                        String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(error), "Unknown error");
-                        log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
-                                selectedProviderName,
-                                selectedModelId,
-                                session.conversationId,
-                                details);
-                        String errorText = "\n\n[Error: %s]".formatted(details);
-                        appendAssistantResponse(session, errorText);
-                        SwingUtilities.invokeLater(() -> {
-                            if (!session.isLive()) {
-                                return;
-                            }
-                            if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
-                                currentAssistantBubble.appendText(errorText);
-                            }
-                            persistAssistantResponse(session, false);
-                            if (isVisibleConversation(session.conversationId)) {
-                                if (currentAssistantThinkingBubble != null) {
-                                    currentAssistantThinkingBubble.setStreaming(false);
-                                }
-                                removeCurrentThinkingBubbleIfBlank();
-                                currentAssistantThinkingBubble = null;
-                                currentAssistantBubble = null;
-                            }
-                            finishStreamingSession(session);
-                            finishSendJob(sendJob);
-                        });
-                    },
+                    });
+                }
+        );
+
+        session.worker = Thread.startVirtualThread(() -> {
+            if (sendJob.agentModeEnabled) {
+                AgentRunRequest request = new AgentRunRequest(
+                        requestHistory,
+                        sendJob.reasoningLevel,
+                        sendJob.agentProjectRoot,
+                        emptyList(),
+                        session.cancelled::get
+                );
+                agentOrchestrator.streamCompletion(
+                        sendJob.providerName,
+                        sendJob.modelId,
+                        sendJob.baseUrl,
+                        sendJob.apiKey,
+                        sendJob.agentSystemPromptAppend,
+                        session.provider,
+                        request,
+                        callbacks
+                );
+                return;
+            }
+
+            session.provider.streamCompletion(
+                    requestHistory,
+                    sendJob.reasoningLevel,
+                    callbacks.onToken(),
+                    callbacks.onThinkingToken(),
+                    callbacks.onComplete(),
+                    callbacks.onError(),
                     session.cancelled::get
             );
         });
@@ -827,11 +892,10 @@ public class ChatPanel extends JPanel {
         String modelIdSnapshot = selectedModelId;
         ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
         String baseUrlSnapshot = providerDef.baseUrl();
-        String envVarSnapshot = providerDef.envVar();
 
         Thread.startVirtualThread(() -> {
             try {
-                String apiKey = CredentialResolver.resolveApiKey(envVarSnapshot, null);
+                String apiKey = resolveProviderApiKey(providerDef);
                 boolean resolvedSupportsThinking = ProviderCapabilityResolver.supportsReasoning(
                         capabilitiesSnapshot,
                         providerNameSnapshot,
@@ -856,13 +920,84 @@ public class ChatPanel extends JPanel {
         });
     }
 
+    private void updateAgentToggleAvailability() {
+        ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
+        if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
+            inputBar.setAgentModeAvailable(false);
+            return;
+        }
+
+        boolean fallbackSupportsTools = ProviderCapabilityResolver.supportsToolInvocation(
+                providerDef.capabilities(),
+                providerDef.name(),
+                selectedModelId
+        );
+        inputBar.setAgentModeAvailable(fallbackSupportsTools);
+
+        if (StringUtils.isBlank(providerDef.baseUrl())) {
+            return;
+        }
+
+        String providerNameSnapshot = providerDef.name();
+        String modelIdSnapshot = selectedModelId;
+        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
+        String baseUrlSnapshot = providerDef.baseUrl();
+
+        Thread.startVirtualThread(() -> {
+            try {
+                String apiKey = resolveProviderApiKey(providerDef);
+                boolean resolvedSupportsTools = ProviderCapabilityResolver.supportsToolInvocation(
+                        capabilitiesSnapshot,
+                        providerNameSnapshot,
+                        modelIdSnapshot,
+                        baseUrlSnapshot,
+                        apiKey
+                );
+
+                SwingUtilities.invokeLater(() -> {
+                    if (!StringUtils.equals(selectedProviderName, providerNameSnapshot)
+                            || !StringUtils.equals(selectedModelId, modelIdSnapshot)
+                    ) {
+                        return;
+                    }
+
+                    inputBar.setAgentModeAvailable(resolvedSupportsTools);
+                });
+            } catch (Exception e) {
+                log.debug("Failed to refresh agent capability for {}::{}",
+                        providerNameSnapshot, modelIdSnapshot, e);
+            }
+        });
+    }
+
     private ProviderSelectionSnapshot captureProviderSelection() {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         ProviderCapabilities capabilities = providerDef == null ? null : providerDef.capabilities();
         String baseUrl = providerDef == null ? null : providerDef.baseUrl();
-        String apiKey = providerDef == null ? null : CredentialResolver.resolveApiKey(providerDef.envVar(), null);
+        String apiKey = resolveProviderApiKey(providerDef);
 
         return new ProviderSelectionSnapshot(selectedProviderName, selectedModelId, capabilities, baseUrl, apiKey);
+    }
+
+    private String resolveProviderApiKey(ProviderRegistry.ProviderDef providerDef) {
+        if (providerDef == null) {
+            return null;
+        }
+
+        String apiKey = CredentialResolver.resolveApiKey(providerDef.envVar(), null);
+        if (StringUtils.isNotBlank(apiKey)) {
+            return apiKey;
+        }
+
+        if (StringUtils.equals(providerDef.name(), "OpenAI Codex")) {
+            return codexAuthResolver.resolveBearerTokenOrNull();
+        }
+
+        if (StringUtils.equals(providerDef.name(), "GitHub Copilot")) {
+            return copilotAuthResolver.resolveBearerTokenOrNull();
+        }
+
+        return null;
     }
 
     private void ensureNotCancelled(BooleanSupplier isCancelled) {
@@ -1779,6 +1914,14 @@ public class ChatPanel extends JPanel {
         this.sendPreparer = sendPreparer == null ? this::prepareUserMessage : sendPreparer;
     }
 
+    void setAgentOrchestratorForTests(AgentOrchestrator agentOrchestrator) {
+        this.agentOrchestrator = agentOrchestrator == null ? AgentOrchestrator.createDefault() : agentOrchestrator;
+    }
+
+    public void setAgentSystemPromptAppend(String agentSystemPromptAppend) {
+        this.agentSystemPromptAppend = StringUtils.defaultString(agentSystemPromptAppend);
+    }
+
     public void setActiveConversationId(UUID conversationId) {
         this.activeConversationId = conversationId;
 
@@ -2272,9 +2415,16 @@ public class ChatPanel extends JPanel {
     private static final class SendJob {
         final long jobId;
         volatile UUID conversationId;
+        final String providerName;
+        final String modelId;
+        final String baseUrl;
+        final String apiKey;
         final ProviderService provider;
         final List<Message> historySnapshot;
         final ReasoningLevel reasoningLevel;
+        final boolean agentModeEnabled;
+        final Path agentProjectRoot;
+        final String agentSystemPromptAppend;
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         volatile SendPhase phase = SendPhase.PREPARING;
         volatile Thread worker;
@@ -2283,15 +2433,29 @@ public class ChatPanel extends JPanel {
 
         SendJob(long jobId,
                 UUID conversationId,
+                String providerName,
+                String modelId,
+                String baseUrl,
+                String apiKey,
                 ProviderService provider,
                 List<Message> historySnapshot,
-                ReasoningLevel reasoningLevel
+                ReasoningLevel reasoningLevel,
+                boolean agentModeEnabled,
+                Path agentProjectRoot,
+                String agentSystemPromptAppend
         ) {
             this.jobId = jobId;
             this.conversationId = conversationId;
+            this.providerName = providerName;
+            this.modelId = modelId;
+            this.baseUrl = baseUrl;
+            this.apiKey = apiKey;
             this.provider = provider;
             this.historySnapshot = List.copyOf(historySnapshot);
             this.reasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+            this.agentModeEnabled = agentModeEnabled;
+            this.agentProjectRoot = agentProjectRoot;
+            this.agentSystemPromptAppend = StringUtils.defaultString(agentSystemPromptAppend);
         }
 
         boolean isLive() {

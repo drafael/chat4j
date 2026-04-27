@@ -2,14 +2,17 @@ package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -23,6 +26,7 @@ class CurrentConversationSaveDispatchCoordinatorTest {
         var history = List.of(Message.user("hello"));
         var capturedConversationId = new AtomicReference<UUID>();
         var capturedSelectedModel = new AtomicReference<String>();
+        var capturedReasoningLevel = new AtomicReference<ReasoningLevel>();
         var appliedSaveResult = new AtomicReference<CurrentConversationSaveCoordinator.SaveResult>();
 
         boolean applied = subject.save(
@@ -31,13 +35,20 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 history,
                 "OpenAI > gpt-4.1",
                 AssistantRenderMode.MARKDOWN,
+                ReasoningLevel.HIGH,
+                true,
+                Path.of("/tmp/demo"),
                 (currentConversationId,
                  pendingUnsavedConversationRenderMode,
                  loadedHistory,
                  selectedModelKey,
-                 currentAssistantRenderMode) -> {
+                 currentAssistantRenderMode,
+                 reasoningLevel,
+                 agentModeEnabled,
+                 agentProjectRoot) -> {
                     capturedConversationId.set(currentConversationId);
                     capturedSelectedModel.set(selectedModelKey);
+                    capturedReasoningLevel.set(reasoningLevel);
                     return new CurrentConversationSaveCoordinator.SaveResult(
                             true,
                             conversationId,
@@ -56,6 +67,7 @@ class CurrentConversationSaveDispatchCoordinatorTest {
         assertThat(applied).isTrue();
         assertThat(capturedConversationId.get()).isEqualTo(conversationId);
         assertThat(capturedSelectedModel.get()).isEqualTo("OpenAI > gpt-4.1");
+        assertThat(capturedReasoningLevel.get()).isEqualTo(ReasoningLevel.HIGH);
         assertThat(appliedSaveResult.get()).isNotNull();
         assertThat(appliedSaveResult.get().saved()).isTrue();
     }
@@ -69,14 +81,20 @@ class CurrentConversationSaveDispatchCoordinatorTest {
         boolean applied = subject.save(
                 UUID.randomUUID(),
                 null,
-                List.of(),
+                emptyList(),
                 null,
                 AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null,
                 (currentConversationId,
                  pendingUnsavedConversationRenderMode,
                  history,
                  selectedModelKey,
-                 currentAssistantRenderMode) -> {
+                 currentAssistantRenderMode,
+                 reasoningLevel,
+                 agentModeEnabled,
+                 agentProjectRoot) -> {
                     throw new IllegalStateException("boom");
                 },
                 saveResult -> true,
@@ -98,11 +116,17 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 null,
                 null,
                 AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null,
                 (currentConversationId,
                  pendingUnsavedConversationRenderMode,
                  history,
                  selectedModelKey,
-                 currentAssistantRenderMode) -> null,
+                 currentAssistantRenderMode,
+                 reasoningLevel,
+                 agentModeEnabled,
+                 agentProjectRoot) -> null,
                 saveResult -> true,
                 error -> {
                 }
@@ -113,9 +137,12 @@ class CurrentConversationSaveDispatchCoordinatorTest {
         assertThatThrownBy(() -> subject.save(
                 UUID.randomUUID(),
                 null,
-                List.of(),
+                emptyList(),
                 null,
                 AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null,
                 null,
                 saveResult -> true,
                 error -> {

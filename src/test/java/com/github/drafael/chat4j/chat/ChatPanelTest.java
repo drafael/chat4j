@@ -1,5 +1,9 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
+import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
+import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
@@ -21,6 +25,8 @@ import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,6 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ChatPanelTest {
@@ -106,6 +113,234 @@ class ChatPanelTest {
         subject.setSelectedModel("LocalTest > basic-model");
         assertThat(thinkingButton.isVisible()).isFalse();
         assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Switching conversations away and back restores previously selected reasoning level")
+    void setSelectedModel_whenSwitchingAwayAndBack_restoresReasoningState() throws Exception {
+        ProviderRegistry.ProviderDef reasoningProvider = new ProviderRegistry.ProviderDef(
+                "OpenRouter",
+                "OPENROUTER_API_KEY",
+                null,
+                List.of("claude-3.7-sonnet"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
+                "LocalTest",
+                "LOCAL_TEST_API_KEY",
+                null,
+                List.of("basic-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
+        customProviders.put(reasoningProvider.name(), reasoningProvider);
+        customProviders.put(plainProvider.name(), plainProvider);
+        setField(subject, "providerMap", customProviders);
+
+        JButton thinkingButton = readThinkingButton(subject.getInputBar());
+
+        // Conversation A
+        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+        subject.getInputBar().setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
+        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+
+        // Switch to conversation B (non-reasoning model)
+        subject.setSelectedModel("LocalTest > basic-model");
+        assertThat(thinkingButton.isVisible()).isFalse();
+        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+        assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+
+        // Switch back to conversation A
+        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+        assertThat(thinkingButton.isVisible()).isTrue();
+        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Agent toggle is visible only for models with tool capability")
+    void setSelectedModel_whenToolCapabilityChanges_updatesAgentToggleVisibility() throws Exception {
+        ProviderRegistry.ProviderDef toolProvider = new ProviderRegistry.ProviderDef(
+                "OpenRouter",
+                "OPENROUTER_API_KEY",
+                null,
+                List.of("gpt-5-mini"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
+                "LocalTest",
+                "LOCAL_TEST_API_KEY",
+                null,
+                List.of("basic-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
+        customProviders.put(toolProvider.name(), toolProvider);
+        customProviders.put(plainProvider.name(), plainProvider);
+        setField(subject, "providerMap", customProviders);
+
+        JToggleButton agentModeButton = readAgentModeButton(subject.getInputBar());
+
+        subject.setSelectedModel("OpenRouter > gpt-5-mini");
+        assertThat(agentModeButton.isVisible()).isTrue();
+
+        subject.getInputBar().setAgentProjectRoot(Files.createTempDirectory("chat4j-agent-project"));
+        subject.getInputBar().setAgentModeEnabled(true);
+        assertThat(subject.getInputBar().isAgentModeEnabled()).isTrue();
+
+        subject.setSelectedModel("LocalTest > basic-model");
+        assertThat(agentModeButton.isVisible()).isFalse();
+        assertThat(subject.getInputBar().isAgentModeEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Send is blocked when agent mode is enabled without a valid project folder")
+    void onSend_whenAgentModeEnabledWithoutProjectFolder_showsValidationAndSkipsSend() throws Exception {
+        setField(subject, "currentProvider", immediateProvider("pong"));
+        subject.getInputBar().setAgentModeAvailable(true);
+
+        Field enabledField = InputBar.class.getDeclaredField("agentModeEnabled");
+        enabledField.setAccessible(true);
+        enabledField.setBoolean(subject.getInputBar(), true);
+
+        Field projectRootField = InputBar.class.getDeclaredField("agentProjectRoot");
+        projectRootField.setAccessible(true);
+        projectRootField.set(subject.getInputBar(), null);
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        JLabel validationLabel = readValidationLabel(subject.getInputBar());
+        assertThat(validationLabel.isVisible()).isTrue();
+        assertThat(validationLabel.getText()).contains("Select a valid project folder");
+        assertThat(subject.getHistory()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Agent mode routes send flow through orchestrator path")
+    void onSend_whenAgentModeEnabled_routesThroughAgentOrchestrator() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-route");
+
+        subject.getInputBar().setAgentModeAvailable(true);
+        subject.getInputBar().setAgentProjectRoot(projectRoot);
+        subject.getInputBar().setAgentModeEnabled(true);
+
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+            @Override
+            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    callbacks.onToken().accept("agent-response");
+                    return AgentTurnResult.complete();
+                };
+            }
+        }, new LocalToolRuntime()));
+
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                throw new IllegalStateException("Non-agent provider path should not be called");
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        assertThat(subject.getHistory().get(1).content()).isEqualTo("agent-response");
+    }
+
+    @Test
+    @DisplayName("Agent mode passes configured prompt addendum to orchestrator")
+    void onSend_whenAgentPromptAddendumConfigured_passesAddendumToOrchestrator() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-route-addendum");
+        AtomicReference<String> observedPromptAppend = new AtomicReference<>();
+
+        subject.getInputBar().setAgentModeAvailable(true);
+        subject.getInputBar().setAgentProjectRoot(projectRoot);
+        subject.getInputBar().setAgentModeEnabled(true);
+        subject.setAgentSystemPromptAppend("Always include key project files.");
+
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+            @Override
+            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                observedPromptAppend.set(agentSystemPromptAppend);
+                return (request, callbacks) -> {
+                    callbacks.onToken().accept("agent-response");
+                    return AgentTurnResult.complete();
+                };
+            }
+        }, new LocalToolRuntime()));
+
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        assertThat(observedPromptAppend.get()).isEqualTo("Always include key project files.");
     }
 
     @Test
@@ -426,7 +661,7 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "\u200B\u200C\u200D\uFEFF")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "\u200B\u200C\u200D\uFEFF")
                 )
         );
 
@@ -445,7 +680,7 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "## Plan\n- Step 1\n- Step 2")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "## Plan\n- Step 1\n- Step 2")
                 )
         );
 
@@ -466,19 +701,19 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("first answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "first thinking")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "first thinking")
                 ),
                 new Message(
                         Role.ASSISTANT,
                         List.of(new TextPart("")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "artifact thinking")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "artifact thinking")
                 ),
                 new Message(
                         Role.ASSISTANT,
                         List.of(new TextPart("final answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "final thinking")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "final thinking")
                 )
         );
 
@@ -502,7 +737,7 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", thinking)
+                        new MessageMeta(emptyList(), emptyList(), false, "", thinking)
                 )
         );
 
@@ -524,6 +759,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking bubble renders without nested inner scroll containers")
     void onSend_whenProviderEmitsThinking_usesSingleRenderedPath() throws Exception {
+        subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
         setField(subject, "currentProvider", new ProviderService() {
@@ -588,7 +824,7 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "reasoning text")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "reasoning text")
                 )
         );
 
@@ -629,7 +865,7 @@ class ChatPanelTest {
                         Role.ASSISTANT,
                         List.of(new TextPart("answer")),
                         Instant.now(),
-                        new MessageMeta(List.of(), List.of(), false, "", "reasoning text")
+                        new MessageMeta(emptyList(), emptyList(), false, "", "reasoning text")
                 )
         );
 
@@ -730,6 +966,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking stream ignores non-visible control tokens and keeps visible text")
     void onSend_whenThinkingIncludesControlSequences_keepsVisibleThinkingText() throws Exception {
+        subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
         setField(subject, "currentProvider", new ProviderService() {
@@ -823,6 +1060,7 @@ class ChatPanelTest {
             }
         });
 
+        subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
@@ -842,6 +1080,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
     void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersThinkingBubble() throws Exception {
+        subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
         setField(subject, "currentProvider", new ProviderService() {
@@ -1132,6 +1371,12 @@ class ChatPanelTest {
         return (JButton) field.get(inputBar);
     }
 
+    private static JToggleButton readAgentModeButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("agentModeButton");
+        field.setAccessible(true);
+        return (JToggleButton) field.get(inputBar);
+    }
+
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
         return readField(chatPanel, "currentProvider");
     }
@@ -1195,7 +1440,7 @@ class ChatPanelTest {
     }
 
     private static <T extends Component> List<T> findComponents(Container root, Class<T> componentType) {
-        List<T> matches = new java.util.ArrayList<>();
+        List<T> matches = new ArrayList<>();
         collectComponents(root, componentType, matches);
         return matches;
     }

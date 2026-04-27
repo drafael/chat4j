@@ -22,7 +22,7 @@ public final class SettingsKeys {
 
     public static final String CHAT_SEND_KEY = "chat4j.chat.input.sendKey";
     public static final String CHAT_AUTO_SCROLL = "chat4j.chat.behavior.autoScroll";
-    public static final String CHAT_REASONING_LEVEL = "chat4j.chat.reasoning.level";
+    public static final String CHAT_AGENT_SYSTEM_PROMPT_APPEND = "chat4j.chat.agent.systemPromptAppend";
     public static final String CHAT_RENDER_MODE = "chat4j.chat.render.mode";
     public static final String CHAT_RENDER_MODE_PREVIEW = AssistantRenderMode.PREVIEW.settingValue();
     public static final String CHAT_RENDER_MODE_MARKDOWN = AssistantRenderMode.MARKDOWN.settingValue();

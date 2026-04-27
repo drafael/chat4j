@@ -2,11 +2,14 @@ package com.github.drafael.chat4j.provider.capability.chat.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.chat.agent.AgentSystemPromptBuilder;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
+import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
 
 import java.io.BufferedReader;
@@ -26,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+
+import static java.util.Collections.emptyMap;
 import org.apache.commons.lang3.StringUtils;
 
 public class CodexCliChatCompletionClient implements ChatCompletionClient {
@@ -81,28 +86,28 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                     sawStreamingDelta
             );
             updateDiagnostics("app-server", sawStreamingDelta.get(), false, null, null);
-        } catch (Exception appServerError) {
+        } catch (Exception e) {
             if (shouldStop(isCancelled)) {
                 updateDiagnostics("cancelled", sawStreamingDelta.get(), false, null, null);
                 return;
             }
 
-            String appServerFailure = firstLine(appServerError.getMessage());
+            String appServerFailure = firstLine(e.getMessage());
             if (emittedOutput.get()) {
                 updateDiagnostics("app-server", sawStreamingDelta.get(), false, appServerFailure, appServerFailure);
-                throw appServerError;
+                throw e;
             }
 
             try {
                 streamViaExec(runtime, history, onToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateDiagnostics("exec-fallback", false, true, null, appServerFailure);
-            } catch (Exception execError) {
-                String fallbackFailure = firstLine(execError.getMessage());
+            } catch (Exception x) {
+                String fallbackFailure = firstLine(x.getMessage());
                 updateDiagnostics("exec-fallback-failed", false, true, fallbackFailure, appServerFailure);
                 throw new IllegalStateException(
                         "codex app-server failed: %s | codex exec fallback failed: %s"
                                 .formatted(appServerFailure, fallbackFailure),
-                        execError
+                        x
                 );
             }
         }
@@ -119,6 +124,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     ) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder("codex", "app-server", "--listen", "stdio://");
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        applyExecutionDirectory(processBuilder);
         ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         Process process = processBuilder.start();
@@ -170,6 +176,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 prompt
         );
         processBuilder.redirectErrorStream(true);
+        applyExecutionDirectory(processBuilder);
         ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         Process process = processBuilder.start();
@@ -315,7 +322,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 }
                 try {
                     return JSON.readTree(line);
-                } catch (IOException ignored) {
+                } catch (IOException e) {
                     continue;
                 }
             }
@@ -353,7 +360,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private Map<String, Object> initializedNotification() {
         return Map.of(
                 "method", "initialized",
-                "params", Map.of());
+                "params", emptyMap());
     }
 
     private Map<String, Object> threadStartRequest(String model) {
@@ -407,6 +414,13 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 .reduce((left, right) -> "%s\n\n%s".formatted(left, right))
                 .orElse("");
 
+        Path executionDirectory = ExecutionDirectoryContext.currentDirectory().orElse(null);
+        if (executionDirectory != null) {
+            String promptAppend = AgentSystemPromptContext.currentPromptAppend().orElse("");
+            String systemPrompt = AgentSystemPromptBuilder.buildCodexFallbackPrompt(executionDirectory, promptAppend);
+            return "%s\n\nConversation:\n\n%s".formatted(systemPrompt, transcript);
+        }
+
         return "You are a coding assistant. Answer directly in plain text. Do not execute commands or modify files.\n\nConversation:\n\n%s"
                 .formatted(transcript);
     }
@@ -429,6 +443,11 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
     private boolean shouldStop(BooleanSupplier isCancelled) {
         return isCancelled.getAsBoolean() || Thread.currentThread().isInterrupted();
+    }
+
+    private void applyExecutionDirectory(ProcessBuilder processBuilder) {
+        ExecutionDirectoryContext.currentDirectory()
+                .ifPresent(directory -> processBuilder.directory(directory.toFile()));
     }
 
     private String firstLine(String text) {

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
@@ -15,10 +16,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -94,7 +97,7 @@ class ConversationRepoTest {
                 Role.ASSISTANT,
                 List.of(new TextPart("answer")),
                 Instant.now(),
-                new MessageMeta(List.of(), List.of(), false, "", "Thinking trace")
+                new MessageMeta(emptyList(), emptyList(), false, "", "Thinking trace")
         );
 
         subject.addMessage(conversationId, message);
@@ -106,6 +109,44 @@ class ConversationRepoTest {
             assertThat(rs.next()).isTrue();
             assertThat(rs.getString(1)).contains("\"assistantThinking\":\"Thinking trace\"");
         }
+    }
+
+    @Test
+    @DisplayName("Updating reasoning level persists per-conversation reasoning mode")
+    void updateReasoningLevel_whenConversationExists_persistsValue() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-reasoning-level");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+
+        ConversationRepo subject = new ConversationRepo(dataSource);
+        subject.updateReasoningLevel(conversationId, ReasoningLevel.EXTRA_HIGH);
+
+        ConversationRepo.ConversationRecord conversation = subject.findById(conversationId).orElseThrow();
+        assertThat(conversation.reasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH.toSettingValue());
+
+        subject.updateReasoningLevel(conversationId, null);
+        ConversationRepo.ConversationRecord updated = subject.findById(conversationId).orElseThrow();
+        assertThat(updated.reasoningLevel()).isEqualTo(ReasoningLevel.OFF.toSettingValue());
+    }
+
+    @Test
+    @DisplayName("Updating agent settings persists per-conversation mode and root")
+    void updateAgentSettings_whenConversationExists_persistsValues() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-agent-settings");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+
+        ConversationRepo subject = new ConversationRepo(dataSource);
+        subject.updateAgentSettings(conversationId, true, Path.of("/tmp/workspace"));
+
+        ConversationRepo.ConversationRecord conversation = subject.findById(conversationId).orElseThrow();
+        assertThat(conversation.agentModeEnabled()).isTrue();
+        assertThat(conversation.agentProjectRoot()).isEqualTo(Path.of("/tmp/workspace").toAbsolutePath().normalize().toString());
+
+        subject.updateAgentSettings(conversationId, true, null);
+        ConversationRepo.ConversationRecord updated = subject.findById(conversationId).orElseThrow();
+        assertThat(updated.agentModeEnabled()).isFalse();
+        assertThat(updated.agentProjectRoot()).isNull();
     }
 
     private static DataSource createDataSource(String dbName) {
@@ -125,6 +166,9 @@ class ConversationRepoTest {
                         provider VARCHAR(50),
                         model VARCHAR(100),
                         is_favorite BOOLEAN DEFAULT FALSE,
+                        reasoning_level VARCHAR(20) DEFAULT 'off',
+                        agent_mode_enabled BOOLEAN DEFAULT FALSE,
+                        agent_project_root VARCHAR(1024),
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )

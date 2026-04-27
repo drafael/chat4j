@@ -829,6 +829,264 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Tool-calling model hints enable tool invocation support")
+    void supportsToolInvocation_whenModelNameMatchesFallbackHints_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "OpenAI",
+                "gpt-5-mini"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Mistral devstral model hints enable tool invocation support")
+    void supportsToolInvocation_whenMistralModelMatchesFallbackHints_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Mistral",
+                "devstral-latest"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Non-chat model hints disable tool invocation support")
+    void supportsToolInvocation_whenModelNameMatchesDenyHints_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "OpenAI",
+                "whisper-1"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Unknown providers stay disabled when no tool metadata is available")
+    void supportsToolInvocation_whenProviderHasNoHintsAndNoMetadata_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Custom Provider",
+                "chat-model-v1"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Ollama chat models default to tool invocation support")
+    void supportsToolInvocation_whenOllamaModelHasNoMetadata_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Ollama",
+                "llama3.2:3b",
+                "http://127.0.0.1:9/v1"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Ollama non-chat deny hints still disable tool invocation support")
+    void supportsToolInvocation_whenOllamaModelMatchesDenyHints_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Ollama",
+                "whisper:latest",
+                "http://127.0.0.1:9/v1"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("LM Studio chat models default to tool invocation support")
+    void supportsToolInvocation_whenLmStudioModelHasNoMetadata_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "LM Studio",
+                "openai/gpt-oss-20b",
+                "http://127.0.0.1:9/v1"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("LM Studio deny hints still disable tool invocation support")
+    void supportsToolInvocation_whenLmStudioModelMatchesDenyHints_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "LM Studio",
+                "whisper:latest",
+                "http://127.0.0.1:9/v1"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Model endpoint function-calling metadata enables tool invocation support")
+    void supportsToolInvocation_whenModelEndpointDeclaresFunctionCalling_returnsTrue() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "tool-model",
+                200,
+                """
+                        {
+                          "id": "tool-model",
+                          "function_calling": true
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "OpenRouter",
+                    "tool-model",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Explicit tools=false metadata overrides fallback tool hints")
+    void supportsToolInvocation_whenModelEndpointDeclaresToolsFalse_returnsFalse() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "gpt-5-mini",
+                200,
+                """
+                        {
+                          "id": "gpt-5-mini",
+                          "tools": false
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "OpenAI",
+                    "gpt-5-mini",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Models list capability metadata is used for tool invocation support")
+    void supportsToolInvocation_whenModelsListDeclaresToolUseCapability_returnsTrue() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "list-tool-model",
+                404,
+                "{}",
+                """
+                        {
+                          "data": [
+                            {
+                              "id": "list-tool-model",
+                              "capabilities": {
+                                "tool_use": true
+                              }
+                            }
+                          ]
+                        }
+                        """
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "Anthropic",
+                    "list-tool-model",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Supported parameters metadata enables tool invocation support")
+    void supportsToolInvocation_whenModelEndpointIncludesToolParameters_returnsTrue() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "params-tool-model",
+                200,
+                """
+                        {
+                          "id": "params-tool-model",
+                          "supported_parameters": ["temperature", "tool_choice", "parallel_tool_calls"]
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "OpenRouter",
+                    "params-tool-model",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Dynamic metadata can enable tool invocation for custom providers")
+    void supportsToolInvocation_whenCustomProviderHasToolMetadata_returnsTrue() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "custom-tool-model",
+                200,
+                """
+                        {
+                          "id": "custom-tool-model",
+                          "capabilities": {
+                            "tools": true
+                          }
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    "custom-tool-model",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Provider descriptor image capability flag is honored")
     void supportsImageInput_whenCapabilitiesDeclareImageSupport_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsImageInput(

@@ -1,8 +1,10 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.Validate;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -51,6 +53,17 @@ public class ConversationPersistenceCoordinator {
 
         conversationRepo.addMessage(conversationId, message);
         persistedMessageCounter.incrementIfPresent(conversationId);
+    }
+
+    public void persistConversationAgentSettings(UUID conversationId, boolean agentModeEnabled, Path agentProjectRoot)
+            throws Exception {
+        Validate.notNull(conversationId, "conversationId must not be null");
+        conversationRepo.updateAgentSettings(conversationId, agentModeEnabled, agentProjectRoot);
+    }
+
+    public void persistConversationReasoningLevel(UUID conversationId, ReasoningLevel reasoningLevel) throws Exception {
+        Validate.notNull(conversationId, "conversationId must not be null");
+        conversationRepo.updateReasoningLevel(conversationId, reasoningLevel);
     }
 
     public void markConversationLoaded(UUID conversationId, int persistedCount) {

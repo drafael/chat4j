@@ -17,6 +17,9 @@
 - [provider-capability-architecture.md](provider-capability-architecture.md)
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
+- [agent-mode.md](agent-mode.md)
+  - Current Agent Mode behavior, provider adapters, fallback strategy, and settings.
+
 - [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
   - Current GitHub Copilot authentication and runtime behavior in Chat4J.
 
@@ -27,7 +30,7 @@
   - Header-routing evidence, curl proofs, and upstream reference links for Copilot model behavior.
 
 - [code-review-remediation-plan.md](code-review-remediation-plan.md)
-  - Active remediation backlog and acceptance criteria for remaining quality work.
+  - Current remediation status and open hardening backlog for code quality work.
 
 - [calver.md](calver.md)
   - Current CalVer versioning, pre-commit bump flow, and packaging alignment.

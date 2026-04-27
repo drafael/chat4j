@@ -2,6 +2,7 @@ package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.PersistedMessageCounter;
 import com.github.drafael.chat4j.storage.SettingsRepo;
@@ -16,6 +17,7 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -46,9 +48,12 @@ class MainFrameConversationWiringFactoryTest {
         var saveResult = wiring.currentConversationSaveCoordinator().save(
                 UUID.randomUUID(),
                 AssistantRenderMode.MARKDOWN,
-                List.of(),
+                emptyList(),
                 "OpenAI > gpt-4.1",
-                AssistantRenderMode.PREVIEW
+                AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null
         );
 
         assertThat(saveResult.saved()).isFalse();

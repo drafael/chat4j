@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ConversationLoadCoordinatorTest {
@@ -33,6 +34,9 @@ class ConversationLoadCoordinatorTest {
                 "OpenAI",
                 "gpt-4.1",
                 false,
+                "off",
+                false,
+                null,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
@@ -145,7 +149,7 @@ class ConversationLoadCoordinatorTest {
                     firstStarted.countDown();
                     awaitLatch(releaseFirst);
                 }
-                return List.of();
+                return emptyList();
             }
 
             @Override

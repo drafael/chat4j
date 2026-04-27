@@ -47,6 +47,7 @@ class MainFrameStateTransitionsIntegrationTest {
                 },
                 () -> flowCalls.add("clear-sidebar-selection"),
                 () -> flowCalls.add("clear-chat-view"),
+                () -> flowCalls.add("reset-agent-state"),
                 assistantRenderModeState.defaultAssistantRenderMode(),
                 (mode, userInitiated) -> {
                     flowCalls.add("apply-render-mode");
@@ -66,6 +67,7 @@ class MainFrameStateTransitionsIntegrationTest {
                 "clear-active",
                 "clear-sidebar-selection",
                 "clear-chat-view",
+                "reset-agent-state",
                 "apply-render-mode",
                 "focus"
         );

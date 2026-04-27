@@ -2,14 +2,17 @@ package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CurrentConversationSaveCoordinatorTest {
@@ -20,6 +23,8 @@ class CurrentConversationSaveCoordinatorTest {
         var createCalls = new AtomicInteger();
         var historyPersistCalls = new AtomicInteger();
         var modePersistCalls = new AtomicInteger();
+        var agentSettingsPersistCalls = new AtomicInteger();
+        var reasoningPersistCalls = new AtomicInteger();
 
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
@@ -28,16 +33,21 @@ class CurrentConversationSaveCoordinatorTest {
                     return UUID.randomUUID();
                 },
                 (conversationId, history) -> historyPersistCalls.incrementAndGet(),
-                (conversationId, mode) -> modePersistCalls.incrementAndGet()
+                (conversationId, mode) -> modePersistCalls.incrementAndGet(),
+                (conversationId, agentModeEnabled, agentProjectRoot) -> agentSettingsPersistCalls.incrementAndGet(),
+                (conversationId, reasoningLevel) -> reasoningPersistCalls.incrementAndGet()
         );
 
         UUID currentConversationId = UUID.randomUUID();
         var result = subject.save(
                 currentConversationId,
                 AssistantRenderMode.PREVIEW,
-                List.of(),
+                emptyList(),
                 "OpenAI > gpt-4.1",
-                AssistantRenderMode.MARKDOWN
+                AssistantRenderMode.MARKDOWN,
+                ReasoningLevel.HIGH,
+                true,
+                Path.of("/tmp/demo")
         );
 
         assertThat(result.saved()).isFalse();
@@ -47,6 +57,8 @@ class CurrentConversationSaveCoordinatorTest {
         assertThat(createCalls.get()).isZero();
         assertThat(historyPersistCalls.get()).isZero();
         assertThat(modePersistCalls.get()).isZero();
+        assertThat(agentSettingsPersistCalls.get()).isZero();
+        assertThat(reasoningPersistCalls.get()).isZero();
     }
 
     @Test
@@ -67,6 +79,11 @@ class CurrentConversationSaveCoordinatorTest {
         var persistedHistory = new AtomicReference<List<Message>>();
         var persistedModeConversationId = new AtomicReference<UUID>();
         var persistedMode = new AtomicReference<AssistantRenderMode>();
+        var persistedAgentConversationId = new AtomicReference<UUID>();
+        var persistedAgentMode = new AtomicReference<Boolean>();
+        var persistedAgentRoot = new AtomicReference<Path>();
+        var persistedReasoningConversationId = new AtomicReference<UUID>();
+        var persistedReasoningLevel = new AtomicReference<ReasoningLevel>();
 
         var subject = new CurrentConversationSaveCoordinator(
                 titleDeriver,
@@ -83,17 +100,30 @@ class CurrentConversationSaveCoordinatorTest {
                 (conversationId, mode) -> {
                     persistedModeConversationId.set(conversationId);
                     persistedMode.set(mode);
+                },
+                (conversationId, agentModeEnabled, agentProjectRoot) -> {
+                    persistedAgentConversationId.set(conversationId);
+                    persistedAgentMode.set(agentModeEnabled);
+                    persistedAgentRoot.set(agentProjectRoot);
+                },
+                (conversationId, reasoningLevel) -> {
+                    persistedReasoningConversationId.set(conversationId);
+                    persistedReasoningLevel.set(reasoningLevel);
                 }
         );
 
         List<Message> history = List.of(Message.user("Hello"));
+        Path projectRoot = Path.of("/tmp/chat4j-agent-root");
 
         var result = subject.save(
                 null,
                 AssistantRenderMode.MARKDOWN,
                 history,
                 "OpenAI > gpt-4.1",
-                AssistantRenderMode.PREVIEW
+                AssistantRenderMode.PREVIEW,
+                ReasoningLevel.EXTRA_HIGH,
+                true,
+                projectRoot
         );
 
         assertThat(result.saved()).isTrue();
@@ -106,6 +136,11 @@ class CurrentConversationSaveCoordinatorTest {
         assertThat(createdModel.get()).isEqualTo("gpt-4.1");
         assertThat(persistedModeConversationId.get()).isEqualTo(createdConversationId);
         assertThat(persistedMode.get()).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(persistedAgentConversationId.get()).isEqualTo(createdConversationId);
+        assertThat(persistedAgentMode.get()).isTrue();
+        assertThat(persistedAgentRoot.get()).isEqualTo(projectRoot);
+        assertThat(persistedReasoningConversationId.get()).isEqualTo(createdConversationId);
+        assertThat(persistedReasoningLevel.get()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
         assertThat(persistedHistoryConversationId.get()).isEqualTo(createdConversationId);
         assertThat(persistedHistory.get()).isEqualTo(history);
     }
@@ -126,6 +161,10 @@ class CurrentConversationSaveCoordinatorTest {
                 (conversationId, history) -> {
                 },
                 (conversationId, mode) -> {
+                },
+                (conversationId, agentModeEnabled, agentProjectRoot) -> {
+                },
+                (conversationId, reasoningLevel) -> {
                 }
         );
 
@@ -134,7 +173,10 @@ class CurrentConversationSaveCoordinatorTest {
                 null,
                 List.of(Message.user("Hello")),
                 "not-a-model-key",
-                AssistantRenderMode.PREVIEW
+                AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null
         );
 
         assertThat(provider.get()).isEqualTo("Unknown");
@@ -147,6 +189,8 @@ class CurrentConversationSaveCoordinatorTest {
         UUID existingConversationId = UUID.randomUUID();
         var createCalls = new AtomicInteger();
         var modePersistCalls = new AtomicInteger();
+        var agentSettingsPersistCalls = new AtomicInteger();
+        var reasoningPersistCalls = new AtomicInteger();
         var historyPersistConversationId = new AtomicReference<UUID>();
 
         var subject = new CurrentConversationSaveCoordinator(
@@ -156,7 +200,9 @@ class CurrentConversationSaveCoordinatorTest {
                     return UUID.randomUUID();
                 },
                 (conversationId, history) -> historyPersistConversationId.set(conversationId),
-                (conversationId, mode) -> modePersistCalls.incrementAndGet()
+                (conversationId, mode) -> modePersistCalls.incrementAndGet(),
+                (conversationId, agentModeEnabled, agentProjectRoot) -> agentSettingsPersistCalls.incrementAndGet(),
+                (conversationId, reasoningLevel) -> reasoningPersistCalls.incrementAndGet()
         );
 
         var result = subject.save(
@@ -164,7 +210,10 @@ class CurrentConversationSaveCoordinatorTest {
                 AssistantRenderMode.PREVIEW,
                 List.of(Message.user("Hello"), Message.assistant("World")),
                 "OpenAI > gpt-4.1",
-                AssistantRenderMode.MARKDOWN
+                AssistantRenderMode.MARKDOWN,
+                ReasoningLevel.MEDIUM,
+                true,
+                Path.of("/tmp/demo")
         );
 
         assertThat(result.saved()).isTrue();
@@ -174,5 +223,7 @@ class CurrentConversationSaveCoordinatorTest {
         assertThat(historyPersistConversationId.get()).isEqualTo(existingConversationId);
         assertThat(createCalls.get()).isZero();
         assertThat(modePersistCalls.get()).isZero();
+        assertThat(agentSettingsPersistCalls.get()).isZero();
+        assertThat(reasoningPersistCalls.get()).isZero();
     }
 }

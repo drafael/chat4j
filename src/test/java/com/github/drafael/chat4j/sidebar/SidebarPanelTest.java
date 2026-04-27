@@ -11,9 +11,11 @@ import javax.swing.JLabel;
 import javax.swing.SwingUtilities;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -92,7 +94,7 @@ class SidebarPanelTest {
         var titlesRef = new AtomicReference<List<String>>();
         SwingUtilities.invokeAndWait(() -> {
             DefaultListModel<?> model = readListModel(panel);
-            List<String> titles = java.util.Collections.list(model.elements()).stream()
+            List<String> titles = Collections.list(model.elements()).stream()
                     .filter(ConversationItem.class::isInstance)
                     .map(ConversationItem.class::cast)
                     .map(ConversationItem::title)
@@ -107,7 +109,7 @@ class SidebarPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             DefaultListModel<?> model = readListModel(panel);
             JList<?> list = readConversationList(panel);
-            int conversationIndex = java.util.stream.IntStream.range(0, model.size())
+            int conversationIndex = IntStream.range(0, model.size())
                     .filter(index -> model.get(index) instanceof ConversationItem conversation
                             && conversation.id().equals(conversationId))
                     .findFirst()
@@ -164,6 +166,9 @@ class SidebarPanelTest {
                 "OpenAI",
                 "gpt-4.1",
                 false,
+                "off",
+                false,
+                null,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );

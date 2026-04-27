@@ -89,6 +89,9 @@ class MainFrameDependenciesFactoryTest {
                         "OpenAI",
                         "gpt-4.1",
                         false,
+                        "off",
+                        false,
+                        null,
                         LocalDateTime.now(),
                         LocalDateTime.now()
                 ))

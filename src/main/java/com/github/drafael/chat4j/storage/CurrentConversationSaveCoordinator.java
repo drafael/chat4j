@@ -2,11 +2,13 @@ package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec.ModelSelection;
 import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
 import org.apache.commons.lang3.Validate;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -16,6 +18,8 @@ public class CurrentConversationSaveCoordinator {
     private final ConversationCreator conversationCreator;
     private final HistoryPersister historyPersister;
     private final ConversationModePersister conversationModePersister;
+    private final ConversationAgentSettingsPersister conversationAgentSettingsPersister;
+    private final ConversationReasoningLevelPersister conversationReasoningLevelPersister;
 
     public CurrentConversationSaveCoordinator(
             ConversationTitleDeriver conversationTitleDeriver,
@@ -26,7 +30,9 @@ public class CurrentConversationSaveCoordinator {
                 conversationTitleDeriver,
                 conversationPersistenceCoordinator::createConversation,
                 conversationPersistenceCoordinator::persistConversationHistory,
-                assistantRenderModeSettingsCoordinator::persistConversationMode
+                assistantRenderModeSettingsCoordinator::persistConversationMode,
+                conversationPersistenceCoordinator::persistConversationAgentSettings,
+                conversationPersistenceCoordinator::persistConversationReasoningLevel
         );
     }
 
@@ -34,7 +40,9 @@ public class CurrentConversationSaveCoordinator {
             ConversationTitleDeriver conversationTitleDeriver,
             ConversationCreator conversationCreator,
             HistoryPersister historyPersister,
-            ConversationModePersister conversationModePersister
+            ConversationModePersister conversationModePersister,
+            ConversationAgentSettingsPersister conversationAgentSettingsPersister,
+            ConversationReasoningLevelPersister conversationReasoningLevelPersister
     ) {
         this.conversationTitleDeriver = Validate.notNull(
                 conversationTitleDeriver,
@@ -46,6 +54,14 @@ public class CurrentConversationSaveCoordinator {
                 conversationModePersister,
                 "conversationModePersister must not be null"
         );
+        this.conversationAgentSettingsPersister = Validate.notNull(
+                conversationAgentSettingsPersister,
+                "conversationAgentSettingsPersister must not be null"
+        );
+        this.conversationReasoningLevelPersister = Validate.notNull(
+                conversationReasoningLevelPersister,
+                "conversationReasoningLevelPersister must not be null"
+        );
     }
 
     public SaveResult save(
@@ -53,7 +69,10 @@ public class CurrentConversationSaveCoordinator {
             AssistantRenderMode pendingUnsavedConversationRenderMode,
             List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode
+            AssistantRenderMode currentAssistantRenderMode,
+            ReasoningLevel reasoningLevel,
+            boolean agentModeEnabled,
+            Path agentProjectRoot
     ) throws Exception {
         Validate.notNull(history, "history must not be null");
         Validate.notNull(currentAssistantRenderMode, "currentAssistantRenderMode must not be null");
@@ -76,6 +95,11 @@ public class CurrentConversationSaveCoordinator {
                     ? pendingUnsavedMode
                     : currentAssistantRenderMode;
             conversationModePersister.persist(conversationId, modeToPersist);
+            conversationAgentSettingsPersister.persist(conversationId, agentModeEnabled, agentProjectRoot);
+            conversationReasoningLevelPersister.persist(
+                    conversationId,
+                    reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel
+            );
             pendingUnsavedMode = null;
             createdConversation = true;
         }
@@ -118,5 +142,15 @@ public class CurrentConversationSaveCoordinator {
     @FunctionalInterface
     interface ConversationModePersister {
         void persist(UUID conversationId, AssistantRenderMode mode);
+    }
+
+    @FunctionalInterface
+    interface ConversationAgentSettingsPersister {
+        void persist(UUID conversationId, boolean agentModeEnabled, Path agentProjectRoot) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface ConversationReasoningLevelPersister {
+        void persist(UUID conversationId, ReasoningLevel reasoningLevel) throws Exception;
     }
 }

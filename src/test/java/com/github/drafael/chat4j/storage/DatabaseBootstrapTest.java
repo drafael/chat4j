@@ -61,6 +61,8 @@ class DatabaseBootstrapTest {
         try (Connection connection = dataSource.getConnection()) {
             assertThat(appliedMigrations(connection, "1")).isEqualTo(1);
             assertThat(appliedMigrations(connection, "3")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "4")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "5")).isEqualTo(1);
         }
     }
 
@@ -75,6 +77,8 @@ class DatabaseBootstrapTest {
             assertThat(tableExists(connection, "flyway_schema_history")).isTrue();
             assertThat(appliedMigrations(connection, "1")).isEqualTo(1);
             assertThat(appliedMigrations(connection, "3")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "4")).isEqualTo(1);
+            assertThat(appliedMigrations(connection, "5")).isEqualTo(1);
             assertThat(tableExists(connection, "conversations")).isTrue();
             assertThat(tableExists(connection, "messages")).isTrue();
             assertThat(tableExists(connection, "provider_configs")).isFalse();

@@ -54,7 +54,9 @@ import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
 import com.formdev.flatlaf.util.SystemInfo;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
 import com.github.drafael.chat4j.settings.AppearancePanel;
@@ -144,6 +146,8 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -232,6 +236,7 @@ public class MainFrame extends JFrame {
     private final ModelMenuStructureRebuildApplyCoordinator modelMenuStructureRebuildApplyCoordinator =
             new ModelMenuStructureRebuildApplyCoordinator();
     private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
+    private final AgentModeSettingsCoordinator agentModeSettingsCoordinator;
     private final AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator;
     private final AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator =
             new AssistantRenderModeChangeUiApplyCoordinator();
@@ -366,6 +371,7 @@ public class MainFrame extends JFrame {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
+        this.agentModeSettingsCoordinator = new AgentModeSettingsCoordinator(settingsRepo);
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
@@ -473,6 +479,8 @@ public class MainFrame extends JFrame {
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         chatPanel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
         chatPanel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
+        chatPanel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
+        chatPanel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
         chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
         chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         chatPanel.setActiveConversationId(conversationState.currentConversationId());
@@ -598,6 +606,7 @@ public class MainFrame extends JFrame {
                 () -> chatPanel.setActiveConversationId(null),
                 sidebarPanel::clearSelection,
                 chatPanel::clearChatView,
+                this::resetConversationRuntimeState,
                 assistantRenderModeState.defaultAssistantRenderMode(),
                 chatPanel::setAssistantRenderMode,
                 () -> chatPanel.getInputBar().requestInputFocus()
@@ -624,6 +633,9 @@ public class MainFrame extends JFrame {
                 chatPanel.getHistory(),
                 chatPanel.getSelectedModel(),
                 chatPanel.getAssistantRenderMode(),
+                chatPanel.getInputBar().getReasoningLevel(),
+                chatPanel.getInputBar().isAgentModeRequested(),
+                chatPanel.getInputBar().getAgentProjectRoot(),
                 currentConversationSaveCoordinator::save,
                 saveResult -> currentConversationSaveUiApplyCoordinator.apply(
                         saveResult,
@@ -668,7 +680,10 @@ public class MainFrame extends JFrame {
                                     saveSnapshot.pendingUnsavedConversationRenderMode(),
                                     saveSnapshot.history(),
                                     saveSnapshot.selectedModelKey(),
-                                    saveSnapshot.currentAssistantRenderMode()
+                                    saveSnapshot.currentAssistantRenderMode(),
+                                    saveSnapshot.reasoningLevel(),
+                                    saveSnapshot.agentModeEnabled(),
+                                    saveSnapshot.agentProjectRoot()
                             );
                         } catch (Exception e) {
                             warnWithoutStack("Failed to capture shutdown save snapshot", e);
@@ -693,7 +708,10 @@ public class MainFrame extends JFrame {
                 conversationState.pendingUnsavedConversationRenderMode(),
                 List.copyOf(chatPanel.getHistory()),
                 chatPanel.getSelectedModel(),
-                chatPanel.getAssistantRenderMode()
+                chatPanel.getAssistantRenderMode(),
+                chatPanel.getInputBar().getReasoningLevel(),
+                chatPanel.getInputBar().isAgentModeRequested(),
+                chatPanel.getInputBar().getAgentProjectRoot()
         );
     }
 
@@ -702,7 +720,10 @@ public class MainFrame extends JFrame {
             AssistantRenderMode pendingUnsavedConversationRenderMode,
             List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode
+            AssistantRenderMode currentAssistantRenderMode,
+            ReasoningLevel reasoningLevel,
+            boolean agentModeEnabled,
+            Path agentProjectRoot
     ) {
     }
 
@@ -712,7 +733,7 @@ public class MainFrame extends JFrame {
             List<MessageRecord> records,
             Optional<ConversationRepo.ConversationRecord> conversation
     ) {
-        conversationLoadApplyDispatchCoordinator.applyLoaded(
+        boolean applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
                 requestId,
                 conversationState.currentConversationId(),
                 conversationId,
@@ -724,6 +745,48 @@ public class MainFrame extends JFrame {
                 chatPanel::setSelectedModel,
                 sidebarPanel::selectConversation
         );
+
+        if (applied) {
+            applyLoadedConversationReasoningSettings(conversation);
+            applyLoadedConversationAgentSettings(conversation);
+        }
+    }
+
+    private void applyLoadedConversationReasoningSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
+        ReasoningLevel level = conversation
+                .map(ConversationRepo.ConversationRecord::reasoningLevel)
+                .map(value -> ReasoningLevel.fromSettingValue(value, ReasoningLevel.OFF))
+                .orElse(ReasoningLevel.OFF);
+
+        chatPanel.getInputBar().setReasoningLevel(level);
+    }
+
+    private void applyLoadedConversationAgentSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
+        ConversationRepo.ConversationRecord record = conversation.orElse(null);
+
+        Path projectRoot = null;
+        boolean enabled = false;
+        if (record != null && StringUtils.isNotBlank(record.agentProjectRoot())) {
+            try {
+                Path normalized = Path.of(record.agentProjectRoot()).toAbsolutePath().normalize();
+                if (Files.isDirectory(normalized)) {
+                    projectRoot = normalized;
+                    enabled = record.agentModeEnabled();
+                }
+            } catch (Exception e) {
+                log.debug("Ignoring invalid persisted Agent project root: {}", record.agentProjectRoot(), e);
+                projectRoot = null;
+            }
+        }
+
+        chatPanel.getInputBar().setAgentProjectRoot(projectRoot);
+        chatPanel.getInputBar().setAgentModeEnabled(enabled);
+    }
+
+    private void resetConversationRuntimeState() {
+        chatPanel.getInputBar().setAgentProjectRoot(null);
+        chatPanel.getInputBar().setAgentModeEnabled(false);
+        chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.OFF);
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
@@ -978,27 +1041,56 @@ public class MainFrame extends JFrame {
                 assistantRenderModeState::setDefaultAssistantRenderMode
         );
 
-        applyReasoningLevelSetting();
-    }
-
-    private void applyReasoningLevelSetting() {
-        try {
-            String settingValue = settingsRepo.get(
-                    SettingsKeys.CHAT_REASONING_LEVEL,
-                    ReasoningLevel.OFF.toSettingValue()
-            );
-            ReasoningLevel reasoningLevel = ReasoningLevel.fromSettingValue(settingValue, ReasoningLevel.OFF);
-            chatPanel.getInputBar().setReasoningLevel(reasoningLevel);
-        } catch (Exception e) {
-            log.debug("Failed to resolve reasoning level setting", e);
-        }
+        applyAgentModeSettings();
     }
 
     private void persistReasoningLevel(ReasoningLevel reasoningLevel) {
+        persistCurrentConversationReasoningLevel(reasoningLevel);
+    }
+
+    private void applyAgentModeSettings() {
         try {
-            settingsRepo.put(SettingsKeys.CHAT_REASONING_LEVEL, reasoningLevel.toSettingValue());
+            chatPanel.setAgentSystemPromptAppend(agentModeSettingsCoordinator.resolveSystemPromptAppend());
         } catch (Exception e) {
-            log.debug("Failed to persist reasoning level setting", e);
+            log.debug("Failed to resolve Agent Mode settings", e);
+        }
+    }
+
+    private void persistCurrentConversationReasoningLevel(ReasoningLevel reasoningLevel) {
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (currentConversationId == null) {
+            return;
+        }
+
+        try {
+            conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
+        } catch (Exception e) {
+            log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
+        }
+    }
+
+    private void persistAgentModeEnabled(boolean enabled) {
+        persistCurrentConversationAgentSettings();
+    }
+
+    private void persistAgentProjectRoot(Path projectRoot) {
+        persistCurrentConversationAgentSettings();
+    }
+
+    private void persistCurrentConversationAgentSettings() {
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (currentConversationId == null) {
+            return;
+        }
+
+        try {
+            conversationRepo.updateAgentSettings(
+                    currentConversationId,
+                    chatPanel.getInputBar().isAgentModeRequested(),
+                    chatPanel.getInputBar().getAgentProjectRoot()
+            );
+        } catch (Exception e) {
+            log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, e);
         }
     }
 

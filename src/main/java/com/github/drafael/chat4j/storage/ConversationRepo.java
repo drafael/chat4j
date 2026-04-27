@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
@@ -19,6 +20,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -81,6 +83,36 @@ public class ConversationRepo {
              )
         ) {
             ps.setObject(1, id);
+            ps.executeUpdate();
+        }
+    }
+
+    public void updateAgentSettings(UUID id, boolean agentModeEnabled, Path agentProjectRoot) throws SQLException {
+        Path normalizedRoot = agentProjectRoot == null ? null : agentProjectRoot.toAbsolutePath().normalize();
+        boolean effectiveAgentModeEnabled = agentModeEnabled && normalizedRoot != null;
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "UPDATE conversations SET agent_mode_enabled = ?, agent_project_root = ? WHERE id = ?"
+             )
+        ) {
+            ps.setBoolean(1, effectiveAgentModeEnabled);
+            ps.setString(2, normalizedRoot == null ? null : normalizedRoot.toString());
+            ps.setObject(3, id);
+            ps.executeUpdate();
+        }
+    }
+
+    public void updateReasoningLevel(UUID id, ReasoningLevel reasoningLevel) throws SQLException {
+        ReasoningLevel normalizedLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "UPDATE conversations SET reasoning_level = ? WHERE id = ?"
+             )
+        ) {
+            ps.setString(1, normalizedLevel.toSettingValue());
+            ps.setObject(2, id);
             ps.executeUpdate();
         }
     }
@@ -169,7 +201,7 @@ public class ConversationRepo {
     public Optional<ConversationRecord> findById(UUID id) throws SQLException {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, title, provider, model, is_favorite, created_at, updated_at FROM conversations WHERE id = ?"
+                     "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, created_at, updated_at FROM conversations WHERE id = ?"
              )
         ) {
             ps.setObject(1, id);
@@ -181,6 +213,9 @@ public class ConversationRepo {
                         rs.getString("provider"),
                         rs.getString("model"),
                         rs.getBoolean("is_favorite"),
+                        rs.getString("reasoning_level"),
+                        rs.getBoolean("agent_mode_enabled"),
+                        rs.getString("agent_project_root"),
                         rs.getTimestamp("created_at").toLocalDateTime(),
                         rs.getTimestamp("updated_at").toLocalDateTime()
                     ));
@@ -227,7 +262,7 @@ public class ConversationRepo {
 
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, title, provider, model, is_favorite, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
+                     "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
              );
              ResultSet rs = ps.executeQuery()
         ) {
@@ -238,6 +273,9 @@ public class ConversationRepo {
                     rs.getString("provider"),
                     rs.getString("model"),
                     rs.getBoolean("is_favorite"),
+                    rs.getString("reasoning_level"),
+                    rs.getBoolean("agent_mode_enabled"),
+                    rs.getString("agent_project_root"),
                     rs.getTimestamp("created_at").toLocalDateTime(),
                     rs.getTimestamp("updated_at").toLocalDateTime());
 
@@ -303,8 +341,8 @@ public class ConversationRepo {
     private void rollbackSafely(Connection connection, Throwable error) {
         try {
             connection.rollback();
-        } catch (SQLException rollbackError) {
-            error.addSuppressed(rollbackError);
+        } catch (SQLException e) {
+            error.addSuppressed(e);
         }
     }
 
@@ -618,6 +656,9 @@ public class ConversationRepo {
         String provider,
         String model,
         boolean isFavorite,
+        String reasoningLevel,
+        boolean agentModeEnabled,
+        String agentProjectRoot,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
     ) {}

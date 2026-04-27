@@ -3,14 +3,17 @@ package com.github.drafael.chat4j.storage;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.chat.NewChatCoordinator;
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,12 +41,14 @@ class ConversationSaveLoadFlowIntegrationTest {
                     return createdConversationId;
                 },
                 (conversationId, loadedHistory) -> flowEvents.add("save-persist-history"),
-                (conversationId, mode) -> flowEvents.add("save-persist-mode")
+                (conversationId, mode) -> flowEvents.add("save-persist-mode"),
+                (conversationId, agentModeEnabled, agentProjectRoot) -> flowEvents.add("save-persist-agent-settings"),
+                (conversationId, reasoningLevel) -> flowEvents.add("save-persist-reasoning-level")
         );
         var saveDispatchCoordinator = new CurrentConversationSaveDispatchCoordinator();
         var saveUiApplyCoordinator = new CurrentConversationSaveUiApplyCoordinator();
 
-        java.util.function.Consumer<Boolean> saveCurrentConversation = selectCreatedConversation -> {
+        Consumer<Boolean> saveCurrentConversation = selectCreatedConversation -> {
             flowEvents.add("save-dispatch:%s".formatted(selectCreatedConversation));
             saveDispatchCoordinator.save(
                     currentConversationId.get(),
@@ -51,6 +56,9 @@ class ConversationSaveLoadFlowIntegrationTest {
                     history,
                     selectedModelKey,
                     AssistantRenderMode.PREVIEW,
+                    ReasoningLevel.HIGH,
+                    true,
+                    Path.of("/tmp/demo"),
                     saveCoordinator::save,
                     saveResult -> saveUiApplyCoordinator.apply(
                             saveResult,
@@ -81,6 +89,7 @@ class ConversationSaveLoadFlowIntegrationTest {
                 },
                 () -> flowEvents.add("clear-sidebar-selection"),
                 () -> flowEvents.add("clear-chat-view"),
+                () -> flowEvents.add("reset-agent-state"),
                 AssistantRenderMode.PREVIEW,
                 (mode, userInitiated) -> flowEvents.add("apply-render-mode:%s:%s".formatted(mode, userInitiated)),
                 () -> flowEvents.add("focus")
@@ -105,11 +114,14 @@ class ConversationSaveLoadFlowIntegrationTest {
                 "clear-active",
                 "clear-sidebar-selection",
                 "clear-chat-view",
+                "reset-agent-state",
                 "apply-render-mode:PREVIEW:true",
                 "focus",
                 "save-dispatch:true",
                 "save-create-conversation",
                 "save-persist-mode",
+                "save-persist-agent-settings",
+                "save-persist-reasoning-level",
                 "save-persist-history"
         );
     }
@@ -144,7 +156,9 @@ class ConversationSaveLoadFlowIntegrationTest {
                 (conversationId, mode) -> {
                     flowEvents.add("save-persist-mode");
                     persistedModes.add(mode);
-                }
+                },
+                (conversationId, agentModeEnabled, agentProjectRoot) -> flowEvents.add("save-persist-agent-settings"),
+                (conversationId, reasoningLevel) -> flowEvents.add("save-persist-reasoning-level")
         );
 
         var saveDispatchCoordinator = new CurrentConversationSaveDispatchCoordinator();
@@ -157,6 +171,9 @@ class ConversationSaveLoadFlowIntegrationTest {
                     history,
                     selectedModelKey,
                     AssistantRenderMode.PREVIEW,
+                    ReasoningLevel.LOW,
+                    false,
+                    null,
                     saveCoordinator::save,
                     saveResult -> saveUiApplyCoordinator.apply(
                             saveResult,
@@ -214,6 +231,8 @@ class ConversationSaveLoadFlowIntegrationTest {
                 "save-dispatch",
                 "save-create-conversation",
                 "save-persist-mode",
+                "save-persist-agent-settings",
+                "save-persist-reasoning-level",
                 "save-persist-history",
                 "save-ui-set-current",
                 "load-set-current",

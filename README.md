@@ -127,6 +127,7 @@ mvn test
 - [docs/copilot-integration-header-behavior.md](docs/copilot-integration-header-behavior.md) — Copilot header-routing evidence and curl proofs
 - [docs/calver.md](docs/calver.md) — Current CalVer format, pre-commit bump behavior, and hook setup
 - [docs/logging.md](docs/logging.md) — Current logging stack, level resolution, and operational logging behavior
+- [docs/agent-mode.md](docs/agent-mode.md) — Current Agent Mode behavior, adapters, and fallback/runtime rules
 
 ## Configuration and data storage
 
