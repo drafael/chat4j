@@ -22,6 +22,11 @@ public class AgentProviderAdapterFactory {
         }
 
         AgentProviderAdapter providerServiceAdapter = new ProviderServiceAgentAdapter(providerService, agentSystemPromptAppend);
+
+        if (shouldUseCodexCliOnly(providerName)) {
+            return providerServiceAdapter;
+        }
+
         if (supportsOpenAiCompatibleToolAdapter(providerName, modelId, baseUrl, apiKey)) {
             AgentProviderAdapter openAiToolAdapter = new OpenAiToolAgentAdapter(
                     providerName,
@@ -30,9 +35,6 @@ public class AgentProviderAdapterFactory {
                     apiKey,
                     agentSystemPromptAppend
             );
-            if (StringUtils.equalsIgnoreCase(providerName, "OpenAI Codex")) {
-                return new CodexFallbackAgentAdapter(openAiToolAdapter, providerServiceAdapter);
-            }
             if (shouldUseProviderFallbackWrapper(providerName)) {
                 return new OpenAiCompatibleFallbackAgentAdapter(providerName, openAiToolAdapter, providerServiceAdapter);
             }
@@ -57,6 +59,10 @@ public class AgentProviderAdapterFactory {
         }
 
         return !StringUtils.equalsIgnoreCase(providerName, "Anthropic");
+    }
+
+    private boolean shouldUseCodexCliOnly(String providerName) {
+        return StringUtils.equalsIgnoreCase(providerName, "OpenAI Codex");
     }
 
     private boolean shouldUseProviderFallbackWrapper(String providerName) {

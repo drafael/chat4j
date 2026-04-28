@@ -25,7 +25,7 @@ This document tracks the **current remediation status** for code-review findings
 - ✅ README Copilot OAuth setup clarification
   - Added explicit setup section to reduce first-run configuration failures.
 
-## Current state
+## Status
 
 - Provider/auth/runtime hardening work for the reviewed Copilot/OpenAI-compatible paths is in place.
 - Logging and diagnostics behavior is consolidated and test-covered for key failure and fallback paths.

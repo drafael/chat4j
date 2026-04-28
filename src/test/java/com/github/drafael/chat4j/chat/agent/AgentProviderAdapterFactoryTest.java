@@ -32,8 +32,8 @@ class AgentProviderAdapterFactoryTest {
     }
 
     @Test
-    @DisplayName("Codex provider uses fallback wrapper when OAuth bearer token is present")
-    void create_whenCodexApiKeyPresent_returnsFallbackWrapperAdapter() {
+    @DisplayName("Codex provider defaults to provider service adapter to match Codex CLI-first flow")
+    void create_whenCodexApiKeyPresent_returnsProviderServiceAdapterByDefault() {
         AgentProviderAdapter adapter = subject.create(
                 "OpenAI Codex",
                 "gpt-5.5",
@@ -43,7 +43,7 @@ class AgentProviderAdapterFactoryTest {
                 ""
         );
 
-        assertThat(adapter).isInstanceOf(CodexFallbackAgentAdapter.class);
+        assertThat(adapter).isInstanceOf(ProviderServiceAgentAdapter.class);
     }
 
     @Test

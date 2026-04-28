@@ -43,8 +43,7 @@ Adapter factory: `AgentProviderAdapterFactory`
 
 - **Anthropic**: native tool adapter (`AnthropicToolAgentAdapter`).
 - **OpenAI-compatible providers**: `OpenAiToolAgentAdapter`.
-- **OpenAI Codex**: wrapped by `CodexFallbackAgentAdapter`.
-  - Falls back to provider-service/Codex CLI path on quota/auth failures (401/403/429, `insufficient_quota`).
+- **OpenAI Codex**: direct provider-service/Codex CLI path (`ProviderServiceAgentAdapter`).
 - **Google AI / GitHub Copilot**: wrapped by `OpenAiCompatibleFallbackAgentAdapter`.
   - Falls back when tool endpoint/protocol fails (for example HTTP 400 invalid argument/unsupported tool behavior).
   - Falls back when first turn returns planning-only text without actual tool activity.
@@ -68,10 +67,9 @@ Shared builder: `AgentSystemPromptBuilder`
 - Produces default Agent Mode system prompt for tool adapters.
 - Appends user-configured **Prompt addendum**.
 - Includes current date and selected working directory.
-- Codex fallback uses dedicated fallback prompt notes (read-only discovery guidance).
 
 ## Safety and scope
 
 - Tool filesystem operations are confined to selected root.
 - `bash` executes with selected root as working directory.
-- v1 behavior is full-access within selected root (no supervised approval flow UI in current state).
+- v1 behavior is full-access within selected root (no supervised approval flow UI).

@@ -16,10 +16,10 @@ import java.util.Set;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class CopilotAuthResolverTest {
@@ -28,6 +28,7 @@ class CopilotAuthResolverTest {
     private static final String ACCESS_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.accessTokenEndpoint";
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.copilot.oauthClientId";
     private static final String OAUTH_SCOPES_PROPERTY = "chat4j.copilot.oauthScopes";
+    private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
 
     @TempDir
     Path tempDir;
@@ -38,6 +39,7 @@ class CopilotAuthResolverTest {
         System.clearProperty(ACCESS_TOKEN_ENDPOINT_PROPERTY);
         System.clearProperty(OAUTH_CLIENT_ID_PROPERTY);
         System.clearProperty(OAUTH_SCOPES_PROPERTY);
+        System.clearProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
     }
 
     @Test
@@ -46,30 +48,16 @@ class CopilotAuthResolverTest {
         Path userHome = tempDir.resolve("home");
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
 
-        var subject = new CopilotAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         assertThat(subject.isOAuthClientConfigured()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Login fails fast when Chat4J OAuth client ID is not configured")
-    void login_whenOAuthClientIdMissing_returnsConfigurationFailure() {
-        Path userHome = tempDir.resolve("home");
-        CopilotAuthResolver.UserPromptActions promptActions = mock(CopilotAuthResolver.UserPromptActions.class);
-        var subject = new CopilotAuthResolver(userHome, Map.of(), HttpClient.newHttpClient(), promptActions);
-
-        CopilotAuthResolver.CopilotAuthActionResult result = subject.login();
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("GitHub OAuth client ID is not configured");
-        verifyNoInteractions(promptActions);
     }
 
     @Test
     @DisplayName("Resolver reports unauthorized when no stored Chat4J token exists")
     void resolveStatus_whenNoStoredToken_returnsUnauthorized() {
         Path userHome = tempDir.resolve("home");
-        var subject = new CopilotAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         var status = subject.resolveStatus();
 
@@ -101,7 +89,14 @@ class CopilotAuthResolverTest {
             exchange.close();
         });
         server.createContext("/token", exchange -> {
-            byte[] body = "{\"access_token\":\"gho_chat4j_123456789012345678901234567890\"}".getBytes();
+            byte[] body = "{\"access_token\":\"ghu_chat4j_123456789012345678901234567890\"}".getBytes();
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/session", exchange -> {
+            byte[] body = "{\"token\":\"tid=chat4j-session-token-12345678901234567890;exp=4070908800\",\"expires_at\":4070908800}".getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -113,6 +108,7 @@ class CopilotAuthResolverTest {
             int port = server.getAddress().getPort();
             System.setProperty(DEVICE_CODE_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/device".formatted(port));
             System.setProperty(ACCESS_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/token".formatted(port));
+            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/session".formatted(port));
 
             CopilotAuthResolver.UserPromptActions promptActions = mock(CopilotAuthResolver.UserPromptActions.class);
             var subject = new CopilotAuthResolver(
@@ -126,12 +122,12 @@ class CopilotAuthResolverTest {
 
             assertThat(result.success()).isTrue();
             assertThat(subject.resolveBearerTokenOrNull())
-                    .isEqualTo("gho_chat4j_123456789012345678901234567890");
+                    .isEqualTo("tid=chat4j-session-token-12345678901234567890;exp=4070908800");
             assertThat(subject.resolveStatus().authorized()).isTrue();
             assertThat(subject.resolveStatus().source()).isEqualTo("Chat4J OAuth");
             assertThat(deviceRequestBody.get())
                     .contains("client_id=chat4j-client-id")
-                    .contains("scope=read%3Auser+user%3Aemail");
+                    .contains("scope=read%3Auser");
 
             Path tokenFile = userHome.resolve(".config/chat4j/copilot-auth.json");
             if (tokenFile.getFileSystem().supportedFileAttributeViews().contains("posix")) {
@@ -155,13 +151,13 @@ class CopilotAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "gho_chat4j_123456789012345678901234567890",
+                  "accessToken": "tid=chat4j-session-token-12345678901234567890;exp=4070908800",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }
                 """);
 
-        var subject = new CopilotAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         var status = subject.resolveStatus();
 
@@ -177,13 +173,13 @@ class CopilotAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "gho_chat4j_123456789012345678901234567890",
+                  "accessToken": "tid=chat4j-session-token-12345678901234567890;exp=4070908800",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }
                 """);
 
-        var subject = new CopilotAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         CopilotAuthResolver.CopilotAuthActionResult result = subject.logout();
 

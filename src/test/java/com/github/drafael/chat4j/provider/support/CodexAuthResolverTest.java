@@ -16,10 +16,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class CodexAuthResolverTest {
@@ -27,6 +27,8 @@ class CodexAuthResolverTest {
     private static final String OAUTH_ISSUER_PROPERTY = "chat4j.codex.oauthIssuer";
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.codex.oauthClientId";
     private static final String OAUTH_SCOPES_PROPERTY = "chat4j.codex.oauthScopes";
+    private static final String OAUTH_REDIRECT_URI_PROPERTY = "chat4j.codex.oauthRedirectUri";
+    private static final String OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY = "chat4j.codex.oauthLoginTimeoutSeconds";
 
     @TempDir
     Path tempDir;
@@ -36,6 +38,8 @@ class CodexAuthResolverTest {
         System.clearProperty(OAUTH_ISSUER_PROPERTY);
         System.clearProperty(OAUTH_CLIENT_ID_PROPERTY);
         System.clearProperty(OAUTH_SCOPES_PROPERTY);
+        System.clearProperty(OAUTH_REDIRECT_URI_PROPERTY);
+        System.clearProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY);
     }
 
     @Test
@@ -44,30 +48,16 @@ class CodexAuthResolverTest {
         Path userHome = tempDir.resolve("home");
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
 
-        var subject = new CodexAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         assertThat(subject.isOAuthClientConfigured()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Login fails fast when Chat4J Codex OAuth client ID is not configured")
-    void login_whenOAuthClientIdMissing_returnsConfigurationFailure() {
-        Path userHome = tempDir.resolve("home");
-        CodexAuthResolver.UserPromptActions promptActions = mock(CodexAuthResolver.UserPromptActions.class);
-        var subject = new CodexAuthResolver(userHome, Map.of(), HttpClient.newHttpClient(), promptActions);
-
-        CodexAuthResolver.CodexAuthActionResult result = subject.login();
-
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("OpenAI Codex OAuth client ID is not configured");
-        verifyNoInteractions(promptActions);
     }
 
     @Test
     @DisplayName("Resolver reports unauthorized when no stored Chat4J token exists")
     void resolveStatus_whenNoStoredToken_returnsUnauthorized() {
         Path userHome = tempDir.resolve("home");
-        var subject = new CodexAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         var status = subject.resolveStatus();
 
@@ -76,59 +66,49 @@ class CodexAuthResolverTest {
     }
 
     @Test
-    @DisplayName("Login flow stores Chat4J Codex token, exchanges oauth code for api key, opens browser, and copies code")
-    void login_whenDeviceFlowCompletes_storesTokenAndTriggersPromptActions() throws Exception {
+    @DisplayName("Begin login creates PKCE authorization URL and triggers browser/clipboard actions")
+    void beginLogin_whenConfigured_returnsChallengeAndPromptsActions() throws Exception {
         Path userHome = tempDir.resolve("home");
-        AtomicReference<String> deviceRequestBody = new AtomicReference<>();
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+        System.setProperty(OAUTH_SCOPES_PROPERTY, "openid profile email offline_access");
+
+        CodexAuthResolver.UserPromptActions promptActions = mock(CodexAuthResolver.UserPromptActions.class);
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient(), promptActions);
+
+        CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+
+        assertThat(challenge.authorizationUri())
+                .contains("response_type=code")
+                .contains("client_id=chat4j-codex-client-id")
+                .contains("code_challenge=")
+                .contains("code_challenge_method=S256")
+                .contains("codex_cli_simplified_flow=true");
+        assertThat(challenge.codeVerifier()).isNotBlank();
+        assertThat(challenge.state()).isNotBlank();
+
+        verify(promptActions).copyCodeToClipboard(challenge.authorizationUri());
+        verify(promptActions).openBrowser(challenge.authorizationUri());
+        verifyNoMoreInteractions(promptActions);
+    }
+
+    @Test
+    @DisplayName("Complete login accepts manual redirect input fallback and stores token")
+    void completeLogin_whenManualInputProvided_storesToken() throws Exception {
+        Path userHome = tempDir.resolve("home");
+        AtomicReference<String> tokenRequestBody = new AtomicReference<>();
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/api/accounts/deviceauth/usercode", exchange -> {
-            deviceRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] body = """
-                    {
-                      "device_auth_id": "device-auth-id-123",
-                      "user_code": "WXYZ-9876",
-                      "expires_in": 600,
-                      "interval": 1
-                    }
-                    """.getBytes();
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
-        server.createContext("/api/accounts/deviceauth/token", exchange -> {
-            byte[] body = """
-                    {
-                      "access_token": "eyJhbGciOiJIUzI1NiJ9.mock-device-token-value-1234567890",
-                      "authorization_code": "authorization-code-123",
-                      "code_verifier": "verifier-token-123"
-                    }
-                    """.getBytes();
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
         server.createContext("/oauth/token", exchange -> {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            byte[] payload;
-            if (body.contains("grant_type=authorization_code")) {
-                payload = """
-                        {
-                          "id_token": "id-token-123456789012345678901234567890",
-                          "access_token": "oauth-access-token-123456789012345678901234",
-                          "refresh_token": "refresh-token"
-                        }
-                        """.getBytes(StandardCharsets.UTF_8);
-            } else {
-                payload = """
-                        {
-                          "access_token": "sk-proj-chat4j-codex-123456789012345678901234567890"
-                        }
-                        """.getBytes(StandardCharsets.UTF_8);
-            }
+            tokenRequestBody.compareAndSet(null, body);
 
+            byte[] payload = """
+                    {
+                      "access_token": "sk-proj-chat4j-codex-123456789012345678901234567890",
+                      "refresh_token": "refresh-token-123",
+                      "expires_in": 3600
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);
             exchange.getResponseBody().write(payload);
@@ -140,33 +120,51 @@ class CodexAuthResolverTest {
             int port = server.getAddress().getPort();
             System.setProperty(OAUTH_ISSUER_PROPERTY, "http://127.0.0.1:%d".formatted(port));
             System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+            System.setProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY, "1");
+            System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
 
-            CodexAuthResolver.UserPromptActions promptActions = mock(CodexAuthResolver.UserPromptActions.class);
-            var subject = new CodexAuthResolver(
-                    userHome,
-                    Map.of(),
-                    HttpClient.newHttpClient(),
-                    promptActions
-            );
+            AtomicReference<CodexAuthResolver.CodexLoginChallenge> challengeRef = new AtomicReference<>();
+            CodexAuthResolver.UserPromptActions promptActions = new CodexAuthResolver.UserPromptActions() {
+                @Override
+                public void openBrowser(String authorizationUri) {
+                    // no-op in tests
+                }
 
-            CodexAuthResolver.CodexAuthActionResult result = subject.login();
+                @Override
+                public void copyCodeToClipboard(String text) {
+                    // no-op in tests
+                }
+
+                @Override
+                public String promptForAuthorizationInput(String message, String defaultValue) {
+                    CodexAuthResolver.CodexLoginChallenge challenge = challengeRef.get();
+                    return "http://localhost:1459/auth/callback?code=auth-code-123&state=%s"
+                            .formatted(challenge.state());
+                }
+            };
+
+            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient(), promptActions);
+
+            CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+            challengeRef.set(challenge);
+
+            CodexAuthResolver.CodexAuthActionResult result = subject.completeLogin(challenge);
 
             assertThat(result.success()).isTrue();
             assertThat(subject.resolveBearerTokenOrNull())
                     .isEqualTo("sk-proj-chat4j-codex-123456789012345678901234567890");
             assertThat(subject.resolveStatus().authorized()).isTrue();
-            assertThat(subject.resolveStatus().source()).isEqualTo("Chat4J OAuth");
-            assertThat(deviceRequestBody.get()).contains("\"client_id\":\"chat4j-codex-client-id\"");
+            assertThat(tokenRequestBody.get())
+                    .contains("grant_type=authorization_code")
+                    .contains("client_id=chat4j-codex-client-id")
+                    .contains("code=auth-code-123")
+                    .contains("code_verifier=");
 
             Path tokenFile = userHome.resolve(".config/chat4j/codex-auth.json");
             if (tokenFile.getFileSystem().supportedFileAttributeViews().contains("posix")) {
                 assertThat(Files.getPosixFilePermissions(tokenFile))
                         .isEqualTo(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
             }
-
-            verify(promptActions).copyCodeToClipboard("WXYZ-9876");
-            verify(promptActions).openBrowser("http://127.0.0.1:%d/codex/device".formatted(port));
-            verifyNoMoreInteractions(promptActions);
         } finally {
             server.stop(0);
         }
@@ -186,7 +184,7 @@ class CodexAuthResolverTest {
                 }
                 """);
 
-        var subject = new CodexAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         var status = subject.resolveStatus();
 
@@ -208,7 +206,7 @@ class CodexAuthResolverTest {
                 }
                 """);
 
-        var subject = new CodexAuthResolver(userHome, Map.of(), HttpClient.newHttpClient());
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
 
         CodexAuthResolver.CodexAuthActionResult result = subject.logout();
 

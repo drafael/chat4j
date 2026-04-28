@@ -651,8 +651,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void showCodexAuthLoginProgress(JLabel statusLabel, CodexAuthResolver.CodexLoginChallenge challenge) {
-        String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
-                .formatted(challenge.userCode(), challenge.verificationUri());
+        String message = "Browser opened for OpenAI sign in. If callback fails, paste the redirect URL when prompted.";
         statusLabel.setText(message);
         statusLabel.setForeground(new Color(214, 117, 0));
         setStatusInfo(message);

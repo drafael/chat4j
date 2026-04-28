@@ -23,9 +23,11 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import static java.util.Collections.emptyMap;
 
 @Slf4j
 public class CopilotAuthResolver {
@@ -37,17 +39,29 @@ public class CopilotAuthResolver {
 
     private static final String DEVICE_CODE_ENDPOINT_PROPERTY = "chat4j.copilot.deviceCodeEndpoint";
     private static final String ACCESS_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.accessTokenEndpoint";
+    private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.copilot.oauthClientId";
     private static final String OAUTH_CLIENT_ID_ENV = "CHAT4J_COPILOT_OAUTH_CLIENT_ID";
     private static final String OAUTH_SCOPES_PROPERTY = "chat4j.copilot.oauthScopes";
-    private static final String DEFAULT_OAUTH_SCOPES = "read:user user:email";
+    private static final String OAUTH_ENTERPRISE_DOMAIN_PROPERTY = "chat4j.copilot.enterpriseDomain";
+    private static final String OAUTH_ENTERPRISE_DOMAIN_ENV = "CHAT4J_COPILOT_ENTERPRISE_DOMAIN";
+
+    private static final String DEFAULT_OAUTH_SCOPES = "read:user";
 
     private static final String BUILD_PROPERTIES_RESOURCE = "/build.properties";
     private static final String BUILD_PROPERTIES_CLIENT_ID_KEY = "copilotOAuthClientId";
     private static final String BUNDLED_CLIENT_ID_RESOURCE = "/oauth/chat4j-copilot-client-id.txt";
 
-    private static final String DEFAULT_DEVICE_CODE_ENDPOINT = "https://github.com/login/device/code";
-    private static final String DEFAULT_ACCESS_TOKEN_ENDPOINT = "https://github.com/login/oauth/access_token";
+    private static final String DEFAULT_GITHUB_DOMAIN = "github.com";
+    private static final Duration TOKEN_REFRESH_SKEW = Duration.ofMinutes(5);
+
+    private static final Map<String, String> COPILOT_OAUTH_HEADERS = Map.of(
+            "User-Agent", "GitHubCopilotChat/0.35.0",
+            "Editor-Version", "vscode/1.107.0",
+            "Editor-Plugin-Version", "copilot-chat/0.35.0",
+            "Copilot-Integration-Id", "vscode-chat"
+    );
 
     private final Path userHome;
     private final Map<String, String> environment;
@@ -78,7 +92,7 @@ public class CopilotAuthResolver {
 
     CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient, UserPromptActions userPromptActions) {
         this.userHome = userHome;
-        this.environment = environment == null ? Map.of() : Map.copyOf(environment);
+        this.environment = environment == null ? emptyMap() : Map.copyOf(environment);
         this.httpClient = httpClient;
         this.userPromptActions = userPromptActions == null ? new DesktopUserPromptActions() : userPromptActions;
     }
@@ -100,7 +114,59 @@ public class CopilotAuthResolver {
         try {
             JsonNode root = JSON.readTree(tokenFile.toFile());
             String token = normalizeToken(root.path("accessToken").asText(""));
-            return StringUtils.isBlank(token) ? null : token;
+            if (StringUtils.isBlank(token)) {
+                return null;
+            }
+
+            String refreshToken = normalizeToken(root.path("refreshToken").asText(""));
+            long expiresAtEpochMs = root.path("expiresAtEpochMs").asLong(0L);
+            String enterpriseDomain = StringUtils.trimToNull(root.path("enterpriseDomain").asText(""));
+            String oauthScopes = root.path("oauthScopes").asText("");
+
+            if (!isCopilotSessionToken(token)) {
+                if (!isGitHubOAuthToken(token)) {
+                    return null;
+                }
+
+                CopilotSessionToken migrated = exchangeCopilotSessionToken(token, enterpriseDomain, false);
+                if (migrated == null || StringUtils.isBlank(migrated.sessionToken())) {
+                    return null;
+                }
+
+                String sourceToken = StringUtils.defaultIfBlank(refreshToken, token);
+                storeChat4jToken(
+                        migrated.sessionToken(),
+                        oauthScopes,
+                        sourceToken,
+                        migrated.expiresAtEpochMs(),
+                        enterpriseDomain
+                );
+                token = migrated.sessionToken();
+                refreshToken = sourceToken;
+                expiresAtEpochMs = migrated.expiresAtEpochMs();
+            }
+
+            if (isExpired(expiresAtEpochMs)) {
+                if (StringUtils.isBlank(refreshToken)) {
+                    return null;
+                }
+
+                CopilotSessionToken refreshed = exchangeCopilotSessionToken(refreshToken, enterpriseDomain, false);
+                if (refreshed == null || StringUtils.isBlank(refreshed.sessionToken())) {
+                    return null;
+                }
+
+                storeChat4jToken(
+                        refreshed.sessionToken(),
+                        oauthScopes,
+                        refreshToken,
+                        refreshed.expiresAtEpochMs(),
+                        enterpriseDomain
+                );
+                token = refreshed.sessionToken();
+            }
+
+            return isCopilotSessionToken(token) ? token : null;
         } catch (Exception e) {
             return null;
         }
@@ -128,7 +194,8 @@ public class CopilotAuthResolver {
 
     public CopilotLoginChallenge beginLogin() {
         try {
-            DeviceCodeResponse deviceCode = requestDeviceCode();
+            String enterpriseDomain = resolveEnterpriseDomain();
+            DeviceCodeResponse deviceCode = requestDeviceCode(enterpriseDomain);
             triggerLoginPromptActions(deviceCode);
             return new CopilotLoginChallenge(
                     deviceCode.deviceCode(),
@@ -136,7 +203,8 @@ public class CopilotAuthResolver {
                     deviceCode.verificationUri(),
                     deviceCode.intervalSeconds(),
                     deviceCode.expiresInSeconds(),
-                    deviceCode.oauthScopes()
+                    deviceCode.oauthScopes(),
+                    enterpriseDomain
             );
         } catch (Exception e) {
             throw new IllegalStateException(firstLine(e.getMessage()), e);
@@ -158,15 +226,27 @@ public class CopilotAuthResolver {
                     challenge.oauthScopes()
             );
 
-            String accessToken = pollForAccessToken(deviceCode);
-            if (StringUtils.isBlank(accessToken)) {
+            String githubAccessToken = pollForAccessToken(deviceCode, challenge.enterpriseDomain());
+            if (StringUtils.isBlank(githubAccessToken)) {
                 return CopilotAuthActionResult.failure(
                         "Login timed out. Complete sign in at %s using code %s."
                                 .formatted(challenge.verificationUri(), challenge.userCode())
                 );
             }
 
-            storeChat4jToken(accessToken, deviceCode.oauthScopes());
+            CopilotSessionToken sessionToken = exchangeCopilotSessionToken(githubAccessToken, challenge.enterpriseDomain(), true);
+            if (sessionToken == null || StringUtils.isBlank(sessionToken.sessionToken())) {
+                return CopilotAuthActionResult.failure("GitHub Copilot token exchange failed");
+            }
+
+            storeChat4jToken(
+                    sessionToken.sessionToken(),
+                    deviceCode.oauthScopes(),
+                    githubAccessToken,
+                    sessionToken.expiresAtEpochMs(),
+                    challenge.enterpriseDomain()
+            );
+
             log.info("GitHub Copilot OAuth login completed");
             return CopilotAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
         } catch (Exception e) {
@@ -200,7 +280,7 @@ public class CopilotAuthResolver {
                 .formatted(OAUTH_CLIENT_ID_PROPERTY, OAUTH_CLIENT_ID_ENV, BUILD_PROPERTIES_CLIENT_ID_KEY);
     }
 
-    private DeviceCodeResponse requestDeviceCode() throws Exception {
+    private DeviceCodeResponse requestDeviceCode(String enterpriseDomain) throws Exception {
         String clientId = resolveOAuthClientId();
         String oauthScopes = resolveOAuthScopes();
         String formBody = "client_id=%s&scope=%s".formatted(
@@ -209,10 +289,11 @@ public class CopilotAuthResolver {
         );
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(deviceCodeEndpoint()))
+                .uri(URI.create(deviceCodeEndpoint(enterpriseDomain)))
                 .timeout(Duration.ofSeconds(10))
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("User-Agent", "GitHubCopilotChat/0.35.0")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
                 .build();
 
@@ -242,7 +323,7 @@ public class CopilotAuthResolver {
         );
     }
 
-    private String pollForAccessToken(DeviceCodeResponse deviceCode) throws Exception {
+    private String pollForAccessToken(DeviceCodeResponse deviceCode, String enterpriseDomain) throws Exception {
         String clientId = resolveOAuthClientId();
         long deadlineEpochMs = System.currentTimeMillis() + Duration.ofSeconds(deviceCode.expiresInSeconds()).toMillis();
         int intervalSeconds = deviceCode.intervalSeconds();
@@ -255,10 +336,11 @@ public class CopilotAuthResolver {
             );
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(accessTokenEndpoint()))
+                    .uri(URI.create(accessTokenEndpoint(enterpriseDomain)))
                     .timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/json")
                     .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("User-Agent", "GitHubCopilotChat/0.35.0")
                     .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
                     .build();
 
@@ -300,19 +382,77 @@ public class CopilotAuthResolver {
         return null;
     }
 
-    private void storeChat4jToken(String token, String oauthScopes) throws Exception {
+    private CopilotSessionToken exchangeCopilotSessionToken(
+            String githubAccessToken,
+            String enterpriseDomain,
+            boolean failOnError
+    ) {
+        if (StringUtils.isBlank(githubAccessToken)) {
+            return null;
+        }
+
+        try {
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(copilotTokenEndpoint(enterpriseDomain)))
+                    .timeout(Duration.ofSeconds(10))
+                    .GET()
+                    .header("Accept", "application/json")
+                    .header("Authorization", "Bearer %s".formatted(githubAccessToken));
+
+            COPILOT_OAUTH_HEADERS.forEach(requestBuilder::header);
+
+            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                if (failOnError) {
+                    throw new IllegalStateException("Copilot token exchange failed with HTTP %d".formatted(response.statusCode()));
+                }
+                return null;
+            }
+
+            JsonNode root = JSON.readTree(response.body());
+            String sessionToken = normalizeToken(root.path("token").asText(""));
+            long expiresAtSeconds = root.path("expires_at").asLong(0L);
+            if (StringUtils.isBlank(sessionToken) || expiresAtSeconds <= 0L) {
+                if (failOnError) {
+                    throw new IllegalStateException("Invalid Copilot token exchange response");
+                }
+                return null;
+            }
+
+            long expiresAtEpochMs = Math.max(
+                    System.currentTimeMillis() + Duration.ofMinutes(1).toMillis(),
+                    expiresAtSeconds * 1000L - TOKEN_REFRESH_SKEW.toMillis()
+            );
+            return new CopilotSessionToken(sessionToken, expiresAtEpochMs);
+        } catch (Exception e) {
+            if (failOnError) {
+                throw new IllegalStateException(firstLine(ExceptionUtils.getMessage(e)), e);
+            }
+            return null;
+        }
+    }
+
+    private void storeChat4jToken(
+            String token,
+            String oauthScopes,
+            String refreshToken,
+            long expiresAtEpochMs,
+            String enterpriseDomain
+    ) throws Exception {
         Path tokenFile = chat4jAuthFile();
         Path tokenDir = tokenFile.getParent();
         Files.createDirectories(tokenDir);
 
-        String content = """
-                {
-                  "accessToken": "%s",
-                  "updatedAtEpochMs": %d,
-                  "source": "%s",
-                  "oauthScopes": "%s"
-                }
-                """.formatted(token, System.currentTimeMillis(), CHAT4J_TOKEN_SOURCE, StringUtils.defaultString(oauthScopes));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("accessToken", token);
+        payload.put("refreshToken", StringUtils.trimToNull(refreshToken));
+        payload.put("expiresAtEpochMs", expiresAtEpochMs > 0 ? expiresAtEpochMs : null);
+        payload.put("enterpriseDomain", StringUtils.trimToNull(enterpriseDomain));
+        payload.put("updatedAtEpochMs", System.currentTimeMillis());
+        payload.put("source", CHAT4J_TOKEN_SOURCE);
+        payload.put("oauthScopes", StringUtils.defaultString(oauthScopes));
+
+        String content = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
 
         Path tempFile = Files.createTempFile(tokenDir, "copilot-auth", ".tmp");
         try {
@@ -323,7 +463,7 @@ public class CopilotAuthResolver {
         } finally {
             try {
                 Files.deleteIfExists(tempFile);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 // Best-effort cleanup for temp file.
             }
         }
@@ -341,7 +481,7 @@ public class CopilotAuthResolver {
         try {
             Set<PosixFilePermission> ownerOnlyPermissions = PosixFilePermissions.fromString("rw-------");
             Files.setPosixFilePermissions(tokenFile, ownerOnlyPermissions);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             // Non-POSIX filesystems (e.g., Windows) do not support this API.
         }
     }
@@ -349,13 +489,13 @@ public class CopilotAuthResolver {
     private void triggerLoginPromptActions(DeviceCodeResponse deviceCode) {
         try {
             userPromptActions.copyCodeToClipboard(deviceCode.userCode());
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             // Keep login flow running even if clipboard interaction fails.
         }
 
         try {
             userPromptActions.openBrowser(deviceCode.verificationUri());
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             // Keep login flow running even if browser interaction fails.
         }
     }
@@ -375,12 +515,48 @@ public class CopilotAuthResolver {
         return StringUtils.defaultIfBlank(System.getProperty(OAUTH_SCOPES_PROPERTY), DEFAULT_OAUTH_SCOPES).trim();
     }
 
+    private String resolveEnterpriseDomain() {
+        String configured = StringUtils.trimToNull(StringUtils.defaultIfBlank(
+                System.getProperty(OAUTH_ENTERPRISE_DOMAIN_PROPERTY),
+                environment.get(OAUTH_ENTERPRISE_DOMAIN_ENV)
+        ));
+        if (StringUtils.isBlank(configured)) {
+            return null;
+        }
+
+        String normalized = normalizeDomain(configured);
+        if (normalized == null) {
+            throw new IllegalStateException("Invalid GitHub Enterprise domain: %s".formatted(configured));
+        }
+
+        if (StringUtils.equalsIgnoreCase(normalized, DEFAULT_GITHUB_DOMAIN)) {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    private String normalizeDomain(String input) {
+        String trimmed = StringUtils.trimToNull(input);
+        if (trimmed == null) {
+            return null;
+        }
+
+        try {
+            URI uri = trimmed.contains("://") ? URI.create(trimmed) : URI.create("https://" + trimmed);
+            String host = StringUtils.trimToNull(uri.getHost());
+            return host == null ? null : host.toLowerCase();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private String configuredOAuthClientId() {
         String explicit = StringUtils.trimToNull(StringUtils.defaultIfBlank(
                 System.getProperty(OAUTH_CLIENT_ID_PROPERTY),
                 environment.get(OAUTH_CLIENT_ID_ENV)
         ));
-        if (StringUtils.isNotBlank(explicit)) {
+        if (isUsableClientId(explicit)) {
             return explicit;
         }
 
@@ -426,12 +602,37 @@ public class CopilotAuthResolver {
                 && !StringUtils.containsIgnoreCase(clientId, "replace");
     }
 
-    private String deviceCodeEndpoint() {
-        return StringUtils.defaultIfBlank(System.getProperty(DEVICE_CODE_ENDPOINT_PROPERTY), DEFAULT_DEVICE_CODE_ENDPOINT);
+    private String deviceCodeEndpoint(String enterpriseDomain) {
+        String configured = StringUtils.trimToNull(System.getProperty(DEVICE_CODE_ENDPOINT_PROPERTY));
+        if (configured != null) {
+            return configured;
+        }
+
+        String domain = StringUtils.defaultIfBlank(enterpriseDomain, DEFAULT_GITHUB_DOMAIN);
+        return "https://%s/login/device/code".formatted(domain);
     }
 
-    private String accessTokenEndpoint() {
-        return StringUtils.defaultIfBlank(System.getProperty(ACCESS_TOKEN_ENDPOINT_PROPERTY), DEFAULT_ACCESS_TOKEN_ENDPOINT);
+    private String accessTokenEndpoint(String enterpriseDomain) {
+        String configured = StringUtils.trimToNull(System.getProperty(ACCESS_TOKEN_ENDPOINT_PROPERTY));
+        if (configured != null) {
+            return configured;
+        }
+
+        String domain = StringUtils.defaultIfBlank(enterpriseDomain, DEFAULT_GITHUB_DOMAIN);
+        return "https://%s/login/oauth/access_token".formatted(domain);
+    }
+
+    private String copilotTokenEndpoint(String enterpriseDomain) {
+        String configured = StringUtils.trimToNull(System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY));
+        if (configured != null) {
+            return configured;
+        }
+
+        if (StringUtils.isBlank(enterpriseDomain)) {
+            return "https://api.github.com/copilot_internal/v2/token";
+        }
+
+        return "https://api.%s/copilot_internal/v2/token".formatted(enterpriseDomain);
     }
 
     private Path chat4jAuthFile() {
@@ -466,6 +667,20 @@ public class CopilotAuthResolver {
         }
 
         return trimmed;
+    }
+
+    private boolean isCopilotSessionToken(String token) {
+        return StringUtils.contains(token, "tid=");
+    }
+
+    private boolean isGitHubOAuthToken(String token) {
+        return StringUtils.startsWith(token, "gho_")
+                || StringUtils.startsWith(token, "ghu_")
+                || StringUtils.startsWith(token, "github_pat_");
+    }
+
+    private boolean isExpired(long expiresAtEpochMs) {
+        return expiresAtEpochMs > 0 && System.currentTimeMillis() >= expiresAtEpochMs;
     }
 
     private String firstLine(String text) {
@@ -521,13 +736,17 @@ public class CopilotAuthResolver {
     ) {
     }
 
+    private record CopilotSessionToken(String sessionToken, long expiresAtEpochMs) {
+    }
+
     public record CopilotLoginChallenge(
             String deviceCode,
             String userCode,
             String verificationUri,
             int intervalSeconds,
             int expiresInSeconds,
-            String oauthScopes
+            String oauthScopes,
+            String enterpriseDomain
     ) {
     }
 

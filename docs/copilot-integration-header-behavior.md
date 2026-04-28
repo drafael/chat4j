@@ -6,8 +6,9 @@ Scope: Copilot API behavior for header-based model routing and endpoint compatib
 
 - `Copilot-Integration-Id` materially changes returned model catalog.
 - In the sample verification matrix below:
-  - no integration header or `vscode-chat` => **7 models** (legacy set)
-  - `copilot-developer-cli` => **25 models** (modern set)
+  - no integration header or `vscode-chat` => **7 models** (legacy set in that run)
+  - `copilot-developer-cli` => **25 models** (modern set in that run)
+- Exact counts can vary by account, rollout, and time.
 - `Editor-Version` and `Editor-Plugin-Version` did **not** change model count in this test matrix.
 - Some modern models are `/responses`-only and fail on `/chat/completions` with `unsupported_api_for_model`.
 
@@ -16,15 +17,27 @@ Scope: Copilot API behavior for header-based model routing and endpoint compatib
 ## Reproducible curl proofs (sanitized)
 
 > Use your own token in `$TOKEN`. Do not commit token values.
+>
+> Prefer a **Copilot session token** (the `token` value returned by `/copilot_internal/v2/token`, and what Chat4J stores as `accessToken`).
 
 ```bash
-export TOKEN="<REDACTED_GITHUB_OAUTH_TOKEN>"
+# Option A: set manually
+export TOKEN="<REDACTED_COPILOT_SESSION_TOKEN>"
+
+# Option B: read Chat4J-stored session token (macOS/Linux)
+export TOKEN="$(jq -r '.accessToken // empty' ~/.config/chat4j/copilot-auth.json)"
+
 export BASE="https://api.githubcopilot.com"
 
 # Helper: count model ids across both possible payload shapes (data[] or models[])
 count_models() {
   jq '([.data[]?.id, .models[]?.id] | map(select(. != null)) | length)'
 }
+
+if [ -z "$TOKEN" ]; then
+  echo "TOKEN is empty. Log in via Chat4J first, or export TOKEN manually." >&2
+  exit 1
+fi
 
 printf "no extra headers: "
 curl -sS "$BASE/models" \
@@ -117,7 +130,7 @@ Permalink commit: `9e668cb12144c701cf0f2c6b3458c00fe3da20f1`
 
 ## Link health check
 
-All URLs above were checked with HTTP `HEAD` and returned `200` during the latest documentation update.
+Use this quick checker to validate referenced URLs:
 
 Example checker:
 
@@ -141,8 +154,10 @@ PY
 
 ---
 
-## Current Chat4J runtime policy
+## Chat4J runtime policy
 
 - Runtime sends only: `Copilot-Integration-Id`.
-- Runtime no longer sends: `Editor-Version`, `Editor-Plugin-Version`.
+- Default value: `copilot-developer-cli`.
+- Override: JVM property `chat4j.copilot.integrationId`.
+- Runtime does not send: `Editor-Version`, `Editor-Plugin-Version`.
 - Docs keep those headers for interoperability/reference and debugging context.

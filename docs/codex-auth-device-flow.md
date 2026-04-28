@@ -1,16 +1,15 @@
-# Codex Auth and Runtime (Current State)
+# Codex Auth and Runtime
 
-This document describes the **current** OpenAI Codex authentication and runtime behavior in Chat4J.
+This document describes OpenAI Codex authentication and runtime behavior in Chat4J.
 
 ## Current status summary
 
 - Authentication is **Chat4J-owned OAuth** (`CODEX_OAUTH`).
 - Provider availability in UI/runtime is driven by `CodexAuthResolver` status.
-- Runtime is currently **compatibility-hybrid**:
+- Runtime remains **hybrid by design**:
   - chat requests use `CodexCliChatCompletionClient` for Codex,
   - model listing tries HTTP first, then falls back to local Codex cache when needed.
-
-This hybrid mode is intentional while temporary/unsupported client-id reuse can produce tokens without required OpenAI API scopes.
+- Agent Mode uses **Codex CLI-first adapter selection** for OpenAI Codex, not OpenAI-compatible tool-calling first.
 
 ## Authentication model
 
@@ -21,17 +20,16 @@ This hybrid mode is intentional while temporary/unsupported client-id reuse can 
 
 Chat4J does **not** rely on `~/.codex/auth.json` as the source of truth for Codex auth.
 
-## Login flow (device authorization)
+## Login flow (OAuth authorization code + PKCE)
 
 When user clicks **Login** for OpenAI Codex in Settings:
 
-1. Chat4J requests device login code from the configured Codex OAuth issuer.
-2. Chat4J automatically:
-   - copies the one-time code to clipboard,
-   - opens the verification URL in browser.
-3. Settings shows progress text with fallback code/URL.
-4. Chat4J polls for completion and exchanges the login result for a usable bearer token when possible.
-5. Chat4J stores the resolved token in `~/.config/chat4j/codex-auth.json`.
+1. Chat4J generates PKCE verifier/challenge and OAuth state.
+2. Chat4J opens browser to the OAuth authorize URL.
+3. Chat4J starts a local callback listener (default redirect URI host/port/path).
+4. If callback cannot complete, Chat4J prompts for manual pasted redirect URL/code.
+5. Chat4J exchanges authorization code for token(s), then resolves a usable bearer token.
+6. Chat4J stores token metadata in `~/.config/chat4j/codex-auth.json`.
 
 When already authorized, the same button performs **Log out** (deletes local token file).
 
@@ -41,21 +39,27 @@ OAuth client ID resolution order:
 
 1. JVM property: `chat4j.codex.oauthClientId`
 2. Environment variable: `CHAT4J_CODEX_OAUTH_CLIENT_ID`
-3. `build.properties` key: `codexOAuthClientId`
-4. bundled resource: `/oauth/chat4j-codex-client-id.txt`
+3. `build.properties` key: `codexOAuthClientId` (populated from `pom.xml`)
+4. bundled resource fallback: `/oauth/chat4j-codex-client-id.txt`
+
+Defaults in current build are set in `pom.xml` and mapped to `build.properties`.
 
 Optional overrides:
 
 - OAuth issuer (default `https://auth.openai.com`):
-  - JVM property: `chat4j.codex.oauthIssuer`
+  - `chat4j.codex.oauthIssuer`
 - OAuth scopes:
-  - JVM property: `chat4j.codex.oauthScopes`
+  - `chat4j.codex.oauthScopes`
+- OAuth originator:
+  - `chat4j.codex.oauthOriginator`
 
-Endpoint overrides:
+Endpoint/flow overrides:
 
-- Device code request endpoint: `chat4j.codex.deviceUserCodeEndpoint`
-- Device token polling endpoint: `chat4j.codex.deviceTokenEndpoint`
-- OAuth token exchange endpoint: `chat4j.codex.oauthTokenEndpoint`
+- OAuth authorize endpoint: `chat4j.codex.oauthAuthorizeEndpoint`
+- OAuth token endpoint: `chat4j.codex.oauthTokenEndpoint`
+- OAuth redirect URI: `chat4j.codex.oauthRedirectUri`
+- OAuth callback host binding: `chat4j.codex.oauthCallbackHost`
+- Login wait timeout seconds: `chat4j.codex.oauthLoginTimeoutSeconds`
 
 ## Provider/runtime wiring
 
@@ -67,8 +71,8 @@ Endpoint overrides:
 
 ### Chat
 
-- Codex is currently routed to `CodexCliChatCompletionClient` in `OpenAiCompatibleModule`.
-- This keeps Codex usable even when temporary OAuth tokens are missing required HTTP API scopes.
+- Codex chat runtime is routed to `CodexCliChatCompletionClient` in `OpenAiCompatibleModule`.
+- This keeps Codex usable even when direct HTTP API scope/token constraints exist.
 
 ### Models
 
@@ -80,11 +84,7 @@ Endpoint overrides:
 
 If model picker appears empty after auth changes, clear the Chat4J Codex model cache file and refresh provider models.
 
-## Known limitation
+## Agent Mode note
 
-In local temporary/unsupported client-id reuse setups, issued tokens can miss required scopes (for example `api.model.read` / `api.responses.write`). In that case:
-
-- pure HTTP Codex runtime is unreliable,
-- hybrid fallback is used to keep Codex functional.
-
-With official API-capable OAuth credentials/scopes, Codex can move back to full HTTP-only runtime.
+For provider `OpenAI Codex`, `AgentProviderAdapterFactory` selects `ProviderServiceAgentAdapter` directly.
+This avoids attempting OpenAI-compatible Codex tool-calling first and prevents expected quota/auth fallback warnings in normal Codex agent runs.

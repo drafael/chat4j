@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.4.6</version>
+    <version>26.4.8</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -27,13 +27,35 @@
         <assertj.version>3.27.6</assertj.version>
         <slf4j.version>2.0.17</slf4j.version>
         <logback.version>1.5.20</logback.version>
-        <chat4j.copilot.oauth.client.id></chat4j.copilot.oauth.client.id>
-        <chat4j.codex.oauth.client.id></chat4j.codex.oauth.client.id>
+
         <chat4j.apple.team.id></chat4j.apple.team.id>
         <chat4j.apple.bundle.id></chat4j.apple.bundle.id>
         <chat4j.apple.signer.cn></chat4j.apple.signer.cn>
+        
         <chat4j.jpackage.input.dir>${project.build.directory}/jpackage-input</chat4j.jpackage.input.dir>
         <chat4j.jpackage.runtime.dir>${project.build.directory}/jpackage-runtime</chat4j.jpackage.runtime.dir>
+
+        <!--
+            OAuth client IDs used to populate src/main/resources/build.properties at build time:
+              - copilotOAuthClientId=${chat4j.copilot.oauth.client.id}
+              - codexOAuthClientId=${chat4j.codex.oauth.client.id}
+
+            Runtime override precedence in resolvers (highest -> lowest):
+              1) JVM system property
+                 - Copilot: -Dchat4j.copilot.oauthClientId=...
+                 - Codex  : -Dchat4j.codex.oauthClientId=...
+              2) Environment variable
+                 - Copilot: CHAT4J_COPILOT_OAUTH_CLIENT_ID
+                 - Codex  : CHAT4J_CODEX_OAUTH_CLIENT_ID
+              3) build.properties value generated from these pom.xml properties
+              4) bundled resource fallback in src/main/resources/oauth/*.txt
+
+            Notes:
+              - These are OAuth *public client IDs* (not client secrets).
+              - For production redistribution/compliance, replace with your own registered OAuth app IDs if required.
+        -->
+        <chat4j.copilot.oauth.client.id>Iv1.b507a08c87ecfe98</chat4j.copilot.oauth.client.id>
+        <chat4j.codex.oauth.client.id>app_EMoamEEZ73f0CkXaXp7hrann</chat4j.codex.oauth.client.id>
     </properties>
 
     <dependencies>

@@ -1,6 +1,6 @@
-# CalVer Documentation (Current State)
+# CalVer Documentation
 
-This document describes the **current CalVer implementation** in this repository.
+This document describes the CalVer implementation in this repository.
 
 ## Version format
 

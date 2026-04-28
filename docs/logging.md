@@ -1,6 +1,6 @@
-# Logging (Current State)
+# Logging
 
-This document describes the current logging behavior in Chat4J.
+This document describes logging behavior in Chat4J.
 
 ## Logging stack
 
