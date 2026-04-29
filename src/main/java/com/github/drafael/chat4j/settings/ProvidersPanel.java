@@ -37,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -108,6 +109,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private final Map<String, AtomicBoolean> cliOauthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final AtomicReference<CodexAuthResolver.CodexLoginChallenge> activeCodexLoginChallenge = new AtomicReference<>();
     private final JList<String> providerList;
 
     static {
@@ -290,14 +292,18 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             gbc.gridx = 1;
             gbc.weightx = 1;
             JButton authButton = new JButton("Login");
-            panel.add(wrapLeading(authButton), gbc);
 
-            if (info.authType() == AuthType.CLI_OAUTH) {
-                configureOAuthAction(name, info, statusLabel, authButton);
-            } else if (info.authType() == AuthType.COPILOT_OAUTH) {
-                configureCopilotAuthAction(name, statusLabel, authButton);
+            if (info.authType() == AuthType.CODEX_OAUTH) {
+                JButton manualPasteButton = new JButton("Paste redirect URL now");
+                panel.add(wrapLeading(authButton, manualPasteButton), gbc);
+                configureCodexAuthAction(name, statusLabel, authButton, manualPasteButton);
             } else {
-                configureCodexAuthAction(name, statusLabel, authButton);
+                panel.add(wrapLeading(authButton), gbc);
+                if (info.authType() == AuthType.CLI_OAUTH) {
+                    configureOAuthAction(name, info, statusLabel, authButton);
+                } else {
+                    configureCopilotAuthAction(name, statusLabel, authButton);
+                }
             }
         }
 
@@ -604,27 +610,56 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         });
     }
 
-    private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
+    private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton, JButton manualPasteButton) {
         CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
+        applyCodexAuthControls(providerName, statusLabel, authButton, manualPasteButton, status, null);
+
+        manualPasteButton.addActionListener(event -> {
+            CodexAuthResolver.CodexLoginChallenge challenge = activeCodexLoginChallenge.get();
+            if (challenge == null) {
+                setStatusError("No active OpenAI Codex login. Click Login first.");
+                return;
+            }
+
+            String manualInput = promptForCodexAuthorizationInput(challenge);
+            if (StringUtils.isBlank(manualInput)) {
+                return;
+            }
+
+            boolean accepted = CODEX_AUTH_RESOLVER.submitManualAuthorizationInput(challenge, manualInput);
+            if (!accepted) {
+                setStatusError("Invalid redirect input. Paste the full redirect URL containing code and matching state.");
+                return;
+            }
+
+            String acceptedMessage = "Manual redirect received. Completing OpenAI sign in...";
+            statusLabel.setText(acceptedMessage);
+            statusLabel.setForeground(new Color(214, 117, 0));
+            setStatusInfo(acceptedMessage);
+        });
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
             authButton.setText("Working...");
+            manualPasteButton.setEnabled(false);
 
             Thread.startVirtualThread(() -> {
                 CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
                 CodexAuthResolver.CodexAuthActionResult actionResult;
 
                 if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
+                    activeCodexLoginChallenge.set(null);
                     actionResult = CODEX_AUTH_RESOLVER.logout();
                 } else {
                     try {
                         CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
-                        SwingUtilities.invokeLater(() -> showCodexAuthLoginProgress(statusLabel, challenge));
+                        activeCodexLoginChallenge.set(challenge);
+                        SwingUtilities.invokeLater(() -> showCodexAuthLoginProgress(statusLabel, manualPasteButton, challenge));
                         actionResult = CODEX_AUTH_RESOLVER.completeLogin(challenge);
+                        activeCodexLoginChallenge.compareAndSet(challenge, null);
                     } catch (Exception e) {
                         log.warn("Codex OAuth action failed: {}", ExceptionUtils.getMessage(e));
+                        activeCodexLoginChallenge.set(null);
                         actionResult = CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
                     }
                 }
@@ -635,6 +670,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                         providerName,
                         statusLabel,
                         authButton,
+                        manualPasteButton,
                         updatedStatus,
                         finalActionResult.success() ? null : finalActionResult.message()
                 ));
@@ -650,11 +686,35 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         setStatusInfo(message);
     }
 
-    private void showCodexAuthLoginProgress(JLabel statusLabel, CodexAuthResolver.CodexLoginChallenge challenge) {
-        String message = "Browser opened for OpenAI sign in. If callback fails, paste the redirect URL when prompted.";
+    private void showCodexAuthLoginProgress(
+            JLabel statusLabel,
+            JButton manualPasteButton,
+            CodexAuthResolver.CodexLoginChallenge challenge
+    ) {
+        String message = "Browser opened for OpenAI sign in. You can paste redirect URL now or wait up to %d seconds."
+                .formatted(challenge.timeoutSeconds());
         statusLabel.setText(message);
         statusLabel.setForeground(new Color(214, 117, 0));
+        manualPasteButton.setEnabled(true);
         setStatusInfo(message);
+    }
+
+    private String promptForCodexAuthorizationInput(CodexAuthResolver.CodexLoginChallenge challenge) {
+        Object response = JOptionPane.showInputDialog(
+                this,
+                "Paste OpenAI redirect URL (or code) below:",
+                "OpenAI Codex Login Fallback",
+                JOptionPane.PLAIN_MESSAGE,
+                null,
+                null,
+                challenge.authorizationUri()
+        );
+
+        if (response == null) {
+            return null;
+        }
+
+        return response.toString();
     }
 
     private void applyOAuthControls(
@@ -743,6 +803,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             String providerName,
             JLabel statusLabel,
             JButton authButton,
+            JButton manualPasteButton,
             CodexAuthResolver.CodexAuthStatus status,
             String failureMessage
     ) {
@@ -759,12 +820,16 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setForeground(Color.WHITE);
             authButton.setBackground(new Color(229, 57, 53));
             authButton.setToolTipText("Sign out Chat4J OAuth session");
+            manualPasteButton.setEnabled(false);
+            manualPasteButton.setToolTipText("Available while login is in progress");
         } else if (!oauthClientConfigured) {
             authButton.setText("Configure OAuth App");
             authButton.setEnabled(false);
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
             authButton.setToolTipText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
+            manualPasteButton.setEnabled(false);
+            manualPasteButton.setToolTipText("Configure OAuth client ID first");
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
@@ -776,6 +841,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
             authButton.setToolTipText("Sign in OpenAI for Chat4J");
+
+            boolean loginInProgress = activeCodexLoginChallenge.get() != null;
+            manualPasteButton.setEnabled(loginInProgress);
+            manualPasteButton.setToolTipText(loginInProgress
+                    ? "Paste redirect URL/code captured from browser"
+                    : "Available while login is in progress");
         }
 
         if (StringUtils.isNotBlank(failureMessage)) {
@@ -1366,6 +1437,14 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         row.setOpaque(false);
         row.add(component);
+        return row;
+    }
+
+    private JComponent wrapLeading(JComponent first, JComponent second) {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        row.setOpaque(false);
+        row.add(first);
+        row.add(second);
         return row;
     }
 

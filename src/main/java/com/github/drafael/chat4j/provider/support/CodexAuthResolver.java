@@ -8,9 +8,12 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
+import java.awt.KeyboardFocusManager;
 import java.awt.Toolkit;
+import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -35,6 +38,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import static java.util.Collections.emptyMap;
@@ -66,8 +70,8 @@ public class CodexAuthResolver {
     private static final String DEFAULT_OAUTH_ORIGINATOR = "chat4j_java";
 
     private static final String DEFAULT_REDIRECT_URI = "http://localhost:1455/auth/callback";
-    private static final String DEFAULT_CALLBACK_HOST = "127.0.0.1";
-    private static final int DEFAULT_LOGIN_TIMEOUT_SECONDS = 300;
+    private static final String DEFAULT_CALLBACK_HOST = "localhost";
+    private static final int DEFAULT_LOGIN_TIMEOUT_SECONDS = 60;
 
     private static final String BUILD_PROPERTIES_RESOURCE = "/build.properties";
     private static final String BUILD_PROPERTIES_CLIENT_ID_KEY = "codexOAuthClientId";
@@ -77,6 +81,7 @@ public class CodexAuthResolver {
     private final Map<String, String> environment;
     private final HttpClient httpClient;
     private final UserPromptActions userPromptActions;
+    private final Map<String, CompletableFuture<AuthorizationCodeInput>> pendingAuthorizationInputsByState = new ConcurrentHashMap<>();
 
     public CodexAuthResolver() {
         this(
@@ -247,6 +252,28 @@ public class CodexAuthResolver {
         }
     }
 
+    public boolean submitManualAuthorizationInput(CodexLoginChallenge challenge, String input) {
+        if (challenge == null) {
+            return false;
+        }
+
+        AuthorizationCodeInput parsedInput = parseAuthorizationInput(input);
+        if (parsedInput == null || StringUtils.isBlank(parsedInput.code())) {
+            return false;
+        }
+
+        if (StringUtils.isNotBlank(parsedInput.state()) && !StringUtils.equals(parsedInput.state(), challenge.state())) {
+            return false;
+        }
+
+        CompletableFuture<AuthorizationCodeInput> pendingInput = pendingAuthorizationInputsByState.get(challenge.state());
+        if (pendingInput == null) {
+            return false;
+        }
+
+        return pendingInput.complete(parsedInput);
+    }
+
     public CodexAuthActionResult logout() {
         try {
             Path tokenFile = chat4jAuthFile();
@@ -273,24 +300,26 @@ public class CodexAuthResolver {
     }
 
     private AuthorizationCodeInput waitForAuthorizationCode(CodexLoginChallenge challenge) {
+        CompletableFuture<AuthorizationCodeInput> pendingInput = new CompletableFuture<>();
+        pendingAuthorizationInputsByState.put(challenge.state(), pendingInput);
+
         URI redirectUri;
         try {
             redirectUri = URI.create(challenge.redirectUri());
         } catch (Exception e) {
-            return null;
+            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
         }
 
         String path = StringUtils.defaultIfBlank(redirectUri.getPath(), "/auth/callback");
         int port = redirectUri.getPort() > 0 ? redirectUri.getPort() : 80;
         String callbackHost = StringUtils.defaultIfBlank(challenge.callbackHost(), DEFAULT_CALLBACK_HOST);
 
-        CompletableFuture<AuthorizationCodeInput> future = new CompletableFuture<>();
         HttpServer server;
         try {
             server = HttpServer.create(new InetSocketAddress(callbackHost, port), 0);
         } catch (Exception e) {
             log.debug("Unable to start local Codex callback server on {}:{}: {}", callbackHost, port, ExceptionUtils.getMessage(e));
-            return null;
+            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
         }
 
         server.createContext(path, exchange -> {
@@ -320,7 +349,7 @@ public class CodexAuthResolver {
                 exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
                 exchange.sendResponseHeaders(200, responseBody.length);
                 exchange.getResponseBody().write(responseBody);
-                future.complete(new AuthorizationCodeInput(code, state));
+                pendingInput.complete(new AuthorizationCodeInput(code, state));
             } catch (Exception e) {
                 byte[] responseBody = oauthHtml("Internal error while processing callback.", false);
                 exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
@@ -333,13 +362,21 @@ public class CodexAuthResolver {
 
         server.start();
         try {
-            return future.get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
+            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private AuthorizationCodeInput waitForPendingInput(CompletableFuture<AuthorizationCodeInput> pendingInput, int timeoutSeconds) {
+        try {
+            return pendingInput.get(timeoutSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             return null;
         } catch (Exception e) {
             return null;
         } finally {
-            server.stop(0);
+            pendingAuthorizationInputsByState.values().removeIf(future -> future == pendingInput);
         }
     }
 
@@ -667,7 +704,22 @@ public class CodexAuthResolver {
     }
 
     private String resolveCallbackHost() {
-        return StringUtils.defaultIfBlank(System.getProperty(OAUTH_CALLBACK_HOST_PROPERTY), DEFAULT_CALLBACK_HOST).trim();
+        String configuredHost = StringUtils.trimToNull(System.getProperty(OAUTH_CALLBACK_HOST_PROPERTY));
+        if (configuredHost != null) {
+            return configuredHost;
+        }
+
+        try {
+            URI redirectUri = URI.create(resolveRedirectUri());
+            String redirectHost = StringUtils.trimToNull(redirectUri.getHost());
+            if (redirectHost != null) {
+                return redirectHost;
+            }
+        } catch (Exception e) {
+            // Fall through to default host.
+        }
+
+        return DEFAULT_CALLBACK_HOST;
     }
 
     private int resolveLoginTimeoutSeconds() {
@@ -1026,9 +1078,28 @@ public class CodexAuthResolver {
                 return null;
             }
 
+            if (SwingUtilities.isEventDispatchThread()) {
+                return showAuthorizationInputDialog(message, defaultValue);
+            }
+
+            final String[] responseHolder = new String[1];
+            try {
+                SwingUtilities.invokeAndWait(() -> responseHolder[0] = showAuthorizationInputDialog(message, defaultValue));
+            } catch (Exception e) {
+                return null;
+            }
+            return responseHolder[0];
+        }
+
+        private String showAuthorizationInputDialog(String message, String defaultValue) {
+            Window activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
             Object response = JOptionPane.showInputDialog(
-                    null,
+                    activeWindow,
                     message,
+                    "OpenAI Codex Login Fallback",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    null,
                     defaultValue
             );
             return response == null ? null : response.toString();

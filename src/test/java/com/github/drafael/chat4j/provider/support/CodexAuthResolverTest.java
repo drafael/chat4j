@@ -171,6 +171,87 @@ class CodexAuthResolverTest {
     }
 
     @Test
+    @DisplayName("Complete login can be completed immediately through manual submit API")
+    void completeLogin_whenManualInputSubmittedDuringWait_completesLogin() throws Exception {
+        Path userHome = tempDir.resolve("home");
+        AtomicReference<String> tokenRequestBody = new AtomicReference<>();
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/oauth/token", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            tokenRequestBody.compareAndSet(null, body);
+
+            byte[] payload = """
+                    {
+                      "access_token": "sk-proj-chat4j-codex-123456789012345678901234567890",
+                      "refresh_token": "refresh-token-123",
+                      "expires_in": 3600
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            System.setProperty(OAUTH_ISSUER_PROPERTY, "http://127.0.0.1:%d".formatted(port));
+            System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+            System.setProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY, "15");
+            System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
+
+            CodexAuthResolver.UserPromptActions promptActions = new CodexAuthResolver.UserPromptActions() {
+                @Override
+                public void openBrowser(String authorizationUri) {
+                    // no-op in tests
+                }
+
+                @Override
+                public void copyCodeToClipboard(String text) {
+                    // no-op in tests
+                }
+
+                @Override
+                public String promptForAuthorizationInput(String message, String defaultValue) {
+                    return null;
+                }
+            };
+
+            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient(), promptActions);
+            CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+
+            AtomicReference<CodexAuthResolver.CodexAuthActionResult> resultRef = new AtomicReference<>();
+            Thread loginThread = Thread.startVirtualThread(() -> resultRef.set(subject.completeLogin(challenge)));
+
+            boolean accepted = false;
+            String redirectInput = "http://localhost:1459/auth/callback?code=manual-code-456&state=%s"
+                    .formatted(challenge.state());
+            for (int i = 0; i < 30; i++) {
+                if (subject.submitManualAuthorizationInput(challenge, redirectInput)) {
+                    accepted = true;
+                    break;
+                }
+                Thread.sleep(50);
+            }
+
+            loginThread.join();
+
+            assertThat(accepted).isTrue();
+            assertThat(resultRef.get()).isNotNull();
+            assertThat(resultRef.get().success()).isTrue();
+            assertThat(subject.resolveBearerTokenOrNull())
+                    .isEqualTo("sk-proj-chat4j-codex-123456789012345678901234567890");
+            assertThat(tokenRequestBody.get())
+                    .contains("grant_type=authorization_code")
+                    .contains("code=manual-code-456");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Resolver accepts stored session even when oauthScopes metadata is absent")
     void resolveStatus_whenStoredTokenHasNoOauthScopesMetadata_returnsAuthorized() throws Exception {
         Path userHome = tempDir.resolve("home");
