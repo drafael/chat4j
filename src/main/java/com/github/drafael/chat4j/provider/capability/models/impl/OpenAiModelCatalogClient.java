@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ModelFilters;
@@ -20,25 +21,19 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 import static java.util.Collections.emptyList;
 
 @Slf4j
 public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
-    private static final Pattern CODEX_SLUG_PATTERN = Pattern.compile("\\\"slug\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
@@ -88,8 +83,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     .map(Model::id)
                     .toList();
 
-            if (models.isEmpty() && "OpenAI Codex".equals(runtime.descriptor().name())) {
-                return readCodexModelsFromCache();
+            if (isCodexProvider(runtime)) {
+                return mergeCodexModelsWithLocalCache(models);
             }
 
             return models;
@@ -102,19 +97,19 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private List<String> fallbackModels(ProviderRuntime runtime) {
         CatalogFetchResult httpFallback = fetchModelsFromHttp(runtime, runtime.apiKey(), false);
+        if (isCodexProvider(runtime)) {
+            List<String> mergedCodexModels = mergeCodexModelsWithLocalCache(httpFallback.modelIds());
+            if (!mergedCodexModels.isEmpty()) {
+                log.info("Recovered model listing for OpenAI Codex via local cache/HTTP fallback ({} models)",
+                        mergedCodexModels.size());
+                return mergedCodexModels;
+            }
+        }
+
         if (!httpFallback.modelIds().isEmpty()) {
             log.info("Recovered model listing for {} via HTTP fallback ({} models)",
                     runtime.descriptor().name(), httpFallback.modelIds().size());
             return httpFallback.modelIds();
-        }
-
-        if ("OpenAI Codex".equals(runtime.descriptor().name())) {
-            List<String> codexCachedModels = readCodexModelsFromCache();
-            if (!codexCachedModels.isEmpty()) {
-                log.info("Recovered model listing for OpenAI Codex via local cache ({} models)",
-                        codexCachedModels.size());
-                return codexCachedModels;
-            }
         }
 
         log.warn("No models available for {} after fallback attempts", runtime.descriptor().name());
@@ -291,6 +286,14 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name());
     }
 
+    private boolean isCodexProvider(ProviderRuntime runtime) {
+        return "OpenAI Codex".equals(runtime.descriptor().name());
+    }
+
+    private List<String> mergeCodexModelsWithLocalCache(List<String> modelIds) {
+        return CodexLocalModelCache.mergeIfCodexProvider("OpenAI Codex", modelIds);
+    }
+
     private boolean supportsConfiguredApiEndpoint(ProviderRuntime runtime, JsonNode modelNode) {
         if (!isCopilotProvider(runtime) || !modelNode.isObject()) {
             return true;
@@ -403,27 +406,6 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         }
 
         return modelEntries;
-    }
-
-    private List<String> readCodexModelsFromCache() {
-        try {
-            Path modelCache = Path.of(System.getProperty("user.home"), ".codex", "models_cache.json");
-            if (!Files.exists(modelCache)) {
-                return emptyList();
-            }
-
-            String content = Files.readString(modelCache, StandardCharsets.UTF_8);
-            Matcher matcher = CODEX_SLUG_PATTERN.matcher(content);
-            LinkedHashSet<String> slugs = new LinkedHashSet<>();
-            while (matcher.find()) {
-                slugs.add(matcher.group(1));
-            }
-
-            return ModelOrdering.sanitizeAndSortByRecency(slugs.stream().toList());
-        } catch (Exception e) {
-            log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
-            return emptyList();
-        }
     }
 
     private record CopilotExchangedTokenSnapshot(String exchangedToken, long expiresAtEpochMs) {

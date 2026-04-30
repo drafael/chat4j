@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.storage;
 
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -207,6 +208,10 @@ public class ProviderModelCacheService {
     }
 
     private static List<String> sanitizeModels(String providerName, List<String> models) {
+        if ("OpenAI Codex".equals(providerName)) {
+            return List.copyOf(CodexLocalModelCache.mergeIfCodexProvider(providerName, models));
+        }
+
         if (models == null || models.isEmpty()) {
             return emptyList();
         }

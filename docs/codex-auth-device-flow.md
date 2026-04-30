@@ -25,13 +25,13 @@ Chat4J does **not** rely on `~/.codex/auth.json` as the source of truth for Code
 When user clicks **Login** for OpenAI Codex in Settings:
 
 1. Chat4J generates PKCE verifier/challenge and OAuth state.
-2. Chat4J opens browser to the OAuth authorize URL.
-3. Chat4J starts a local callback listener (default redirect URI host/port/path).
-4. If callback cannot complete, Chat4J supports manual fallback:
-   - click **Paste redirect URL now** in Settings during login, or
-   - wait for the timeout prompt and paste redirect URL/code there.
-5. Chat4J exchanges authorization code for token(s), then resolves a usable bearer token.
-6. Chat4J stores token metadata in `~/.config/chat4j/codex-auth.json`.
+2. Chat4J starts a local callback listener when possible.
+3. Chat4J shows a modal dialog with the login URL, **Open browser**, **Copy login URL**, and a callback URL input.
+4. Chat4J attempts to open the browser automatically after the dialog is visible.
+5. If browser callback succeeds, the dialog closes and login completes automatically.
+6. If localhost callback is blocked, user copies the full browser address bar URL and pastes it into the dialog. Expected format: `http://localhost:1455/auth/callback?code=...&state=...`.
+7. Chat4J exchanges authorization code for token(s), then resolves a usable bearer token.
+8. Chat4J stores token metadata in `~/.config/chat4j/codex-auth.json`.
 
 When already authorized, the same button performs **Log out** (deletes local token file).
 
@@ -61,13 +61,13 @@ Endpoint/flow overrides:
 - OAuth token endpoint: `chat4j.codex.oauthTokenEndpoint`
 - OAuth redirect URI: `chat4j.codex.oauthRedirectUri`
 - OAuth callback host binding: `chat4j.codex.oauthCallbackHost`
-- Login wait timeout seconds: `chat4j.codex.oauthLoginTimeoutSeconds` (default `60`)
+- Login wait timeout seconds: `chat4j.codex.oauthLoginTimeoutSeconds`
 
 ## Provider/runtime wiring
 
 - `ProviderFacade` resolves Codex bearer token via `CodexAuthResolver`.
 - `ProviderRuntimePolicy` uses resolver status to determine Codex availability.
-- `ProvidersPanel` shows Codex auth status and login/logout actions.
+- `ProvidersPanel` shows simplified Codex auth status (`Authorized` / `Not authorized`) and login/logout actions.
 
 ## Chat and model runtime behavior
 

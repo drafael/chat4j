@@ -3,17 +3,15 @@ package com.github.drafael.chat4j.provider.support;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.JOptionPane;
-import javax.swing.SwingUtilities;
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
-import java.awt.KeyboardFocusManager;
 import java.awt.Toolkit;
-import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -38,7 +36,6 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import static java.util.Collections.emptyMap;
@@ -71,7 +68,7 @@ public class CodexAuthResolver {
 
     private static final String DEFAULT_REDIRECT_URI = "http://localhost:1455/auth/callback";
     private static final String DEFAULT_CALLBACK_HOST = "localhost";
-    private static final int DEFAULT_LOGIN_TIMEOUT_SECONDS = 60;
+    private static final int DEFAULT_LOGIN_TIMEOUT_SECONDS = 300;
 
     private static final String BUILD_PROPERTIES_RESOURCE = "/build.properties";
     private static final String BUILD_PROPERTIES_CLIENT_ID_KEY = "codexOAuthClientId";
@@ -81,7 +78,6 @@ public class CodexAuthResolver {
     private final Map<String, String> environment;
     private final HttpClient httpClient;
     private final UserPromptActions userPromptActions;
-    private final Map<String, CompletableFuture<AuthorizationCodeInput>> pendingAuthorizationInputsByState = new ConcurrentHashMap<>();
 
     public CodexAuthResolver() {
         this(
@@ -163,12 +159,34 @@ public class CodexAuthResolver {
 
     public CodexAuthActionResult login() {
         log.debug("Starting OpenAI Codex OAuth login");
+        CodexCallbackWait callbackWait = null;
         try {
             CodexLoginChallenge challenge = beginLogin();
-            return completeLogin(challenge);
+            callbackWait = startCallbackWait(challenge);
+            triggerLoginPromptActions(challenge.authorizationUri());
+
+            String inputText = null;
+            try {
+                inputText = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                // Fall through to manual prompt.
+            }
+
+            if (StringUtils.isBlank(inputText)) {
+                inputText = userPromptActions.promptForAuthorizationInput(
+                        manualAuthorizationInputMessage(challenge),
+                        manualAuthorizationInputExample(challenge)
+                );
+            }
+
+            return completeLoginWithAuthorizationInput(challenge, inputText);
         } catch (Exception e) {
             log.warn("OpenAI Codex OAuth login failed: {}", ExceptionUtils.getMessage(e));
             return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+        } finally {
+            if (callbackWait != null) {
+                callbackWait.close();
+            }
         }
     }
 
@@ -181,7 +199,6 @@ public class CodexAuthResolver {
             String redirectUri = resolveRedirectUri();
 
             String authorizationUri = createAuthorizationUri(clientId, oauthScopes, pkce.challenge(), state, redirectUri);
-            triggerLoginPromptActions(authorizationUri);
 
             return new CodexLoginChallenge(
                     pkce.verifier(),
@@ -197,81 +214,32 @@ public class CodexAuthResolver {
         }
     }
 
-    public CodexAuthActionResult completeLogin(CodexLoginChallenge challenge) {
-        if (challenge == null) {
-            return CodexAuthActionResult.failure("Login challenge is missing");
-        }
-
+    public CodexAuthActionResult completeLogin(@NonNull CodexLoginChallenge challenge) {
         try {
             AuthorizationCodeInput callbackInput = waitForAuthorizationCode(challenge);
             AuthorizationCodeInput input = callbackInput;
             if (input == null || StringUtils.isBlank(input.code())) {
                 String manualInput = userPromptActions.promptForAuthorizationInput(
-                        "Paste redirect URL below, or complete login in browser:",
-                        challenge.authorizationUri()
+                        manualAuthorizationInputMessage(challenge),
+                        manualAuthorizationInputExample(challenge)
                 );
                 input = parseAuthorizationInput(manualInput);
             }
 
-            if (input == null || StringUtils.isBlank(input.code())) {
-                return CodexAuthActionResult.failure(
-                        "Login timed out. Complete sign in at %s."
-                                .formatted(challenge.authorizationUri())
-                );
-            }
-
-            if (StringUtils.isNotBlank(input.state()) && !StringUtils.equals(input.state(), challenge.state())) {
-                return CodexAuthActionResult.failure("OpenAI login failed: state mismatch");
-            }
-
-            OauthTokenResponse tokenResponse = exchangeAuthorizationCode(
-                    resolveOAuthClientId(),
-                    input.code(),
-                    challenge.codeVerifier(),
-                    challenge.redirectUri()
-            );
-
-            String resolvedToken = selectPreferredToken(resolveOAuthClientId(), tokenResponse);
-            if (StringUtils.isBlank(resolvedToken)) {
-                return CodexAuthActionResult.failure("OAuth token exchange returned no usable token");
-            }
-
-            long expiresAtEpochMs = resolveExpiresAtEpochMs(tokenResponse.expiresInSeconds());
-            storeChat4jToken(
-                    resolvedToken,
-                    challenge.oauthScopes(),
-                    tokenResponse.refreshToken(),
-                    expiresAtEpochMs
-            );
-
-            log.info("OpenAI Codex OAuth login completed");
-            return CodexAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
+            return completeLogin(challenge, input);
         } catch (Exception e) {
             log.warn("OpenAI Codex OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
             return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
-    public boolean submitManualAuthorizationInput(CodexLoginChallenge challenge, String input) {
-        if (challenge == null) {
-            return false;
+    public CodexAuthActionResult completeLoginWithAuthorizationInput(@NonNull CodexLoginChallenge challenge, String inputText) {
+        try {
+            return completeLogin(challenge, parseAuthorizationInput(inputText));
+        } catch (Exception e) {
+            log.warn("OpenAI Codex OAuth manual completion failed: {}", ExceptionUtils.getMessage(e));
+            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
-
-        AuthorizationCodeInput parsedInput = parseAuthorizationInput(input);
-        if (parsedInput == null || StringUtils.isBlank(parsedInput.code())) {
-            return false;
-        }
-
-        if (StringUtils.isNotBlank(parsedInput.state()) && !StringUtils.equals(parsedInput.state(), challenge.state())) {
-            return false;
-        }
-
-        CompletableFuture<AuthorizationCodeInput> pendingInput = pendingAuthorizationInputsByState.get(challenge.state());
-        if (pendingInput == null) {
-            return false;
-        }
-
-        return pendingInput.complete(parsedInput);
     }
 
     public CodexAuthActionResult logout() {
@@ -299,15 +267,15 @@ public class CodexAuthResolver {
                 .formatted(OAUTH_CLIENT_ID_PROPERTY, OAUTH_CLIENT_ID_ENV, BUILD_PROPERTIES_CLIENT_ID_KEY);
     }
 
-    private AuthorizationCodeInput waitForAuthorizationCode(CodexLoginChallenge challenge) {
-        CompletableFuture<AuthorizationCodeInput> pendingInput = new CompletableFuture<>();
-        pendingAuthorizationInputsByState.put(challenge.state(), pendingInput);
-
+    public CodexCallbackWait startCallbackWait(@NonNull CodexLoginChallenge challenge) {
+        CompletableFuture<String> callbackInputFuture = new CompletableFuture<>();
         URI redirectUri;
         try {
             redirectUri = URI.create(challenge.redirectUri());
         } catch (Exception e) {
-            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
+            String message = "Invalid callback URI. Use manual callback URL paste.";
+            log.warn("{} URI={}: {}", message, challenge.redirectUri(), ExceptionUtils.getMessage(e));
+            return CodexCallbackWait.manualOnly(message, callbackInputFuture);
         }
 
         String path = StringUtils.defaultIfBlank(redirectUri.getPath(), "/auth/callback");
@@ -318,8 +286,10 @@ public class CodexAuthResolver {
         try {
             server = HttpServer.create(new InetSocketAddress(callbackHost, port), 0);
         } catch (Exception e) {
-            log.debug("Unable to start local Codex callback server on {}:{}: {}", callbackHost, port, ExceptionUtils.getMessage(e));
-            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
+            String message = "Local callback unavailable on %s:%d. Use manual callback URL paste."
+                    .formatted(callbackHost, port);
+            log.warn("{} {}", message, ExceptionUtils.getMessage(e));
+            return CodexCallbackWait.manualOnly(message, callbackInputFuture);
         }
 
         server.createContext(path, exchange -> {
@@ -349,7 +319,7 @@ public class CodexAuthResolver {
                 exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
                 exchange.sendResponseHeaders(200, responseBody.length);
                 exchange.getResponseBody().write(responseBody);
-                pendingInput.complete(new AuthorizationCodeInput(code, state));
+                callbackInputFuture.complete(callbackInputFromRequest(challenge, requestUri));
             } catch (Exception e) {
                 byte[] responseBody = oauthHtml("Internal error while processing callback.", false);
                 exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
@@ -361,23 +331,79 @@ public class CodexAuthResolver {
         });
 
         server.start();
-        try {
-            return waitForPendingInput(pendingInput, challenge.timeoutSeconds());
-        } finally {
-            server.stop(0);
-        }
+        String message = "Listening for local callback on %s:%d.".formatted(callbackHost, port);
+        log.debug("OpenAI Codex OAuth {}", message);
+        return new CodexCallbackWait(true, message, callbackInputFuture, () -> server.stop(0));
     }
 
-    private AuthorizationCodeInput waitForPendingInput(CompletableFuture<AuthorizationCodeInput> pendingInput, int timeoutSeconds) {
+    private AuthorizationCodeInput waitForAuthorizationCode(CodexLoginChallenge challenge) {
+        CodexCallbackWait callbackWait = startCallbackWait(challenge);
         try {
-            return pendingInput.get(timeoutSeconds, TimeUnit.SECONDS);
+            String callbackInput = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
+            return parseAuthorizationInput(callbackInput);
         } catch (TimeoutException e) {
             return null;
         } catch (Exception e) {
             return null;
         } finally {
-            pendingAuthorizationInputsByState.values().removeIf(future -> future == pendingInput);
+            callbackWait.close();
         }
+    }
+
+    private CodexAuthActionResult completeLogin(CodexLoginChallenge challenge, AuthorizationCodeInput input) throws Exception {
+        if (input == null || StringUtils.isBlank(input.code())) {
+            return CodexAuthActionResult.failure(
+                    "Login timed out. Paste callback URL like %s"
+                            .formatted(manualAuthorizationInputExample(challenge))
+            );
+        }
+
+        if (StringUtils.isNotBlank(input.state()) && !StringUtils.equals(input.state(), challenge.state())) {
+            return CodexAuthActionResult.failure("OpenAI login failed: state mismatch");
+        }
+
+        OauthTokenResponse tokenResponse = exchangeAuthorizationCode(
+                resolveOAuthClientId(),
+                input.code(),
+                challenge.codeVerifier(),
+                challenge.redirectUri()
+        );
+
+        String resolvedToken = selectPreferredToken(resolveOAuthClientId(), tokenResponse);
+        if (StringUtils.isBlank(resolvedToken)) {
+            return CodexAuthActionResult.failure("OAuth token exchange returned no usable token");
+        }
+
+        long expiresAtEpochMs = resolveExpiresAtEpochMs(tokenResponse.expiresInSeconds());
+        storeChat4jToken(
+                resolvedToken,
+                challenge.oauthScopes(),
+                tokenResponse.refreshToken(),
+                expiresAtEpochMs
+        );
+
+        log.info("OpenAI Codex OAuth login completed");
+        return CodexAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
+    }
+
+    private String callbackInputFromRequest(CodexLoginChallenge challenge, URI requestUri) {
+        String rawQuery = StringUtils.defaultString(requestUri.getRawQuery());
+        String separator = challenge.redirectUri().contains("?") ? "&" : "?";
+        return "%s%s%s".formatted(challenge.redirectUri(), separator, rawQuery);
+    }
+
+    private String manualAuthorizationInputMessage(CodexLoginChallenge challenge) {
+        return """
+                Paste the full callback URL from your browser address bar after OpenAI sign-in.
+                It should look like: %s
+                If you cannot copy the full URL, paste the code value from code=... .
+                """.formatted(manualAuthorizationInputExample(challenge));
+    }
+
+    private String manualAuthorizationInputExample(CodexLoginChallenge challenge) {
+        String redirectUri = challenge == null ? resolveRedirectUri() : challenge.redirectUri();
+        String separator = redirectUri.contains("?") ? "&" : "?";
+        return "%s%scode=...&state=...".formatted(redirectUri, separator);
     }
 
     private byte[] oauthHtml(String message, boolean success) {
@@ -1078,28 +1104,9 @@ public class CodexAuthResolver {
                 return null;
             }
 
-            if (SwingUtilities.isEventDispatchThread()) {
-                return showAuthorizationInputDialog(message, defaultValue);
-            }
-
-            final String[] responseHolder = new String[1];
-            try {
-                SwingUtilities.invokeAndWait(() -> responseHolder[0] = showAuthorizationInputDialog(message, defaultValue));
-            } catch (Exception e) {
-                return null;
-            }
-            return responseHolder[0];
-        }
-
-        private String showAuthorizationInputDialog(String message, String defaultValue) {
-            Window activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
             Object response = JOptionPane.showInputDialog(
-                    activeWindow,
+                    null,
                     message,
-                    "OpenAI Codex Login Fallback",
-                    JOptionPane.PLAIN_MESSAGE,
-                    null,
-                    null,
                     defaultValue
             );
             return response == null ? null : response.toString();
@@ -1124,6 +1131,27 @@ public class CodexAuthResolver {
             int timeoutSeconds,
             String oauthScopes
     ) {
+    }
+
+    public record CodexCallbackWait(
+            boolean listening,
+            String message,
+            @NonNull CompletableFuture<String> callbackInputFuture,
+            @NonNull Runnable closeAction
+    ) {
+
+        private static CodexCallbackWait manualOnly(String message, CompletableFuture<String> callbackInputFuture) {
+            return new CodexCallbackWait(false, message, callbackInputFuture, () -> {
+            });
+        }
+
+        public void close() {
+            try {
+                closeAction.run();
+            } catch (Exception e) {
+                // Best-effort cleanup.
+            }
+        }
     }
 
     public record CodexAuthActionResult(boolean success, String message) {

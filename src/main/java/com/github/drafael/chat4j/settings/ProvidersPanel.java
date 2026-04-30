@@ -6,7 +6,6 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
 import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
-import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
@@ -20,6 +19,9 @@ import lombok.extern.slf4j.Slf4j;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.net.URI;
 import java.net.URL;
 import java.net.http.HttpClient;
@@ -35,9 +37,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -109,7 +111,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private final Map<String, AtomicBoolean> cliOauthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
-    private final AtomicReference<CodexAuthResolver.CodexLoginChallenge> activeCodexLoginChallenge = new AtomicReference<>();
     private final JList<String> providerList;
 
     static {
@@ -292,32 +293,15 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             gbc.gridx = 1;
             gbc.weightx = 1;
             JButton authButton = new JButton("Login");
+            panel.add(wrapLeading(authButton), gbc);
 
-            if (info.authType() == AuthType.CODEX_OAUTH) {
-                JButton manualPasteButton = new JButton("Paste redirect URL now");
-                panel.add(wrapLeading(authButton, manualPasteButton), gbc);
-                configureCodexAuthAction(name, statusLabel, authButton, manualPasteButton);
+            if (info.authType() == AuthType.CLI_OAUTH) {
+                configureOAuthAction(name, info, statusLabel, authButton);
+            } else if (info.authType() == AuthType.COPILOT_OAUTH) {
+                configureCopilotAuthAction(name, statusLabel, authButton);
             } else {
-                panel.add(wrapLeading(authButton), gbc);
-                if (info.authType() == AuthType.CLI_OAUTH) {
-                    configureOAuthAction(name, info, statusLabel, authButton);
-                } else {
-                    configureCopilotAuthAction(name, statusLabel, authButton);
-                }
+                configureCodexAuthAction(name, statusLabel, authButton);
             }
-        }
-
-        if ("GitHub Copilot".equals(name)) {
-            row = addSectionHeader(panel, gbc, row + 1, "Diagnostics");
-
-            gbc.gridx = 0;
-            gbc.gridy = row;
-            gbc.weightx = 0;
-            panel.add(label("Endpoint"), gbc);
-
-            gbc.gridx = 1;
-            gbc.weightx = 1;
-            panel.add(createCopilotEndpointDiagnosticsPanel(), gbc);
         }
 
         if ("OpenRouter".equals(name)) {
@@ -529,17 +513,22 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void openInBrowser(String url) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            Thread.startVirtualThread(() -> openInBrowser(url));
+            return;
+        }
+
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-            setStatusError("Unable to open browser automatically. URL: %s".formatted(url));
+            SwingUtilities.invokeLater(() -> setStatusError("Unable to open browser automatically. URL: %s".formatted(url)));
             return;
         }
 
         try {
             Desktop.getDesktop().browse(URI.create(url));
-            setStatusInfo("Opened: %s".formatted(url));
+            SwingUtilities.invokeLater(() -> setStatusInfo("Opened: %s".formatted(url)));
         } catch (Exception e) {
             log.warn("Failed to open URL {}: {}", url, ExceptionUtils.getMessage(e));
-            setStatusError("Failed to open URL: %s".formatted(firstLine(ExceptionUtils.getMessage(e))));
+            SwingUtilities.invokeLater(() -> setStatusError("Failed to open URL: %s".formatted(firstLine(ExceptionUtils.getMessage(e)))));
         }
     }
 
@@ -586,13 +575,22 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
                     actionResult = COPILOT_AUTH_RESOLVER.logout();
                 } else {
+                    CompletableFuture<JDialog> loginDialogFuture = new CompletableFuture<>();
                     try {
                         CopilotAuthResolver.CopilotLoginChallenge challenge = COPILOT_AUTH_RESOLVER.beginLogin();
-                        SwingUtilities.invokeLater(() -> showCopilotAuthLoginProgress(statusLabel, challenge));
+                        SwingUtilities.invokeLater(() -> {
+                            try {
+                                loginDialogFuture.complete(showCopilotAuthLoginProgress(statusLabel, challenge));
+                            } catch (Exception e) {
+                                loginDialogFuture.completeExceptionally(e);
+                            }
+                        });
                         actionResult = COPILOT_AUTH_RESOLVER.completeLogin(challenge);
                     } catch (Exception e) {
                         log.warn("Copilot OAuth action failed: {}", ExceptionUtils.getMessage(e));
                         actionResult = CopilotAuthResolver.CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+                    } finally {
+                        loginDialogFuture.thenAccept(dialog -> SwingUtilities.invokeLater(dialog::dispose));
                     }
                 }
 
@@ -610,111 +608,287 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         });
     }
 
-    private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton, JButton manualPasteButton) {
+    private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
         CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-        applyCodexAuthControls(providerName, statusLabel, authButton, manualPasteButton, status, null);
-
-        manualPasteButton.addActionListener(event -> {
-            CodexAuthResolver.CodexLoginChallenge challenge = activeCodexLoginChallenge.get();
-            if (challenge == null) {
-                setStatusError("No active OpenAI Codex login. Click Login first.");
-                return;
-            }
-
-            String manualInput = promptForCodexAuthorizationInput(challenge);
-            if (StringUtils.isBlank(manualInput)) {
-                return;
-            }
-
-            boolean accepted = CODEX_AUTH_RESOLVER.submitManualAuthorizationInput(challenge, manualInput);
-            if (!accepted) {
-                setStatusError("Invalid redirect input. Paste the full redirect URL containing code and matching state.");
-                return;
-            }
-
-            String acceptedMessage = "Manual redirect received. Completing OpenAI sign in...";
-            statusLabel.setText(acceptedMessage);
-            statusLabel.setForeground(new Color(214, 117, 0));
-            setStatusInfo(acceptedMessage);
-        });
+        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
             authButton.setText("Working...");
-            manualPasteButton.setEnabled(false);
+            statusLabel.setText("Preparing OpenAI Codex login...");
+            statusLabel.setForeground(new Color(214, 117, 0));
 
             Thread.startVirtualThread(() -> {
                 CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
                 CodexAuthResolver.CodexAuthActionResult actionResult;
 
                 if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
-                    activeCodexLoginChallenge.set(null);
                     actionResult = CODEX_AUTH_RESOLVER.logout();
                 } else {
-                    try {
-                        CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
-                        activeCodexLoginChallenge.set(challenge);
-                        SwingUtilities.invokeLater(() -> showCodexAuthLoginProgress(statusLabel, manualPasteButton, challenge));
-                        actionResult = CODEX_AUTH_RESOLVER.completeLogin(challenge);
-                        activeCodexLoginChallenge.compareAndSet(challenge, null);
-                    } catch (Exception e) {
-                        log.warn("Codex OAuth action failed: {}", ExceptionUtils.getMessage(e));
-                        activeCodexLoginChallenge.set(null);
-                        actionResult = CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
-                    }
+                    actionResult = runCodexLoginDialogFlow();
                 }
 
                 CodexAuthResolver.CodexAuthStatus updatedStatus = CODEX_AUTH_RESOLVER.resolveStatus();
-                CodexAuthResolver.CodexAuthActionResult finalActionResult = actionResult;
                 SwingUtilities.invokeLater(() -> applyCodexAuthControls(
                         providerName,
                         statusLabel,
                         authButton,
-                        manualPasteButton,
                         updatedStatus,
-                        finalActionResult.success() ? null : finalActionResult.message()
+                        actionResult.success() ? null : actionResult.message()
                 ));
             });
         });
     }
 
-    private void showCopilotAuthLoginProgress(JLabel statusLabel, CopilotAuthResolver.CopilotLoginChallenge challenge) {
+    private CodexAuthResolver.CodexAuthActionResult runCodexLoginDialogFlow() {
+        CodexAuthResolver.CodexCallbackWait callbackWait = null;
+        try {
+            CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
+            callbackWait = CODEX_AUTH_RESOLVER.startCallbackWait(challenge);
+            String input = showCodexLoginDialogOnEdt(challenge, callbackWait);
+            if (StringUtils.isBlank(input)) {
+                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
+            }
+
+            return CODEX_AUTH_RESOLVER.completeLoginWithAuthorizationInput(challenge, input);
+        } catch (Exception e) {
+            log.warn("Codex OAuth action failed: {}", ExceptionUtils.getMessage(e));
+            return CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+        } finally {
+            if (callbackWait != null) {
+                callbackWait.close();
+            }
+        }
+    }
+
+    private String showCodexLoginDialogOnEdt(
+            CodexAuthResolver.CodexLoginChallenge challenge,
+            CodexAuthResolver.CodexCallbackWait callbackWait
+    ) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return showCodexLoginDialog(challenge, callbackWait);
+        }
+
+        CompletableFuture<String> result = new CompletableFuture<>();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                result.complete(showCodexLoginDialog(challenge, callbackWait));
+            } catch (Exception e) {
+                result.completeExceptionally(e);
+            }
+        });
+        return result.get();
+    }
+
+    private String showCodexLoginDialog(
+            CodexAuthResolver.CodexLoginChallenge challenge,
+            CodexAuthResolver.CodexCallbackWait callbackWait
+    ) {
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), "OpenAI Codex Login", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel content = new JPanel(new BorderLayout(0, 12));
+        content.setBorder(new EmptyBorder(14, 14, 14, 14));
+
+        JTextArea instructions = new JTextArea("""
+                1. Sign in with OpenAI in your browser.
+                2. If the browser callback succeeds, this dialog will close automatically.
+                3. If browser opens a localhost/callback error, copy the full address bar URL.
+                4. Paste that callback URL below. It should look like:
+                %s
+                """.formatted(codexCallbackUrlExample(challenge)));
+        instructions.setEditable(false);
+        instructions.setLineWrap(true);
+        instructions.setWrapStyleWord(true);
+        instructions.setOpaque(false);
+        content.add(instructions, BorderLayout.NORTH);
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 0, 4, 8);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        JTextField loginUrlField = new JTextField(challenge.authorizationUri());
+        loginUrlField.setEditable(false);
+        JTextField callbackUrlField = new JTextField(codexCallbackUrlExample(challenge));
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 0;
+        fields.add(new JLabel("Login URL"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1;
+        fields.add(loginUrlField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.weightx = 0;
+        fields.add(new JLabel("Callback URL"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1;
+        fields.add(callbackUrlField, gbc);
+        content.add(fields, BorderLayout.CENTER);
+
+        String callbackStatusText = callbackWait.listening()
+                ? "%s Waiting for browser callback. You can paste manually if it is blocked.".formatted(callbackWait.message())
+                : callbackWait.message();
+        JLabel callbackStatus = new JLabel(callbackStatusText);
+        callbackStatus.setForeground(new Color(214, 117, 0));
+
+        JButton openBrowserButton = new JButton("Open browser");
+        JButton copyLoginUrlButton = new JButton("Copy login URL");
+        JButton completeButton = new JButton("Complete login with callback URL");
+        JButton cancelButton = new JButton("Cancel");
+
+        final String[] resultHolder = new String[1];
+        callbackWait.callbackInputFuture().whenComplete((callbackInput, throwable) -> {
+            if (throwable != null || StringUtils.isBlank(callbackInput)) {
+                return;
+            }
+
+            SwingUtilities.invokeLater(() -> {
+                if (!dialog.isDisplayable()) {
+                    return;
+                }
+
+                resultHolder[0] = callbackInput;
+                callbackStatus.setText("Browser callback received. Completing login...");
+                dialog.dispose();
+            });
+        });
+        openBrowserButton.addActionListener(e -> openInBrowser(challenge.authorizationUri()));
+        copyLoginUrlButton.addActionListener(e -> copyToClipboard(challenge.authorizationUri(), "Copied OpenAI Codex login URL."));
+        completeButton.addActionListener(e -> {
+            resultHolder[0] = callbackUrlField.getText();
+            dialog.dispose();
+        });
+        cancelButton.addActionListener(e -> dialog.dispose());
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttons.add(openBrowserButton);
+        buttons.add(copyLoginUrlButton);
+        buttons.add(completeButton);
+        buttons.add(cancelButton);
+
+        JPanel south = new JPanel(new BorderLayout(0, 8));
+        south.add(callbackStatus, BorderLayout.NORTH);
+        south.add(buttons, BorderLayout.SOUTH);
+        content.add(south, BorderLayout.SOUTH);
+
+        dialog.setContentPane(content);
+        dialog.setSize(new Dimension(760, 320));
+        dialog.setLocationRelativeTo(this);
+        dialog.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                openInBrowser(challenge.authorizationUri());
+            }
+        });
+        dialog.setVisible(true);
+        return resultHolder[0];
+    }
+
+    private String codexCallbackUrlExample(CodexAuthResolver.CodexLoginChallenge challenge) {
+        String redirectUri = challenge == null ? "http://localhost:1455/auth/callback" : challenge.redirectUri();
+        String separator = redirectUri.contains("?") ? "&" : "?";
+        return "%s%scode=...&state=...".formatted(redirectUri, separator);
+    }
+
+    private void copyToClipboard(String text, String successMessage) {
+        try {
+            Toolkit.getDefaultToolkit()
+                    .getSystemClipboard()
+                    .setContents(new StringSelection(StringUtils.defaultString(text)), null);
+            setStatusInfo(successMessage);
+        } catch (Exception e) {
+            setStatusError("Unable to copy to clipboard: %s".formatted(firstLine(ExceptionUtils.getMessage(e))));
+        }
+    }
+
+    private JDialog showCopilotAuthLoginProgress(
+            JLabel statusLabel,
+            CopilotAuthResolver.CopilotLoginChallenge challenge
+    ) {
         String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
                 .formatted(challenge.userCode(), challenge.verificationUri());
         statusLabel.setText(message);
         statusLabel.setForeground(new Color(214, 117, 0));
         setStatusInfo(message);
-    }
 
-    private void showCodexAuthLoginProgress(
-            JLabel statusLabel,
-            JButton manualPasteButton,
-            CodexAuthResolver.CodexLoginChallenge challenge
-    ) {
-        String message = "Browser opened for OpenAI sign in. You can paste redirect URL now or wait up to %d seconds."
-                .formatted(challenge.timeoutSeconds());
-        statusLabel.setText(message);
-        statusLabel.setForeground(new Color(214, 117, 0));
-        manualPasteButton.setEnabled(true);
-        setStatusInfo(message);
-    }
-
-    private String promptForCodexAuthorizationInput(CodexAuthResolver.CodexLoginChallenge challenge) {
-        Object response = JOptionPane.showInputDialog(
-                this,
-                "Paste OpenAI redirect URL (or code) below:",
-                "OpenAI Codex Login Fallback",
-                JOptionPane.PLAIN_MESSAGE,
-                null,
-                null,
-                challenge.authorizationUri()
+        JDialog dialog = new JDialog(
+                SwingUtilities.getWindowAncestor(this),
+                "GitHub Copilot Login",
+                Dialog.ModalityType.MODELESS
         );
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 
-        if (response == null) {
-            return null;
-        }
+        JPanel content = new JPanel(new BorderLayout(0, 12));
+        content.setBorder(new EmptyBorder(14, 14, 14, 14));
 
-        return response.toString();
+        JTextArea instructions = new JTextArea("""
+                Complete GitHub Copilot sign-in in your browser.
+                The login code was copied to your clipboard. If needed, copy it again below.
+                """);
+        instructions.setEditable(false);
+        instructions.setLineWrap(true);
+        instructions.setWrapStyleWord(true);
+        instructions.setOpaque(false);
+        content.add(instructions, BorderLayout.NORTH);
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 0, 4, 8);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        JTextField codeField = new JTextField(challenge.userCode());
+        codeField.setEditable(false);
+        JTextField verificationUrlField = new JTextField(challenge.verificationUri());
+        verificationUrlField.setEditable(false);
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.weightx = 0;
+        fields.add(new JLabel("Code"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1;
+        fields.add(codeField, gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.weightx = 0;
+        fields.add(new JLabel("Login URL"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1;
+        fields.add(verificationUrlField, gbc);
+        content.add(fields, BorderLayout.CENTER);
+
+        JButton copyCodeButton = new JButton("Copy code");
+        JButton openBrowserButton = new JButton("Open browser");
+        JButton closeButton = new JButton("Close");
+
+        copyCodeButton.addActionListener(e -> copyToClipboard(
+                challenge.userCode(),
+                "Copied GitHub Copilot login code."
+        ));
+        openBrowserButton.addActionListener(e -> {
+            copyToClipboard(challenge.userCode(), "Copied GitHub Copilot login code.");
+            openInBrowser(challenge.verificationUri());
+        });
+        closeButton.addActionListener(e -> dialog.dispose());
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        buttons.add(openBrowserButton);
+        buttons.add(copyCodeButton);
+        buttons.add(closeButton);
+        content.add(buttons, BorderLayout.SOUTH);
+
+        dialog.setContentPane(content);
+        dialog.setSize(new Dimension(560, 240));
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+        return dialog;
     }
 
     private void applyOAuthControls(
@@ -803,7 +977,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             String providerName,
             JLabel statusLabel,
             JButton authButton,
-            JButton manualPasteButton,
             CodexAuthResolver.CodexAuthStatus status,
             String failureMessage
     ) {
@@ -820,16 +993,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setForeground(Color.WHITE);
             authButton.setBackground(new Color(229, 57, 53));
             authButton.setToolTipText("Sign out Chat4J OAuth session");
-            manualPasteButton.setEnabled(false);
-            manualPasteButton.setToolTipText("Available while login is in progress");
         } else if (!oauthClientConfigured) {
             authButton.setText("Configure OAuth App");
             authButton.setEnabled(false);
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
             authButton.setToolTipText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
-            manualPasteButton.setEnabled(false);
-            manualPasteButton.setToolTipText("Configure OAuth client ID first");
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
@@ -841,12 +1010,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
             authButton.setToolTipText("Sign in OpenAI for Chat4J");
-
-            boolean loginInProgress = activeCodexLoginChallenge.get() != null;
-            manualPasteButton.setEnabled(loginInProgress);
-            manualPasteButton.setToolTipText(loginInProgress
-                    ? "Paste redirect URL/code captured from browser"
-                    : "Available while login is in progress");
         }
 
         if (StringUtils.isNotBlank(failureMessage)) {
@@ -863,12 +1026,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void applyCopilotAuthStatus(JLabel statusLabel, CopilotAuthResolver.CopilotAuthStatus status) {
-        statusLabel.setText(status.message());
+        statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
         statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
     }
 
     private void applyCodexAuthStatus(JLabel statusLabel, CodexAuthResolver.CodexAuthStatus status) {
-        statusLabel.setText(status.message());
+        statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
         statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
     }
 
@@ -1121,57 +1284,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
         int newline = text.indexOf('\n');
         return newline < 0 ? text.trim() : text.substring(0, newline).trim();
-    }
-
-    private JPanel createCopilotEndpointDiagnosticsPanel() {
-        JPanel diagnosticsPanel = new JPanel();
-        diagnosticsPanel.setLayout(new BoxLayout(diagnosticsPanel, BoxLayout.Y_AXIS));
-        diagnosticsPanel.setOpaque(false);
-
-        JLabel modelLabel = new JLabel();
-        JLabel endpointLabel = new JLabel();
-        JLabel updatedLabel = new JLabel();
-
-        JButton refreshButton = new JButton("Refresh diagnostics");
-        refreshButton.addActionListener(e -> refreshCopilotEndpointDiagnostics(
-                modelLabel,
-                endpointLabel,
-                updatedLabel
-        ));
-
-        diagnosticsPanel.add(modelLabel);
-        diagnosticsPanel.add(endpointLabel);
-        diagnosticsPanel.add(updatedLabel);
-        diagnosticsPanel.add(Box.createVerticalStrut(6));
-        diagnosticsPanel.add(refreshButton);
-
-        refreshCopilotEndpointDiagnostics(
-                modelLabel,
-                endpointLabel,
-                updatedLabel
-        );
-
-        return diagnosticsPanel;
-    }
-
-    private void refreshCopilotEndpointDiagnostics(
-            JLabel modelLabel,
-            JLabel endpointLabel,
-            JLabel updatedLabel
-    ) {
-        OpenAiChatCompletionClient.CopilotEndpointDiagnosticsSnapshot snapshot = OpenAiChatCompletionClient.diagnosticsSnapshot();
-
-        String model = StringUtils.defaultIfBlank(snapshot.modelId(), "n/a");
-        String endpoint = StringUtils.defaultIfBlank(snapshot.endpoint(), "n/a");
-
-        modelLabel.setText("Model: %s".formatted(model));
-        endpointLabel.setText("Endpoint: %s".formatted(endpoint));
-        updatedLabel.setText("Updated: %s".formatted(formatDiagnosticsTime(snapshot.updatedAtEpochMs())));
-
-        Color endpointColor = "n/a".equals(endpoint)
-                ? UIManager.getColor("Label.disabledForeground")
-                : new Color(0, 150, 0);
-        endpointLabel.setForeground(endpointColor);
     }
 
     private JPanel createCodexDiagnosticsPanel() {
@@ -1437,14 +1549,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         row.setOpaque(false);
         row.add(component);
-        return row;
-    }
-
-    private JComponent wrapLeading(JComponent first, JComponent second) {
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        row.setOpaque(false);
-        row.add(first);
-        row.add(second);
         return row;
     }
 

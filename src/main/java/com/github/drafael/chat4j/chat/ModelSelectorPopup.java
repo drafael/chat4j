@@ -4,7 +4,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderDef;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
-import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
@@ -950,7 +950,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private static List<String> sanitizeModels(String providerName, List<String> modelIds) {
-        return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
+        return CodexLocalModelCache.mergeIfCodexProvider(providerName, modelIds);
     }
 
     private static Icon providerIcon(String providerName, int size) {

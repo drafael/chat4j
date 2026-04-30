@@ -7,19 +7,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class CodexAuthResolverTest {
@@ -28,6 +31,7 @@ class CodexAuthResolverTest {
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.codex.oauthClientId";
     private static final String OAUTH_SCOPES_PROPERTY = "chat4j.codex.oauthScopes";
     private static final String OAUTH_REDIRECT_URI_PROPERTY = "chat4j.codex.oauthRedirectUri";
+    private static final String OAUTH_CALLBACK_HOST_PROPERTY = "chat4j.codex.oauthCallbackHost";
     private static final String OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY = "chat4j.codex.oauthLoginTimeoutSeconds";
 
     @TempDir
@@ -39,6 +43,7 @@ class CodexAuthResolverTest {
         System.clearProperty(OAUTH_CLIENT_ID_PROPERTY);
         System.clearProperty(OAUTH_SCOPES_PROPERTY);
         System.clearProperty(OAUTH_REDIRECT_URI_PROPERTY);
+        System.clearProperty(OAUTH_CALLBACK_HOST_PROPERTY);
         System.clearProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY);
     }
 
@@ -66,8 +71,8 @@ class CodexAuthResolverTest {
     }
 
     @Test
-    @DisplayName("Begin login creates PKCE authorization URL and triggers browser/clipboard actions")
-    void beginLogin_whenConfigured_returnsChallengeAndPromptsActions() throws Exception {
+    @DisplayName("Begin login creates PKCE authorization URL without triggering browser or clipboard actions")
+    void beginLogin_whenConfigured_returnsChallengeWithoutPromptActions() throws Exception {
         Path userHome = tempDir.resolve("home");
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
         System.setProperty(OAUTH_SCOPES_PROPERTY, "openid profile email offline_access");
@@ -86,9 +91,50 @@ class CodexAuthResolverTest {
         assertThat(challenge.codeVerifier()).isNotBlank();
         assertThat(challenge.state()).isNotBlank();
 
-        verify(promptActions).copyCodeToClipboard(challenge.authorizationUri());
-        verify(promptActions).openBrowser(challenge.authorizationUri());
         verifyNoMoreInteractions(promptActions);
+    }
+
+    @Test
+    @DisplayName("Begin login binds callback listener to redirect URI host by default")
+    void beginLogin_whenRedirectUriConfigured_usesRedirectUriHostAsCallbackHost() {
+        Path userHome = tempDir.resolve("home");
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+        System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
+
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+
+        CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+
+        assertThat(challenge.redirectUri()).isEqualTo("http://localhost:1459/auth/callback");
+        assertThat(challenge.callbackHost()).isEqualTo("localhost");
+    }
+
+    @Test
+    @DisplayName("Callback listener completes with browser redirect input")
+    void startCallbackWait_whenBrowserRedirectArrives_completesFuture() throws Exception {
+        Path userHome = tempDir.resolve("home");
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+        System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:%d/auth/callback".formatted(freePort()));
+
+        var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+        CodexAuthResolver.CodexCallbackWait callbackWait = subject.startCallbackWait(challenge);
+
+        try {
+            URI callbackUri = URI.create("%s?code=browser-code-123&state=%s".formatted(challenge.redirectUri(), challenge.state()));
+            HttpResponse<String> response = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(callbackUri).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()
+            );
+
+            assertThat(callbackWait.listening()).isTrue();
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(callbackWait.callbackInputFuture().get(2, TimeUnit.SECONDS))
+                    .contains("code=browser-code-123")
+                    .contains("state=%s".formatted(challenge.state()));
+        } finally {
+            callbackWait.close();
+        }
     }
 
     @Test
@@ -170,84 +216,9 @@ class CodexAuthResolverTest {
         }
     }
 
-    @Test
-    @DisplayName("Complete login can be completed immediately through manual submit API")
-    void completeLogin_whenManualInputSubmittedDuringWait_completesLogin() throws Exception {
-        Path userHome = tempDir.resolve("home");
-        AtomicReference<String> tokenRequestBody = new AtomicReference<>();
-
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/oauth/token", exchange -> {
-            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            tokenRequestBody.compareAndSet(null, body);
-
-            byte[] payload = """
-                    {
-                      "access_token": "sk-proj-chat4j-codex-123456789012345678901234567890",
-                      "refresh_token": "refresh-token-123",
-                      "expires_in": 3600
-                    }
-                    """.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, payload.length);
-            exchange.getResponseBody().write(payload);
-            exchange.close();
-        });
-        server.start();
-
-        try {
-            int port = server.getAddress().getPort();
-            System.setProperty(OAUTH_ISSUER_PROPERTY, "http://127.0.0.1:%d".formatted(port));
-            System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
-            System.setProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY, "15");
-            System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
-
-            CodexAuthResolver.UserPromptActions promptActions = new CodexAuthResolver.UserPromptActions() {
-                @Override
-                public void openBrowser(String authorizationUri) {
-                    // no-op in tests
-                }
-
-                @Override
-                public void copyCodeToClipboard(String text) {
-                    // no-op in tests
-                }
-
-                @Override
-                public String promptForAuthorizationInput(String message, String defaultValue) {
-                    return null;
-                }
-            };
-
-            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient(), promptActions);
-            CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
-
-            AtomicReference<CodexAuthResolver.CodexAuthActionResult> resultRef = new AtomicReference<>();
-            Thread loginThread = Thread.startVirtualThread(() -> resultRef.set(subject.completeLogin(challenge)));
-
-            boolean accepted = false;
-            String redirectInput = "http://localhost:1459/auth/callback?code=manual-code-456&state=%s"
-                    .formatted(challenge.state());
-            for (int i = 0; i < 30; i++) {
-                if (subject.submitManualAuthorizationInput(challenge, redirectInput)) {
-                    accepted = true;
-                    break;
-                }
-                Thread.sleep(50);
-            }
-
-            loginThread.join();
-
-            assertThat(accepted).isTrue();
-            assertThat(resultRef.get()).isNotNull();
-            assertThat(resultRef.get().success()).isTrue();
-            assertThat(subject.resolveBearerTokenOrNull())
-                    .isEqualTo("sk-proj-chat4j-codex-123456789012345678901234567890");
-            assertThat(tokenRequestBody.get())
-                    .contains("grant_type=authorization_code")
-                    .contains("code=manual-code-456");
-        } finally {
-            server.stop(0);
+    private int freePort() throws Exception {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
         }
     }
 

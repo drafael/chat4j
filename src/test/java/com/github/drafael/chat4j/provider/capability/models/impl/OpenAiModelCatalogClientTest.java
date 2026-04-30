@@ -412,6 +412,71 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("Codex OAuth provider merges local codex cache with API model listing")
+    void fetchModels_whenCodexApiListingSucceeds_mergesLocalCodexModelsFromCache() throws Exception {
+        originalUserHome = System.getProperty("user.home");
+        Path tempHome = Files.createTempDirectory("chat4j-codex-home");
+        System.setProperty("user.home", tempHome.toString());
+
+        Path codexDir = tempHome.resolve(".codex");
+        Files.createDirectories(codexDir);
+        Files.writeString(codexDir.resolve("models_cache.json"), """
+                {
+                  "models": [
+                    {"slug": "gpt-5.5"},
+                    {"slug": "gpt-5.4"}
+                  ]
+                }
+                """);
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            byte[] payload = """
+                    {
+                      "object": "list",
+                      "data": [
+                        {"id":"gpt-4o","object":"model","created":1,"owned_by":"openai"}
+                      ]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "OpenAI Codex",
+                    AuthType.CODEX_OAUTH,
+                    null,
+                    null,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
+
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    "http://127.0.0.1:%d".formatted(port),
+                    "test-token",
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-5.5", "gpt-5.4", "gpt-4o");
+            assertThat(models).doesNotHaveDuplicates();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Codex OAuth provider falls back to local codex models cache when API listing fails")
     void fetchModels_whenCodexApiListingFails_returnsLocalCodexModelsFromCache() throws Exception {
         originalUserHome = System.getProperty("user.home");

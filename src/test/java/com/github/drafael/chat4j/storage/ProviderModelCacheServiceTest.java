@@ -3,6 +3,8 @@ package com.github.drafael.chat4j.storage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -61,6 +63,36 @@ class ProviderModelCacheServiceTest {
         subject.clearRefreshInFlight("Mistral");
 
         assertThat(subject.tryMarkRefreshInFlight("Mistral")).isTrue();
+    }
+
+    @Test
+    @DisplayName("OpenAI Codex cached models are merged with local Codex CLI cache")
+    void getModels_whenProviderIsOpenAiCodex_mergesLocalCodexCache() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        Path tempHome = Files.createTempDirectory("chat4j-codex-model-cache");
+        System.setProperty("user.home", tempHome.toString());
+
+        try {
+            Path codexDir = tempHome.resolve(".codex");
+            Files.createDirectories(codexDir);
+            Files.writeString(codexDir.resolve("models_cache.json"), """
+                    {
+                      "models": [
+                        {"slug": "gpt-5.5"},
+                        {"slug": "gpt-5.4"}
+                      ]
+                    }
+                    """);
+
+            var cache = new InMemoryModelCache();
+            cache.put("OpenAI Codex", Instant.parse("2026-04-10T10:00:00Z"), List.of("gpt-5.3-codex"));
+            var subject = new ProviderModelCacheService(cache, fixedClock("2026-04-10T11:00:00Z"), Duration.ofHours(12));
+
+            assertThat(subject.getModels("OpenAI Codex"))
+                    .contains("gpt-5.5", "gpt-5.4", "gpt-5.3-codex");
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
     }
 
     @Test

@@ -17,10 +17,10 @@ When user clicks **Login** for GitHub Copilot in Settings:
 2. Chat4J automatically:
    - copies the user code to clipboard,
    - opens the verification URL in browser.
-3. Settings shows progress text with fallback code/URL.
-4. Chat4J polls GitHub OAuth token endpoint (`/login/oauth/access_token`) for the GitHub user token.
+3. Settings shows a modeless login dialog with the user code, verification URL, **Copy code**, and **Open browser** actions.
+4. Chat4J polls GitHub OAuth token endpoint (`/login/oauth/access_token`) for the GitHub user token while the dialog remains available.
 5. Chat4J exchanges that token at Copilot token endpoint (`/copilot_internal/v2/token`) to obtain the Copilot session token (`token`, `expires_at`).
-6. Chat4J stores:
+6. Chat4J closes the login dialog after completion and stores:
    - session token as `accessToken`
    - GitHub token as `refreshToken` (used for re-exchange)
    - `expiresAtEpochMs`
@@ -62,7 +62,7 @@ Optional endpoint overrides (primarily for testing/custom setups):
 
 - `ProviderFacade` resolves Copilot bearer token via `CopilotAuthResolver`.
 - `ProviderRuntimePolicy` uses resolver status to determine availability.
-- `ProvidersPanel` displays Copilot auth status and login/logout actions.
+- `ProvidersPanel` displays simplified Copilot auth status (`Authorized` / `Not authorized`) and login/logout actions.
 
 ## Copilot request behavior
 
@@ -81,8 +81,8 @@ Optional endpoint overrides (primarily for testing/custom setups):
 - Chat runtime prefers the endpoint declared by Copilot for the selected model, then caches observed fallback results per model.
 - Automatic fallback remains in place when runtime metadata is missing or stale.
 
-## Diagnostics and evidence
+## Reference evidence
 
-For reproducible curl proofs, upstream code permalinks, and verified external docs links:
+The Copilot provider settings panel intentionally omits inline diagnostics. For reproducible curl proofs, upstream code permalinks, and verified external docs links:
 
 - `docs/copilot-integration-header-behavior.md`

@@ -35,6 +35,6 @@ public class ProviderModelsResolver {
     }
 
     private static List<String> sanitize(String providerName, List<String> modelIds) {
-        return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
+        return CodexLocalModelCache.mergeIfCodexProvider(providerName, modelIds);
     }
 }

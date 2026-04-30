@@ -20,7 +20,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
-import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
@@ -2367,7 +2367,7 @@ public class ChatPanel extends JPanel {
     }
 
     private static List<String> sanitizeModelIds(String providerName, List<String> modelIds) {
-        return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
+        return CodexLocalModelCache.mergeIfCodexProvider(providerName, modelIds);
     }
 
     private boolean persistAssistantMessageEvent(UUID conversationId, Message message) {
