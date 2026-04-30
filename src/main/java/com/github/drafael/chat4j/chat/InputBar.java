@@ -20,6 +20,7 @@ import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
+import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.ComponentAdapter;
@@ -76,9 +77,18 @@ public class InputBar extends JPanel {
     private final JLabel agentAccessLabel;
     private final JLabel validationLabel;
     private JButton cancelGenerationButton;
-    private final JPopupMenu slashPopup = new JPopupMenu();
+    private JLayeredPane slashPopupLayeredPane;
+    private final SlashPopupPanel slashPopupContentPanel = new SlashPopupPanel();
+    private JScrollPane slashPopupScrollPane;
+    private AWTEventListener slashPopupOutsideClickListener;
+    private boolean slashPopupOutsideClickListenerInstalled;
     private final DefaultListModel<SkillCommand> slashSuggestions = new DefaultListModel<>();
-    private final JList<SkillCommand> slashSuggestionsList = new JList<>(slashSuggestions);
+    private final JList<SkillCommand> slashSuggestionsList = new JList<>(slashSuggestions) {
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+    };
     private final List<ComposerAttachment> attachments = new ArrayList<>();
     private final List<String> activeSkills = new ArrayList<>();
     private final List<SkillCommand> availableSkills = new ArrayList<>();
@@ -292,6 +302,7 @@ public class InputBar extends JPanel {
     @Override
     public void updateUI() {
         super.updateUI();
+        refreshDetachedPopupUis();
         applyThemeStyles();
         if (chipsPanel != null) {
             refreshChips();
@@ -872,7 +883,7 @@ public class InputBar extends JPanel {
         });
 
         new ArrayList<>(activeSkills).forEach(skill -> chipsPanel.add(createSkillChip(
-                "/%s".formatted(ellipsize(skill, 20)),
+                ellipsize(skill, 20),
                 () -> {
                     activeSkills.remove(skill);
                     refreshChips();
@@ -988,15 +999,15 @@ public class InputBar extends JPanel {
 
     private JComponent createSkillChip(String text, Runnable onRemove) {
         SkillChipPanel chip = new SkillChipPanel();
-        chip.setLayout(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        chip.setBorder(BorderFactory.createEmptyBorder(1, 8, 1, 3));
+        chip.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        chip.setBorder(BorderFactory.createEmptyBorder(3, 10, 3, 8));
 
         JLabel label = new JLabel(text);
-        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_COMPACT);
-        label.setForeground(resolveSkillTextColor(resolveSkillChipBackground(false)));
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
+        label.setForeground(resolveSkillChipForeground());
         chip.add(label);
 
-        JButton remove = createChipRemoveButton(onRemove);
+        JButton remove = createSkillRemoveButton(onRemove);
         chip.add(remove);
 
         chip.addMouseListener(new MouseAdapter() {
@@ -1015,15 +1026,20 @@ public class InputBar extends JPanel {
     }
 
     private JButton createChipRemoveButton(Runnable onRemove) {
-        JButton remove = new JButton();
-        remove.putClientProperty("JButton.buttonType", "toolBarButton");
-        remove.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:8");
-        remove.setIcon(chipIcon("/icons/sidebar/trash.svg", new Color(190, 86, 86)));
+        JButton remove = new ChipRemoveButton();
+        remove.setIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveForeground()));
+        remove.setRolloverIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveHoverForeground()));
         remove.setToolTipText("Remove");
-        remove.setMargin(new Insets(0, 0, 0, 0));
-        remove.setFocusable(false);
-        remove.setPreferredSize(new Dimension(18, 18));
-        remove.setMinimumSize(new Dimension(18, 18));
+        remove.addActionListener(e -> onRemove.run());
+        return remove;
+    }
+
+    private JButton createSkillRemoveButton(Runnable onRemove) {
+        JButton remove = new SkillRemoveButton();
+        Color foreground = resolveSkillChipForeground();
+        remove.setIcon(svgIcon("/icons/input/x.svg", 14, foreground));
+        remove.setRolloverIcon(svgIcon("/icons/input/x.svg", 14, resolveSkillRemoveHoverForeground()));
+        remove.setToolTipText("Remove skill");
         remove.addActionListener(e -> onRemove.run());
         return remove;
     }
@@ -1127,29 +1143,41 @@ public class InputBar extends JPanel {
     private void configureSlashPopup() {
         slashSuggestionsList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         Fonts.apply(slashSuggestionsList, Font.PLAIN, Fonts.SIZE_BODY);
-        slashSuggestionsList.setVisibleRowCount(8);
+        slashSuggestionsList.setVisibleRowCount(5);
+        slashSuggestionsList.setFixedCellHeight(46);
         slashSuggestionsList.setCellRenderer((list, value, index, isSelected, cellHasFocus) -> {
-            JPanel row = new JPanel(new BorderLayout(0, 2));
-            row.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+            JPanel row = new JPanel(new BorderLayout(14, 0));
+            row.setBorder(BorderFactory.createEmptyBorder(6, 14, 6, 12));
 
-            JLabel title = new JLabel("/%s".formatted(value.name()));
-            Fonts.apply(title, Font.PLAIN, Fonts.SIZE_BODY);
-            row.add(title, BorderLayout.NORTH);
+            SkillBadgeLabel badge = new SkillBadgeLabel();
+            badge.setColors(
+                    resolveSkillBadgeBackground(),
+                    resolveSkillBadgeBorder(),
+                    resolveSkillBadgeForeground()
+            );
+            JPanel badgeContainer = new JPanel(new GridBagLayout());
+            badgeContainer.setOpaque(false);
+            badgeContainer.add(badge);
+            row.add(badgeContainer, BorderLayout.WEST);
+
+            JPanel textStack = new JPanel();
+            textStack.setOpaque(false);
+            textStack.setLayout(new BoxLayout(textStack, BoxLayout.Y_AXIS));
+
+            JLabel title = new JLabel(value.name());
+            Fonts.apply(title, Font.BOLD, Fonts.SIZE_BODY_LARGE);
+            title.setAlignmentX(Component.LEFT_ALIGNMENT);
+            textStack.add(title);
 
             JLabel desc = new JLabel(value.description());
-            Fonts.apply(desc, Font.PLAIN, Fonts.SIZE_SMALL);
-            desc.setForeground(UIManager.getColor("Label.disabledForeground"));
-            row.add(desc, BorderLayout.SOUTH);
+            Fonts.apply(desc, Font.PLAIN, Fonts.SIZE_BODY);
+            desc.setAlignmentX(Component.LEFT_ALIGNMENT);
+            textStack.add(desc);
+            row.add(textStack, BorderLayout.CENTER);
 
-            if (isSelected) {
-                row.setBackground(list.getSelectionBackground());
-                title.setForeground(list.getSelectionForeground());
-                desc.setForeground(list.getSelectionForeground());
-            } else {
-                row.setBackground(list.getBackground());
-                title.setForeground(list.getForeground());
-            }
-
+            row.setBackground(isSelected ? resolveSkillPopupSelectionBackground(list.getBackground()) : list.getBackground());
+            title.setForeground(resolveSkillPopupTitleForeground(list));
+            desc.setForeground(resolveMutedForeground(list));
             row.setOpaque(true);
             return row;
         });
@@ -1172,10 +1200,15 @@ public class InputBar extends JPanel {
             }
         });
 
-        JScrollPane scrollPane = new JScrollPane(slashSuggestionsList);
-        scrollPane.setBorder(null);
-        scrollPane.setPreferredSize(new Dimension(320, 220));
-        slashPopup.add(scrollPane);
+        slashPopupScrollPane = new JScrollPane(slashSuggestionsList);
+        slashPopupScrollPane.setBorder(null);
+        slashPopupScrollPane.setViewportBorder(null);
+        slashPopupScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        slashPopupScrollPane.setPreferredSize(new Dimension(320, 220));
+        slashPopupContentPanel.setLayout(new BorderLayout());
+        slashPopupContentPanel.setOpaque(true);
+        slashPopupContentPanel.add(slashPopupScrollPane, BorderLayout.CENTER);
+        applySlashPopupBorder();
     }
 
     private void refreshSkills() {
@@ -1227,12 +1260,20 @@ public class InputBar extends JPanel {
 
         try {
             List<String> lines = Files.readAllLines(file);
-            for (String line : lines) {
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i);
                 String trimmed = line.trim();
+                if ("---".equals(trimmed) && i > 0) {
+                    break;
+                }
+
                 if (trimmed.startsWith("name:")) {
-                    name = trimmed.substring("name:".length()).trim();
+                    name = normalizeYamlScalar(trimmed.substring("name:".length()));
                 } else if (trimmed.startsWith("description:")) {
-                    description = trimmed.substring("description:".length()).trim();
+                    String rawDescription = trimmed.substring("description:".length()).trim();
+                    description = rawDescription.startsWith("|") || rawDescription.startsWith(">")
+                            ? parseYamlBlockScalar(lines, i + 1, leadingWhitespace(line))
+                            : normalizeYamlScalar(rawDescription);
                 }
 
                 if (!description.isBlank() && !name.isBlank()) {
@@ -1245,6 +1286,51 @@ public class InputBar extends JPanel {
 
         String finalDescription = description.isBlank() ? "No description" : description;
         return Optional.of(new SkillCommand(name, finalDescription));
+    }
+
+    private String parseYamlBlockScalar(List<String> lines, int startIndex, int parentIndent) {
+        List<String> blockLines = new ArrayList<>();
+        for (int i = startIndex; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if ("---".equals(line.trim())) {
+                break;
+            }
+            if (StringUtils.isNotBlank(line) && leadingWhitespace(line) <= parentIndent) {
+                break;
+            }
+            blockLines.add(line);
+        }
+
+        int contentIndent = blockLines.stream()
+                .filter(StringUtils::isNotBlank)
+                .mapToInt(this::leadingWhitespace)
+                .min()
+                .orElse(parentIndent + 1);
+
+        String text = blockLines.stream()
+                .map(line -> line.length() >= contentIndent ? line.substring(contentIndent) : line.trim())
+                .reduce("", (left, right) -> "%s %s".formatted(left, right));
+        return normalizeYamlScalar(text);
+    }
+
+    private String normalizeYamlScalar(String value) {
+        String normalized = StringUtils.normalizeSpace(value);
+        if (normalized.length() >= 2) {
+            char first = normalized.charAt(0);
+            char last = normalized.charAt(normalized.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return normalized.substring(1, normalized.length() - 1).trim();
+            }
+        }
+        return normalized;
+    }
+
+    private int leadingWhitespace(String value) {
+        int count = 0;
+        while (count < value.length() && Character.isWhitespace(value.charAt(count))) {
+            count++;
+        }
+        return count;
     }
 
     private void updateSlashSuggestions() {
@@ -1300,26 +1386,116 @@ public class InputBar extends JPanel {
         }
 
         int popupWidth = Math.max(240, (int) (getWidth() * 0.8));
-        Dimension popupPref = slashPopup.getPreferredSize();
-        slashPopup.setPreferredSize(new Dimension(popupWidth, popupPref.height));
+        int visibleRows = Math.max(1, Math.min(slashSuggestionsList.getVisibleRowCount(), slashSuggestions.size()));
+        int rowHeight = Math.max(1, slashSuggestionsList.getFixedCellHeight());
+        int popupHeight = (visibleRows * rowHeight) + 2;
+        JLayeredPane layeredPane = ensureSlashPopupLayeredPane();
+        if (layeredPane == null) {
+            return;
+        }
 
+        int decorationInset = slashPopupContentPanel.decorationInset();
+        slashPopupContentPanel.setPreferredSize(new Dimension(
+                popupWidth + (decorationInset * 2),
+                popupHeight + (decorationInset * 2)
+        ));
+        applySlashPopupBorder();
+
+        Point location;
         try {
             Point anchorInInputBar = new Point((getWidth() - popupWidth) / 2, 0);
-            Point anchorInTextArea = SwingUtilities.convertPoint(this, anchorInInputBar, textArea);
-            int y = Math.max(6, anchorInTextArea.y - slashPopup.getPreferredSize().height - 8);
-            slashPopup.show(textArea, anchorInTextArea.x, y);
+            Point anchorInLayeredPane = SwingUtilities.convertPoint(this, anchorInInputBar, layeredPane);
+            int y = Math.max(6, anchorInLayeredPane.y - popupHeight - 8);
+            location = new Point(anchorInLayeredPane.x, y);
         } catch (Exception e) {
-            slashPopup.show(textArea, 6, 6);
+            location = SwingUtilities.convertPoint(textArea, 6, 6, layeredPane);
         }
+
+        if (slashPopupContentPanel.getParent() != layeredPane) {
+            Container currentParent = slashPopupContentPanel.getParent();
+            if (currentParent != null) {
+                currentParent.remove(slashPopupContentPanel);
+            }
+            layeredPane.add(slashPopupContentPanel, JLayeredPane.POPUP_LAYER);
+        }
+
+        slashPopupContentPanel.setBounds(
+                location.x - decorationInset,
+                location.y - decorationInset,
+                popupWidth + (decorationInset * 2),
+                popupHeight + (decorationInset * 2)
+        );
+        slashPopupContentPanel.setVisible(true);
+        layeredPane.moveToFront(slashPopupContentPanel);
+        layeredPane.revalidate();
+        layeredPane.repaint(slashPopupContentPanel.getBounds());
+        installSlashPopupOutsideClickListener();
     }
 
     private void hideSlashPopup() {
         slashTokenStart = -1;
-        slashPopup.setVisible(false);
+        Container parent = slashPopupContentPanel.getParent();
+        if (parent != null) {
+            Rectangle bounds = slashPopupContentPanel.getBounds();
+            parent.remove(slashPopupContentPanel);
+            parent.revalidate();
+            parent.repaint(bounds.x, bounds.y, bounds.width, bounds.height);
+        }
+        uninstallSlashPopupOutsideClickListener();
+    }
+
+    private boolean isSlashPopupVisible() {
+        return slashPopupContentPanel.getParent() != null && slashPopupContentPanel.isVisible();
+    }
+
+    private JLayeredPane ensureSlashPopupLayeredPane() {
+        JRootPane rootPane = SwingUtilities.getRootPane(this);
+        if (rootPane == null) {
+            return null;
+        }
+
+        slashPopupLayeredPane = rootPane.getLayeredPane();
+        return slashPopupLayeredPane;
+    }
+
+    private void installSlashPopupOutsideClickListener() {
+        if (slashPopupOutsideClickListenerInstalled) {
+            return;
+        }
+
+        if (slashPopupOutsideClickListener == null) {
+            slashPopupOutsideClickListener = event -> {
+                if (!(event instanceof MouseEvent mouseEvent)
+                        || mouseEvent.getID() != MouseEvent.MOUSE_PRESSED
+                        || !isSlashPopupVisible()) {
+                    return;
+                }
+
+                Component source = mouseEvent.getComponent();
+                if (source != null && (SwingUtilities.isDescendingFrom(source, slashPopupContentPanel)
+                        || SwingUtilities.isDescendingFrom(source, this))) {
+                    return;
+                }
+
+                hideSlashPopup();
+            };
+        }
+
+        Toolkit.getDefaultToolkit().addAWTEventListener(slashPopupOutsideClickListener, AWTEvent.MOUSE_EVENT_MASK);
+        slashPopupOutsideClickListenerInstalled = true;
+    }
+
+    private void uninstallSlashPopupOutsideClickListener() {
+        if (!slashPopupOutsideClickListenerInstalled || slashPopupOutsideClickListener == null) {
+            return;
+        }
+
+        Toolkit.getDefaultToolkit().removeAWTEventListener(slashPopupOutsideClickListener);
+        slashPopupOutsideClickListenerInstalled = false;
     }
 
     private boolean handleSlashPopupKey(KeyEvent e) {
-        if (!slashPopup.isVisible()) {
+        if (!isSlashPopupVisible()) {
             return false;
         }
 
@@ -1390,8 +1566,50 @@ public class InputBar extends JPanel {
         textArea.setCaretPosition(Math.min(before.length() + separator.length(), updated.length()));
     }
 
+    private void refreshDetachedPopupUis() {
+        refreshDetachedPopupUi(reasoningLevelMenu);
+        refreshSlashPopupUi();
+        if (textArea != null) {
+            refreshDetachedPopupUi(textArea.getComponentPopupMenu());
+        }
+    }
+
+    private void refreshDetachedPopupUi(JPopupMenu popupMenu) {
+        if (popupMenu == null) {
+            return;
+        }
+
+        SwingUtilities.updateComponentTreeUI(popupMenu);
+        popupMenu.invalidate();
+        popupMenu.validate();
+        popupMenu.repaint();
+    }
+
+    private void refreshSlashPopupUi() {
+        if (slashPopupContentPanel == null) {
+            return;
+        }
+
+        SwingUtilities.updateComponentTreeUI(slashPopupContentPanel);
+        applySlashPopupBorder();
+    }
+
+    private void applySlashPopupBorder() {
+        if (slashPopupContentPanel == null) {
+            return;
+        }
+
+        slashPopupContentPanel.applyThemeBorder();
+        if (slashPopupScrollPane != null) {
+            slashPopupScrollPane.setBorder(null);
+            slashPopupScrollPane.setViewportBorder(null);
+            slashPopupScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        }
+    }
+
     private void applyThemeStyles() {
         setBorder(BorderFactory.createEmptyBorder(8, 16, 12, 16));
+        applySlashPopupBorder();
 
         if (scrollPane != null) {
             scrollPane.setBorder(null);
@@ -1551,6 +1769,58 @@ public class InputBar extends JPanel {
         }
     }
 
+    private class SlashPopupPanel extends JPanel {
+
+        private static final int DECORATION_INSET = 1;
+
+        private Color fill;
+        private Color stroke;
+
+        private SlashPopupPanel() {
+            super(new BorderLayout());
+            setOpaque(false);
+            applyThemeBorder();
+        }
+
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            applyThemeBorder();
+        }
+
+        private int decorationInset() {
+            return DECORATION_INSET;
+        }
+
+        private void applyThemeBorder() {
+            fill = resolveListBackground();
+            stroke = resolvePopupBorderColor();
+            setBackground(fill);
+            setOpaque(false);
+            setBorder(BorderFactory.createEmptyBorder(
+                    DECORATION_INSET,
+                    DECORATION_INSET,
+                    DECORATION_INSET,
+                    DECORATION_INSET
+            ));
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+
+            Color background = fill == null ? resolveListBackground() : fill;
+            Color border = stroke == null ? resolvePopupBorderColor() : stroke;
+            g2.setColor(background);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            g2.setColor(border);
+            g2.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
+            g2.dispose();
+        }
+    }
+
     private class ChipPanel extends JPanel {
 
         private static final int ARC = 10;
@@ -1646,65 +1916,216 @@ public class InputBar extends JPanel {
         }
     }
 
-    private Color resolveSkillTextColor(Color chipBackground) {
-        Color fallback = UIManager.getColor("Label.foreground");
-        if (fallback == null) {
-            fallback = new Color(230, 230, 230);
+    private class ChipRemoveButton extends JButton {
+
+        private static final int SIZE = 18;
+        private static final int ARC = 8;
+
+        private ChipRemoveButton() {
+            putClientProperty("JButton.buttonType", "toolBarButton");
+            setMargin(new Insets(0, 0, 0, 0));
+            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+            setContentAreaFilled(false);
+            setFocusPainted(false);
+            setFocusable(false);
+            setRolloverEnabled(true);
+            setPreferredSize(new Dimension(SIZE, SIZE));
+            setMinimumSize(new Dimension(SIZE, SIZE));
         }
 
-        Color accent = resolveAccentColor();
-        Color darkAccentText = blendColors(accent, Color.BLACK, 0.58f);
-        Color lightAccentText = blendColors(accent, Color.WHITE, 0.70f);
+        @Override
+        protected void paintComponent(Graphics g) {
+            if (getModel().isRollover()) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(resolveChipRemoveHoverBackground());
+                g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, ARC, ARC);
+                g2.dispose();
+            }
+            super.paintComponent(g);
+        }
+    }
 
-        Color best = fallback;
-        double bestContrast = contrastRatio(best, chipBackground);
+    private class SkillRemoveButton extends JButton {
 
-        double darkContrast = contrastRatio(darkAccentText, chipBackground);
-        if (darkContrast > bestContrast) {
-            best = darkAccentText;
-            bestContrast = darkContrast;
+        private static final int SIZE = 20;
+        private static final int ARC = 9;
+
+        private SkillRemoveButton() {
+            putClientProperty("JButton.buttonType", "toolBarButton");
+            setMargin(new Insets(0, 0, 0, 0));
+            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+            setContentAreaFilled(false);
+            setFocusPainted(false);
+            setFocusable(false);
+            setRolloverEnabled(true);
+            setPreferredSize(new Dimension(SIZE, SIZE));
+            setMinimumSize(new Dimension(SIZE, SIZE));
         }
 
-        double lightContrast = contrastRatio(lightAccentText, chipBackground);
-        if (lightContrast > bestContrast) {
-            best = lightAccentText;
-            bestContrast = lightContrast;
+        @Override
+        protected void paintComponent(Graphics g) {
+            if (getModel().isRollover()) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(resolveSkillRemoveHoverBackground());
+                g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, ARC, ARC);
+                g2.dispose();
+            }
+            super.paintComponent(g);
+        }
+    }
+
+    private class SkillBadgeLabel extends JLabel {
+
+        private static final int ARC = 10;
+        private Color fill;
+        private Color border;
+
+        private SkillBadgeLabel() {
+            super("SKILL", SwingConstants.CENTER);
+            Fonts.apply(this, Font.BOLD, Fonts.SIZE_MICRO);
+            setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
+            Dimension size = new Dimension(48, 28);
+            setPreferredSize(size);
+            setMinimumSize(size);
+            setMaximumSize(size);
+            setOpaque(false);
         }
 
-        if (bestContrast < 3.4d) {
-            Color black = Color.BLACK;
-            Color white = Color.WHITE;
-            best = contrastRatio(black, chipBackground) > contrastRatio(white, chipBackground) ? black : white;
+        private void setColors(Color fill, Color border, Color foreground) {
+            this.fill = fill;
+            this.border = border;
+            setForeground(foreground);
         }
 
-        return best;
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(fill == null ? resolveSkillBadgeBackground() : fill);
+            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
+            g2.dispose();
+            super.paintComponent(g);
+        }
+
+        @Override
+        protected void paintBorder(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(border == null ? resolveSkillBadgeBorder() : border);
+            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
+            g2.dispose();
+        }
+    }
+
+    private Color resolveChipRemoveForeground() {
+        Color foreground = UIManager.getColor("Label.foreground");
+        if (foreground == null) {
+            foreground = new Color(120, 120, 120);
+        }
+        return foreground;
+    }
+
+    private Color resolveChipRemoveHoverForeground() {
+        Color background = resolveChipBackground();
+        return isDark(background) ? Color.WHITE : Color.BLACK;
+    }
+
+    private Color resolveChipRemoveHoverBackground() {
+        Color chipBackground = resolveChipBackground();
+        Color foreground = resolveChipRemoveForeground();
+        return blendColors(chipBackground, foreground, isDark(chipBackground) ? 0.24f : 0.10f);
     }
 
     private Color resolveSkillChipBackground(boolean hovered) {
         Color base = resolveChipBackground();
-        Color accent = resolveAccentColor();
-        float ratio = hovered ? 0.28f : 0.22f;
-        return blendColors(base, accent, ratio);
+        Color fill = isDark(base) ? blendColors(base, skillGreen(), hovered ? 0.34f : 0.26f) : new Color(214, 250, 232);
+        return hovered ? adjustBrightness(fill, 0.05f) : fill;
     }
 
     private Color resolveSkillChipBorder(boolean hovered) {
-        Color background = resolveSkillChipBackground(hovered);
-        Color border = resolveChipBorderColor(background);
-        if (colorDistance(background, border) < 20) {
-            border = adjustBrightness(background, 0.18f);
-        }
-        return border;
+        Color base = resolveChipBackground();
+        Color border = isDark(base) ? blendColors(skillGreen(), Color.WHITE, 0.18f) : new Color(125, 239, 183);
+        return hovered ? adjustBrightness(border, 0.04f) : border;
     }
 
-    private Color resolveAccentColor() {
-        Color accent = UIManager.getColor("Component.accentColor");
-        if (accent == null) {
-            accent = UIManager.getColor("Component.linkColor");
+    private Color resolveSkillChipForeground() {
+        return isDark(resolveChipBackground()) ? new Color(181, 255, 218) : new Color(0, 95, 70);
+    }
+
+    private Color resolveSkillRemoveHoverForeground() {
+        return isDark(resolveChipBackground()) ? Color.WHITE : new Color(0, 74, 55);
+    }
+
+    private Color resolveSkillRemoveHoverBackground() {
+        Color chipBackground = resolveSkillChipBackground(false);
+        Color foreground = resolveSkillChipForeground();
+        return blendColors(chipBackground, foreground, isDark(chipBackground) ? 0.22f : 0.12f);
+    }
+
+    private Color resolveSkillBadgeBackground() {
+        Color listBackground = resolveListBackground();
+        return isDark(listBackground) ? blendColors(listBackground, skillGreen(), 0.30f) : new Color(219, 252, 235);
+    }
+
+    private Color resolveSkillBadgeBorder() {
+        return isDark(resolveListBackground()) ? blendColors(skillGreen(), Color.WHITE, 0.16f) : new Color(132, 242, 190);
+    }
+
+    private Color resolveSkillBadgeForeground() {
+        return isDark(resolveListBackground()) ? new Color(181, 255, 218) : new Color(0, 95, 70);
+    }
+
+    private Color resolveSkillPopupSelectionBackground(Color listBackground) {
+        Color background = listBackground == null ? resolveListBackground() : listBackground;
+        Color foreground = resolveContrastingForeground(background);
+        return blendColors(background, foreground, isDark(background) ? 0.12f : 0.07f);
+    }
+
+    private Color resolveSkillPopupTitleForeground(JList<?> list) {
+        Color foreground = list.getForeground();
+        if (foreground == null) {
+            foreground = UIManager.getColor("Label.foreground");
         }
-        if (accent == null) {
-            accent = new Color(120, 175, 255);
+        return foreground == null ? resolveContrastingForeground(resolveListBackground()) : foreground;
+    }
+
+    private Color resolveMutedForeground(JList<?> list) {
+        Color foreground = UIManager.getColor("Label.disabledForeground");
+        if (foreground == null) {
+            foreground = list.getForeground();
         }
-        return accent;
+        return foreground == null ? new Color(110, 110, 120) : foreground;
+    }
+
+    private Color resolveListBackground() {
+        Color background = UIManager.getColor("List.background");
+        if (background == null) {
+            background = UIManager.getColor("PopupMenu.background");
+        }
+        if (background == null) {
+            background = UIManager.getColor("Panel.background");
+        }
+        return background == null ? Color.WHITE : background;
+    }
+
+    private Color resolvePopupBorderColor() {
+        Color background = resolveListBackground();
+        Color foreground = resolveContrastingForeground(background);
+        return blendColors(background, foreground, isDark(background) ? 0.18f : 0.12f);
+    }
+
+    private Color resolveContrastingForeground(Color background) {
+        return isDark(background) ? Color.WHITE : Color.BLACK;
+    }
+
+    private boolean isDark(Color color) {
+        return color != null && relativeLuminance(color) < 0.45d;
+    }
+
+    private Color skillGreen() {
+        return new Color(16, 185, 129);
     }
 
     private Color blendColors(Color base, Color overlay, float ratio) {

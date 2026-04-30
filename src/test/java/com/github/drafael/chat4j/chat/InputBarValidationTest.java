@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
+import javax.swing.plaf.basic.BasicListUI;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -192,11 +193,61 @@ class InputBarValidationTest {
         assertThat(projectRootButton.getText()).startsWith(secondRoot.getFileName().toString().substring(0, 8));
     }
 
+    @Test
+    @DisplayName("Block YAML skill descriptions are flattened for popup display")
+    void parseSkillFile_whenDescriptionUsesBlockScalar_returnsReadableDescription() throws Exception {
+        InputBar subject = new InputBar();
+        Path skillDir = Files.createTempDirectory("chat4j-skill-block-description");
+        Path skillFile = skillDir.resolve("SKILL.md");
+        Files.writeString(skillFile, """
+                ---
+                name: humanizer
+                description: |
+                  Remove signs of AI-generated writing from text. Use when editing or reviewing
+                  text to make it sound more natural and human-written.
+                allowed-tools:
+                  - Read
+                ---
+                # Humanizer
+                """);
+
+        Optional<?> result = invokeParseSkillFile(subject, skillFile);
+
+        assertThat(result).isPresent();
+        assertThat(readSkillDescription(result.orElseThrow()))
+                .isEqualTo("Remove signs of AI-generated writing from text. Use when editing or reviewing text to make it sound more natural and human-written.");
+    }
+
+    @Test
+    @DisplayName("Theme refresh updates detached skills popup components")
+    void updateUI_whenThemeChanges_refreshesDetachedSlashPopupComponents() throws Exception {
+        InputBar subject = new InputBar();
+        JList<?> slashSuggestionsList = readSlashSuggestionsList(subject);
+        slashSuggestionsList.setUI(new SentinelListUi());
+
+        subject.updateUI();
+
+        assertThat(slashSuggestionsList.getUI()).isNotInstanceOf(SentinelListUi.class);
+    }
+
     @SuppressWarnings("unchecked")
     private Optional<?> invokeToComposerAttachment(InputBar inputBar, Path path) throws Exception {
         Method method = InputBar.class.getDeclaredMethod("toComposerAttachment", Path.class);
         method.setAccessible(true);
         return (Optional<?>) method.invoke(inputBar, path);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<?> invokeParseSkillFile(InputBar inputBar, Path path) throws Exception {
+        Method method = InputBar.class.getDeclaredMethod("parseSkillFile", Path.class);
+        method.setAccessible(true);
+        return (Optional<?>) method.invoke(inputBar, path);
+    }
+
+    private String readSkillDescription(Object skillCommand) throws Exception {
+        Method method = skillCommand.getClass().getDeclaredMethod("description");
+        method.setAccessible(true);
+        return (String) method.invoke(skillCommand);
     }
 
     private JLabel readValidationLabel(InputBar inputBar) throws Exception {
@@ -221,5 +272,14 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("agentModeButton");
         field.setAccessible(true);
         return (JToggleButton) field.get(inputBar);
+    }
+
+    private JList<?> readSlashSuggestionsList(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("slashSuggestionsList");
+        field.setAccessible(true);
+        return (JList<?>) field.get(inputBar);
+    }
+
+    private static class SentinelListUi extends BasicListUI {
     }
 }
