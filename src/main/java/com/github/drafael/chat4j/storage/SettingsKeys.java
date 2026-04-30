@@ -34,6 +34,8 @@ public final class SettingsKeys {
     public static final String MODEL_FAVORITE_PREFIX = "chat4j.models.favorite.";
     public static final String MODEL_FAVORITE_DELIMITER = "::";
 
+    public static final String PROMPT_CATALOG = "chat4j.prompts.catalog";
+
     public static final String SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER = "chat4j.migration.settingsDbToProperties";
 
     private SettingsKeys() {

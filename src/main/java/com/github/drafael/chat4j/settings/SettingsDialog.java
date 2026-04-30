@@ -1,7 +1,8 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.formdev.flatlaf.util.SystemInfo;
+import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.NonNull;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -12,6 +13,8 @@ import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.util.List;
 
+import static java.util.Collections.emptyList;
+
 public class SettingsDialog extends JDialog {
 
     private static final int SIDEBAR_WIDTH = 230;
@@ -19,9 +22,11 @@ public class SettingsDialog extends JDialog {
     private JPanel titleBarSpacer;
     private JPanel actionBar;
     private JList<SettingsSection> sectionList;
+    private List<SettingsSection> sections = emptyList();
+    private boolean savingBeforeDispose;
     private final PropertyChangeListener lafChangeListener;
 
-    public SettingsDialog(Frame owner, SettingsRepo settingsRepo) {
+    public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepo settingsRepo) {
         super(owner, "Settings", true);
 
         configureDialog(owner);
@@ -66,7 +71,7 @@ public class SettingsDialog extends JDialog {
     }
 
     private JComponent createSettingsShell(SettingsRepo settingsRepo) {
-        List<SettingsSection> sections = createSections(settingsRepo);
+        sections = createSections(settingsRepo);
 
         DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
         sections.forEach(sectionModel::addElement);
@@ -126,7 +131,8 @@ public class SettingsDialog extends JDialog {
         return List.of(
                 new SettingsSection("general", "General", new GeneralPanel(settingsRepo)),
                 new SettingsSection("appearance", "Appearance", new AppearancePanel(settingsRepo)),
-                new SettingsSection("providers", "Providers", new ProvidersPanel(settingsRepo))
+                new SettingsSection("providers", "Providers", new ProvidersPanel(settingsRepo)),
+                new SettingsSection("prompts", "Prompts", new PromptsPanel(settingsRepo))
         );
     }
 
@@ -162,6 +168,40 @@ public class SettingsDialog extends JDialog {
                 UIManager.removePropertyChangeListener(lafChangeListener);
             }
         });
+    }
+
+    @Override
+    public void dispose() {
+        SavePendingResult saveResult = savePendingPanelChangesResult();
+        if (!saveResult.saved()) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Prompt settings could not be saved:\n\n%s".formatted(saveResult.message()),
+                    "Settings Not Saved",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
+        super.dispose();
+    }
+
+    private SavePendingResult savePendingPanelChangesResult() {
+        if (savingBeforeDispose) {
+            return new SavePendingResult(true, "");
+        }
+        savingBeforeDispose = true;
+        try {
+            return sections.stream()
+                    .map(SettingsSection::content)
+                    .filter(PromptsPanel.class::isInstance)
+                    .map(PromptsPanel.class::cast)
+                    .filter(panel -> !panel.savePendingChanges())
+                    .findFirst()
+                    .map(panel -> new SavePendingResult(false, panel.lastSaveError()))
+                    .orElseGet(() -> new SavePendingResult(true, ""));
+        } finally {
+            savingBeforeDispose = false;
+        }
     }
 
     private void applyThemeStyles() {
@@ -207,5 +247,8 @@ public class SettingsDialog extends JDialog {
     }
 
     private record SettingsSection(String id, String title, JComponent content) {
+    }
+
+    private record SavePendingResult(boolean saved, String message) {
     }
 }

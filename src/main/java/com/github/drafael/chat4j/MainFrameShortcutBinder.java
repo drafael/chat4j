@@ -40,6 +40,7 @@ public final class MainFrameShortcutBinder {
         registerShortcut(rootPane, normalizedModifier, "COMMA", "openSettings", actions.openSettings());
         registerShortcut(rootPane, normalizedModifier, "B", "toggleSidebar", actions.toggleSidebar());
         registerShortcut(rootPane, "%s shift".formatted(normalizedModifier), "F", "openChatSearch", actions.openChatSearch());
+        registerShortcut(rootPane, normalizedModifier, "P", "openCommandCenter", actions.openCommandCenter());
         registerShortcut(rootPane, normalizedModifier, "SLASH", "toggleModelDropdown", actions.toggleModelDropdown());
     }
 
@@ -76,6 +77,7 @@ public final class MainFrameShortcutBinder {
             Runnable openSettings,
             Runnable toggleSidebar,
             Runnable openChatSearch,
+            Runnable openCommandCenter,
             Runnable toggleModelDropdown
     ) {
 
@@ -84,6 +86,7 @@ public final class MainFrameShortcutBinder {
             openSettings = validateAction(openSettings, "openSettings");
             toggleSidebar = validateAction(toggleSidebar, "toggleSidebar");
             openChatSearch = validateAction(openChatSearch, "openChatSearch");
+            openCommandCenter = validateAction(openCommandCenter, "openCommandCenter");
             toggleModelDropdown = validateAction(toggleModelDropdown, "toggleModelDropdown");
         }
 

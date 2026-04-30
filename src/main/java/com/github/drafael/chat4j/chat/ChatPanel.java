@@ -1272,8 +1272,23 @@ public class ChatPanel extends JPanel {
     }
 
     private void copyBubbleTextToClipboard(MessageBubble bubble) {
-        String text = bubble.getFullText();
-        if (text.isEmpty()) {
+        copyTextToClipboard(bubble.getFullText());
+    }
+
+    public boolean canCopyRecentResponse() {
+        return history.stream().anyMatch(message -> message.role() == Role.ASSISTANT && StringUtils.isNotBlank(message.content()));
+    }
+
+    public void copyRecentResponseToClipboard() {
+        history.stream()
+                .filter(message -> message.role() == Role.ASSISTANT && StringUtils.isNotBlank(message.content()))
+                .reduce((first, second) -> second)
+                .map(Message::content)
+                .ifPresent(this::copyTextToClipboard);
+    }
+
+    private void copyTextToClipboard(String text) {
+        if (StringUtils.isBlank(text)) {
             return;
         }
         Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
@@ -1291,6 +1306,21 @@ public class ChatPanel extends JPanel {
         }
         int keepCount = bubble.getRole() == Role.USER ? bubbleIndex + 1 : bubbleIndex;
         return keepCount > 0 && history.get(keepCount - 1).role() == Role.USER;
+    }
+
+    public boolean canRegenerateRecentResponse() {
+        if (currentProvider == null || isVisibleConversationBusy()) {
+            return false;
+        }
+        List<MessageBubble> bubbles = collectBubbles();
+        return !bubbles.isEmpty() && canRegenerateFrom(bubbles.getLast());
+    }
+
+    public void regenerateRecentResponse() {
+        List<MessageBubble> bubbles = collectBubbles();
+        if (!bubbles.isEmpty()) {
+            regenerateFromBubble(bubbles.getLast());
+        }
     }
 
     private void regenerateFromBubble(MessageBubble bubble) {
@@ -1981,7 +2011,7 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void requestClearChat() {
+    public void requestClearChat() {
         if (!canClearChat()) {
             return;
         }
@@ -1990,7 +2020,7 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private boolean canClearChat() {
+    public boolean canClearChat() {
         return !history.isEmpty() && !isVisibleConversationBusy() && inputBar.isEnabled();
     }
 

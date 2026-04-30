@@ -196,6 +196,25 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Command center button fires listener using toolbar presentation")
+    void commandCenterButtonClick_whenListenerRegistered_notifiesListener() throws Exception {
+        InputBar subject = new InputBar();
+        JButton commandCenterButton = readCommandCenterButton(subject);
+        AtomicBoolean notified = new AtomicBoolean(false);
+
+        subject.addCommandCenterListener(e -> notified.set(true));
+        SwingUtilities.invokeAndWait(commandCenterButton::doClick);
+
+        assertThat(notified).isTrue();
+        assertThat(commandCenterButton.getToolTipText()).contains("Command center");
+        assertThat(commandCenterButton.getToolTipText()).contains("P");
+        assertThat(commandCenterButton.getPreferredSize()).isEqualTo(new Dimension(24, 24));
+
+        subject.setEnabled(false);
+        assertThat(commandCenterButton.isEnabled()).isFalse();
+    }
+
+    @Test
     @DisplayName("Clear chat button fires listener using toolbar presentation")
     void clearChatButtonClick_whenListenerRegistered_notifiesListener() throws Exception {
         InputBar subject = new InputBar();
@@ -303,6 +322,12 @@ class InputBarValidationTest {
 
     private JButton readClearChatButton(InputBar inputBar) throws Exception {
         Field field = InputBar.class.getDeclaredField("clearChatButton");
+        field.setAccessible(true);
+        return (JButton) field.get(inputBar);
+    }
+
+    private JButton readCommandCenterButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("commandCenterButton");
         field.setAccessible(true);
         return (JButton) field.get(inputBar);
     }

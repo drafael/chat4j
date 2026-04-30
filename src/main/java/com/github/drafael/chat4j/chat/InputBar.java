@@ -5,6 +5,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatFileViewDirectoryIcon;
 import com.formdev.flatlaf.icons.FlatFileViewFileIcon;
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
@@ -51,6 +52,7 @@ public class InputBar extends JPanel {
     private static final int SHELL_ARC = 20;
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
+    private static final int COMMAND_CENTER_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int AGENT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int CLEAR_CHAT_ICON_SIZE = ATTACH_ICON_SIZE;
@@ -68,6 +70,7 @@ public class InputBar extends JPanel {
     private final JPanel chipsPanel;
     private final JPanel composerShell;
     private final JButton attachButton;
+    private final JButton commandCenterButton;
     private final JButton thinkingButton;
     private final JToggleButton agentModeButton;
     private final JButton clearChatButton;
@@ -96,6 +99,7 @@ public class InputBar extends JPanel {
     private final List<SkillCommand> availableSkills = new ArrayList<>();
     private final AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
     private final List<ActionListener> sendListeners = new ArrayList<>();
+    private final List<ActionListener> commandCenterListeners = new ArrayList<>();
     private final List<ActionListener> clearChatListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
@@ -186,6 +190,19 @@ public class InputBar extends JPanel {
         attachButton.setMinimumSize(new Dimension(24, 24));
         attachButton.addActionListener(e -> openAttachmentPicker());
 
+        commandCenterButton = new JButton();
+        commandCenterButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        commandCenterButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        commandCenterButton.setIcon(commandCenterIcon(UIManager.getColor("Label.foreground")));
+        commandCenterButton.setFocusable(false);
+        commandCenterButton.setRolloverEnabled(true);
+        commandCenterButton.setMargin(new Insets(0, 0, 0, 0));
+        commandCenterButton.setPreferredSize(new Dimension(24, 24));
+        commandCenterButton.setMinimumSize(new Dimension(24, 24));
+        commandCenterButton.setMaximumSize(new Dimension(24, 24));
+        commandCenterButton.setToolTipText("Command center  %sP".formatted(SystemInfo.isMacOS ? "⌘" : "Ctrl+"));
+        commandCenterButton.addActionListener(e -> fireCommandCenter());
+
         thinkingButton = new JButton();
         thinkingButton.putClientProperty("JButton.buttonType", "toolBarButton");
         thinkingButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
@@ -243,6 +260,7 @@ public class InputBar extends JPanel {
         JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(attachButton);
+        actionsPanel.add(commandCenterButton);
         actionsPanel.add(thinkingButton);
         actionsPanel.add(agentModeButton);
         actionsPanel.add(clearChatButton);
@@ -331,6 +349,15 @@ public class InputBar extends JPanel {
         return textArea.getText().trim();
     }
 
+    public String getRawText() {
+        return textArea.getText();
+    }
+
+    public void setText(String text) {
+        textArea.setText(StringUtils.defaultString(text));
+        textArea.setCaretPosition(textArea.getDocument().getLength());
+    }
+
     public ComposerState getComposerState() {
         return new ComposerState(textArea.getText(), attachments, activeSkills);
     }
@@ -372,6 +399,7 @@ public class InputBar extends JPanel {
         super.setEnabled(enabled);
         textArea.setEnabled(enabled);
         attachButton.setEnabled(enabled);
+        commandCenterButton.setEnabled(enabled);
         thinkingButton.setEnabled(enabled);
         agentModeButton.setEnabled(enabled && agentModeAvailable);
         clearChatButton.setEnabled(enabled);
@@ -383,6 +411,10 @@ public class InputBar extends JPanel {
 
     public void addSendListener(ActionListener listener) {
         sendListeners.add(listener);
+    }
+
+    public void addCommandCenterListener(ActionListener listener) {
+        commandCenterListeners.add(listener);
     }
 
     public void setSendOnEnter(boolean sendOnEnter) {
@@ -457,6 +489,10 @@ public class InputBar extends JPanel {
 
     public boolean isAgentModeRequested() {
         return agentModeRequested;
+    }
+
+    public void toggleAgentMode() {
+        onAgentModeButtonClicked();
     }
 
     public void setAgentModeEnabled(boolean enabled) {
@@ -812,6 +848,13 @@ public class InputBar extends JPanel {
     private void fireSend() {
         var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "send");
         for (ActionListener l : sendListeners) {
+            l.actionPerformed(event);
+        }
+    }
+
+    private void fireCommandCenter() {
+        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "commandCenter");
+        for (ActionListener l : commandCenterListeners) {
             l.actionPerformed(event);
         }
     }
@@ -1698,6 +1741,11 @@ public class InputBar extends JPanel {
             attachButton.setIcon(attachIcon(attachColor));
         }
 
+        if (commandCenterButton != null) {
+            commandCenterButton.setForeground(attachColor);
+            commandCenterButton.setIcon(commandCenterIcon(attachColor));
+        }
+
         if (thinkingButton != null) {
             thinkingButton.setForeground(attachColor);
             updateThinkingTogglePresentation();
@@ -2402,6 +2450,11 @@ public class InputBar extends JPanel {
     private Icon attachIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/paperclip.svg", ATTACH_ICON_SIZE, tint);
         return icon != null ? icon : new FlatFileViewFileIcon();
+    }
+
+    private Icon commandCenterIcon(Color tint) {
+        Icon icon = svgIcon("/icons/input/command.svg", COMMAND_CENTER_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
     }
 
     private Icon thinkingIcon(Color tint) {

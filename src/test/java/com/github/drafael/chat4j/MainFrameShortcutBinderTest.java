@@ -23,6 +23,7 @@ class MainFrameShortcutBinderTest {
         var settingsCalls = new AtomicInteger();
         var sidebarCalls = new AtomicInteger();
         var searchCalls = new AtomicInteger();
+        var commandCenterCalls = new AtomicInteger();
         var modelCalls = new AtomicInteger();
 
         var actions = new MainFrameShortcutBinder.ShortcutActions(
@@ -30,6 +31,7 @@ class MainFrameShortcutBinderTest {
                 settingsCalls::incrementAndGet,
                 sidebarCalls::incrementAndGet,
                 searchCalls::incrementAndGet,
+                commandCenterCalls::incrementAndGet,
                 modelCalls::incrementAndGet
         );
 
@@ -39,18 +41,21 @@ class MainFrameShortcutBinderTest {
         assertThat(mappedActionKey(rootPane, "ctrl COMMA")).isEqualTo("openSettings");
         assertThat(mappedActionKey(rootPane, "ctrl B")).isEqualTo("toggleSidebar");
         assertThat(mappedActionKey(rootPane, "ctrl shift F")).isEqualTo("openChatSearch");
+        assertThat(mappedActionKey(rootPane, "ctrl P")).isEqualTo("openCommandCenter");
         assertThat(mappedActionKey(rootPane, "ctrl SLASH")).isEqualTo("toggleModelDropdown");
 
         trigger(rootPane, "newChat");
         trigger(rootPane, "openSettings");
         trigger(rootPane, "toggleSidebar");
         trigger(rootPane, "openChatSearch");
+        trigger(rootPane, "openCommandCenter");
         trigger(rootPane, "toggleModelDropdown");
 
         assertThat(newChatCalls.get()).isEqualTo(1);
         assertThat(settingsCalls.get()).isEqualTo(1);
         assertThat(sidebarCalls.get()).isEqualTo(1);
         assertThat(searchCalls.get()).isEqualTo(1);
+        assertThat(commandCenterCalls.get()).isEqualTo(1);
         assertThat(modelCalls.get()).isEqualTo(1);
     }
 
@@ -59,6 +64,7 @@ class MainFrameShortcutBinderTest {
     void bind_whenModifierIsUnsupported_throwsException() {
         var rootPane = new JRootPane();
         var actions = new MainFrameShortcutBinder.ShortcutActions(
+                () -> { },
                 () -> { },
                 () -> { },
                 () -> { },
