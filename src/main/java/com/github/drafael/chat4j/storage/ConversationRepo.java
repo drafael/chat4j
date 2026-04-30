@@ -128,6 +128,17 @@ public class ConversationRepo {
         }
     }
 
+    public void deleteMessages(UUID conversationId) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "DELETE FROM messages WHERE conversation_id = ?"
+             )
+        ) {
+            ps.setObject(1, conversationId);
+            ps.executeUpdate();
+        }
+    }
+
     public void deleteConversations(List<UUID> ids) throws SQLException {
         if (ids.isEmpty()) {
             return;

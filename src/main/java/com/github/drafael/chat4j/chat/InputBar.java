@@ -53,6 +53,7 @@ public class InputBar extends JPanel {
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int AGENT_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int CLEAR_CHAT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_ICON_SIZE = 24;
     private static final int STOP_BUTTON_SIZE = 28;
     private static final int PROJECT_ROOT_BUTTON_HEIGHT = 24;
@@ -69,6 +70,7 @@ public class InputBar extends JPanel {
     private final JButton attachButton;
     private final JButton thinkingButton;
     private final JToggleButton agentModeButton;
+    private final JButton clearChatButton;
     private final JPopupMenu reasoningLevelMenu = new JPopupMenu();
     private final Map<ReasoningLevel, JRadioButtonMenuItem> reasoningLevelItems = new LinkedHashMap<>();
     private final JPanel projectRootRowPanel;
@@ -94,6 +96,7 @@ public class InputBar extends JPanel {
     private final List<SkillCommand> availableSkills = new ArrayList<>();
     private final AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
     private final List<ActionListener> sendListeners = new ArrayList<>();
+    private final List<ActionListener> clearChatListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
     private final List<Consumer<Boolean>> agentModeListeners = new ArrayList<>();
@@ -104,6 +107,7 @@ public class InputBar extends JPanel {
     private boolean agentModeAvailable = false;
     private boolean agentModeEnabled = false;
     private boolean agentModeRequested = false;
+    private boolean clearChatAvailable = false;
     private Path agentProjectRoot;
     private int slashTokenStart = -1;
     private Function<Component, Optional<Path>> projectRootChooser =
@@ -206,6 +210,19 @@ public class InputBar extends JPanel {
         agentModeButton.setVisible(false);
         agentModeButton.addActionListener(e -> onAgentModeButtonClicked());
 
+        clearChatButton = new JButton();
+        clearChatButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        clearChatButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        clearChatButton.setFocusable(false);
+        clearChatButton.setRolloverEnabled(true);
+        clearChatButton.setMargin(new Insets(0, 0, 0, 0));
+        clearChatButton.setPreferredSize(new Dimension(24, 24));
+        clearChatButton.setMinimumSize(new Dimension(24, 24));
+        clearChatButton.setMaximumSize(new Dimension(24, 24));
+        clearChatButton.setToolTipText("Clear chat");
+        clearChatButton.setVisible(false);
+        clearChatButton.addActionListener(e -> fireClearChat());
+
         cancelGenerationButton = new JButton();
         cancelGenerationButton.putClientProperty("JButton.buttonType", "toolBarButton");
         cancelGenerationButton.putClientProperty(
@@ -228,6 +245,7 @@ public class InputBar extends JPanel {
         actionsPanel.add(attachButton);
         actionsPanel.add(thinkingButton);
         actionsPanel.add(agentModeButton);
+        actionsPanel.add(clearChatButton);
 
         JPanel cancelPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         cancelPanel.setOpaque(false);
@@ -356,6 +374,8 @@ public class InputBar extends JPanel {
         attachButton.setEnabled(enabled);
         thinkingButton.setEnabled(enabled);
         agentModeButton.setEnabled(enabled && agentModeAvailable);
+        clearChatButton.setEnabled(enabled);
+        applyClearChatVisibility();
         if (projectRootButton != null) {
             projectRootButton.setEnabled(enabled && agentModeAvailable && agentModeEnabled);
         }
@@ -367,6 +387,10 @@ public class InputBar extends JPanel {
 
     public void setSendOnEnter(boolean sendOnEnter) {
         this.sendOnEnter = sendOnEnter;
+    }
+
+    public void addClearChatListener(ActionListener listener) {
+        clearChatListeners.add(listener);
     }
 
     public void addCancelGenerationListener(ActionListener listener) {
@@ -762,9 +786,39 @@ public class InputBar extends JPanel {
         return cancelGenerationButton.isVisible();
     }
 
+    public void setClearChatVisible(boolean visible) {
+        Runnable update = () -> {
+            clearChatAvailable = visible;
+            applyClearChatVisibility();
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            update.run();
+        } else {
+            SwingUtilities.invokeLater(update);
+        }
+    }
+
+    public boolean isClearChatVisible() {
+        return clearChatButton.isVisible();
+    }
+
+    private void applyClearChatVisibility() {
+        clearChatButton.setVisible(clearChatAvailable && isEnabled());
+        revalidate();
+        repaint();
+    }
+
     private void fireSend() {
         var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "send");
         for (ActionListener l : sendListeners) {
+            l.actionPerformed(event);
+        }
+    }
+
+    private void fireClearChat() {
+        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "clearChat");
+        for (ActionListener l : clearChatListeners) {
             l.actionPerformed(event);
         }
     }
@@ -1656,6 +1710,11 @@ public class InputBar extends JPanel {
             updateAgentModePresentation();
         }
 
+        if (clearChatButton != null) {
+            clearChatButton.setForeground(attachColor);
+            clearChatButton.setIcon(clearChatIcon(attachColor));
+        }
+
         if (cancelGenerationButton != null) {
             cancelGenerationButton.setForeground(attachColor);
             cancelGenerationButton.setIcon(stopIcon(attachColor));
@@ -2353,6 +2412,11 @@ public class InputBar extends JPanel {
     private Icon agentModeIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/agent.svg", AGENT_ICON_SIZE, tint);
         return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
+    }
+
+    private Icon clearChatIcon(Color tint) {
+        Icon icon = svgIcon("/icons/input/eraser.svg", CLEAR_CHAT_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.warningIcon");
     }
 
     private Icon stopIcon(Color tint) {

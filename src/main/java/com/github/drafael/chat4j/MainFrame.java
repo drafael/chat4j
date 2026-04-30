@@ -22,6 +22,7 @@ import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
+import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import com.github.drafael.chat4j.util.TitleBarUiSupport;
@@ -148,11 +149,13 @@ import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static java.util.Collections.emptyList;
@@ -312,6 +315,7 @@ public class MainFrame extends JFrame {
     private final ConversationLoadResultPlanner conversationLoadResultPlanner;
     private final ConversationLoadApplyDispatchCoordinator conversationLoadApplyDispatchCoordinator;
     private final ConversationPersistenceCoordinator conversationPersistenceCoordinator;
+    private final ConversationTitleDeriver conversationTitleDeriver = new ConversationTitleDeriver();
     private final AssistantMessageCompletionDispatchCoordinator assistantMessageCompletionDispatchCoordinator =
             new AssistantMessageCompletionDispatchCoordinator();
     private final AssistantMessageCompletionEventDispatchCoordinator assistantMessageCompletionEventDispatchCoordinator =
@@ -326,6 +330,7 @@ public class MainFrame extends JFrame {
     private final ShutdownFlowCoordinator shutdownFlowCoordinator =
             new ShutdownFlowCoordinator(shutdownSaveDispatchCoordinator);
     private final MainFrameConversationState conversationState = new MainFrameConversationState();
+    private final Set<UUID> clearedConversationIds = new HashSet<>();
     private final MainFrameShutdownState shutdownState = new MainFrameShutdownState();
     private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
     private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
@@ -478,6 +483,7 @@ public class MainFrame extends JFrame {
         chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         chatPanel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
+        chatPanel.setOnClearChatRequested(this::confirmClearCurrentChat);
         chatPanel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
         chatPanel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
         chatPanel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
@@ -626,17 +632,100 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void confirmClearCurrentChat() {
+        if (!showClearChatConfirmation()) {
+            return;
+        }
+
+        clearCurrentChatMessages();
+    }
+
+    private boolean showClearChatConfirmation() {
+        JLabel titleLabel = new JLabel("Clear Chat", SwingConstants.CENTER);
+        Fonts.apply(titleLabel, Font.BOLD, Fonts.SIZE_BODY_LARGE);
+
+        JLabel messageLabel = new JLabel(
+                "<html><div style='text-align:center'>Are you sure you want to remove all<br>messages in the chat?</div></html>",
+                SwingConstants.CENTER
+        );
+
+        JPanel content = new JPanel(new BorderLayout(0, 10));
+        content.setOpaque(false);
+        content.add(titleLabel, BorderLayout.NORTH);
+        content.add(messageLabel, BorderLayout.CENTER);
+
+        Object[] options = {"Cancel", "Yes"};
+        var pane = new JOptionPane(content, JOptionPane.WARNING_MESSAGE, JOptionPane.YES_NO_OPTION, null, options, options[0]);
+        var dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setContentPane(pane);
+        pane.addPropertyChangeListener(event -> {
+            if (dialog.isVisible()
+                && event.getSource() == pane
+                && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
+                dialog.setVisible(false);
+            }
+        });
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+        dialog.dispose();
+
+        return Objects.equals(pane.getValue(), options[1]);
+    }
+
+    private void clearCurrentChatMessages() {
+        UUID currentConversationId = conversationState.currentConversationId();
+        try {
+            if (currentConversationId != null) {
+                conversationRepo.deleteMessages(currentConversationId);
+                conversationPersistenceCoordinator.markConversationLoaded(currentConversationId, 0);
+                clearedConversationIds.add(currentConversationId);
+            }
+
+            chatPanel.clearChat();
+            sidebarPanel.refresh();
+            if (currentConversationId != null) {
+                sidebarPanel.selectConversation(currentConversationId);
+            }
+            chatPanel.getInputBar().requestInputFocus();
+        } catch (Exception e) {
+            warnWithoutStack("Failed to clear current conversation messages", e);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Failed to clear chat: %s".formatted(e.getMessage()),
+                    "Clear Chat",
+                    JOptionPane.ERROR_MESSAGE
+            );
+        }
+    }
+
     private void saveCurrentConversation(boolean selectCreatedConversation) {
+        UUID currentConversationId = conversationState.currentConversationId();
+        List<Message> history = chatPanel.getHistory();
+        boolean retitleClearedConversation = shouldRetitleClearedConversation(currentConversationId, history);
+
         currentConversationSaveDispatchCoordinator.save(
-                conversationState.currentConversationId(),
+                currentConversationId,
                 conversationState.pendingUnsavedConversationRenderMode(),
-                chatPanel.getHistory(),
+                history,
                 chatPanel.getSelectedModel(),
                 chatPanel.getAssistantRenderMode(),
                 chatPanel.getInputBar().getReasoningLevel(),
                 chatPanel.getInputBar().isAgentModeRequested(),
                 chatPanel.getInputBar().getAgentProjectRoot(),
-                currentConversationSaveCoordinator::save,
+                (conversationId, pendingMode, messages, selectedModel, renderMode, reasoningLevel, agentModeEnabled, agentProjectRoot) ->
+                        saveConversationAndRetitleIfNeeded(
+                                conversationId,
+                                pendingMode,
+                                messages,
+                                selectedModel,
+                                renderMode,
+                                reasoningLevel,
+                                agentModeEnabled,
+                                agentProjectRoot,
+                                retitleClearedConversation
+                        ),
                 saveResult -> currentConversationSaveUiApplyCoordinator.apply(
                         saveResult,
                         conversationState::setCurrentConversationId,
@@ -648,6 +737,40 @@ public class MainFrame extends JFrame {
                 ),
                 error -> warnWithoutStack("Failed to persist current conversation", error)
         );
+    }
+
+    private CurrentConversationSaveCoordinator.SaveResult saveConversationAndRetitleIfNeeded(
+            UUID currentConversationId,
+            AssistantRenderMode pendingUnsavedConversationRenderMode,
+            List<Message> history,
+            String selectedModelKey,
+            AssistantRenderMode currentAssistantRenderMode,
+            ReasoningLevel reasoningLevel,
+            boolean agentModeEnabled,
+            Path agentProjectRoot,
+            boolean retitleClearedConversation
+    ) throws Exception {
+        CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
+                currentConversationId,
+                pendingUnsavedConversationRenderMode,
+                history,
+                selectedModelKey,
+                currentAssistantRenderMode,
+                reasoningLevel,
+                agentModeEnabled,
+                agentProjectRoot
+        );
+
+        if (saveResult.saved() && retitleClearedConversation) {
+            conversationRepo.updateTitle(saveResult.conversationId(), conversationTitleDeriver.derive(history.getFirst()));
+            clearedConversationIds.remove(saveResult.conversationId());
+        }
+
+        return saveResult;
+    }
+
+    private boolean shouldRetitleClearedConversation(UUID conversationId, List<Message> history) {
+        return conversationId != null && clearedConversationIds.contains(conversationId) && !history.isEmpty();
     }
 
     private void requestWindowClose() {

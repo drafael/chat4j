@@ -112,6 +112,24 @@ class ConversationRepoTest {
     }
 
     @Test
+    @DisplayName("Deleting messages keeps the conversation row")
+    void deleteMessages_whenConversationHasMessages_removesMessagesOnly() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-delete-messages");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+
+        ConversationRepo subject = new ConversationRepo(dataSource);
+        subject.addMessage(conversationId, Message.user("first"));
+        subject.addMessage(conversationId, Message.assistant("second"));
+
+        subject.deleteMessages(conversationId);
+
+        assertThat(countRows(dataSource, "conversations")).isEqualTo(1);
+        assertThat(countRows(dataSource, "messages")).isZero();
+        assertThat(subject.findById(conversationId)).isPresent();
+    }
+
+    @Test
     @DisplayName("Updating reasoning level persists per-conversation reasoning mode")
     void updateReasoningLevel_whenConversationExists_persistsValue() throws Exception {
         DataSource dataSource = createDataSource("conversation-repo-reasoning-level");

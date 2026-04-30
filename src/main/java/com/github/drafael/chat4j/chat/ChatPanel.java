@@ -118,6 +118,7 @@ public class ChatPanel extends JPanel {
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
     private Runnable messageSubmittedListener;
+    private Runnable clearChatRequestedListener;
     private AssistantMessagePersistenceListener assistantMessageCompletedListener;
     private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
     private Consumer<ConversationStreamingEvent> conversationStreamingListener;
@@ -196,7 +197,9 @@ public class ChatPanel extends JPanel {
         // Input bar at bottom
         inputBar = new InputBar();
         inputBar.addSendListener(e -> onSend());
+        inputBar.addClearChatListener(e -> requestClearChat());
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());
+        updateClearChatButtonVisibility();
 
         bodyContent = new JPanel(new BorderLayout());
         bodyContent.setOpaque(false);
@@ -553,6 +556,7 @@ public class ChatPanel extends JPanel {
             inputBar.clear();
             history.add(userMessage);
             addUserBubble(userMessage);
+            updateClearChatButtonVisibility();
         }
 
         UUID persistedConversationId = sendJob.conversationId;
@@ -1562,6 +1566,13 @@ public class ChatPanel extends JPanel {
                 () -> regenerateFromBubble(bubble)
         );
 
+        JMenuItem clearChatItem = buildChatMenuItem(
+                "Clear Chat",
+                "/icons/input/eraser.svg",
+                null,
+                this::requestClearChat
+        );
+
         JPopupMenu popup = new JPopupMenu();
         popup.add(copyItem);
         popup.addSeparator();
@@ -1569,6 +1580,7 @@ public class ChatPanel extends JPanel {
         popup.add(selectConversationItem);
         popup.addSeparator();
         popup.add(regenerateItem);
+        popup.add(clearChatItem);
 
         popup.addPopupMenuListener(new PopupMenuListener() {
             @Override
@@ -1578,6 +1590,7 @@ public class ChatPanel extends JPanel {
                 selectMessageItem.setEnabled(!bubble.getFullText().isEmpty());
                 selectConversationItem.setEnabled(hasAnyConversationText());
                 regenerateItem.setEnabled(canRegenerateFrom(bubble));
+                clearChatItem.setVisible(canClearChat());
             }
 
             @Override
@@ -1773,6 +1786,7 @@ public class ChatPanel extends JPanel {
         messagesPanel.revalidate();
         messagesPanel.repaint();
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
+        updateClearChatButtonVisibility();
     }
 
     public List<Message> getHistory() {
@@ -1805,6 +1819,7 @@ public class ChatPanel extends JPanel {
 
             addBubble(new MessageBubble(msg.role()), msg.content(), msg.role());
         }
+        updateClearChatButtonVisibility();
     }
 
     public String getSelectedModel() {
@@ -1894,6 +1909,10 @@ public class ChatPanel extends JPanel {
         this.messageSubmittedListener = listener;
     }
 
+    public void setOnClearChatRequested(Runnable listener) {
+        this.clearChatRequestedListener = listener;
+    }
+
     public void setOnAssistantMessageCompleted(AssistantMessagePersistenceListener listener) {
         this.assistantMessageCompletedListener = listener;
     }
@@ -1960,6 +1979,23 @@ public class ChatPanel extends JPanel {
         if (messageSubmittedListener != null) {
             messageSubmittedListener.run();
         }
+    }
+
+    private void requestClearChat() {
+        if (!canClearChat()) {
+            return;
+        }
+        if (clearChatRequestedListener != null) {
+            clearChatRequestedListener.run();
+        }
+    }
+
+    private boolean canClearChat() {
+        return !history.isEmpty() && !isVisibleConversationBusy() && inputBar.isEnabled();
+    }
+
+    private void updateClearChatButtonVisibility() {
+        inputBar.setClearChatVisible(canClearChat());
     }
 
     private void notifyConversationStreamingChanged(UUID conversationId, boolean streaming) {
@@ -2039,6 +2075,7 @@ public class ChatPanel extends JPanel {
             if (currentAssistantBubble == null) {
                 addBubble(new MessageBubble(Role.ASSISTANT), assistantText, Role.ASSISTANT);
             }
+            updateClearChatButtonVisibility();
         }
 
         boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
@@ -2362,6 +2399,7 @@ public class ChatPanel extends JPanel {
 
         streaming = indicatorVisible;
         inputBar.setCancelGenerationVisible(indicatorVisible);
+        updateClearChatButtonVisibility();
         jumpToLatestOverlay.setStreaming(indicatorVisible);
         refreshJumpOverlay();
     }

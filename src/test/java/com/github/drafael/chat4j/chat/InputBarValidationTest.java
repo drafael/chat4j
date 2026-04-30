@@ -6,11 +6,13 @@ import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
 import javax.swing.plaf.basic.BasicListUI;
+import java.awt.Dimension;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -194,6 +196,31 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Clear chat button fires listener using toolbar presentation")
+    void clearChatButtonClick_whenListenerRegistered_notifiesListener() throws Exception {
+        InputBar subject = new InputBar();
+        JButton clearChatButton = readClearChatButton(subject);
+        AtomicBoolean notified = new AtomicBoolean(false);
+
+        assertThat(subject.isClearChatVisible()).isFalse();
+
+        subject.addClearChatListener(e -> notified.set(true));
+        subject.setClearChatVisible(true);
+        SwingUtilities.invokeAndWait(clearChatButton::doClick);
+
+        assertThat(notified).isTrue();
+        assertThat(subject.isClearChatVisible()).isTrue();
+
+        subject.setEnabled(false);
+        assertThat(subject.isClearChatVisible()).isFalse();
+
+        subject.setEnabled(true);
+        assertThat(subject.isClearChatVisible()).isTrue();
+        assertThat(clearChatButton.getToolTipText()).isEqualTo("Clear chat");
+        assertThat(clearChatButton.getPreferredSize()).isEqualTo(new Dimension(24, 24));
+    }
+
+    @Test
     @DisplayName("Block YAML skill descriptions are flattened for popup display")
     void parseSkillFile_whenDescriptionUsesBlockScalar_returnsReadableDescription() throws Exception {
         InputBar subject = new InputBar();
@@ -272,6 +299,12 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("agentModeButton");
         field.setAccessible(true);
         return (JToggleButton) field.get(inputBar);
+    }
+
+    private JButton readClearChatButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("clearChatButton");
+        field.setAccessible(true);
+        return (JButton) field.get(inputBar);
     }
 
     private JList<?> readSlashSuggestionsList(InputBar inputBar) throws Exception {

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.*;
+import javax.swing.event.PopupMenuEvent;
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
@@ -470,6 +471,50 @@ class ChatPanelTest {
 
         assertThat(subject.getAssistantRenderMode()).isEqualTo(AssistantRenderMode.MARKDOWN);
         assertThat(capturedMode.get()).isEqualTo(AssistantRenderMode.MARKDOWN);
+    }
+
+    @Test
+    @DisplayName("Clear chat button is visible only when chat history has messages")
+    void loadHistoryAndClearChat_whenHistoryChanges_updatesClearChatButtonVisibility() throws Exception {
+        flushEdt();
+        assertThat(subject.getInputBar().isClearChatVisible()).isFalse();
+
+        subject.loadHistory(List.of(Message.user("hello")));
+        flushEdt();
+
+        assertThat(subject.getInputBar().isClearChatVisible()).isTrue();
+
+        subject.clearChatView();
+        flushEdt();
+
+        assertThat(subject.getInputBar().isClearChatVisible()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Bubble context menu clear item follows clear chat visibility and requests clear")
+    void bubbleContextMenu_whenClearChatAvailabilityChanges_updatesItemVisibilityAndAction() throws Exception {
+        var requested = new AtomicInteger();
+        subject.setOnClearChatRequested(requested::incrementAndGet);
+        subject.loadHistory(List.of(Message.user("hello")));
+        flushEdt();
+
+        MessageBubble bubble = findComponents((JPanel) readField(subject, "messagesPanel"), MessageBubble.class).getFirst();
+        JPopupMenu popup = bubble.getEditorPane().getComponentPopupMenu();
+        JMenuItem clearChatItem = findMenuItem(popup, "Clear Chat");
+
+        notifyPopupWillBecomeVisible(popup);
+        assertThat(clearChatItem.isVisible()).isTrue();
+
+        SwingUtilities.invokeAndWait(clearChatItem::doClick);
+        assertThat(requested).hasValue(1);
+
+        subject.getInputBar().setEnabled(false);
+        notifyPopupWillBecomeVisible(popup);
+
+        assertThat(clearChatItem.isVisible()).isFalse();
+
+        SwingUtilities.invokeAndWait(clearChatItem::doClick);
+        assertThat(requested).hasValue(1);
     }
 
     @Test
@@ -1421,6 +1466,22 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             // flush pending UI tasks
         });
+    }
+
+    private static void notifyPopupWillBecomeVisible(JPopupMenu popup) {
+        PopupMenuEvent event = new PopupMenuEvent(popup);
+        for (var listener : popup.getPopupMenuListeners()) {
+            listener.popupMenuWillBecomeVisible(event);
+        }
+    }
+
+    private static JMenuItem findMenuItem(JPopupMenu popup, String text) {
+        for (Component component : popup.getComponents()) {
+            if (component instanceof JMenuItem item && text.equals(item.getText())) {
+                return item;
+            }
+        }
+        throw new AssertionError("Menu item not found: %s".formatted(text));
     }
 
     private static void awaitCondition(long timeout, TimeUnit unit, CheckedBooleanSupplier condition) throws Exception {
