@@ -25,6 +25,10 @@ This document tracks the **current remediation status** for code-review findings
 - ✅ README Copilot OAuth setup clarification
   - Added explicit setup section to reduce first-run configuration failures.
 
+- ✅ Shutdown responsiveness hardening
+  - Close/quit persistence now runs through `ShutdownFlowCoordinator` and `ShutdownSaveDispatchCoordinator` with timeout/failure handling.
+  - Covered by `ShutdownFlowCoordinatorTest`, `ShutdownSaveDispatchCoordinatorTest`, and `ShutdownPersistenceFlowIntegrationTest` success/timeout/failure scenarios.
+
 ## Status
 
 - Provider/auth/runtime hardening work for the reviewed Copilot/OpenAI-compatible paths is in place.
@@ -46,9 +50,6 @@ This document tracks the **current remediation status** for code-review findings
   - Continue extracting remaining constructor wiring/composition concerns.
   - Consolidate mutable UI state into clearer holders.
   - Continue simplifying coordinator contracts where APIs carry unused return semantics.
-
-- Shutdown responsiveness hardening
-  - Ensure close/quit save paths avoid EDT blocking under slow storage conditions.
 
 - Broader integration-level confidence
   - Expand high-value orchestration/integration tests for menu sync, save/load switching flow, and close/quit behavior.
