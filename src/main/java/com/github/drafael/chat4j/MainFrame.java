@@ -57,8 +57,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
-import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
-import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangePlanner;
@@ -108,7 +106,6 @@ import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
-import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
 import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
 import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
 import com.github.drafael.chat4j.prompts.CommandCenterAction;
@@ -277,9 +274,7 @@ public class MainFrame extends JFrame {
     private final FontMenuApplyCoordinator fontMenuApplyCoordinator;
     private final FontMenuApplyDispatchCoordinator fontMenuApplyDispatchCoordinator =
             new FontMenuApplyDispatchCoordinator();
-    private final AppFontSizeStepResolver appFontSizeStepResolver;
     private final AppFontSizeAdjustCoordinator appFontSizeAdjustCoordinator;
-    private final ThemeSettingsResolver themeSettingsResolver;
     private final ThemeMenuApplyCoordinator themeMenuApplyCoordinator;
     private final ThemeMenuApplyDispatchCoordinator themeMenuApplyDispatchCoordinator =
             new ThemeMenuApplyDispatchCoordinator();
@@ -314,6 +309,7 @@ public class MainFrame extends JFrame {
     private final FontMenuSelectionApplyCoordinator fontMenuSelectionApplyCoordinator =
             new FontMenuSelectionApplyCoordinator();
     private final FontMenuSelectionFlowCoordinator fontMenuSelectionFlowCoordinator;
+    private final MainFrameFontMenuCoordinator fontMenuCoordinator;
     private final WindowStateSettingsCoordinator windowStateSettingsCoordinator;
     private final WindowStateRestoreCoordinator windowStateRestoreCoordinator;
     private final ConversationLoadCoordinator conversationLoadCoordinator;
@@ -446,9 +442,17 @@ public class MainFrame extends JFrame {
         this.fontMenuSelectionRefreshCoordinator = settingsWiring.fontMenuSelectionRefreshCoordinator();
         this.fontMenuSelectionDispatchCoordinator = settingsWiring.fontMenuSelectionDispatchCoordinator();
         this.fontMenuSelectionFlowCoordinator = settingsWiring.fontMenuSelectionFlowCoordinator();
-        this.appFontSizeStepResolver = settingsWiring.appFontSizeStepResolver();
         this.appFontSizeAdjustCoordinator = settingsWiring.appFontSizeAdjustCoordinator();
-        this.themeSettingsResolver = settingsWiring.themeSettingsResolver();
+        this.fontMenuCoordinator = new MainFrameFontMenuCoordinator(
+                fontMenuReadyDispatchCoordinator,
+                fontMenuStructureRebuildCoordinator,
+                fontMenuStructureRebuildApplyCoordinator,
+                fontMenuSelectionFlowCoordinator,
+                fontMenuApplyDispatchCoordinator,
+                fontMenuApplyCoordinator,
+                fontSettingsResolver,
+                appFontSizeAdjustCoordinator
+        );
         this.themeMenuApplyCoordinator = settingsWiring.themeMenuApplyCoordinator();
         this.themeMenuSelectionRefreshCoordinator = settingsWiring.themeMenuSelectionRefreshCoordinator();
         this.themeMenuSelectionDispatchCoordinator = settingsWiring.themeMenuSelectionDispatchCoordinator();
@@ -1390,11 +1394,7 @@ public class MainFrame extends JFrame {
     }
 
     private void ensureFontMenuReady() {
-        fontMenuReadyDispatchCoordinator.ensureReady(
-                fontMenuState.fontMenuBuilt(),
-                this::rebuildFontMenuStructure,
-                this::syncFontMenuSelection
-        );
+        fontMenuCoordinator.ensureReady(fontMenuContext());
     }
 
     private void syncTogglePreviewMenuSelection() {
@@ -1451,94 +1451,39 @@ public class MainFrame extends JFrame {
     }
 
     private void rebuildFontMenuStructure() {
-        FontMenuStructureRebuildCoordinator.RebuildState rebuildState =
-                fontMenuStructureRebuildCoordinator.rebuild(
-                        boundMenusState.fontMenu(),
-                        menuItemsState.appFontMenuItemsByFamily(),
-                        menuItemsState.appFontSizeMenuItemsBySize(),
-                        menuItemsState.codeFontMenuItemsByFamily(),
-                        this::restoreAppFontFromMenu,
-                        () -> adjustAppFontSizeFromMenu(true),
-                        () -> adjustAppFontSizeFromMenu(false),
-                        this::applyAppFontFamilyFromMenu,
-                        this::applyCodeFontFromMenu,
-                        this::applyAppFontSizeFromMenu,
-                        fontMenuState.fontMenuBuilt(),
-                        fontMenuState.lastMenuSelectedAppFontFamily(),
-                        fontMenuState.lastMenuSelectedAppFontSize(),
-                        fontMenuState.lastMenuSelectedCodeFontFamily()
-                );
-
-        fontMenuStructureRebuildApplyCoordinator.apply(
-                rebuildState,
-                fontMenuState::setFontMenuBuilt,
-                fontMenuState::setLastMenuSelectedAppFontFamily,
-                fontMenuState::setLastMenuSelectedAppFontSize,
-                fontMenuState::setLastMenuSelectedCodeFontFamily
-        );
+        fontMenuCoordinator.rebuildStructure(fontMenuContext());
     }
 
     private void syncFontMenuSelection() {
-        fontMenuSelectionFlowCoordinator.refreshAndApply(
-                menuItemsState.appFontMenuItemsByFamily(),
-                menuItemsState.appFontSizeMenuItemsBySize(),
-                menuItemsState.codeFontMenuItemsByFamily(),
-                fontMenuState.lastMenuSelectedAppFontFamily(),
-                fontMenuState.lastMenuSelectedAppFontSize(),
-                fontMenuState.lastMenuSelectedCodeFontFamily(),
-                fontMenuState.fontMenuBuilt(),
-                fontMenuState::setLastMenuSelectedAppFontFamily,
-                fontMenuState::setLastMenuSelectedAppFontSize,
-                fontMenuState::setLastMenuSelectedCodeFontFamily
-        );
+        fontMenuCoordinator.syncSelection(fontMenuContext());
     }
 
     private void applyAppFontFamilyFromMenu(String fontFamily) {
-        applyAppFontSelectionFromMenu(fontFamily, fontSettingsResolver.resolveAppFontSizeSetting());
+        fontMenuCoordinator.applyAppFontFamily(fontMenuContext(), fontFamily);
     }
 
     private void applyAppFontSizeFromMenu(int appFontSize) {
-        String appFontFamily = fontSettingsResolver.resolveAppFontFamilySetting();
-        applyAppFontSelectionFromMenu(appFontFamily, appFontSize);
-    }
-
-    private void applyAppFontSelectionFromMenu(String appFontFamily, int appFontSize) {
-        fontMenuApplyDispatchCoordinator.apply(
-                () -> fontMenuApplyCoordinator.applyAppFontSelection(
-                        appFontFamily,
-                        appFontSize,
-                        menuItemsState.appFontMenuItemsByFamily().keySet(),
-                        this::syncFontMenuSelection
-                ),
-                "Failed to apply UI font: ",
-                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
-        );
+        fontMenuCoordinator.applyAppFontSize(fontMenuContext(), appFontSize);
     }
 
     private void applyCodeFontFromMenu(String fontFamily) {
-        fontMenuApplyDispatchCoordinator.apply(
-                () -> fontMenuApplyCoordinator.applyCodeFontSelection(
-                        fontFamily,
-                        menuItemsState.codeFontMenuItemsByFamily().keySet(),
-                        this::syncFontMenuSelection
-                ),
-                "Failed to apply code font: ",
-                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
-        );
+        fontMenuCoordinator.applyCodeFont(fontMenuContext(), fontFamily);
     }
 
     private void restoreAppFontFromMenu() {
-        applyAppFontSelectionFromMenu(
-                AppearancePanel.DEFAULT_APP_FONT,
-                AppearancePanel.defaultAppFontSize());
+        fontMenuCoordinator.restoreAppFont(fontMenuContext());
     }
 
     private void adjustAppFontSizeFromMenu(boolean increase) {
-        appFontSizeAdjustCoordinator.adjust(
-                increase,
-                AppearancePanel::appFontSizeOptions,
-                fontSettingsResolver::resolveAppFontSizeSetting,
-                this::applyAppFontSizeFromMenu
+        fontMenuCoordinator.adjustAppFontSize(fontMenuContext(), increase);
+    }
+
+    private MainFrameFontMenuCoordinator.FontMenuContext fontMenuContext() {
+        return new MainFrameFontMenuCoordinator.FontMenuContext(
+                boundMenusState,
+                menuItemsState,
+                fontMenuState,
+                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
         );
     }
 

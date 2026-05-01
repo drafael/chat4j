@@ -45,6 +45,7 @@ This document tracks the **current remediation status** for code-review findings
 - `MainFrame` constructor setup was split into focused helpers for window chrome, chat-panel wiring, close handlers, and desktop handlers.
 - `MainFrame` provider/model menu ready, dirty-refresh, selection-sync, and availability-refresh orchestration was extracted to `MainFrameModelMenuCoordinator`.
 - `MainFrame` theme menu ready, rebuild, selection-sync, and apply orchestration was extracted to `MainFrameThemeMenuCoordinator`.
+- `MainFrame` font menu ready, rebuild, selection-sync, apply, restore, and size-adjust orchestration was extracted to `MainFrameFontMenuCoordinator`.
 
 ## Open hardening backlog (current)
 
