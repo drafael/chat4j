@@ -209,6 +209,7 @@ public class MainFrame extends JFrame {
     private final MainFrameDependenciesFactory mainFrameDependenciesFactory = new MainFrameDependenciesFactory();
     private final MainFrameTitleBarFactory titleBarFactory = new MainFrameTitleBarFactory();
     private final ClearChatConfirmationDialog clearChatConfirmationDialog = new ClearChatConfirmationDialog();
+    private final MainFrameShutdownSaveActionFactory shutdownSaveActionFactory = new MainFrameShutdownSaveActionFactory();
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
@@ -745,25 +746,7 @@ public class MainFrame extends JFrame {
                             warnWithoutStack("Failed during pre-shutdown actions", e);
                         }
                     },
-                    () -> {
-                        try {
-                            ShutdownSaveSnapshot saveSnapshot = captureShutdownSaveSnapshot();
-                            return () -> currentConversationSaveCoordinator.save(
-                                    saveSnapshot.currentConversationId(),
-                                    saveSnapshot.pendingUnsavedConversationRenderMode(),
-                                    saveSnapshot.history(),
-                                    saveSnapshot.selectedModelKey(),
-                                    saveSnapshot.currentAssistantRenderMode(),
-                                    saveSnapshot.reasoningLevel(),
-                                    saveSnapshot.agentModeEnabled(),
-                                    saveSnapshot.agentProjectRoot()
-                            );
-                        } catch (Exception e) {
-                            warnWithoutStack("Failed to capture shutdown save snapshot", e);
-                            return () -> {
-                            };
-                        }
-                    },
+                    this::createShutdownSaveAction,
                     finishAction,
                     () -> log.warn("Timed out persisting current conversation during shutdown"),
                     error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
@@ -775,29 +758,19 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private ShutdownSaveSnapshot captureShutdownSaveSnapshot() {
-        return new ShutdownSaveSnapshot(
-                conversationState.currentConversationId(),
-                conversationState.pendingUnsavedConversationRenderMode(),
-                List.copyOf(chatPanel.getHistory()),
-                chatPanel.getSelectedModel(),
-                chatPanel.getAssistantRenderMode(),
-                chatPanel.getInputBar().getReasoningLevel(),
-                chatPanel.getInputBar().isAgentModeRequested(),
-                chatPanel.getInputBar().getAgentProjectRoot()
-        );
-    }
-
-    private record ShutdownSaveSnapshot(
-            UUID currentConversationId,
-            AssistantRenderMode pendingUnsavedConversationRenderMode,
-            List<Message> history,
-            String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode,
-            ReasoningLevel reasoningLevel,
-            boolean agentModeEnabled,
-            Path agentProjectRoot
-    ) {
+    private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveAction() {
+        return shutdownSaveActionFactory.create(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
+                conversationState::currentConversationId,
+                conversationState::pendingUnsavedConversationRenderMode,
+                chatPanel::getHistory,
+                chatPanel::getSelectedModel,
+                chatPanel::getAssistantRenderMode,
+                chatPanel.getInputBar()::getReasoningLevel,
+                chatPanel.getInputBar()::isAgentModeRequested,
+                chatPanel.getInputBar()::getAgentProjectRoot,
+                currentConversationSaveCoordinator,
+                error -> warnWithoutStack("Failed to capture shutdown save snapshot", error)
+        ));
     }
 
     private void applyLoadedConversation(

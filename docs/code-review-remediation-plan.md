@@ -36,6 +36,7 @@ This document tracks the **current remediation status** for code-review findings
 - `MainFrame` title-bar composition was extracted to `MainFrameTitleBarFactory`.
 - `MainFrame` clear-chat confirmation UI was extracted to `ClearChatConfirmationDialog`.
 - `MainFrame` prompt-variable dialog UI was extracted to `PromptVariablesDialog`.
+- `MainFrame` shutdown save snapshot/action creation was extracted to `MainFrameShutdownSaveActionFactory`.
 - `MainFrame` constructor setup was split into focused helpers for window chrome, chat-panel wiring, close handlers, and desktop handlers.
 
 ## Open hardening backlog (current)
