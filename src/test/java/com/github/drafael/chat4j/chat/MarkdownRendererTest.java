@@ -253,6 +253,24 @@ class MarkdownRendererTest {
         assertThat(body).contains("</table><p>after</p>");
     }
 
+    @Test
+    @DisplayName("Plain source references link to matching source list URLs")
+    void toHtml_whenMarkdownContainsNumberedSourceList_linksInlineReferences() {
+        String body = renderBody("""
+                Feature A[1][2]
+
+                ---
+                [1] https://example.com/one
+                [2] https://example.com/two
+                """);
+
+        assertThat(body)
+                .contains("href=\"https://example.com/one\">[1]</a>")
+                .contains("href=\"https://example.com/two\">[2]</a>")
+                .contains("href=\"https://example.com/one\">https://example.com/one</a>")
+                .contains("href=\"https://example.com/two\">https://example.com/two</a>");
+    }
+
     private static String renderBody(String markdown) {
         String html = MarkdownRenderer.toHtml(markdown, false);
         int bodyStart = html.indexOf("<body>");

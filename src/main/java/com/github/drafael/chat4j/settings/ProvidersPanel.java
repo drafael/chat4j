@@ -68,6 +68,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final Map<String, String> API_KEY_PORTAL_URLS = Map.ofEntries(
             Map.entry("Anthropic", "https://console.anthropic.com/settings/keys"),
             Map.entry("OpenAI", "https://platform.openai.com/api-keys"),
+            Map.entry("Perplexity", "https://www.perplexity.ai/settings/api"),
             Map.entry("Google AI", "https://aistudio.google.com/app/apikey"),
             Map.entry("OpenRouter", "https://openrouter.ai/keys"),
             Map.entry("Groq", "https://console.groq.com/keys"),
@@ -88,6 +89,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
+            Map.entry("Perplexity", "/icons/providers/perplexity.svg"),
             Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),
@@ -116,6 +118,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     static {
         PROVIDERS.put("Anthropic", ProviderInfo.envVar("ANTHROPIC_API_KEY", "https://api.anthropic.com"));
         PROVIDERS.put("OpenAI", ProviderInfo.envVar("OPENAI_API_KEY", "https://api.openai.com/v1"));
+        PROVIDERS.put("Perplexity", ProviderInfo.envVar("PERPLEXITY_API_KEY", "https://api.perplexity.ai"));
         PROVIDERS.put("OpenAI Codex", ProviderInfo.codexOAuth("https://api.openai.com/v1"));
         PROVIDERS.put("GitHub Copilot", ProviderInfo.copilotOAuth("https://api.githubcopilot.com"));
         PROVIDERS.put("Google AI", ProviderInfo.envVar("GEMINI_API_KEY|GOOGLEAI_API_KEY|GOOGLE_AI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai"));
@@ -1286,75 +1289,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return newline < 0 ? text.trim() : text.substring(0, newline).trim();
     }
 
-    private JPanel createCodexDiagnosticsPanel() {
-        JPanel diagnosticsPanel = new JPanel();
-        diagnosticsPanel.setLayout(new BoxLayout(diagnosticsPanel, BoxLayout.Y_AXIS));
-        diagnosticsPanel.setOpaque(false);
-
-        JLabel transportLabel = new JLabel();
-        JLabel deltasLabel = new JLabel();
-        JLabel fallbackLabel = new JLabel();
-        JLabel failureLabel = new JLabel();
-        JLabel appServerErrorLabel = new JLabel();
-        JLabel updatedLabel = new JLabel();
-
-        JButton refreshButton = new JButton("Refresh diagnostics");
-        refreshButton.addActionListener(e -> refreshCodexDiagnostics(
-            transportLabel,
-            deltasLabel,
-            fallbackLabel,
-            failureLabel,
-            appServerErrorLabel,
-            updatedLabel
-        ));
-
-        diagnosticsPanel.add(transportLabel);
-        diagnosticsPanel.add(deltasLabel);
-        diagnosticsPanel.add(fallbackLabel);
-        diagnosticsPanel.add(failureLabel);
-        diagnosticsPanel.add(appServerErrorLabel);
-        diagnosticsPanel.add(updatedLabel);
-        diagnosticsPanel.add(Box.createVerticalStrut(6));
-        diagnosticsPanel.add(refreshButton);
-
-        refreshCodexDiagnostics(
-            transportLabel,
-            deltasLabel,
-            fallbackLabel,
-            failureLabel,
-            appServerErrorLabel,
-            updatedLabel
-        );
-
-        return diagnosticsPanel;
-    }
-
-    private void refreshCodexDiagnostics(
-        JLabel transportLabel,
-        JLabel deltasLabel,
-        JLabel fallbackLabel,
-        JLabel failureLabel,
-        JLabel appServerErrorLabel,
-        JLabel updatedLabel
-    ) {
-        CodexCliChatCompletionClient.DiagnosticsSnapshot snapshot = CodexCliChatCompletionClient.diagnosticsSnapshot();
-
-        transportLabel.setText("Transport: %s".formatted(snapshot.transport()));
-        deltasLabel.setText("Streaming deltas seen: %s".formatted(yesNo(snapshot.sawStreamingDelta())));
-        fallbackLabel.setText("Fallback used: %s".formatted(yesNo(snapshot.fallbackUsed())));
-        failureLabel.setText("Last failure: %s".formatted(defaultValue(snapshot.lastFailureReason())));
-        appServerErrorLabel.setText("Last app-server error: %s".formatted(defaultValue(snapshot.lastAppServerError())));
-        updatedLabel.setText("Updated: %s".formatted(formatDiagnosticsTime(snapshot.updatedAtEpochMs())));
-
-        Color failureColor = "none".equals(defaultValue(snapshot.lastFailureReason()))
-                ? UIManager.getColor("Label.disabledForeground")
-                : new Color(200, 50, 50);
-        failureLabel.setForeground(failureColor);
-        appServerErrorLabel.setForeground("none".equals(defaultValue(snapshot.lastAppServerError()))
-                ? UIManager.getColor("Label.disabledForeground")
-                : new Color(214, 117, 0));
-    }
-
     private String formatRelativeTime(long epochMillis) {
         if (epochMillis <= 0) {
             return "n/a";
@@ -1374,20 +1308,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
 
         return DIAGNOSTICS_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMillis));
-    }
-
-    private String formatDiagnosticsTime(long epochMillis) {
-        return epochMillis <= 0
-                ? "n/a"
-                : DIAGNOSTICS_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMillis));
-    }
-
-    private String defaultValue(String value) {
-        return StringUtils.isBlank(value) ? "none" : value;
-    }
-
-    private String yesNo(boolean value) {
-        return value ? "yes" : "no";
     }
 
     private static String formatEnvVarNames(String envVarExpression) {

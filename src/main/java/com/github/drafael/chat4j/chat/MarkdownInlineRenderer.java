@@ -31,8 +31,8 @@ final class MarkdownInlineRenderer {
         MathExtraction mathExtraction = extractMathSegments(codeExtraction.text());
         String rendered = applyInlineFormatting(mathExtraction.text());
 
-        rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2);
-        rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1);
+        rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2, palette);
+        rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1, palette);
         rendered = restoreMathSegments(rendered, mathExtraction.mathSegments(), palette);
 
         return restoreInlineCode(rendered, codeExtraction.codeSegments(), palette);
@@ -102,12 +102,19 @@ final class MarkdownInlineRenderer {
         });
     }
 
-    private static String renderAnchors(String text, Pattern pattern, int labelGroup, int hrefGroup) {
-        return pattern.matcher(text).replaceAll(matchResult -> Matcher.quoteReplacement(
-                "<a href=\"%s\">%s</a>".formatted(
-                        matchResult.group(hrefGroup),
-                        matchResult.group(labelGroup)
-                )));
+    private static String renderAnchors(String text, Pattern pattern, int labelGroup, int hrefGroup, Palette palette) {
+        return pattern.matcher(text).replaceAll(matchResult -> {
+            String label = matchResult.group(labelGroup);
+            String href = matchResult.group(hrefGroup);
+            String renderedLabel = label.matches("\\d+")
+                    ? sourceReferenceHtml(label, palette)
+                    : label;
+            return Matcher.quoteReplacement("<a href=\"%s\">%s</a>".formatted(href, renderedLabel));
+        });
+    }
+
+    private static String sourceReferenceHtml(String label, Palette palette) {
+        return "[%s]".formatted(label);
     }
 
     private static String mathToken(int index) {

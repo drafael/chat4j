@@ -48,10 +48,14 @@ public class ThinkingBubble extends JPanel {
     private boolean renderValidationScheduled;
 
     public ThinkingBubble() {
-        this(false);
+        this("Thinking", false);
     }
 
     public ThinkingBubble(boolean defaultCollapsed) {
+        this("Thinking", defaultCollapsed);
+    }
+
+    public ThinkingBubble(String title, boolean defaultCollapsed) {
         setLayout(new BorderLayout(0, 4));
         setOpaque(false);
         setDoubleBuffered(true);
@@ -73,10 +77,11 @@ public class ThinkingBubble extends JPanel {
         foldButton.setMaximumSize(toggleButtonSize);
         foldButton.addActionListener(e -> toggleCollapsedDebounced());
 
-        titleLabel = new JLabel("Thinking");
+        String titleText = StringUtils.defaultIfBlank(title, "Thinking");
+        titleLabel = new JLabel(titleText);
         titleLabel.putClientProperty("FlatLaf.styleClass", "small");
         titleLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        titleLabel.setToolTipText("Toggle reasoning");
+        titleLabel.setToolTipText("Toggle %s".formatted(titleText.toLowerCase()));
         titleLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -92,7 +97,7 @@ public class ThinkingBubble extends JPanel {
         copyButton.setBorderPainted(false);
         copyButton.setContentAreaFilled(false);
         copyButton.setOpaque(false);
-        copyButton.setToolTipText("Copy thinking");
+        copyButton.setToolTipText("Copy %s".formatted(titleText.toLowerCase()));
         copyButton.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {

@@ -23,6 +23,7 @@ public final class ProviderMenuIconRenderer {
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
+            Map.entry("Perplexity", "/icons/providers/perplexity.svg"),
             Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),

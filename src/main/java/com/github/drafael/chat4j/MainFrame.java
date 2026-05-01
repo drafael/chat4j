@@ -499,6 +499,9 @@ public class MainFrame extends JFrame {
         chatPanel.setOnClearChatRequested(this::confirmClearCurrentChat);
         chatPanel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
         chatPanel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
+        chatPanel.getInputBar().addWebSearchEnabledListener(this::persistWebSearchEnabled);
+        chatPanel.getInputBar().addWebSearchOptionListener(this::persistWebSearchOption);
+        chatPanel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
         chatPanel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
         chatPanel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
         chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
@@ -885,6 +888,7 @@ public class MainFrame extends JFrame {
 
         if (applied) {
             applyLoadedConversationReasoningSettings(conversation);
+            applyLoadedConversationWebSearchSettings(conversation);
             applyLoadedConversationAgentSettings(conversation);
         }
     }
@@ -896,6 +900,20 @@ public class MainFrame extends JFrame {
                 .orElse(ReasoningLevel.OFF);
 
         chatPanel.getInputBar().setReasoningLevel(level);
+    }
+
+    private void applyLoadedConversationWebSearchSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
+        boolean enabled = conversation
+                .map(ConversationRepo.ConversationRecord::webSearchEnabled)
+                .orElse(false);
+        String option = conversation
+                .map(ConversationRepo.ConversationRecord::webSearchOption)
+                .orElse(null);
+
+        if (StringUtils.isNotBlank(option)) {
+            chatPanel.getInputBar().setWebSearchOptionId(option);
+        }
+        chatPanel.getInputBar().setWebSearchEnabled(enabled);
     }
 
     private void applyLoadedConversationAgentSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
@@ -924,6 +942,7 @@ public class MainFrame extends JFrame {
         chatPanel.getInputBar().setAgentProjectRoot(null);
         chatPanel.getInputBar().setAgentModeEnabled(false);
         chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.OFF);
+        chatPanel.getInputBar().setWebSearchEnabled(false);
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
@@ -1366,6 +1385,7 @@ public class MainFrame extends JFrame {
         );
 
         applyAgentModeSettings();
+        applyWebSearchSettings();
     }
 
     private void persistReasoningLevel(ReasoningLevel reasoningLevel) {
@@ -1380,6 +1400,16 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void applyWebSearchSettings() {
+        try {
+            int topN = Integer.parseInt(settingsRepo.get(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, "3"));
+            chatPanel.getInputBar().setWebBrowseTopN(topN);
+        } catch (Exception e) {
+            log.debug("Failed to resolve Web Search settings", e);
+            chatPanel.getInputBar().setWebBrowseTopN(3);
+        }
+    }
+
     private void persistCurrentConversationReasoningLevel(ReasoningLevel reasoningLevel) {
         UUID currentConversationId = conversationState.currentConversationId();
         if (currentConversationId == null) {
@@ -1390,6 +1420,39 @@ public class MainFrame extends JFrame {
             conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
         } catch (Exception e) {
             log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
+        }
+    }
+
+    private void persistWebSearchEnabled(boolean enabled) {
+        persistCurrentConversationWebSearchSettings();
+    }
+
+    private void persistWebSearchOption(String optionId) {
+        persistCurrentConversationWebSearchSettings();
+    }
+
+    private void persistWebBrowseTopN(int topN) {
+        try {
+            settingsRepo.put(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, String.valueOf(topN));
+        } catch (Exception e) {
+            log.debug("Failed to persist Web Search browse-top setting", e);
+        }
+    }
+
+    private void persistCurrentConversationWebSearchSettings() {
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (currentConversationId == null) {
+            return;
+        }
+
+        try {
+            conversationRepo.updateWebSearchSettings(
+                    currentConversationId,
+                    chatPanel.getInputBar().isWebSearchEnabled(),
+                    chatPanel.getInputBar().getWebSearchOptionId()
+            );
+        } catch (Exception e) {
+            log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, e);
         }
     }
 

@@ -35,6 +35,33 @@ public final class ProviderCapabilityResolver {
             "lm studio",
             "lmstudio"
     );
+    private static final Set<String> NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("perplexity");
+    private static final Set<String> ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("anthropic");
+    private static final Set<String> OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("openai");
+    private static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
+    private static final Set<String> OPENROUTER_PROVIDER_HINTS = Set.of("openrouter");
+    private static final Set<String> NATIVE_WEB_SEARCH_MODEL_DENY_HINTS = Set.of(
+            "embedding",
+            "moderation",
+            "whisper",
+            "transcribe",
+            "tts",
+            "speech",
+            "image"
+    );
+    private static final Set<String> ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of("claude");
+    private static final Set<String> OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
+            "search-preview",
+            "gpt-4o-search",
+            "gpt-4.1",
+            "gpt-5",
+            "o3",
+            "o4"
+    );
+    private static final Set<String> OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
+            ":online",
+            "perplexity/sonar"
+    );
     private static final Set<String> OLLAMA_PROVIDER_HINTS = Set.of("ollama");
     private static final Set<String> LM_STUDIO_PROVIDER_HINTS = Set.of("lm studio", "lmstudio");
     private static final Set<String> GOOGLE_AI_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
@@ -199,6 +226,53 @@ public final class ProviderCapabilityResolver {
             "tools-disabled",
             "none"
     );
+    private static final Set<String> DYNAMIC_NATIVE_WEB_SEARCH_HINTS = Set.of(
+            "web_search",
+            "web-search",
+            "web search",
+            "web_browsing",
+            "web-browsing",
+            "web browsing",
+            "browser_search",
+            "browser-search",
+            "browsing",
+            "grounding",
+            "google_search",
+            "google-search",
+            "google search"
+    );
+    private static final Set<String> DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS = Set.of(
+            "no-web-search",
+            "no_web_search",
+            "without-web-search",
+            "without_web_search",
+            "web-search-disabled",
+            "web_search_disabled",
+            "search-disabled",
+            "search_disabled",
+            "none"
+    );
+    private static final Set<String> NATIVE_WEB_SEARCH_BOOLEAN_FIELDS = Set.of(
+            "web_search",
+            "webSearch",
+            "supports_web_search",
+            "supportsWebSearch",
+            "native_web_search",
+            "nativeWebSearch",
+            "supports_native_web_search",
+            "supportsNativeWebSearch",
+            "web_browsing",
+            "webBrowsing",
+            "supports_web_browsing",
+            "supportsWebBrowsing",
+            "grounding",
+            "supports_grounding",
+            "supportsGrounding",
+            "google_search",
+            "googleSearch",
+            "supports_google_search",
+            "supportsGoogleSearch"
+    );
     private static final Set<String> TOOL_BOOLEAN_FIELDS = Set.of(
             "tools",
             "supports_tools",
@@ -256,6 +330,7 @@ public final class ProviderCapabilityResolver {
     private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_IMAGE_SUPPORT_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_REASONING_SUPPORT_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_TOOL_SUPPORT_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<ModelCapabilityKey, Boolean> DYNAMIC_NATIVE_WEB_SEARCH_SUPPORT_CACHE = new ConcurrentHashMap<>();
 
     private ProviderCapabilityResolver() {
     }
@@ -386,12 +461,79 @@ public final class ProviderCapabilityResolver {
         return !model.isBlank() && containsAny(model, TOOL_MODEL_ALLOW_HINTS);
     }
 
+    public static boolean supportsNativeWebSearch(ProviderCapabilities capabilities, String providerName, String modelId) {
+        return supportsNativeWebSearch(capabilities, providerName, modelId, null, null);
+    }
+
+    public static boolean supportsNativeWebSearch(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
+            String baseUrl
+    ) {
+        return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, null);
+    }
+
+    public static boolean supportsNativeWebSearch(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        String provider = normalize(providerName);
+        String model = normalize(modelId);
+        if (model.isBlank() || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
+            return false;
+        }
+
+        if (capabilities != null && capabilities.supportsNativeWebSearch()) {
+            return true;
+        }
+
+        Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicNativeWebSearchSupport(
+                provider,
+                modelId,
+                baseUrl,
+                apiKey
+        );
+        if (dynamicallyResolvedSupport.isPresent()) {
+            return dynamicallyResolvedSupport.get();
+        }
+
+        if (containsAny(provider, NATIVE_WEB_SEARCH_PROVIDER_HINTS)) {
+            return true;
+        }
+
+        if (ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
+            return containsAny(model, ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
+        }
+
+        if (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
+            return containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
+        }
+
+        if (containsAny(provider, GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS)) {
+            return false;
+        }
+
+        if (OPENROUTER_PROVIDER_HINTS.contains(provider)) {
+            return supportsOpenRouterNativeWebSearch(model);
+        }
+
+        return false;
+    }
+
     public static boolean supportsFileInput(ProviderCapabilities capabilities, String providerName, String modelId) {
         if (capabilities != null && capabilities.supportsFileInput()) {
             return true;
         }
 
         return false;
+    }
+
+    private static boolean supportsOpenRouterNativeWebSearch(String model) {
+        return containsAny(model, OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
     }
 
     private static Optional<Boolean> resolveDynamicImageSupport(
@@ -535,6 +677,48 @@ public final class ProviderCapabilityResolver {
         return resolvedSupport;
     }
 
+    private static Optional<Boolean> resolveDynamicNativeWebSearchSupport(
+            String provider,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        if (StringUtils.isBlank(baseUrl)) {
+            return Optional.empty();
+        }
+
+        String resolvedModelId = modelId == null ? "" : modelId.trim();
+        if (resolvedModelId.isBlank()) {
+            return Optional.empty();
+        }
+
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+        ModelCapabilityKey key = new ModelCapabilityKey(
+                normalize(provider),
+                normalizedBaseUrl,
+                normalize(resolvedModelId),
+                authFingerprint(apiKey)
+        );
+
+        Boolean cachedSupport = DYNAMIC_NATIVE_WEB_SEARCH_SUPPORT_CACHE.get(key);
+        if (cachedSupport != null) {
+            return Optional.of(cachedSupport);
+        }
+
+        Optional<Boolean> resolvedSupport = containsAny(provider, GOOGLE_AI_PROVIDER_HINTS)
+                ? probeGoogleAiNativeWebSearchSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey)
+                        .or(() -> probeModelCatalogNativeWebSearchSupport(
+                                normalizedBaseUrl,
+                                resolvedModelId,
+                                provider,
+                                apiKey
+                        ))
+                : probeModelCatalogNativeWebSearchSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey);
+
+        resolvedSupport.ifPresent(value -> DYNAMIC_NATIVE_WEB_SEARCH_SUPPORT_CACHE.put(key, value));
+        return resolvedSupport;
+    }
+
     private static Optional<Boolean> probeModelCatalogToolSupport(
             String normalizedBaseUrl,
             String modelId,
@@ -553,6 +737,26 @@ public final class ProviderCapabilityResolver {
 
         return fetchJson(modelsEndpoint(normalizedBaseUrl), provider, apiKey)
                 .flatMap(root -> resolveToolSupportFromModelsList(root, modelId));
+    }
+
+    private static Optional<Boolean> probeModelCatalogNativeWebSearchSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        Optional<Boolean> fromModelEndpoint = fetchJson(
+                modelEndpoint(normalizedBaseUrl, modelId),
+                provider,
+                apiKey
+        ).flatMap(ProviderCapabilityResolver::resolveNativeWebSearchSupportFromNode);
+
+        if (fromModelEndpoint.isPresent()) {
+            return fromModelEndpoint;
+        }
+
+        return fetchJson(modelsEndpoint(normalizedBaseUrl), provider, apiKey)
+                .flatMap(root -> resolveNativeWebSearchSupportFromModelsList(root, modelId));
     }
 
     private static Optional<Boolean> probeLmStudioToolSupport(
@@ -581,6 +785,28 @@ public final class ProviderCapabilityResolver {
 
                     String description = normalize(modelNode.path("description").asText(""));
                     if (description.contains("tool") || description.contains("function calling")) {
+                        return Optional.of(true);
+                    }
+
+                    return Optional.empty();
+                });
+    }
+
+    private static Optional<Boolean> probeGoogleAiNativeWebSearchSupport(
+            String normalizedBaseUrl,
+            String modelId,
+            String provider,
+            String apiKey
+    ) {
+        return resolveGoogleAiModelNode(normalizedBaseUrl, modelId, provider, apiKey)
+                .flatMap(modelNode -> {
+                    Optional<Boolean> resolved = resolveNativeWebSearchSupportFromNode(modelNode);
+                    if (resolved.isPresent()) {
+                        return resolved;
+                    }
+
+                    String description = normalize(modelNode.path("description").asText(""));
+                    if (containsAny(description, DYNAMIC_NATIVE_WEB_SEARCH_HINTS)) {
                         return Optional.of(true);
                     }
 
@@ -951,6 +1177,22 @@ public final class ProviderCapabilityResolver {
                 .findFirst();
     }
 
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromModelsList(JsonNode root, String modelId) {
+        JsonNode dataNode = root.path("data");
+        JsonNode modelsNode = dataNode.isArray() ? dataNode : root;
+        if (!modelsNode.isArray()) {
+            return Optional.empty();
+        }
+
+        String normalizedModelId = normalize(modelId);
+        return StreamSupport.stream(modelsNode.spliterator(), false)
+                .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
+                .map(ProviderCapabilityResolver::resolveNativeWebSearchSupportFromNode)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .findFirst();
+    }
+
     private static Optional<Boolean> resolveImageSupportFromNode(JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull()) {
             return Optional.empty();
@@ -1018,6 +1260,29 @@ public final class ProviderCapabilityResolver {
         }
 
         return resolveToolSupportFromSingleNode(node.path("architecture"));
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromNode(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return Optional.empty();
+        }
+
+        Optional<Boolean> directResolution = resolveNativeWebSearchSupportFromSingleNode(node);
+        if (directResolution.isPresent()) {
+            return directResolution;
+        }
+
+        Optional<Boolean> metaResolution = resolveNativeWebSearchSupportFromSingleNode(node.path("meta"));
+        if (metaResolution.isPresent()) {
+            return metaResolution;
+        }
+
+        Optional<Boolean> detailsResolution = resolveNativeWebSearchSupportFromSingleNode(node.path("details"));
+        if (detailsResolution.isPresent()) {
+            return detailsResolution;
+        }
+
+        return resolveNativeWebSearchSupportFromSingleNode(node.path("architecture"));
     }
 
     private static Optional<Boolean> resolveImageSupportFromSingleNode(JsonNode node) {
@@ -1162,6 +1427,55 @@ public final class ProviderCapabilityResolver {
         return resolveToolSupportFromSingleNode(node.path("architecture"));
     }
 
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromSingleNode(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return Optional.empty();
+        }
+
+        Optional<Boolean> booleanResolution = resolveNativeWebSearchSupportFromBooleanFields(node);
+        if (booleanResolution.isPresent()) {
+            return booleanResolution;
+        }
+
+        Optional<Boolean> capabilitiesResolution = resolveNativeWebSearchSupportFromCapabilitiesField(
+                node.path("capabilities")
+        );
+        if (capabilitiesResolution.isPresent()) {
+            return capabilitiesResolution;
+        }
+
+        Optional<Boolean> directFieldsResolution = resolveNativeWebSearchSupportFromKnownFields(node);
+        if (directFieldsResolution.isPresent()) {
+            return directFieldsResolution;
+        }
+
+        Optional<Boolean> supportedParametersResolution = resolveNativeWebSearchSupportFromSupportedParameters(
+                node.path("supported_parameters")
+        );
+        if (supportedParametersResolution.isPresent()) {
+            return supportedParametersResolution;
+        }
+
+        Optional<Boolean> supportedParametersCamelResolution = resolveNativeWebSearchSupportFromSupportedParameters(
+                node.path("supportedParameters")
+        );
+        if (supportedParametersCamelResolution.isPresent()) {
+            return supportedParametersCamelResolution;
+        }
+
+        Optional<Boolean> tagsResolution = resolveNativeWebSearchSupportFromStringArray(node.path("tags"));
+        if (tagsResolution.isPresent()) {
+            return tagsResolution;
+        }
+
+        Optional<Boolean> featuresResolution = resolveNativeWebSearchSupportFromStringArray(node.path("features"));
+        if (featuresResolution.isPresent()) {
+            return featuresResolution;
+        }
+
+        return resolveNativeWebSearchSupportFromSingleNode(node.path("architecture"));
+    }
+
     private static Optional<Boolean> resolveImageSupportFromBooleanFields(JsonNode node) {
         return CAPABILITY_BOOLEAN_FIELDS.stream()
                 .map(field -> booleanField(node, field))
@@ -1199,6 +1513,24 @@ public final class ProviderCapabilityResolver {
         }
 
         boolean supported = TOOL_BOOLEAN_FIELDS.stream()
+                .map(field -> booleanField(node, field))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .reduce((left, right) -> left || right)
+                .orElse(false);
+
+        return Optional.of(supported);
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromBooleanFields(JsonNode node) {
+        boolean hasNativeWebSearchField = NATIVE_WEB_SEARCH_BOOLEAN_FIELDS.stream()
+                .map(field -> booleanField(node, field))
+                .anyMatch(Optional::isPresent);
+        if (!hasNativeWebSearchField) {
+            return Optional.empty();
+        }
+
+        boolean supported = NATIVE_WEB_SEARCH_BOOLEAN_FIELDS.stream()
                 .map(field -> booleanField(node, field))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
@@ -1341,6 +1673,49 @@ public final class ProviderCapabilityResolver {
         return resolveToolSupportFromFieldValue(capabilitiesNode);
     }
 
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromCapabilitiesField(JsonNode capabilitiesNode) {
+        if (capabilitiesNode == null || capabilitiesNode.isMissingNode() || capabilitiesNode.isNull()) {
+            return Optional.empty();
+        }
+
+        if (capabilitiesNode.isArray()) {
+            return resolveNativeWebSearchSupportFromStringArray(capabilitiesNode);
+        }
+
+        if (capabilitiesNode.isObject()) {
+            Optional<Boolean> booleanResolution = resolveNativeWebSearchSupportFromBooleanFields(capabilitiesNode);
+            if (booleanResolution.isPresent()) {
+                return booleanResolution;
+            }
+
+            Optional<Boolean> directFieldsResolution = resolveNativeWebSearchSupportFromKnownFields(capabilitiesNode);
+            if (directFieldsResolution.isPresent()) {
+                return directFieldsResolution;
+            }
+
+            Optional<Boolean> tagsResolution = resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("tags"));
+            if (tagsResolution.isPresent()) {
+                return tagsResolution;
+            }
+
+            Optional<Boolean> featuresResolution = resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("features"));
+            if (featuresResolution.isPresent()) {
+                return featuresResolution;
+            }
+
+            Optional<Boolean> supportedParametersResolution = resolveNativeWebSearchSupportFromSupportedParameters(
+                    capabilitiesNode.path("supported_parameters")
+            );
+            if (supportedParametersResolution.isPresent()) {
+                return supportedParametersResolution;
+            }
+
+            return resolveNativeWebSearchSupportFromSupportedParameters(capabilitiesNode.path("supportedParameters"));
+        }
+
+        return resolveNativeWebSearchSupportFromFieldValue(capabilitiesNode);
+    }
+
     private static Optional<Boolean> resolveImageSupportFromStringArray(JsonNode arrayNode) {
         return resolveSupportFromStringArray(arrayNode, DYNAMIC_IMAGE_HINTS, DYNAMIC_TEXT_ONLY_HINTS);
     }
@@ -1351,6 +1726,14 @@ public final class ProviderCapabilityResolver {
 
     private static Optional<Boolean> resolveToolSupportFromStringArray(JsonNode arrayNode) {
         return resolveSupportFromStringArray(arrayNode, DYNAMIC_TOOL_HINTS, DYNAMIC_NON_TOOL_HINTS);
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromStringArray(JsonNode arrayNode) {
+        return resolveSupportFromStringArray(
+                arrayNode,
+                DYNAMIC_NATIVE_WEB_SEARCH_HINTS,
+                DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS
+        );
     }
 
     private static Optional<Boolean> resolveImageSupportFromModalityText(JsonNode modalityNode) {
@@ -1382,6 +1765,10 @@ public final class ProviderCapabilityResolver {
         return resolveToolSupportFromStringArray(parametersNode);
     }
 
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromSupportedParameters(JsonNode parametersNode) {
+        return resolveNativeWebSearchSupportFromStringArray(parametersNode);
+    }
+
     private static Optional<Boolean> resolveToolSupportFromKnownFields(JsonNode node) {
         return StreamSupport.stream(List.of(
                         node.path("tools"),
@@ -1393,6 +1780,24 @@ public final class ProviderCapabilityResolver {
                         node.path("toolCalling")
                 ).spliterator(), false)
                 .map(ProviderCapabilityResolver::resolveToolSupportFromFieldValue)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .findFirst();
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromKnownFields(JsonNode node) {
+        return StreamSupport.stream(List.of(
+                        node.path("web_search"),
+                        node.path("webSearch"),
+                        node.path("native_web_search"),
+                        node.path("nativeWebSearch"),
+                        node.path("web_browsing"),
+                        node.path("webBrowsing"),
+                        node.path("grounding"),
+                        node.path("google_search"),
+                        node.path("googleSearch")
+                ).spliterator(), false)
+                .map(ProviderCapabilityResolver::resolveNativeWebSearchSupportFromFieldValue)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .findFirst();
@@ -1437,6 +1842,76 @@ public final class ProviderCapabilityResolver {
             }
 
             Optional<Boolean> textualResolution = resolveToolSupportFromStringArray(fieldNode);
+            if (textualResolution.isPresent()) {
+                return textualResolution;
+            }
+
+            return Optional.of(true);
+        }
+
+        if (fieldNode.isObject()) {
+            Optional<Boolean> enabledResolution = booleanField(fieldNode, "enabled");
+            if (enabledResolution.isPresent()) {
+                return enabledResolution;
+            }
+
+            Optional<Boolean> supportedResolution = booleanField(fieldNode, "supported");
+            if (supportedResolution.isPresent()) {
+                return supportedResolution;
+            }
+
+            Optional<Boolean> allowResolution = booleanField(fieldNode, "allow");
+            if (allowResolution.isPresent()) {
+                return allowResolution;
+            }
+
+            return fieldNode.fieldNames().hasNext()
+                    ? Optional.of(true)
+                    : Optional.of(false);
+        }
+
+        return Optional.empty();
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSupportFromFieldValue(JsonNode fieldNode) {
+        if (fieldNode == null || fieldNode.isMissingNode() || fieldNode.isNull()) {
+            return Optional.empty();
+        }
+
+        if (fieldNode.isBoolean()) {
+            return Optional.of(fieldNode.asBoolean());
+        }
+
+        if (fieldNode.isTextual()) {
+            String normalized = normalize(fieldNode.asText(""));
+            if (normalized.isBlank()) {
+                return Optional.empty();
+            }
+
+            if (containsAny(normalized, DYNAMIC_NATIVE_WEB_SEARCH_HINTS)
+                    || "enabled".equals(normalized)
+                    || "supported".equals(normalized)
+                    || "required".equals(normalized)
+            ) {
+                return Optional.of(true);
+            }
+
+            if (containsAny(normalized, DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS)
+                    || "disabled".equals(normalized)
+                    || "unsupported".equals(normalized)
+            ) {
+                return Optional.of(false);
+            }
+
+            return Optional.empty();
+        }
+
+        if (fieldNode.isArray()) {
+            if (fieldNode.isEmpty()) {
+                return Optional.of(false);
+            }
+
+            Optional<Boolean> textualResolution = resolveNativeWebSearchSupportFromStringArray(fieldNode);
             if (textualResolution.isPresent()) {
                 return textualResolution;
             }

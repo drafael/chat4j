@@ -33,8 +33,10 @@ final class ModelRowComponent {
     private static final String STAR_FILLED_PATH = "/icons/sidebar/star-filled.svg";
     private static final String IMAGE_CAPABILITY_PATH = "/icons/sidebar/eye.svg";
     private static final String REASONING_CAPABILITY_PATH = "/icons/sidebar/brain.svg";
+    private static final String WEB_CAPABILITY_PATH = "/icons/input/globe.svg";
     private static final Color IMAGE_CAPABILITY_COLOR = new Color(44, 123, 255);
     private static final Color REASONING_CAPABILITY_COLOR = new Color(155, 81, 255);
+    private static final Color WEB_CAPABILITY_COLOR = new Color(16, 185, 129);
     private static final Map<String, Icon> FAVORITE_ICON_CACHE = new ConcurrentHashMap<>();
     private static final Map<String, Icon> CAPABILITY_ICON_CACHE = new ConcurrentHashMap<>();
 
@@ -44,6 +46,7 @@ final class ModelRowComponent {
     private final JLabel favoriteLabel;
     private final JLabel imageCapabilityLabel;
     private final JLabel reasoningCapabilityLabel;
+    private final JLabel webCapabilityLabel;
     private final String providerName;
     private final String modelId;
     private final String displayLabel;
@@ -59,6 +62,7 @@ final class ModelRowComponent {
             boolean initiallyFavorite,
             boolean supportsImageInput,
             boolean supportsReasoning,
+            boolean supportsNativeWebSearch,
             Listener listener
     ) {
         this.providerName = providerName;
@@ -72,9 +76,10 @@ final class ModelRowComponent {
         this.favoriteLabel = buildFavoriteLabel();
         this.imageCapabilityLabel = buildCapabilityLabel();
         this.reasoningCapabilityLabel = buildCapabilityLabel();
+        this.webCapabilityLabel = buildCapabilityLabel();
 
         updateFavoriteState(initiallyFavorite);
-        updateCapabilities(supportsImageInput, supportsReasoning);
+        updateCapabilities(supportsImageInput, supportsReasoning, supportsNativeWebSearch);
         wireFavoriteLabel(listener);
         applyDisabledState();
         wireRow(listener);
@@ -126,9 +131,10 @@ final class ModelRowComponent {
         favoriteLabel.setToolTipText(favorite ? "Remove from favorites" : "Add to favorites");
     }
 
-    void updateCapabilities(boolean supportsImageInput, boolean supportsReasoning) {
+    void updateCapabilities(boolean supportsImageInput, boolean supportsReasoning, boolean supportsNativeWebSearch) {
         int eyeSize = Math.max(16, Fonts.scale(Fonts.SIZE_BODY_LARGE) + 2);
         int brainSize = Math.max(14, Fonts.scale(Fonts.SIZE_BODY_LARGE));
+        int webSize = Math.max(14, Fonts.scale(Fonts.SIZE_BODY_LARGE));
 
         imageCapabilityLabel.setIcon(loadTintedIcon(
                 CAPABILITY_ICON_CACHE,
@@ -145,6 +151,14 @@ final class ModelRowComponent {
                 brainSize));
         reasoningCapabilityLabel.setVisible(supportsReasoning);
         reasoningCapabilityLabel.setToolTipText(supportsReasoning ? "Supports Reasoning" : null);
+
+        webCapabilityLabel.setIcon(loadTintedIcon(
+                CAPABILITY_ICON_CACHE,
+                WEB_CAPABILITY_PATH,
+                WEB_CAPABILITY_COLOR,
+                webSize));
+        webCapabilityLabel.setVisible(supportsNativeWebSearch);
+        webCapabilityLabel.setToolTipText(supportsNativeWebSearch ? "Supports Native Web Search" : null);
     }
 
     private JPanel buildPanel() {
@@ -269,6 +283,7 @@ final class ModelRowComponent {
         checkLabel.addMouseListener(rowMouseListener);
         imageCapabilityLabel.addMouseListener(rowMouseListener);
         reasoningCapabilityLabel.addMouseListener(rowMouseListener);
+        webCapabilityLabel.addMouseListener(rowMouseListener);
     }
 
     private void assemble() {
@@ -279,6 +294,7 @@ final class ModelRowComponent {
         actions.add(favoriteLabel);
         actions.add(imageCapabilityLabel);
         actions.add(reasoningCapabilityLabel);
+        actions.add(webCapabilityLabel);
 
         panel.add(nameLabel, BorderLayout.CENTER);
         panel.add(actions, BorderLayout.EAST);

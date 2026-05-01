@@ -36,6 +36,9 @@ public final class SettingsKeys {
 
     public static final String PROMPT_CATALOG = "chat4j.prompts.catalog";
 
+    public static final String WEB_AUTO_BROWSE_TOP_N = "chat4j.web.autoBrowseTopN";
+    public static final String WEB_SEARCH_RESULT_COUNT = "chat4j.web.searchResultCount";
+
     public static final String SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER = "chat4j.migration.settingsDbToProperties";
 
     private SettingsKeys() {

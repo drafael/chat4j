@@ -23,6 +23,7 @@ public final class CredentialResolver {
         "DEEPSEEK_API_KEY",
         "MISTRAL_API_KEY",
         "XAI_API_KEY",
+        "PERPLEXITY_API_KEY",
         "GEMINI_API_KEY",
         "GOOGLEAI_API_KEY",
         "GOOGLE_AI_API_KEY"

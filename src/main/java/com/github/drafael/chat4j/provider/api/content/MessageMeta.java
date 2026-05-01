@@ -8,7 +8,8 @@ public record MessageMeta(
     List<String> fallbackNotices,
     boolean cancelled,
     String error,
-    String assistantThinking
+    String assistantThinking,
+    String assistantWebSearch
 ) {
 
     public MessageMeta {
@@ -16,17 +17,28 @@ public record MessageMeta(
         fallbackNotices = fallbackNotices == null ? emptyList() : List.copyOf(fallbackNotices);
         error = error == null ? "" : error;
         assistantThinking = assistantThinking == null ? "" : assistantThinking;
+        assistantWebSearch = assistantWebSearch == null ? "" : assistantWebSearch;
     }
 
     public MessageMeta(List<String> activeSkills, boolean cancelled, String error) {
-        this(activeSkills, emptyList(), cancelled, error, "");
+        this(activeSkills, emptyList(), cancelled, error, "", "");
     }
 
     public MessageMeta(List<String> activeSkills, List<String> fallbackNotices, boolean cancelled, String error) {
-        this(activeSkills, fallbackNotices, cancelled, error, "");
+        this(activeSkills, fallbackNotices, cancelled, error, "", "");
+    }
+
+    public MessageMeta(
+            List<String> activeSkills,
+            List<String> fallbackNotices,
+            boolean cancelled,
+            String error,
+            String assistantThinking
+    ) {
+        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, "");
     }
 
     public static MessageMeta empty() {
-        return new MessageMeta(emptyList(), emptyList(), false, "", "");
+        return new MessageMeta(emptyList(), emptyList(), false, "", "", "");
     }
 }

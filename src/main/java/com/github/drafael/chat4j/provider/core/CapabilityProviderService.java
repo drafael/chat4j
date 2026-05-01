@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.core;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
@@ -48,6 +49,40 @@ public class CapabilityProviderService implements ProviderService {
                 runtime,
                 history,
                 reasoningLevel,
+                onToken,
+                onThinkingToken,
+                isCancelled,
+                this::registerActiveStream,
+                this::clearActiveStream
+            );
+            if (!isCancelled.getAsBoolean()) {
+                onComplete.run();
+            }
+        } catch (Exception e) {
+            if (!shouldStop(isCancelled)) {
+                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
+                onError.accept(ProviderExceptionMapper.map(e));
+            }
+        }
+    }
+
+    @Override
+    public void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled
+    ) {
+        try {
+            chatCompletionClient.streamCompletion(
+                runtime,
+                history,
+                reasoningLevel,
+                webSearchOptions == null ? WebSearchRequestOptions.disabled() : webSearchOptions,
                 onToken,
                 onThinkingToken,
                 isCancelled,

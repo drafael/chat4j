@@ -11,12 +11,14 @@ import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.WebSearchTool20250305;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
@@ -45,6 +47,31 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
+        streamCompletion(
+                runtime,
+                history,
+                reasoningLevel,
+                WebSearchRequestOptions.disabled(),
+                onToken,
+                onThinkingToken,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
+    @Override
+    public void streamCompletion(
+        ProviderRuntime runtime,
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) throws Exception {
         AnthropicClient client = AnthropicOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
                 .baseUrl(runtime.baseUrl())
@@ -67,6 +94,10 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
         if (reasoningLevel.enabled() && supportsReasoning(runtime)) {
             paramsBuilder.enabledThinking(reasoningBudget(reasoningLevel));
+        }
+
+        if (webSearchOptions != null && webSearchOptions.enabled()) {
+            paramsBuilder.addTool(WebSearchTool20250305.builder().build());
         }
 
         MessageCreateParams params = paramsBuilder.build();

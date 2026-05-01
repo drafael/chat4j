@@ -1,6 +1,8 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.web.WebSearchMode;
+import com.github.drafael.chat4j.web.WebSearchOption;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +13,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -240,6 +243,64 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Web search button click toggles enabled state and notifies listener")
+    void webSearchButtonClick_whenAvailable_togglesEnabledState() throws Exception {
+        InputBar subject = new InputBar();
+        JToggleButton webSearchButton = readWebSearchButton(subject);
+        AtomicReference<Boolean> notified = new AtomicReference<>();
+
+        subject.addWebSearchEnabledListener(notified::set);
+        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
+
+        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+
+        assertThat(subject.isWebSearchEnabled()).isTrue();
+        assertThat(notified.get()).isTrue();
+
+        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+
+        assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(notified.get()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Locked web search remains enabled when button is clicked")
+    void webSearchButtonClick_whenLockedEnabled_remainsEnabled() throws Exception {
+        InputBar subject = new InputBar();
+        JToggleButton webSearchButton = readWebSearchButton(subject);
+
+        subject.setWebSearchLockedEnabled(true);
+        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
+
+        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+
+        assertThat(subject.isWebSearchEnabled()).isTrue();
+        assertThat(webSearchButton.isSelected()).isTrue();
+        assertThat(webSearchButton.getToolTipText()).contains("always on");
+    }
+
+    @Test
+    @DisplayName("Web search context menu omits enabled item and separators")
+    void rebuildWebSearchMenu_whenOptionsAvailable_omitsToggleItemAndSeparators() throws Exception {
+        InputBar subject = new InputBar();
+        JPopupMenu webSearchMenu = readWebSearchMenu(subject);
+
+        subject.setWebSearchOptions(List.of(
+                new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
+                new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
+        ), "native");
+
+        assertThat(webSearchMenu.getComponentCount()).isEqualTo(2);
+        assertThat(webSearchMenu.getComponent(0)).isInstanceOf(JMenu.class);
+        assertThat(((JMenu) webSearchMenu.getComponent(0)).getText()).isEqualTo("Search with");
+        assertThat(webSearchMenu.getComponent(1)).isInstanceOf(JMenu.class);
+        assertThat(((JMenu) webSearchMenu.getComponent(1)).getText()).isEqualTo("Browse top");
+        assertThat(List.of(webSearchMenu.getComponents()))
+                .noneMatch(component -> component instanceof JSeparator)
+                .noneMatch(component -> component instanceof JCheckBoxMenuItem);
+    }
+
+    @Test
     @DisplayName("Block YAML skill descriptions are flattened for popup display")
     void parseSkillFile_whenDescriptionUsesBlockScalar_returnsReadableDescription() throws Exception {
         InputBar subject = new InputBar();
@@ -330,6 +391,18 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("commandCenterButton");
         field.setAccessible(true);
         return (JButton) field.get(inputBar);
+    }
+
+    private JToggleButton readWebSearchButton(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("webSearchButton");
+        field.setAccessible(true);
+        return (JToggleButton) field.get(inputBar);
+    }
+
+    private JPopupMenu readWebSearchMenu(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("webSearchMenu");
+        field.setAccessible(true);
+        return (JPopupMenu) field.get(inputBar);
     }
 
     private JList<?> readSlashSuggestionsList(InputBar inputBar) throws Exception {

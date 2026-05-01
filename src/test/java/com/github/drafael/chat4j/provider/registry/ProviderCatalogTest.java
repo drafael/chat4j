@@ -24,12 +24,17 @@ class ProviderCatalogTest {
     }
 
     @Test
-    @DisplayName("Provider catalog uses dynamic model loading with no hardcoded seed models")
+    @DisplayName("Provider catalog uses dynamic model loading except static Perplexity seed models")
     void allProviders_whenCatalogInitialized_returnsProvidersWithoutSeedModels() {
         var subject = new ProviderCatalog();
 
         assertThat(subject.allProviders())
+                .filteredOn(providerDefinition -> !"Perplexity".equals(providerDefinition.name()))
                 .allSatisfy(providerDefinition -> assertThat(providerDefinition.seedModels()).isEmpty());
+        assertThat(subject.allProviders())
+                .filteredOn(providerDefinition -> "Perplexity".equals(providerDefinition.name()))
+                .singleElement()
+                .satisfies(providerDefinition -> assertThat(providerDefinition.seedModels()).contains("sonar", "sonar-pro"));
     }
 
     @Test

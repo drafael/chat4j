@@ -8,6 +8,7 @@ import com.formdev.flatlaf.util.SystemFileChooser;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.web.WebSearchOption;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -54,6 +55,7 @@ public class InputBar extends JPanel {
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int COMMAND_CENTER_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int WEB_SEARCH_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int AGENT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int CLEAR_CHAT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_ICON_SIZE = 24;
@@ -72,6 +74,9 @@ public class InputBar extends JPanel {
     private final JButton attachButton;
     private final JButton commandCenterButton;
     private final JButton thinkingButton;
+    private final JToggleButton webSearchButton;
+    private final JPopupMenu webSearchMenu = new JPopupMenu();
+    private final Map<String, JRadioButtonMenuItem> webSearchOptionItems = new LinkedHashMap<>();
     private final JToggleButton agentModeButton;
     private final JButton clearChatButton;
     private final JPopupMenu reasoningLevelMenu = new JPopupMenu();
@@ -103,11 +108,20 @@ public class InputBar extends JPanel {
     private final List<ActionListener> clearChatListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
+    private final List<Consumer<Boolean>> webSearchEnabledListeners = new ArrayList<>();
+    private final List<Consumer<String>> webSearchOptionListeners = new ArrayList<>();
+    private final List<Consumer<Integer>> webBrowseTopNListeners = new ArrayList<>();
     private final List<Consumer<Boolean>> agentModeListeners = new ArrayList<>();
     private final List<Consumer<Path>> agentProjectRootListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
     private ReasoningLevel reasoningLevel = ReasoningLevel.OFF;
     private boolean thinkingAvailable = false;
+    private boolean webSearchAvailable = false;
+    private boolean webSearchEnabled = false;
+    private boolean webSearchLockedEnabled = false;
+    private String webSearchOptionId;
+    private int webBrowseTopN = 3;
+    private List<WebSearchOption> webSearchOptions = emptyList();
     private boolean agentModeAvailable = false;
     private boolean agentModeEnabled = false;
     private boolean agentModeRequested = false;
@@ -214,6 +228,31 @@ public class InputBar extends JPanel {
         thinkingButton.addActionListener(e -> toggleReasoningSelector());
         initializeReasoningLevelMenu();
 
+        webSearchButton = new JToggleButton();
+        webSearchButton.putClientProperty("JButton.buttonType", "toolBarButton");
+        webSearchButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        webSearchButton.setFocusable(false);
+        webSearchButton.setRolloverEnabled(true);
+        webSearchButton.setMargin(new Insets(0, 0, 0, 0));
+        webSearchButton.setPreferredSize(new Dimension(24, 24));
+        webSearchButton.setMinimumSize(new Dimension(24, 24));
+        webSearchButton.setMaximumSize(new Dimension(24, 24));
+        webSearchButton.setToolTipText("Web Search");
+        webSearchButton.setVisible(false);
+        webSearchButton.addActionListener(e -> onWebSearchButtonClicked());
+        webSearchButton.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                maybeShowWebSearchMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                maybeShowWebSearchMenu(e);
+            }
+        });
+        rebuildWebSearchMenu();
+
         agentModeButton = new JToggleButton();
         agentModeButton.putClientProperty("JButton.buttonType", "toolBarButton");
         agentModeButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
@@ -262,6 +301,7 @@ public class InputBar extends JPanel {
         actionsPanel.add(attachButton);
         actionsPanel.add(commandCenterButton);
         actionsPanel.add(thinkingButton);
+        actionsPanel.add(webSearchButton);
         actionsPanel.add(agentModeButton);
         actionsPanel.add(clearChatButton);
 
@@ -401,12 +441,14 @@ public class InputBar extends JPanel {
         attachButton.setEnabled(enabled);
         commandCenterButton.setEnabled(enabled);
         thinkingButton.setEnabled(enabled);
+        webSearchButton.setEnabled(enabled && webSearchAvailable);
         agentModeButton.setEnabled(enabled && agentModeAvailable);
         clearChatButton.setEnabled(enabled);
         applyClearChatVisibility();
         if (projectRootButton != null) {
             projectRootButton.setEnabled(enabled && agentModeAvailable && agentModeEnabled);
         }
+        updateInputButtonIcons();
     }
 
     public void addSendListener(ActionListener listener) {
@@ -432,6 +474,24 @@ public class InputBar extends JPanel {
     public void addReasoningLevelListener(Consumer<ReasoningLevel> listener) {
         if (listener != null) {
             reasoningLevelListeners.add(listener);
+        }
+    }
+
+    public void addWebSearchEnabledListener(Consumer<Boolean> listener) {
+        if (listener != null) {
+            webSearchEnabledListeners.add(listener);
+        }
+    }
+
+    public void addWebSearchOptionListener(Consumer<String> listener) {
+        if (listener != null) {
+            webSearchOptionListeners.add(listener);
+        }
+    }
+
+    public void addWebBrowseTopNListener(Consumer<Integer> listener) {
+        if (listener != null) {
+            webBrowseTopNListeners.add(listener);
         }
     }
 
@@ -468,6 +528,90 @@ public class InputBar extends JPanel {
 
     public boolean isThinkingAvailable() {
         return thinkingAvailable;
+    }
+
+    public boolean isWebSearchAvailable() {
+        return webSearchAvailable;
+    }
+
+    public boolean isWebSearchEnabled() {
+        return webSearchAvailable && webSearchEnabled;
+    }
+
+    public String getWebSearchOptionId() {
+        return webSearchOptionId;
+    }
+
+    public void setWebSearchOptionId(String optionId) {
+        boolean available = webSearchOptions.stream()
+                .anyMatch(option -> option.available() && StringUtils.equals(option.id(), optionId));
+        if (available) {
+            selectWebSearchOption(optionId, false);
+        }
+    }
+
+    public void setWebSearchEnabled(boolean enabled) {
+        boolean normalized = webSearchLockedEnabled ? webSearchAvailable : enabled && webSearchAvailable;
+        if (webSearchEnabled == normalized) {
+            updateWebSearchPresentation();
+            return;
+        }
+
+        webSearchEnabled = normalized;
+        updateWebSearchPresentation();
+    }
+
+    public void setWebSearchLockedEnabled(boolean lockedEnabled) {
+        if (webSearchLockedEnabled == lockedEnabled) {
+            if (webSearchLockedEnabled && webSearchAvailable && !webSearchEnabled) {
+                webSearchEnabled = true;
+            }
+            updateWebSearchPresentation();
+            return;
+        }
+
+        webSearchLockedEnabled = lockedEnabled;
+        if (webSearchLockedEnabled && webSearchAvailable) {
+            webSearchEnabled = true;
+        }
+        updateWebSearchPresentation();
+    }
+
+    public void setWebBrowseTopN(int topN) {
+        webBrowseTopN = switch (topN) {
+            case 1, 2, 3, 5, 10 -> topN;
+            default -> 3;
+        };
+        rebuildWebSearchMenu();
+    }
+
+    public int getWebBrowseTopN() {
+        return webBrowseTopN;
+    }
+
+    public void setWebSearchOptions(List<WebSearchOption> options, String defaultOptionId) {
+        webSearchOptions = options == null ? emptyList() : List.copyOf(options);
+        webSearchAvailable = webSearchOptions.stream().anyMatch(WebSearchOption::available);
+
+        boolean currentStillAvailable = webSearchOptions.stream()
+                .anyMatch(option -> option.available() && StringUtils.equals(option.id(), webSearchOptionId));
+        if (!currentStillAvailable) {
+            webSearchOptionId = webSearchOptions.stream()
+                    .filter(option -> option.available() && StringUtils.equals(option.id(), defaultOptionId))
+                    .findFirst()
+                    .or(() -> webSearchOptions.stream().filter(WebSearchOption::available).findFirst())
+                    .map(WebSearchOption::id)
+                    .orElse(null);
+        }
+
+        if (!webSearchAvailable) {
+            webSearchEnabled = false;
+        } else if (webSearchLockedEnabled) {
+            webSearchEnabled = true;
+        }
+
+        rebuildWebSearchMenu();
+        updateWebSearchPresentation();
     }
 
     public boolean isAgentModeAvailable() {
@@ -590,6 +734,124 @@ public class InputBar extends JPanel {
         };
     }
 
+    private void onWebSearchButtonClicked() {
+        if (!webSearchAvailable) {
+            setWebSearchEnabled(false);
+            return;
+        }
+
+        boolean previous = webSearchEnabled;
+        setWebSearchEnabled(!webSearchEnabled);
+        if (previous != webSearchEnabled) {
+            notifyWebSearchEnabledChanged(webSearchEnabled);
+        }
+
+        if (webSearchEnabled) {
+            showWebSearchMenu();
+        } else {
+            webSearchMenu.setVisible(false);
+        }
+    }
+
+    private void maybeShowWebSearchMenu(MouseEvent e) {
+        if (e == null || !e.isPopupTrigger()) {
+            return;
+        }
+
+        e.consume();
+        showWebSearchMenu();
+    }
+
+    private void showWebSearchMenu() {
+        updateWebSearchPresentation();
+        if (!webSearchAvailable) {
+            setWebSearchEnabled(false);
+            return;
+        }
+
+        rebuildWebSearchMenu();
+        if (!webSearchButton.isShowing()) {
+            return;
+        }
+        if (!webSearchMenu.isVisible()) {
+            webSearchMenu.show(webSearchButton, 0, -webSearchMenu.getPreferredSize().height - 4);
+        }
+    }
+
+    private void rebuildWebSearchMenu() {
+        if (webSearchMenu == null) {
+            return;
+        }
+
+        webSearchMenu.removeAll();
+
+        if (!webSearchOptions.isEmpty()) {
+            JMenu searchWithMenu = new JMenu("Search with");
+            ButtonGroup optionGroup = new ButtonGroup();
+            webSearchOptionItems.clear();
+            webSearchOptions.stream()
+                    .filter(WebSearchOption::available)
+                    .forEach(option -> {
+                        JRadioButtonMenuItem item = new JRadioButtonMenuItem(option.label());
+                        item.setSelected(StringUtils.equals(option.id(), webSearchOptionId));
+                        item.addActionListener(e -> selectWebSearchOption(option.id(), true));
+                        optionGroup.add(item);
+                        webSearchOptionItems.put(option.id(), item);
+                        searchWithMenu.add(item);
+                    });
+            webSearchMenu.add(searchWithMenu);
+        }
+
+        JMenu browseTopMenu = new JMenu("Browse top");
+        ButtonGroup browseGroup = new ButtonGroup();
+        for (int topN : List.of(1, 2, 3, 5, 10)) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(String.valueOf(topN));
+            item.setSelected(webBrowseTopN == topN);
+            item.addActionListener(e -> {
+                setWebBrowseTopN(topN);
+                notifyWebBrowseTopNChanged(topN);
+            });
+            browseGroup.add(item);
+            browseTopMenu.add(item);
+        }
+        webSearchMenu.add(browseTopMenu);
+    }
+
+    private void selectWebSearchOption(String optionId, boolean notify) {
+        if (StringUtils.equals(webSearchOptionId, optionId)) {
+            return;
+        }
+
+        webSearchOptionId = optionId;
+        webSearchOptionItems.forEach((id, item) -> item.setSelected(StringUtils.equals(id, optionId)));
+        updateWebSearchPresentation();
+        if (notify) {
+            notifyWebSearchOptionChanged(optionId);
+        }
+    }
+
+    private void updateWebSearchPresentation() {
+        if (webSearchButton == null) {
+            return;
+        }
+
+        webSearchButton.setVisible(webSearchAvailable);
+        webSearchButton.setEnabled(isEnabled() && webSearchAvailable);
+        webSearchButton.setSelected(isEnabled() && webSearchAvailable && webSearchEnabled);
+        webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(isWebSearchEnabled())));
+        String optionLabel = webSearchOptions.stream()
+                .filter(option -> StringUtils.equals(option.id(), webSearchOptionId))
+                .findFirst()
+                .map(WebSearchOption::label)
+                .orElse("Web Search");
+        String toggleHint = webSearchLockedEnabled ? "always on" : "click to toggle, right-click for options";
+        webSearchButton.setToolTipText(webSearchAvailable
+                ? "Web Search: %s (%s)".formatted(optionLabel, toggleHint)
+                : null);
+        revalidate();
+        repaint();
+    }
+
     private void onAgentModeButtonClicked() {
         if (!agentModeAvailable) {
             setAgentModeEnabled(false);
@@ -684,7 +946,8 @@ public class InputBar extends JPanel {
 
         agentModeButton.setVisible(agentModeAvailable);
         agentModeButton.setEnabled(isEnabled() && agentModeAvailable);
-        agentModeButton.setSelected(agentModeAvailable && agentModeEnabled);
+        agentModeButton.setSelected(isEnabled() && agentModeAvailable && agentModeEnabled);
+        agentModeButton.setIcon(agentModeIcon(resolveInputIconTint(agentModeAvailable && agentModeEnabled)));
         agentModeButton.setToolTipText(agentModeAvailable ? "Agent Mode" : null);
         updateProjectRootPresentation();
         revalidate();
@@ -876,6 +1139,24 @@ public class InputBar extends JPanel {
     private void notifyReasoningLevelChanged(ReasoningLevel level) {
         for (Consumer<ReasoningLevel> listener : reasoningLevelListeners) {
             listener.accept(level);
+        }
+    }
+
+    private void notifyWebSearchEnabledChanged(boolean enabled) {
+        for (Consumer<Boolean> listener : webSearchEnabledListeners) {
+            listener.accept(enabled);
+        }
+    }
+
+    private void notifyWebSearchOptionChanged(String optionId) {
+        for (Consumer<String> listener : webSearchOptionListeners) {
+            listener.accept(optionId);
+        }
+    }
+
+    private void notifyWebBrowseTopNChanged(int topN) {
+        for (Consumer<Integer> listener : webBrowseTopNListeners) {
+            listener.accept(topN);
         }
     }
 
@@ -1665,6 +1946,7 @@ public class InputBar extends JPanel {
 
     private void refreshDetachedPopupUis() {
         refreshDetachedPopupUi(reasoningLevelMenu);
+        refreshDetachedPopupUi(webSearchMenu);
         refreshSlashPopupUi();
         if (textArea != null) {
             refreshDetachedPopupUi(textArea.getComponentPopupMenu());
@@ -1736,37 +2018,7 @@ public class InputBar extends JPanel {
             attachColor = new Color(120, 120, 120);
         }
 
-        if (attachButton != null) {
-            attachButton.setForeground(attachColor);
-            attachButton.setIcon(attachIcon(attachColor));
-        }
-
-        if (commandCenterButton != null) {
-            commandCenterButton.setForeground(attachColor);
-            commandCenterButton.setIcon(commandCenterIcon(attachColor));
-        }
-
-        if (thinkingButton != null) {
-            thinkingButton.setForeground(attachColor);
-            updateThinkingTogglePresentation();
-        }
-
-        if (agentModeButton != null) {
-            agentModeButton.setForeground(attachColor);
-            Color iconTint = agentModeButton.isSelected() ? resolveThinkingActiveTint(attachColor) : attachColor;
-            agentModeButton.setIcon(agentModeIcon(iconTint));
-            updateAgentModePresentation();
-        }
-
-        if (clearChatButton != null) {
-            clearChatButton.setForeground(attachColor);
-            clearChatButton.setIcon(clearChatIcon(attachColor));
-        }
-
-        if (cancelGenerationButton != null) {
-            cancelGenerationButton.setForeground(attachColor);
-            cancelGenerationButton.setIcon(stopIcon(attachColor));
-        }
+        updateInputButtonIcons();
 
         Color mutedText = UIManager.getColor("Label.disabledForeground");
         if (mutedText == null) {
@@ -1796,6 +2048,60 @@ public class InputBar extends JPanel {
             }
             validationLabel.setForeground(errorColor);
         }
+    }
+
+    private void updateInputButtonIcons() {
+        Color tint = resolveInputIconTint(false);
+        if (attachButton != null) {
+            attachButton.setForeground(tint);
+            attachButton.setIcon(attachIcon(tint));
+        }
+        if (commandCenterButton != null) {
+            commandCenterButton.setForeground(tint);
+            commandCenterButton.setIcon(commandCenterIcon(tint));
+        }
+        if (thinkingButton != null) {
+            thinkingButton.setForeground(tint);
+            updateThinkingTogglePresentation();
+        }
+        if (webSearchButton != null) {
+            webSearchButton.setForeground(tint);
+            updateWebSearchPresentation();
+        }
+        if (agentModeButton != null) {
+            agentModeButton.setForeground(tint);
+            updateAgentModePresentation();
+        }
+        if (clearChatButton != null) {
+            clearChatButton.setForeground(tint);
+            clearChatButton.setIcon(clearChatIcon(tint));
+        }
+        if (cancelGenerationButton != null) {
+            Color cancelTint = enabledInputIconTint();
+            cancelGenerationButton.setForeground(cancelTint);
+            cancelGenerationButton.setIcon(stopIcon(cancelTint));
+        }
+    }
+
+    private Color resolveInputIconTint(boolean active) {
+        Color inactive = baseInputIconTint();
+        if (!isEnabled() || !active) {
+            return inactive;
+        }
+        return resolveThinkingActiveTint(inactive);
+    }
+
+    private Color baseInputIconTint() {
+        Color tint = isEnabled() ? UIManager.getColor("Label.foreground") : UIManager.getColor("Label.disabledForeground");
+        if (tint == null) {
+            tint = enabledInputIconTint();
+        }
+        return tint;
+    }
+
+    private Color enabledInputIconTint() {
+        Color tint = UIManager.getColor("Label.foreground");
+        return tint == null ? new Color(120, 120, 120) : tint;
     }
 
     private static class WrapLayout extends FlowLayout {
@@ -2372,13 +2678,8 @@ public class InputBar extends JPanel {
             return;
         }
 
-        Color inactive = UIManager.getColor("Label.foreground");
-        if (inactive == null) {
-            inactive = new Color(120, 120, 120);
-        }
-
-        Color tint = reasoningEnabled ? resolveThinkingActiveTint(inactive) : inactive;
-        thinkingButton.setSelected(reasoningEnabled);
+        Color tint = resolveInputIconTint(reasoningEnabled);
+        thinkingButton.setSelected(isEnabled() && reasoningEnabled);
         thinkingButton.setIcon(thinkingIcon(tint));
         thinkingButton.setToolTipText("Reasoning");
         reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
@@ -2443,10 +2744,6 @@ public class InputBar extends JPanel {
         return background;
     }
 
-    private Icon chipIcon(String path, Color tint) {
-        return svgIcon(path, CHIP_ICON_SIZE, tint);
-    }
-
     private Icon attachIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/paperclip.svg", ATTACH_ICON_SIZE, tint);
         return icon != null ? icon : new FlatFileViewFileIcon();
@@ -2460,6 +2757,11 @@ public class InputBar extends JPanel {
     private Icon thinkingIcon(Color tint) {
         Icon icon = svgIcon("/icons/sidebar/brain.svg", THINKING_ICON_SIZE, tint);
         return icon != null ? icon : UIManager.getIcon("OptionPane.questionIcon");
+    }
+
+    private Icon webSearchIcon(Color tint) {
+        Icon icon = svgIcon("/icons/input/globe.svg", WEB_SEARCH_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
     }
 
     private Icon agentModeIcon(Color tint) {

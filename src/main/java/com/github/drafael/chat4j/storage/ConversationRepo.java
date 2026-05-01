@@ -117,6 +117,20 @@ public class ConversationRepo {
         }
     }
 
+    public void updateWebSearchSettings(UUID id, boolean enabled, String optionId) throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            ensureConversationWebSearchColumns(connection);
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE conversations SET web_search_enabled = ?, web_search_option = ? WHERE id = ?"
+            )) {
+                ps.setBoolean(1, enabled);
+                ps.setString(2, StringUtils.trimToNull(optionId));
+                ps.setObject(3, id);
+                ps.executeUpdate();
+            }
+        }
+    }
+
     public void deleteConversation(UUID id) throws SQLException {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
@@ -210,26 +224,29 @@ public class ConversationRepo {
     }
 
     public Optional<ConversationRecord> findById(UUID id) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, created_at, updated_at FROM conversations WHERE id = ?"
-             )
-        ) {
-            ps.setObject(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return Optional.of(new ConversationRecord(
-                        rs.getObject("id", UUID.class),
-                        rs.getString("title"),
-                        rs.getString("provider"),
-                        rs.getString("model"),
-                        rs.getBoolean("is_favorite"),
-                        rs.getString("reasoning_level"),
-                        rs.getBoolean("agent_mode_enabled"),
-                        rs.getString("agent_project_root"),
-                        rs.getTimestamp("created_at").toLocalDateTime(),
-                        rs.getTimestamp("updated_at").toLocalDateTime()
-                    ));
+        try (Connection connection = dataSource.getConnection()) {
+            ensureConversationWebSearchColumns(connection);
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, web_search_enabled, web_search_option, created_at, updated_at FROM conversations WHERE id = ?"
+            )) {
+                ps.setObject(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return Optional.of(new ConversationRecord(
+                                rs.getObject("id", UUID.class),
+                                rs.getString("title"),
+                                rs.getString("provider"),
+                                rs.getString("model"),
+                                rs.getBoolean("is_favorite"),
+                                rs.getString("reasoning_level"),
+                                rs.getBoolean("agent_mode_enabled"),
+                                rs.getString("agent_project_root"),
+                                rs.getBoolean("web_search_enabled"),
+                                rs.getString("web_search_option"),
+                                rs.getTimestamp("created_at").toLocalDateTime(),
+                                rs.getTimestamp("updated_at").toLocalDateTime()
+                        ));
+                    }
                 }
             }
         }
@@ -271,30 +288,33 @@ public class ConversationRepo {
         Map<String, List<ConversationRecord>> grouped = new LinkedHashMap<>();
         grouped.put("Favorites", new ArrayList<>());
 
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
-             );
-             ResultSet rs = ps.executeQuery()
-        ) {
-            while (rs.next()) {
-                ConversationRecord rec = new ConversationRecord(
-                    rs.getObject("id", UUID.class),
-                    rs.getString("title"),
-                    rs.getString("provider"),
-                    rs.getString("model"),
-                    rs.getBoolean("is_favorite"),
-                    rs.getString("reasoning_level"),
-                    rs.getBoolean("agent_mode_enabled"),
-                    rs.getString("agent_project_root"),
-                    rs.getTimestamp("created_at").toLocalDateTime(),
-                    rs.getTimestamp("updated_at").toLocalDateTime());
+        try (Connection connection = dataSource.getConnection()) {
+            ensureConversationWebSearchColumns(connection);
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, web_search_enabled, web_search_option, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
+            );
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    ConversationRecord rec = new ConversationRecord(
+                            rs.getObject("id", UUID.class),
+                            rs.getString("title"),
+                            rs.getString("provider"),
+                            rs.getString("model"),
+                            rs.getBoolean("is_favorite"),
+                            rs.getString("reasoning_level"),
+                            rs.getBoolean("agent_mode_enabled"),
+                            rs.getString("agent_project_root"),
+                            rs.getBoolean("web_search_enabled"),
+                            rs.getString("web_search_option"),
+                            rs.getTimestamp("created_at").toLocalDateTime(),
+                            rs.getTimestamp("updated_at").toLocalDateTime());
 
-                if (rec.isFavorite()) {
-                    grouped.get("Favorites").add(rec);
-                } else {
-                    String group = dateGroup(rec.updatedAt());
-                    grouped.computeIfAbsent(group, k -> new ArrayList<>()).add(rec);
+                    if (rec.isFavorite()) {
+                        grouped.get("Favorites").add(rec);
+                    } else {
+                        String group = dateGroup(rec.updatedAt());
+                        grouped.computeIfAbsent(group, k -> new ArrayList<>()).add(rec);
+                    }
                 }
             }
         }
@@ -354,6 +374,20 @@ public class ConversationRepo {
             connection.rollback();
         } catch (SQLException e) {
             error.addSuppressed(e);
+        }
+    }
+
+    private void ensureConversationWebSearchColumns(Connection connection) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN DEFAULT FALSE"
+        )) {
+            ps.executeUpdate();
+        }
+
+        try (PreparedStatement ps = connection.prepareStatement(
+                "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_option VARCHAR(80)"
+        )) {
+            ps.executeUpdate();
         }
     }
 
@@ -498,6 +532,7 @@ public class ConversationRepo {
         node.put("cancelled", value.cancelled());
         node.put("error", value.error());
         node.put("assistantThinking", value.assistantThinking());
+        node.put("assistantWebSearch", value.assistantWebSearch());
         return node.toString();
     }
 
@@ -583,7 +618,8 @@ public class ConversationRepo {
                     fallbackNotices,
                     node.path("cancelled").asBoolean(false),
                     node.path("error").asText(""),
-                    node.path("assistantThinking").asText("")
+                    node.path("assistantThinking").asText(""),
+                    node.path("assistantWebSearch").asText("")
             );
         } catch (Exception e) {
             return MessageMeta.empty();
@@ -670,9 +706,39 @@ public class ConversationRepo {
         String reasoningLevel,
         boolean agentModeEnabled,
         String agentProjectRoot,
+        boolean webSearchEnabled,
+        String webSearchOption,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
-    ) {}
+    ) {
+        public ConversationRecord(
+                UUID id,
+                String title,
+                String provider,
+                String model,
+                boolean isFavorite,
+                String reasoningLevel,
+                boolean agentModeEnabled,
+                String agentProjectRoot,
+                LocalDateTime createdAt,
+                LocalDateTime updatedAt
+        ) {
+            this(
+                    id,
+                    title,
+                    provider,
+                    model,
+                    isFavorite,
+                    reasoningLevel,
+                    agentModeEnabled,
+                    agentProjectRoot,
+                    false,
+                    null,
+                    createdAt,
+                    updatedAt
+            );
+        }
+    }
 
     public record MessageRecord(
         UUID id,

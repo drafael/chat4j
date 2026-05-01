@@ -1087,6 +1087,142 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Anthropic Claude models expose native web search capability")
+    void supportsNativeWebSearch_whenAnthropicClaudeModel_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "Anthropic",
+                "claude-haiku-4-5-20251001"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("OpenAI web-search-capable model hints expose native web search capability")
+    void supportsNativeWebSearch_whenOpenAiModelMatchesWebSearchHints_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenAI",
+                "gpt-4.1-mini"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Google Gemini models do not expose native web search until Gemini native request path exists")
+    void supportsNativeWebSearch_whenGoogleAiGeminiRequestPathMissing_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "Google AI",
+                "gemini-2.5-flash"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("OpenRouter online model ids expose native web search capability")
+    void supportsNativeWebSearch_whenOpenRouterOnlineModel_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenRouter",
+                "anthropic/claude-haiku-4-5-20251001:online"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("OpenRouter regular namespaced models do not expose native web search")
+    void supportsNativeWebSearch_whenOpenRouterRegularNamespacedModel_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenRouter",
+                "openai/gpt-5-mini"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("OpenRouter model family hints resolve image, reasoning, and tool capabilities")
+    void capabilities_whenOpenRouterModelsUseProviderNamespaces_resolveExpectedSupport() {
+        assertThat(ProviderCapabilityResolver.supportsImageInput(
+                ProviderCapabilities.chatAndModels(),
+                "OpenRouter",
+                "google/gemini-2.5-flash"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(),
+                "OpenRouter",
+                "openai/gpt-5-mini"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "OpenRouter",
+                "anthropic/claude-sonnet-4-20250514"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("OpenAI Codex does not inherit OpenAI native web search hints")
+    void supportsNativeWebSearch_whenOpenAiCodexProviderSelected_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "OpenAI Codex",
+                "gpt-5"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Non-chat model hints disable native web search capability")
+    void supportsNativeWebSearch_whenModelMatchesDenyHints_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenAI",
+                "text-embedding-3-small"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Model endpoint metadata enables native web search capability")
+    void supportsNativeWebSearch_whenModelEndpointDeclaresWebSearch_returnsTrue() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "web-model",
+                200,
+                """
+                        {
+                          "id": "web-model",
+                          "capabilities": {
+                            "web_search": true
+                          }
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            int port = server.getAddress().getPort();
+            boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    "web-model",
+                    "http://127.0.0.1:%d/v1".formatted(port)
+            );
+
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Provider descriptor image capability flag is honored")
     void supportsImageInput_whenCapabilitiesDeclareImageSupport_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsImageInput(

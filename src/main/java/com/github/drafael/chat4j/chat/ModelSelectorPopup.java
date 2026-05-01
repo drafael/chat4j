@@ -50,6 +50,7 @@ public class ModelSelectorPopup extends JDialog {
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
+            Map.entry("Perplexity", "/icons/providers/perplexity.svg"),
             Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),
@@ -103,7 +104,7 @@ public class ModelSelectorPopup extends JDialog {
     private record ModelCapabilityKey(String providerName, String modelId) {
     }
 
-    private record ModelCapabilities(boolean supportsImageInput, boolean supportsReasoning) {
+    private record ModelCapabilities(boolean supportsImageInput, boolean supportsReasoning, boolean supportsNativeWebSearch) {
     }
 
     private static final class ProviderEntry {
@@ -792,6 +793,7 @@ public class ModelSelectorPopup extends JDialog {
                 modelFavoritesService.isFavorite(providerName, modelId),
                 initialCapabilities.supportsImageInput(),
                 initialCapabilities.supportsReasoning(),
+                initialCapabilities.supportsNativeWebSearch(),
                 new ModelRowComponent.Listener() {
                     @Override
                     public void onSelect(String p, String m) {
@@ -848,7 +850,13 @@ public class ModelSelectorPopup extends JDialog {
                 modelId
         );
 
-        return new ModelCapabilities(supportsImageInput, supportsReasoning);
+        boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsNativeWebSearch(
+                entry.def.capabilities(),
+                entry.name(),
+                modelId
+        );
+
+        return new ModelCapabilities(supportsImageInput, supportsReasoning, supportsNativeWebSearch);
     }
 
     private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
@@ -879,7 +887,19 @@ public class ModelSelectorPopup extends JDialog {
                         apiKey
                 );
 
-                ModelCapabilities resolved = new ModelCapabilities(supportsImageInput, supportsReasoning);
+                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsNativeWebSearch(
+                        entry.def.capabilities(),
+                        entry.name(),
+                        modelId,
+                        entry.baseUrl,
+                        apiKey
+                );
+
+                ModelCapabilities resolved = new ModelCapabilities(
+                        supportsImageInput,
+                        supportsReasoning,
+                        supportsNativeWebSearch
+                );
                 capabilityCache.put(key, resolved);
                 SwingUtilities.invokeLater(() -> applyCapabilitiesToVisibleRows(key, resolved));
             } finally {
@@ -891,7 +911,11 @@ public class ModelSelectorPopup extends JDialog {
     private void applyCapabilitiesToVisibleRows(ModelCapabilityKey key, ModelCapabilities capabilities) {
         groups.forEach(group -> group.rows().forEach(row -> {
             if (row.providerName().equals(key.providerName()) && row.modelId().equals(key.modelId())) {
-                row.updateCapabilities(capabilities.supportsImageInput(), capabilities.supportsReasoning());
+                row.updateCapabilities(
+                        capabilities.supportsImageInput(),
+                        capabilities.supportsReasoning(),
+                        capabilities.supportsNativeWebSearch()
+                );
             }
         }));
     }

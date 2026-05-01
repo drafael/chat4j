@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
@@ -29,6 +30,7 @@ import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import com.openai.models.responses.ResponseCreateParams;
 import com.openai.models.responses.ResponseStreamEvent;
 import com.openai.models.responses.ResponseTextDeltaEvent;
+import com.openai.models.responses.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -69,6 +71,31 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
+        streamCompletion(
+                runtime,
+                history,
+                reasoningLevel,
+                WebSearchRequestOptions.disabled(),
+                onToken,
+                onThinkingToken,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
+    @Override
+    public void streamCompletion(
+        ProviderRuntime runtime,
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) throws Exception {
         ReasoningLevel normalizedReasoningLevel = normalizeReasoningLevel(reasoningLevel);
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
@@ -84,7 +111,21 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             return;
         }
 
+        if (webSearchOptions != null && webSearchOptions.enabled() && "OpenAI".equals(runtime.descriptor().name())) {
+            if (supportsFlattenedResponsesInput(history)) {
+                streamWithResponses(runtime, history, client, normalizedReasoningLevel, true, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
+                return;
+            }
+            log.info("Skipping OpenAI native web search for model {} because the request contains non-text attachments", runtime.selectedModel());
+        }
+
         streamWithChatCompletions(runtime, history, client, normalizedReasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
+    }
+
+    private boolean supportsFlattenedResponsesInput(List<Message> history) {
+        return history.stream()
+                .flatMap(message -> message.parts().stream())
+                .allMatch(part -> part instanceof TextPart);
     }
 
     private void streamCopilotCompletion(
@@ -104,7 +145,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
         if (mode == CopilotEndpointMode.RESPONSES) {
             try {
-                streamWithResponses(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
+                streamWithResponses(runtime, history, client, reasoningLevel, false, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
                 return;
             } catch (Exception e) {
@@ -136,7 +177,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     RESPONSES_ENDPOINT,
                     ExceptionUtils.getMessage(e));
             COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
-            streamWithResponses(runtime, history, client, reasoningLevel, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
+            streamWithResponses(runtime, history, client, reasoningLevel, false, onToken, onThinkingToken, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
         }
     }
@@ -205,6 +246,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             List<Message> history,
             OpenAIClient client,
             ReasoningLevel reasoningLevel,
+            boolean webSearchEnabled,
             Consumer<String> onToken,
             Consumer<String> onThinkingToken,
             BooleanSupplier isCancelled,
@@ -220,6 +262,9 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     .model(runtime.selectedModel())
                     .input(input);
             applyResponsesReasoningHints(paramsBuilder, attemptLevel);
+            if (webSearchEnabled) {
+                paramsBuilder.addTool(WebSearchTool.builder().build());
+            }
             ResponseCreateParams params = paramsBuilder.build();
 
             try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {

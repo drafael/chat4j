@@ -7,11 +7,15 @@ import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.PerplexityChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.OpenAiModelCatalogClient;
+import com.github.drafael.chat4j.provider.capability.models.impl.PerplexityModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+
+import java.util.List;
 
 import static java.util.Collections.emptyList;
 
@@ -39,6 +43,30 @@ public class OpenAiCompatibleModule implements ProviderModule {
         String defaultBaseUrl,
         CopilotModelMetadataStore copilotModelMetadataStore
     ) {
+        this(
+                providerName,
+                authType,
+                credentialEnvVar,
+                fallbackApiKey,
+                oauthCliSpec,
+                defaultBaseUrl,
+                copilotModelMetadataStore,
+                emptyList(),
+                declaredCapabilities(providerName)
+        );
+    }
+
+    public OpenAiCompatibleModule(
+        String providerName,
+        AuthType authType,
+        String credentialEnvVar,
+        String fallbackApiKey,
+        OAuthCliSpec oauthCliSpec,
+        String defaultBaseUrl,
+        CopilotModelMetadataStore copilotModelMetadataStore,
+        List<String> seedModels,
+        ProviderCapabilities capabilities
+    ) {
         this.descriptor = new ProviderDescriptor(
             providerName,
             authType,
@@ -46,11 +74,11 @@ public class OpenAiCompatibleModule implements ProviderModule {
             fallbackApiKey,
             oauthCliSpec,
             defaultBaseUrl,
-            emptyList(),
-            declaredCapabilities(providerName),
+            seedModels,
+            capabilities,
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
         this.chatCompletionClient = selectChatClient(providerName);
-        this.modelCatalogClient = new OpenAiModelCatalogClient(copilotModelMetadataStore);
+        this.modelCatalogClient = selectModelCatalogClient(providerName, seedModels, copilotModelMetadataStore);
     }
 
     @Override
@@ -64,9 +92,11 @@ public class OpenAiCompatibleModule implements ProviderModule {
     }
 
     private ChatCompletionClient selectChatClient(String providerName) {
-        return "OpenAI Codex".equals(providerName)
-                ? new CodexCliChatCompletionClient()
-                : new OpenAiChatCompletionClient();
+        return switch (providerName) {
+            case "OpenAI Codex" -> new CodexCliChatCompletionClient();
+            case "Perplexity" -> new PerplexityChatCompletionClient();
+            default -> new OpenAiChatCompletionClient();
+        };
     }
 
     @Override
@@ -74,7 +104,17 @@ public class OpenAiCompatibleModule implements ProviderModule {
         return modelCatalogClient;
     }
 
-    private ProviderCapabilities declaredCapabilities(String providerName) {
+    private ModelCatalogClient selectModelCatalogClient(
+            String providerName,
+            List<String> seedModels,
+            CopilotModelMetadataStore copilotModelMetadataStore
+    ) {
+        return "Perplexity".equals(providerName)
+                ? new PerplexityModelCatalogClient()
+                : new OpenAiModelCatalogClient(copilotModelMetadataStore);
+    }
+
+    private static ProviderCapabilities declaredCapabilities(String providerName) {
         return switch (providerName) {
             case "OpenAI", "OpenRouter" -> ProviderCapabilities.chatModelsAndImages();
             default -> ProviderCapabilities.chatAndModels();

@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
@@ -26,6 +27,15 @@ import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.web.BrowsedPage;
+import com.github.drafael.chat4j.web.ModelWebQueryPlanner;
+import com.github.drafael.chat4j.web.PerplexityWebSearchProvider;
+import com.github.drafael.chat4j.web.WebSearchAvailability;
+import com.github.drafael.chat4j.web.WebSearchAvailabilityResolver;
+import com.github.drafael.chat4j.web.WebSearchContext;
+import com.github.drafael.chat4j.web.WebSearchCoordinator;
+import com.github.drafael.chat4j.web.WebSearchResponse;
+import com.github.drafael.chat4j.web.WebSearchResult;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -67,6 +77,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
@@ -85,9 +97,11 @@ public class ChatPanel extends JPanel {
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
+    private static final boolean WEB_SEARCH_COLLAPSED_BY_DEFAULT = true;
     private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\u001B\\[[;\\d]*[ -/]*[@-~]");
     private static final Pattern NON_PRINTABLE_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\r\\n\\t]]");
     private static final Pattern UNICODE_FORMAT_PATTERN = Pattern.compile("\\p{Cf}");
+    private static final Pattern SOURCE_URL_PATTERN = Pattern.compile("(?:\\[[^]]+])?\\(?(https?://[^\\s)<>]+)\\)?|<?(https?://[^\\s)<>]+)>?");
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
@@ -104,6 +118,8 @@ public class ChatPanel extends JPanel {
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
     private final AttachmentStager attachmentStager = new AttachmentStager();
+    private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
+    private final WebSearchCoordinator webSearchCoordinator = new WebSearchCoordinator(List.of(new PerplexityWebSearchProvider()));
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
@@ -130,6 +146,7 @@ public class ChatPanel extends JPanel {
     private String selectedProviderName;
     private String selectedModelId;
     private ProviderService currentProvider;
+    private ThinkingBubble currentAssistantWebSearchBubble;
     private ThinkingBubble currentAssistantThinkingBubble;
     private MessageBubble currentAssistantBubble;
     private final AtomicLong sendJobCounter = new AtomicLong();
@@ -423,6 +440,7 @@ public class ChatPanel extends JPanel {
         currentProvider = null;
         modelSelectorBtn.setSelection("", "");
         inputBar.setThinkingAvailable(false);
+        inputBar.setWebSearchOptions(emptyList(), null);
         inputBar.setAgentModeAvailable(false);
     }
 
@@ -477,6 +495,7 @@ public class ChatPanel extends JPanel {
         }
 
         updateThinkingToggleAvailability();
+        updateWebSearchAvailability();
         updateAgentToggleAvailability();
 
         if (selectedModelChangedListener != null) {
@@ -520,6 +539,9 @@ public class ChatPanel extends JPanel {
                 provider,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
+                inputBar.isWebSearchEnabled(),
+                inputBar.getWebSearchOptionId(),
+                inputBar.getWebBrowseTopN(),
                 agentModeEnabled,
                 agentProjectRoot,
                 agentSystemPromptAppend
@@ -578,6 +600,12 @@ public class ChatPanel extends JPanel {
             currentAssistantThinkingBubble.setVisible(false);
             addThinkingBubble(currentAssistantThinkingBubble, null);
 
+            if (sendJob.webSearchEnabled) {
+                currentAssistantWebSearchBubble = new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
+                currentAssistantWebSearchBubble.setVisible(false);
+                addThinkingBubble(currentAssistantWebSearchBubble, null);
+            }
+
             currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
             addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         }
@@ -626,6 +654,9 @@ public class ChatPanel extends JPanel {
                 provider,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
+                inputBar.isWebSearchEnabled(),
+                inputBar.getWebSearchOptionId(),
+                inputBar.getWebBrowseTopN(),
                 inputBar.isAgentModeEnabled(),
                 inputBar.getAgentProjectRoot(),
                 agentSystemPromptAppend
@@ -687,12 +718,14 @@ public class ChatPanel extends JPanel {
                     if (!session.isLive()) {
                         return;
                     }
-                    persistAssistantResponse(session, true);
+                    persistAssistantResponse(session, sendJob, true);
                     if (isVisibleConversation(session.conversationId)) {
                         if (currentAssistantThinkingBubble != null) {
                             currentAssistantThinkingBubble.setStreaming(false);
                         }
+                        removeCurrentWebSearchBubbleIfBlank();
                         removeCurrentThinkingBubbleIfBlank();
+                        currentAssistantWebSearchBubble = null;
                         currentAssistantThinkingBubble = null;
                         currentAssistantBubble = null;
                     }
@@ -718,12 +751,14 @@ public class ChatPanel extends JPanel {
                         if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
                             currentAssistantBubble.appendText(errorText);
                         }
-                        persistAssistantResponse(session, false);
+                        persistAssistantResponse(session, sendJob, false);
                         if (isVisibleConversation(session.conversationId)) {
                             if (currentAssistantThinkingBubble != null) {
                                 currentAssistantThinkingBubble.setStreaming(false);
                             }
+                            removeCurrentWebSearchBubbleIfBlank();
                             removeCurrentThinkingBubbleIfBlank();
+                            currentAssistantWebSearchBubble = null;
                             currentAssistantThinkingBubble = null;
                             currentAssistantBubble = null;
                         }
@@ -755,16 +790,230 @@ public class ChatPanel extends JPanel {
                 return;
             }
 
-            session.provider.streamCompletion(
-                    requestHistory,
-                    sendJob.reasoningLevel,
-                    callbacks.onToken(),
-                    callbacks.onThinkingToken(),
-                    callbacks.onComplete(),
-                    callbacks.onError(),
-                    session.cancelled::get
-            );
+            try {
+                List<Message> effectiveHistory = prepareWebSearchContext(sendJob, session, requestHistory, session.cancelled::get);
+                session.provider.streamCompletion(
+                        effectiveHistory,
+                        sendJob.reasoningLevel,
+                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob, requestHistory), sendJob.webSearchOptionId),
+                        callbacks.onToken(),
+                        callbacks.onThinkingToken(),
+                        callbacks.onComplete(),
+                        callbacks.onError(),
+                        session.cancelled::get
+                );
+            } catch (Exception e) {
+                callbacks.onError().accept(e);
+            }
         });
+    }
+
+    private List<Message> prepareWebSearchContext(
+            SendJob sendJob,
+            StreamingSession session,
+            List<Message> requestHistory,
+            BooleanSupplier isCancelled
+    ) throws Exception {
+        if (!sendJob.webSearchEnabled) {
+            return requestHistory;
+        }
+
+        ensureNotCancelled(isCancelled);
+        String query = latestUserText(requestHistory);
+        if (StringUtils.isBlank(query)) {
+            return requestHistory;
+        }
+
+        if (!StringUtils.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
+            if (nativeWebSearchEnabled(sendJob, requestHistory)) {
+                recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
+            }
+            return requestHistory;
+        }
+
+        WebSearchContext webSearchContext;
+        try {
+            webSearchContext = webSearchCoordinator.buildExternalContextDetails(
+                    sendJob.webSearchOptionId,
+                    query,
+                    Math.max(1, sendJob.webBrowseTopN),
+                    isCancelled,
+                    new ModelWebQueryPlanner(sendJob.provider, requestHistory)
+            );
+        } catch (Exception e) {
+            ensureNotCancelled(isCancelled);
+            log.warn("Web search failed for provider={} query={}: {}",
+                    sendJob.webSearchOptionId,
+                    query,
+                    ExceptionUtils.getMessage(e));
+            return requestHistory;
+        }
+        ensureNotCancelled(isCancelled);
+        String context = webSearchContext.promptContext();
+        if (StringUtils.isBlank(context)) {
+            return requestHistory;
+        }
+
+        recordWebSearchActivity(session, formatWebSearchActivity(webSearchContext));
+
+        return withWebContextMessage(requestHistory, context);
+    }
+
+    private boolean nativeWebSearchEnabled(SendJob sendJob, List<Message> requestHistory) {
+        if (!sendJob.webSearchEnabled || !StringUtils.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)) {
+            return false;
+        }
+        if (!StringUtils.equals(sendJob.providerName, "OpenAI")) {
+            return true;
+        }
+        return requestHistory.stream()
+                .flatMap(message -> message.parts().stream())
+                .allMatch(part -> part instanceof TextPart);
+    }
+
+    private List<Message> withWebContextMessage(List<Message> requestHistory, String context) {
+        int latestUserIndex = latestUserIndex(requestHistory);
+        if (latestUserIndex < 0) {
+            return requestHistory;
+        }
+
+        List<Message> effectiveHistory = new ArrayList<>(requestHistory);
+        effectiveHistory.set(latestUserIndex, mergeWebContextIntoUserMessage(requestHistory.get(latestUserIndex), context));
+        return effectiveHistory;
+    }
+
+    private Message mergeWebContextIntoUserMessage(Message userMessage, String context) {
+        List<ContentPart> parts = new ArrayList<>(userMessage.parts().size() + 1);
+        parts.add(new TextPart(context));
+        parts.addAll(userMessage.parts());
+        return new Message(userMessage.role(), parts, userMessage.timestamp(), userMessage.meta());
+    }
+
+    private int latestUserIndex(List<Message> requestHistory) {
+        return IntStream.range(0, requestHistory.size())
+                .filter(index -> requestHistory.get(index).role() == Role.USER)
+                .reduce((first, second) -> second)
+                .orElse(-1);
+    }
+
+    private String latestUserText(List<Message> requestHistory) {
+        return requestHistory.stream()
+                .filter(message -> message.role() == Role.USER)
+                .reduce((first, second) -> second)
+                .map(Message::content)
+                .orElse("");
+    }
+
+    private void recordWebSearchActivity(StreamingSession session, String webSearchActivity) {
+        String normalizedActivity = normalizeWebSearchActivity(webSearchActivity);
+        if (StringUtils.isBlank(normalizedActivity)) {
+            return;
+        }
+
+        synchronized (session.webSearchActivity) {
+            session.webSearchActivity.setLength(0);
+            session.webSearchActivity.append(normalizedActivity);
+        }
+        SwingUtilities.invokeLater(() -> showWebSearchActivity(session, normalizedActivity));
+    }
+
+    private String formatNativeWebSearchActivity(SendJob sendJob, String query) {
+        String provider = StringUtils.defaultIfBlank(sendJob.providerName, "Selected provider");
+        String model = StringUtils.defaultIfBlank(sendJob.modelId, "selected model");
+        return """
+                **Searched**
+                - %s
+
+                **Sources**
+                - Native web search is handled by %s (%s). Source URLs will appear here if the provider returns citation metadata in the answer.
+                """.formatted(query, provider, model).trim();
+    }
+
+    private String formatWebSearchActivity(WebSearchContext context) {
+        if (context == null || (context.responses().isEmpty() && context.browsedPages().isEmpty())) {
+            return "";
+        }
+
+        // Internally, search results and browsed pages remain separate on WebSearchContext:
+        // responses are URLs returned by the search provider.
+        // browsedPages are URLs Chat4J fetched and parsed.
+        // The bubble merges both into one Sources section because users mainly need one de-duplicated citation list.
+        StringBuilder activity = new StringBuilder();
+        context.responses().stream()
+                .filter(Objects::nonNull)
+                .forEach(response -> appendWebSearchResponseActivity(activity, response));
+        appendBrowsedPageActivity(activity, context.browsedPages());
+        return activity.toString().trim();
+    }
+
+    private void appendWebSearchResponseActivity(StringBuilder activity, WebSearchResponse response) {
+        if (activity.length() > 0) {
+            activity.append("\n\n");
+        }
+
+        activity.append("**Searched**\n");
+        activity.append("- ").append(StringUtils.defaultIfBlank(response.query(), "latest information")).append("\n\n");
+        activity.append("**Sources**\n");
+        if (response.results().isEmpty()) {
+            activity.append("- No source URLs returned.");
+            return;
+        }
+
+        for (int i = 0; i < response.results().size(); i++) {
+            appendWebSearchResultActivity(activity, i + 1, response.results().get(i));
+        }
+    }
+
+    private void appendWebSearchResultActivity(StringBuilder activity, int index, WebSearchResult result) {
+        String url = StringUtils.defaultString(result.url());
+        String title = StringUtils.defaultIfBlank(result.title(), StringUtils.defaultIfBlank(result.domain(), url));
+        activity.append("%d. [%s](%s)".formatted(index, escapeMarkdownLinkLabel(title), url));
+        if (StringUtils.isNotBlank(result.snippet())) {
+            activity.append(" — ").append(result.snippet().trim());
+        }
+        activity.append("\n");
+    }
+
+    private void appendBrowsedPageActivity(StringBuilder activity, List<BrowsedPage> pages) {
+        if (pages == null || pages.isEmpty()) {
+            return;
+        }
+
+        if (activity.length() > 0) {
+            activity.append("\n");
+        }
+        activity.append("\n**Sources**\n");
+        for (int i = 0; i < pages.size(); i++) {
+            BrowsedPage page = pages.get(i);
+            String label = StringUtils.defaultIfBlank(page.title(), StringUtils.defaultIfBlank(page.domain(), page.url()));
+            activity.append("%d. [%s](%s)".formatted(i + 1, escapeMarkdownLinkLabel(label), page.url()));
+            if (!page.success()) {
+                activity.append(" — failed: ").append(StringUtils.defaultIfBlank(page.error(), "unknown error"));
+            } else if (StringUtils.isNotBlank(page.excerpt())) {
+                activity.append(" — ").append(StringUtils.abbreviate(page.excerpt(), 220));
+            }
+            activity.append("\n");
+        }
+    }
+
+    private String escapeMarkdownLinkLabel(String value) {
+        return StringUtils.defaultString(value).replace("[", "\\[").replace("]", "\\]");
+    }
+
+    private void showWebSearchActivity(StreamingSession session, String webSearchActivity) {
+        String normalizedActivity = normalizeWebSearchActivity(webSearchActivity);
+        if (!session.isLive() || !isVisibleConversation(session.conversationId) || StringUtils.isBlank(normalizedActivity)) {
+            return;
+        }
+
+        if (currentAssistantWebSearchBubble == null) {
+            currentAssistantWebSearchBubble = new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
+            addThinkingBubble(currentAssistantWebSearchBubble, null);
+        }
+
+        currentAssistantWebSearchBubble.setVisible(true);
+        currentAssistantWebSearchBubble.setText(normalizedActivity);
+        scrollToBottom();
     }
 
     private Message prepareUserMessage(
@@ -922,6 +1171,23 @@ public class ChatPanel extends JPanel {
                         providerNameSnapshot, modelIdSnapshot, e);
             }
         });
+    }
+
+    private void updateWebSearchAvailability() {
+        ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
+        if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
+            inputBar.setWebSearchLockedEnabled(false);
+            inputBar.setWebSearchOptions(emptyList(), null);
+            return;
+        }
+
+        WebSearchAvailability availability = webSearchAvailabilityResolver.resolve(
+                providerDef,
+                selectedModelId,
+                new ArrayList<>(providerMap.values())
+        );
+        inputBar.setWebSearchLockedEnabled(StringUtils.equals(providerDef.name(), "Perplexity"));
+        inputBar.setWebSearchOptions(availability.options(), availability.defaultOptionId());
     }
 
     private void updateAgentToggleAvailability() {
@@ -1354,6 +1620,12 @@ public class ChatPanel extends JPanel {
         currentAssistantThinkingBubble.setVisible(false);
         addThinkingBubble(currentAssistantThinkingBubble, null);
 
+        if (inputBar.isWebSearchEnabled()) {
+            currentAssistantWebSearchBubble = new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
+            currentAssistantWebSearchBubble.setVisible(false);
+            addThinkingBubble(currentAssistantWebSearchBubble, null);
+        }
+
         currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         startAssistantStream(conversationId, currentProvider);
@@ -1365,6 +1637,7 @@ public class ChatPanel extends JPanel {
         }
 
         loadHistory(new ArrayList<>(history));
+        currentAssistantWebSearchBubble = null;
         currentAssistantThinkingBubble = null;
         currentAssistantBubble = null;
     }
@@ -1735,13 +2008,6 @@ public class ChatPanel extends JPanel {
         clipboard.setContents(new StringSelection(joined.toString()), null);
     }
 
-    private void addErrorBubble(String message) {
-        MessageBubble errorBubble = new MessageBubble(Role.ASSISTANT);
-        errorBubble.setText(message);
-        errorBubble.setBackground(new Color(200, 50, 50));
-        addBubble(errorBubble, null, Role.ASSISTANT);
-    }
-
     private void scrollToBottom() {
         if (!autoScrollEnabled) {
             return;
@@ -1806,6 +2072,7 @@ public class ChatPanel extends JPanel {
             cancelStreaming();
         }
 
+        currentAssistantWebSearchBubble = null;
         currentAssistantThinkingBubble = null;
         currentAssistantBubble = null;
         history.clear();
@@ -1840,6 +2107,13 @@ public class ChatPanel extends JPanel {
                         : StringUtils.defaultString(msg.meta().assistantThinking()));
                 if (hasVisibleThinkingContent(assistantThinking)) {
                     addThinkingBubble(new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY), assistantThinking);
+                }
+
+                String assistantWebSearch = normalizeWebSearchActivity(msg.meta() == null
+                        ? ""
+                        : StringUtils.defaultString(msg.meta().assistantWebSearch()));
+                if (StringUtils.isNotBlank(assistantWebSearch)) {
+                    addThinkingBubble(new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT), assistantWebSearch);
                 }
 
                 if (StringUtils.isBlank(msg.content())) {
@@ -2073,7 +2347,7 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void persistAssistantResponse(StreamingSession session, boolean allowBlankContent) {
+    private void persistAssistantResponse(StreamingSession session, SendJob sendJob, boolean allowBlankContent) {
         String assistantText;
         synchronized (session.response) {
             assistantText = session.response.toString();
@@ -2084,7 +2358,18 @@ public class ChatPanel extends JPanel {
             assistantThinking = normalizeThinkingText(session.thinking.toString());
         }
 
-        boolean hasContent = StringUtils.isNotBlank(assistantText) || hasVisibleThinkingContent(assistantThinking);
+        String assistantWebSearch;
+        synchronized (session.webSearchActivity) {
+            assistantWebSearch = session.webSearchActivity.toString();
+        }
+        assistantWebSearch = normalizeWebSearchActivity(mergeAssistantWebSearchWithAnswerSources(sendJob, assistantText, assistantWebSearch));
+        if (isVisibleConversation(session.conversationId) && StringUtils.isNotBlank(assistantWebSearch)) {
+            showWebSearchActivity(session, assistantWebSearch);
+        }
+
+        boolean hasContent = StringUtils.isNotBlank(assistantText)
+                || hasVisibleThinkingContent(assistantThinking)
+                || StringUtils.isNotBlank(assistantWebSearch);
         if (!allowBlankContent && !hasContent) {
             return;
         }
@@ -2097,7 +2382,7 @@ public class ChatPanel extends JPanel {
                 Role.ASSISTANT,
                 List.of(new TextPart(assistantText)),
                 Instant.now(),
-                new MessageMeta(emptyList(), emptyList(), false, "", assistantThinking)
+                new MessageMeta(emptyList(), emptyList(), false, "", assistantThinking, assistantWebSearch)
         );
         UUID conversationId = session.conversationId;
         if (isVisibleConversation(conversationId)) {
@@ -2112,6 +2397,58 @@ public class ChatPanel extends JPanel {
         if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
             notifyMessageSubmitted();
         }
+    }
+
+    private String mergeAssistantWebSearchWithAnswerSources(SendJob sendJob, String assistantText, String existingActivity) {
+        if (sendJob == null || !sendJob.webSearchEnabled) {
+            return existingActivity;
+        }
+
+        String sourceActivity = extractWebSearchSourcesFromAssistantText(assistantText);
+        if (StringUtils.isBlank(sourceActivity)) {
+            return existingActivity;
+        }
+
+        return "%s\n\n**Sources**\n%s".formatted(
+                StringUtils.defaultString(existingActivity).trim(),
+                sourceActivity
+        ).trim();
+    }
+
+    private String normalizeWebSearchActivity(String activity) {
+        return WebSearchActivityNormalizer.normalize(activity);
+    }
+
+    private String extractWebSearchSourcesFromAssistantText(String assistantText) {
+        if (StringUtils.isBlank(assistantText)) {
+            return "";
+        }
+
+        List<String> urls = Arrays.stream(assistantText.split("\\R"))
+                .map(SOURCE_URL_PATTERN::matcher)
+                .filter(Matcher::find)
+                .map(matcher -> StringUtils.defaultIfBlank(matcher.group(1), matcher.group(2)))
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .limit(10)
+                .toList();
+        if (urls.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sources = new StringBuilder();
+        for (String url : urls) {
+            sources.append("- <").append(url).append(">\n");
+        }
+        return sources.toString().trim();
+    }
+
+    private void removeCurrentWebSearchBubbleIfBlank() {
+        if (currentAssistantWebSearchBubble == null || StringUtils.isNotBlank(currentAssistantWebSearchBubble.getFullText())) {
+            return;
+        }
+
+        removeMessageComponentFromPanel(currentAssistantWebSearchBubble);
     }
 
     private void removeCurrentThinkingBubbleIfBlank() {
@@ -2176,13 +2513,21 @@ public class ChatPanel extends JPanel {
                 .filter(this::hasVisibleThinkingContent)
                 .collect(Collectors.joining("\n\n"));
 
+        String mergedWebSearch = normalizeWebSearchActivity(assistantRun.stream()
+                .map(candidate -> candidate.meta() == null
+                        ? ""
+                        : StringUtils.defaultString(candidate.meta().assistantWebSearch()))
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.joining("\n\n")));
+
         MessageMeta meta = primary.meta() == null ? MessageMeta.empty() : primary.meta();
         MessageMeta mergedMeta = new MessageMeta(
                 meta.activeSkills(),
                 meta.fallbackNotices(),
                 meta.cancelled(),
                 meta.error(),
-                mergedThinking
+                mergedThinking,
+                mergedWebSearch
         );
 
         return new Message(primary.role(), primary.parts(), primary.timestamp(), mergedMeta);
@@ -2285,7 +2630,8 @@ public class ChatPanel extends JPanel {
                 if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
                     currentAssistantBubble.appendText(cancelledMarker);
                 }
-                persistAssistantResponse(session, false);
+                persistAssistantResponse(session, findSendJobByStreamSession(session.sessionId), false);
+                removeCurrentWebSearchBubbleIfBlank();
                 removeCurrentThinkingBubbleIfBlank();
             }
 
@@ -2307,7 +2653,9 @@ public class ChatPanel extends JPanel {
         autoScrollQueued = false;
         activeStreamSessionId = -1L;
         streaming = false;
+        removeCurrentWebSearchBubbleIfBlank();
         removeCurrentThinkingBubbleIfBlank();
+        currentAssistantWebSearchBubble = null;
         currentAssistantThinkingBubble = null;
         currentAssistantBubble = null;
         updateGenerationIndicator();
@@ -2380,6 +2728,13 @@ public class ChatPanel extends JPanel {
                 .ifPresent(this::finishSendJob);
     }
 
+    private SendJob findSendJobByStreamSession(long streamSessionId) {
+        return activeSendJobs.values().stream()
+                .filter(job -> Objects.equals(job.streamSessionId, streamSessionId))
+                .findFirst()
+                .orElse(null);
+    }
+
     private boolean isPreparing(SendJob sendJob) {
         return sendJob != null
                 && activeSendJobs.containsKey(sendJob.jobId)
@@ -2389,10 +2744,6 @@ public class ChatPanel extends JPanel {
 
     private boolean isVisibleConversationBusy() {
         return visiblePreparingJob() != null || visibleStreamingSession() != null;
-    }
-
-    private boolean isVisibleConversationStreaming() {
-        return visibleStreamingSession() != null;
     }
 
     private boolean hasLiveStreamingSession(UUID conversationId) {
@@ -2490,6 +2841,9 @@ public class ChatPanel extends JPanel {
         final ProviderService provider;
         final List<Message> historySnapshot;
         final ReasoningLevel reasoningLevel;
+        final boolean webSearchEnabled;
+        final String webSearchOptionId;
+        final int webBrowseTopN;
         final boolean agentModeEnabled;
         final Path agentProjectRoot;
         final String agentSystemPromptAppend;
@@ -2508,6 +2862,9 @@ public class ChatPanel extends JPanel {
                 ProviderService provider,
                 List<Message> historySnapshot,
                 ReasoningLevel reasoningLevel,
+                boolean webSearchEnabled,
+                String webSearchOptionId,
+                int webBrowseTopN,
                 boolean agentModeEnabled,
                 Path agentProjectRoot,
                 String agentSystemPromptAppend
@@ -2521,6 +2878,9 @@ public class ChatPanel extends JPanel {
             this.provider = provider;
             this.historySnapshot = List.copyOf(historySnapshot);
             this.reasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
+            this.webSearchEnabled = webSearchEnabled;
+            this.webSearchOptionId = webSearchOptionId;
+            this.webBrowseTopN = webBrowseTopN;
             this.agentModeEnabled = agentModeEnabled;
             this.agentProjectRoot = agentProjectRoot;
             this.agentSystemPromptAppend = StringUtils.defaultString(agentSystemPromptAppend);
@@ -2551,6 +2911,7 @@ public class ChatPanel extends JPanel {
         final AtomicBoolean persisted = new AtomicBoolean(false);
         final StringBuilder response = new StringBuilder();
         final StringBuilder thinking = new StringBuilder();
+        final StringBuilder webSearchActivity = new StringBuilder();
         volatile Thread worker;
         volatile boolean finished = false;
 

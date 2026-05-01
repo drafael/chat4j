@@ -18,6 +18,19 @@ public interface ProviderService {
         BooleanSupplier isCancelled
     );
 
+    default void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled
+    ) {
+        streamCompletion(history, reasoningLevel, onToken, onThinkingToken, onComplete, onError, isCancelled);
+    }
+
     List<String> availableModels();
 
     default void cancelActiveRequest() {

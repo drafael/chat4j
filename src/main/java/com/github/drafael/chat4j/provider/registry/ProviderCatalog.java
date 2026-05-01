@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ModelFetcher;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
 import com.github.drafael.chat4j.provider.capability.auth.impl.EnvVarCredentialStrategy;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
@@ -64,6 +65,17 @@ final class ProviderCatalog {
                         null,
                         "https://api.openai.com/v1",
                         COPILOT_MODEL_METADATA_STORE
+                ),
+                new OpenAiCompatibleModule(
+                        "Perplexity",
+                        AuthType.ENV_VAR,
+                        "PERPLEXITY_API_KEY",
+                        null,
+                        null,
+                        "https://api.perplexity.ai",
+                        COPILOT_MODEL_METADATA_STORE,
+                        List.of("sonar", "sonar-pro"),
+                        ProviderCapabilities.chatModelsAndNativeWebSearch()
                 ),
                 new OpenAiCompatibleModule(
                         "OpenRouter",
