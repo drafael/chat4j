@@ -34,7 +34,12 @@ class ProviderCatalogTest {
         assertThat(subject.allProviders())
                 .filteredOn(providerDefinition -> "Perplexity".equals(providerDefinition.name()))
                 .singleElement()
-                .satisfies(providerDefinition -> assertThat(providerDefinition.seedModels()).contains("sonar", "sonar-pro"));
+                .satisfies(providerDefinition -> assertThat(providerDefinition.seedModels()).containsExactly(
+                        "sonar",
+                        "sonar-pro",
+                        "sonar-reasoning-pro",
+                        "sonar-deep-research"
+                ));
     }
 
     @Test

@@ -35,7 +35,18 @@ public final class ProviderCapabilityResolver {
             "lm studio",
             "lmstudio"
     );
-    private static final Set<String> NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("perplexity");
+    private static final Set<String> PERPLEXITY_PROVIDER_HINTS = Set.of("perplexity");
+    private static final Set<String> DEEPSEEK_PROVIDER_HINTS = Set.of("deepseek");
+    private static final Set<String> DEEPSEEK_REASONING_MODEL_ALLOW_HINTS = Set.of(
+            "deepseek-v4",
+            "deepseek-reasoner",
+            "deepseek-r1"
+    );
+    private static final Set<String> DEEPSEEK_TOOL_MODEL_ALLOW_HINTS = Set.of(
+            "deepseek-v4",
+            "deepseek-chat",
+            "deepseek-reasoner"
+    );
     private static final Set<String> ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("anthropic");
     private static final Set<String> OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("openai");
     private static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
@@ -58,10 +69,7 @@ public final class ProviderCapabilityResolver {
             "o3",
             "o4"
     );
-    private static final Set<String> OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
-            ":online",
-            "perplexity/sonar"
-    );
+    private static final Set<String> OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(":online");
     private static final Set<String> OLLAMA_PROVIDER_HINTS = Set.of("ollama");
     private static final Set<String> LM_STUDIO_PROVIDER_HINTS = Set.of("lm studio", "lmstudio");
     private static final Set<String> GOOGLE_AI_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
@@ -406,9 +414,21 @@ public final class ProviderCapabilityResolver {
             return false;
         }
 
+        if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
+            return PerplexityModelIds.isReasoningSonarModel(modelId);
+        }
+
         Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicReasoningSupport(provider, modelId, baseUrl, apiKey);
         if (dynamicallyResolvedSupport.isPresent()) {
             return dynamicallyResolvedSupport.get();
+        }
+
+        if (containsAny(provider, DEEPSEEK_PROVIDER_HINTS)) {
+            return supportsDeepSeekReasoning(model);
+        }
+
+        if (OPENROUTER_PROVIDER_HINTS.contains(provider) && PerplexityModelIds.isNamespacedReasoningSonarModel(modelId)) {
+            return true;
         }
 
         if (!containsAny(provider, REASONING_PROVIDER_HINTS)) {
@@ -454,6 +474,10 @@ public final class ProviderCapabilityResolver {
             return !model.isBlank();
         }
 
+        if (containsAny(provider, DEEPSEEK_PROVIDER_HINTS)) {
+            return supportsDeepSeekToolInvocation(model);
+        }
+
         if (!containsAny(provider, TOOL_PROVIDER_HINTS)) {
             return false;
         }
@@ -487,6 +511,10 @@ public final class ProviderCapabilityResolver {
             return false;
         }
 
+        if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
+            return PerplexityModelIds.isSonarModel(modelId);
+        }
+
         if (capabilities != null && capabilities.supportsNativeWebSearch()) {
             return true;
         }
@@ -499,10 +527,6 @@ public final class ProviderCapabilityResolver {
         );
         if (dynamicallyResolvedSupport.isPresent()) {
             return dynamicallyResolvedSupport.get();
-        }
-
-        if (containsAny(provider, NATIVE_WEB_SEARCH_PROVIDER_HINTS)) {
-            return true;
         }
 
         if (ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
@@ -533,7 +557,16 @@ public final class ProviderCapabilityResolver {
     }
 
     private static boolean supportsOpenRouterNativeWebSearch(String model) {
-        return containsAny(model, OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
+        return containsAny(model, OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
+                || PerplexityModelIds.isNamespacedSonarModel(model);
+    }
+
+    private static boolean supportsDeepSeekReasoning(String model) {
+        return StringUtils.isNotBlank(model) && containsAny(model, DEEPSEEK_REASONING_MODEL_ALLOW_HINTS);
+    }
+
+    private static boolean supportsDeepSeekToolInvocation(String model) {
+        return StringUtils.isNotBlank(model) && containsAny(model, DEEPSEEK_TOOL_MODEL_ALLOW_HINTS);
     }
 
     private static Optional<Boolean> resolveDynamicImageSupport(

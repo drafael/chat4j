@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.modules.AnthropicModule;
 import com.github.drafael.chat4j.provider.modules.OpenAiCompatibleModule;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -69,7 +70,7 @@ final class ProviderCatalog {
                         null,
                         "https://api.perplexity.ai",
                         COPILOT_MODEL_METADATA_STORE,
-                        List.of("sonar", "sonar-pro"),
+                        PerplexityModelIds.SONAR_MODELS,
                         ProviderCapabilities.chatModelsAndNativeWebSearch()
                 ),
                 new OpenAiCompatibleModule(

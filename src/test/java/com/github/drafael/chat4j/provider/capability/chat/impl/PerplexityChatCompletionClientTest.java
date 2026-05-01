@@ -67,6 +67,92 @@ class PerplexityChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("Perplexity chat client leaves think tags for the model-agnostic chat parser")
+    void streamCompletion_whenResponseContainsThinkTags_preservesTagsForChatParser() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": "<think>private reasoning</think>visible answer"}}],
+                      "search_results": []
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            StringBuilder output = new StringBuilder();
+            StringBuilder thinking = new StringBuilder();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.MEDIUM,
+                    output::append,
+                    thinking::append,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output).hasToString("<think>private reasoning</think>visible answer");
+            assertThat(thinking).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Perplexity chat client preserves think tags even when reasoning output is disabled")
+    void streamCompletion_whenReasoningDisabledAndResponseContainsThinkTags_preservesTagsForChatParser() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": "<think>private reasoning</think>visible answer"}}],
+                      "search_results": []
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            StringBuilder output = new StringBuilder();
+            StringBuilder thinking = new StringBuilder();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    output::append,
+                    thinking::append,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output).hasToString("<think>private reasoning</think>visible answer");
+            assertThat(thinking).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Perplexity chat client appends chat completions path when base URL ends with v1")
     void streamCompletion_whenBaseUrlEndsWithV1_postsToChatCompletionsEndpoint() throws Exception {
         AtomicReference<String> requestedPath = new AtomicReference<>();

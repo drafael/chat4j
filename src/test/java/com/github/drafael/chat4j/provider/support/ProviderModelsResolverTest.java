@@ -35,6 +35,25 @@ class ProviderModelsResolverTest {
     }
 
     @Test
+    @DisplayName("Resolve uses Perplexity seed models even when stale cache entries exist")
+    void resolve_whenPerplexityCacheContainsStaleModels_usesSeedModels() {
+        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        modelCacheService.update("Perplexity", List.of("sonar-pro", "sonar"));
+
+        var subject = new ProviderModelsResolver(modelCacheService);
+        var provider = provider("Perplexity", "https://api.perplexity.ai", PerplexityModelIds.SONAR_MODELS);
+
+        Map<String, List<String>> modelsByProvider = subject.resolve(List.of(provider));
+
+        assertThat(modelsByProvider.get("Perplexity")).containsExactly(
+                "sonar",
+                "sonar-pro",
+                "sonar-reasoning-pro",
+                "sonar-deep-research"
+        );
+    }
+
+    @Test
     @DisplayName("Resolve falls back to seed models when cache is empty")
     void resolve_whenCacheIsEmpty_usesSeedModels() {
         var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));

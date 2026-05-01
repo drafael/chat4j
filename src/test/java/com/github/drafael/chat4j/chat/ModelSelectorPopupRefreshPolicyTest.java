@@ -4,10 +4,28 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ModelSelectorPopupRefreshPolicyTest {
+
+    @Test
+    @DisplayName("Perplexity popup models ignore stale cache and use static Sonar list")
+    void initialModels_whenProviderIsPerplexity_returnsStaticSonarModels() {
+        List<String> models = ModelSelectorPopup.initialModels(
+                "Perplexity",
+                List.of("sonar-pro", "sonar"),
+                List.of("sonar", "sonar-pro")
+        );
+
+        assertThat(models).containsExactly(
+                "sonar",
+                "sonar-pro",
+                "sonar-reasoning-pro",
+                "sonar-deep-research"
+        );
+    }
 
     @Test
     @DisplayName("GitHub Copilot uses default provider refresh cadence")

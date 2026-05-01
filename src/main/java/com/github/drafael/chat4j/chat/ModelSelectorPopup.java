@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderDef;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
+import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
@@ -692,10 +693,7 @@ public class ModelSelectorPopup extends JDialog {
         entries.clear();
 
         providers.forEach(provider -> {
-            List<String> cached = sanitizeModels(provider.name(), modelCacheService.getModels(provider.name()));
-            List<String> models = cached.isEmpty()
-                    ? sanitizeModels(provider.name(), provider.seedModels())
-                    : cached;
+            List<String> models = initialModels(provider.name(), modelCacheService.getModels(provider.name()), provider.seedModels());
             entries.put(provider.name(), new ProviderEntry(
                     provider,
                     models,
@@ -767,6 +765,10 @@ public class ModelSelectorPopup extends JDialog {
 
     private void fetchModelsAsync() {
         entries.values().forEach(entry -> {
+            if (StringUtils.equals(entry.name(), "Perplexity")) {
+                return;
+            }
+
             Duration ttl = refreshTtl(entry.name());
             boolean refreshRequired = modelCacheService.shouldRefresh(entry.name(), ttl);
             if (!refreshRequired || !modelCacheService.tryMarkRefreshInFlight(entry.name())) {
@@ -1012,6 +1014,17 @@ public class ModelSelectorPopup extends JDialog {
 
     private static Color colorOrDefault(Color candidate, Color fallback) {
         return candidate != null ? candidate : fallback;
+    }
+
+    static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels) {
+        if (StringUtils.equals(providerName, "Perplexity")) {
+            return PerplexityModelIds.SONAR_MODELS;
+        }
+
+        List<String> cached = sanitizeModels(providerName, cachedModels);
+        return cached.isEmpty()
+                ? sanitizeModels(providerName, seedModels)
+                : cached;
     }
 
     private static List<String> sanitizeModels(String providerName, List<String> modelIds) {

@@ -1207,6 +1207,94 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Think tags emitted in answer tokens are rendered as thinking for any provider")
+    void onSend_whenProviderEmitsThinkTagsInAnswerTokens_extractsThinkingModelAgnostically() throws Exception {
+        subject.getInputBar().setThinkingAvailable(true);
+        subject.getInputBar().setThinkingEnabled(true);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("<thi");
+                onToken.accept("nk>hidden reasoning</thi");
+                onToken.accept("nk>visible answer");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).isEqualTo("visible answer");
+        assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+        assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
+        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+    }
+
+    @Test
+    @DisplayName("Think tags in answer tokens render as thinking even when reasoning is disabled")
+    void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersThinkingBubble() throws Exception {
+        subject.getInputBar().setThinkingAvailable(false);
+        subject.getInputBar().setThinkingEnabled(false);
+        setField(subject, "currentProvider", immediateProvider("<think>hidden reasoning</think>visible answer"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).isEqualTo("visible answer");
+        assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        assertThat(thinkingBubbles).hasSize(1);
+        assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
+        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+    }
+
+    @Test
     @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
     void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersThinkingBubble() throws Exception {
         subject.getInputBar().setThinkingAvailable(true);
@@ -1261,6 +1349,8 @@ class ChatPanelTest {
         List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("compare enum features");
+        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
     }
 
     @Test
@@ -1587,6 +1677,24 @@ class ChatPanelTest {
     @FunctionalInterface
     private interface CheckedBooleanSupplier {
         boolean getAsBoolean() throws Exception;
+    }
+
+    private static MessageBubble assistantBubble(JPanel messagesPanel) {
+        return findComponents(messagesPanel, MessageBubble.class).stream()
+                .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static int messageRowIndex(JPanel messagesPanel, Component component) {
+        Component row = component;
+        while (row != null && row.getParent() != messagesPanel) {
+            row = row.getParent();
+        }
+        assertThat(row).isNotNull();
+
+        GridBagLayout layout = (GridBagLayout) messagesPanel.getLayout();
+        return layout.getConstraints(row).gridy;
     }
 
     private static <T extends Component> List<T> findComponents(Container root, Class<T> componentType) {

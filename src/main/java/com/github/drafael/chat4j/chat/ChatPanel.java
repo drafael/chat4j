@@ -750,67 +750,29 @@ public class ChatPanel extends JPanel {
         sendJob.streamSessionId = session.sessionId;
 
         AgentRunCallbacks callbacks = new AgentRunCallbacks(
-                token -> {
-                    if (!session.isLive()) {
-                        return;
-                    }
-                    appendAssistantResponse(session, token);
+                token -> handleAssistantToken(session, sendJob, token),
+                thinkingToken -> handleAssistantThinkingToken(session, sendJob, thinkingToken),
+                () -> {
+                    flushThinkTagParser(session, sendJob);
                     SwingUtilities.invokeLater(() -> {
-                        if (!session.isLive()
-                                || currentAssistantBubble == null
-                                || !isVisibleConversation(session.conversationId)
-                        ) {
+                        if (!session.isLive()) {
                             return;
                         }
-                        currentAssistantBubble.appendText(token);
-                        scrollToBottom();
+                        persistAssistantResponse(session, sendJob, true);
+                        if (isVisibleConversation(session.conversationId)) {
+                            if (currentAssistantThinkingBubble != null) {
+                                currentAssistantThinkingBubble.setStreaming(false);
+                            }
+                            removeCurrentWebSearchBubbleIfBlank();
+                            removeCurrentThinkingBubbleIfBlank();
+                            currentAssistantWebSearchBubble = null;
+                            currentAssistantThinkingBubble = null;
+                            currentAssistantBubble = null;
+                        }
+                        finishStreamingSession(session);
+                        finishSendJob(sendJob);
                     });
                 },
-                thinkingToken -> {
-                    if (!session.isLive() || !sendJob.reasoningLevel.enabled()) {
-                        return;
-                    }
-
-                    String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
-                    if (normalizedThinkingToken.isEmpty()) {
-                        return;
-                    }
-
-                    appendAssistantThinking(session, normalizedThinkingToken);
-                    SwingUtilities.invokeLater(() -> {
-                        if (!session.isLive() || !isVisibleConversation(session.conversationId)) {
-                            return;
-                        }
-
-                        if (currentAssistantThinkingBubble == null) {
-                            currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
-                            currentAssistantThinkingBubble.setStreaming(true);
-                            addThinkingBubble(currentAssistantThinkingBubble, null);
-                        }
-
-                        currentAssistantThinkingBubble.setVisible(true);
-                        currentAssistantThinkingBubble.appendText(normalizedThinkingToken);
-                        scrollToBottom();
-                    });
-                },
-                () -> SwingUtilities.invokeLater(() -> {
-                    if (!session.isLive()) {
-                        return;
-                    }
-                    persistAssistantResponse(session, sendJob, true);
-                    if (isVisibleConversation(session.conversationId)) {
-                        if (currentAssistantThinkingBubble != null) {
-                            currentAssistantThinkingBubble.setStreaming(false);
-                        }
-                        removeCurrentWebSearchBubbleIfBlank();
-                        removeCurrentThinkingBubbleIfBlank();
-                        currentAssistantWebSearchBubble = null;
-                        currentAssistantThinkingBubble = null;
-                        currentAssistantBubble = null;
-                    }
-                    finishStreamingSession(session);
-                    finishSendJob(sendJob);
-                }),
                 error -> {
                     if (!session.isLive()) {
                         return;
@@ -1776,14 +1738,53 @@ public class ChatPanel extends JPanel {
     }
 
     private void addMessageWrapper(JPanel wrapper) {
+        GridBagConstraints gbc = messageRowConstraints(messageRow++);
+        messagesPanel.add(wrapper, gbc);
+        finishMessageWrapperAdd();
+    }
+
+    private void addMessageWrapperBefore(JPanel wrapper, JComponent beforeComponent) {
+        Component beforeWrapper = findMessagePanelChild(beforeComponent);
+        if (beforeWrapper == null) {
+            addMessageWrapper(wrapper);
+            return;
+        }
+
+        removeBottomFiller();
+        GridBagLayout layout = (GridBagLayout) messagesPanel.getLayout();
+        int insertRow = layout.getConstraints(beforeWrapper).gridy;
+        for (Component component : messagesPanel.getComponents()) {
+            GridBagConstraints constraints = layout.getConstraints(component);
+            if (constraints.gridy >= insertRow) {
+                constraints.gridy++;
+                layout.setConstraints(component, constraints);
+            }
+        }
+
+        messagesPanel.add(wrapper, messageRowConstraints(insertRow));
+        messageRow++;
+        finishMessageWrapperAdd();
+    }
+
+    private GridBagConstraints messageRowConstraints(int row) {
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.gridx = 0;
-        gbc.gridy = messageRow++;
+        gbc.gridy = row;
         gbc.weightx = 1.0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.anchor = GridBagConstraints.NORTH;
+        return gbc;
+    }
 
-        messagesPanel.add(wrapper, gbc);
+    private Component findMessagePanelChild(Component component) {
+        Component current = component;
+        while (current != null && current.getParent() != messagesPanel) {
+            current = current.getParent();
+        }
+        return current;
+    }
+
+    private void finishMessageWrapperAdd() {
         addBottomFiller();
         messagesPanel.revalidate();
         messagesCardLayout.show(messagesContainer, CARD_CHAT);
@@ -1917,16 +1918,26 @@ public class ChatPanel extends JPanel {
         secondaryInfoWrapper.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 16));
         secondaryInfoWrapper.add(bubble, BorderLayout.CENTER);
 
-        addMessageComponent(Role.ASSISTANT, secondaryInfoWrapper, null);
+        JComponent beforeComponent = thinkingBubbleInsertTarget(bubble);
+        if (beforeComponent == null) {
+            addMessageComponent(Role.ASSISTANT, secondaryInfoWrapper, null);
+        } else {
+            addMessageWrapperBefore(createMessageWrapper(Role.ASSISTANT, secondaryInfoWrapper, null), beforeComponent);
+        }
+    }
+
+    private JComponent thinkingBubbleInsertTarget(ThinkingBubble bubble) {
+        if (bubble == currentAssistantThinkingBubble && currentAssistantWebSearchBubble != null) {
+            return currentAssistantWebSearchBubble;
+        }
+        if (bubble == currentAssistantThinkingBubble || bubble == currentAssistantWebSearchBubble) {
+            return currentAssistantBubble;
+        }
+        return null;
     }
 
     private void addBottomFiller() {
-        for (Component c : messagesPanel.getComponents()) {
-            if ("filler".equals(c.getName())) {
-                messagesPanel.remove(c);
-                break;
-            }
-        }
+        removeBottomFiller();
         JPanel filler = new JPanel();
         filler.setName("filler");
         filler.setOpaque(false);
@@ -1936,6 +1947,15 @@ public class ChatPanel extends JPanel {
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.VERTICAL;
         messagesPanel.add(filler, gbc);
+    }
+
+    private void removeBottomFiller() {
+        for (Component c : messagesPanel.getComponents()) {
+            if ("filler".equals(c.getName())) {
+                messagesPanel.remove(c);
+                return;
+            }
+        }
     }
 
     private void installBubbleContextMenu(MessageBubble bubble) {
@@ -2459,6 +2479,81 @@ public class ChatPanel extends JPanel {
 
     private boolean isVisibleConversation(UUID conversationId) {
         return Objects.equals(activeConversationId, conversationId);
+    }
+
+    private void handleAssistantToken(StreamingSession session, SendJob sendJob, String token) {
+        if (!session.isLive()) {
+            return;
+        }
+
+        ThinkTagSplit split = session.thinkTagParser.accept(token);
+        appendAssistantVisibleToken(session, split.visibleText());
+        handleAssistantThinkingToken(session, sendJob, split.thinkingText(), true);
+    }
+
+    private void flushThinkTagParser(StreamingSession session, SendJob sendJob) {
+        if (!session.isLive()) {
+            return;
+        }
+
+        ThinkTagSplit split = session.thinkTagParser.flush();
+        appendAssistantVisibleToken(session, split.visibleText());
+        handleAssistantThinkingToken(session, sendJob, split.thinkingText(), true);
+    }
+
+    private void appendAssistantVisibleToken(StreamingSession session, String token) {
+        if (StringUtils.isEmpty(token)) {
+            return;
+        }
+
+        appendAssistantResponse(session, token);
+        SwingUtilities.invokeLater(() -> {
+            if (!session.isLive()
+                    || currentAssistantBubble == null
+                    || !isVisibleConversation(session.conversationId)
+            ) {
+                return;
+            }
+            currentAssistantBubble.appendText(token);
+            scrollToBottom();
+        });
+    }
+
+    private void handleAssistantThinkingToken(StreamingSession session, SendJob sendJob, String thinkingToken) {
+        handleAssistantThinkingToken(session, sendJob, thinkingToken, false);
+    }
+
+    private void handleAssistantThinkingToken(
+            StreamingSession session,
+            SendJob sendJob,
+            String thinkingToken,
+            boolean forceRender
+    ) {
+        if (!session.isLive() || (!forceRender && !sendJob.reasoningLevel.enabled())) {
+            return;
+        }
+
+        String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
+        if (normalizedThinkingToken.isEmpty()) {
+            return;
+        }
+
+        appendAssistantThinking(session, normalizedThinkingToken);
+        SwingUtilities.invokeLater(() -> {
+            if (!session.isLive() || !isVisibleConversation(session.conversationId)) {
+                return;
+            }
+
+            if (currentAssistantThinkingBubble == null) {
+                currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+                currentAssistantThinkingBubble.setStreaming(true);
+                addThinkingBubble(currentAssistantThinkingBubble, null);
+            }
+
+            currentAssistantThinkingBubble.setVisible(true);
+            currentAssistantThinkingBubble.appendText(normalizedThinkingToken);
+            scrollToBottom();
+        });
     }
 
     private void appendAssistantResponse(StreamingSession session, String text) {
@@ -3061,6 +3156,7 @@ public class ChatPanel extends JPanel {
         final StringBuilder response = new StringBuilder();
         final StringBuilder thinking = new StringBuilder();
         final StringBuilder webSearchActivity = new StringBuilder();
+        final ThinkTagStreamParser thinkTagParser = new ThinkTagStreamParser();
         volatile Thread worker;
         volatile boolean finished = false;
 
@@ -3072,6 +3168,89 @@ public class ChatPanel extends JPanel {
 
         boolean isLive() {
             return !finished && !cancelled.get();
+        }
+    }
+
+    private static final class ThinkTagStreamParser {
+        private static final String OPEN_TAG = "<think>";
+        private static final String CLOSE_TAG = "</think>";
+
+        private final StringBuilder pending = new StringBuilder();
+        private boolean inThinking;
+
+        ThinkTagSplit accept(String token) {
+            if (StringUtils.isEmpty(token)) {
+                return ThinkTagSplit.empty();
+            }
+
+            pending.append(token);
+            return drain(false);
+        }
+
+        ThinkTagSplit flush() {
+            return drain(true);
+        }
+
+        private ThinkTagSplit drain(boolean flush) {
+            StringBuilder visible = new StringBuilder();
+            StringBuilder thinking = new StringBuilder();
+
+            while (!pending.isEmpty()) {
+                String tag = inThinking ? CLOSE_TAG : OPEN_TAG;
+                int tagIndex = StringUtils.indexOfIgnoreCase(pending.toString(), tag);
+                if (tagIndex >= 0) {
+                    appendCurrentModeText(visible, thinking, pending.substring(0, tagIndex));
+                    pending.delete(0, tagIndex + tag.length());
+                    inThinking = !inThinking;
+                    continue;
+                }
+
+                int keepLength = flush ? 0 : partialTagSuffixLength(pending, tag);
+                int emitLength = pending.length() - keepLength;
+                if (emitLength <= 0) {
+                    break;
+                }
+
+                appendCurrentModeText(visible, thinking, pending.substring(0, emitLength));
+                pending.delete(0, emitLength);
+            }
+
+            if (flush && !pending.isEmpty()) {
+                appendCurrentModeText(visible, thinking, pending.toString());
+                pending.setLength(0);
+            }
+
+            return new ThinkTagSplit(visible.toString(), thinking.toString());
+        }
+
+        private void appendCurrentModeText(StringBuilder visible, StringBuilder thinking, String text) {
+            if (text.isEmpty()) {
+                return;
+            }
+
+            if (inThinking) {
+                thinking.append(text);
+            } else {
+                visible.append(text);
+            }
+        }
+
+        private int partialTagSuffixLength(StringBuilder value, String tag) {
+            int maxLength = Math.min(value.length(), tag.length() - 1);
+            for (int length = maxLength; length > 0; length--) {
+                String suffix = value.substring(value.length() - length);
+                if (StringUtils.startsWithIgnoreCase(tag, suffix)) {
+                    return length;
+                }
+            }
+
+            return 0;
+        }
+    }
+
+    private record ThinkTagSplit(String visibleText, String thinkingText) {
+        static ThinkTagSplit empty() {
+            return new ThinkTagSplit("", "");
         }
     }
 

@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
 import java.util.LinkedHashMap;
@@ -24,6 +25,10 @@ public class ProviderModelsResolver {
                 .collect(Collectors.toMap(
                         ProviderRegistry.ProviderDef::name,
                         provider -> {
+                            if (StringUtils.equals(provider.name(), "Perplexity")) {
+                                return provider.seedModels();
+                            }
+
                             List<String> models = sanitize(provider.name(), modelCacheService.getModels(provider.name()));
                             return models.isEmpty()
                                     ? sanitize(provider.name(), provider.seedModels())

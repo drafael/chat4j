@@ -327,15 +327,62 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("DeepSeek reasoner model hints enable reasoning support")
-    void supportsReasoning_whenDeepSeekReasonerModelNameIsUsed_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsReasoning(
+    @DisplayName("DeepSeek V4 and reasoner model hints enable reasoning support")
+    void supportsReasoning_whenDeepSeekReasoningModelNameIsUsed_returnsTrue() {
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-pro"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-flash"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
                 ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-reasoner"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("DeepSeek chat compatibility model does not expose reasoning support")
+    void supportsReasoning_whenDeepSeekChatModelNameIsUsed_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-chat"
         );
 
-        assertThat(supported).isTrue();
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Perplexity reasoning Sonar models expose reasoning capability")
+    void supportsReasoning_whenPerplexityReasoningSonarModelSelected_returnsTrue() {
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "sonar-reasoning-pro"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "sonar-deep-research"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("Perplexity non-reasoning Sonar models keep reasoning disabled")
+    void supportsReasoning_whenPerplexitySearchSonarModelSelected_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "sonar-pro"
+        );
+
+        assertThat(supported).isFalse();
     }
 
     @Test
@@ -829,6 +876,41 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("DeepSeek V4 compatibility model hints enable tool invocation support")
+    void supportsToolInvocation_whenDeepSeekModelNameIsUsed_returnsTrue() {
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-pro"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-flash"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-chat"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("DeepSeek does not expose image or native web search hints")
+    void capabilities_whenDeepSeekModelNameIsUsed_disablesImageAndNativeWebSearch() {
+        assertThat(ProviderCapabilityResolver.supportsImageInput(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-pro"
+        )).isFalse();
+        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-pro"
+        )).isFalse();
+    }
+
+    @Test
     @DisplayName("Tool-calling model hints enable tool invocation support")
     void supportsToolInvocation_whenModelNameMatchesFallbackHints_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
@@ -1123,6 +1205,33 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Perplexity Sonar models expose native web search capability")
+    void supportsNativeWebSearch_whenPerplexitySonarModelSelected_returnsTrue() {
+        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "sonar"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "sonar-deep-research"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("Perplexity native web search is limited to the static Sonar model list")
+    void supportsNativeWebSearch_whenPerplexityNonSonarModelSelected_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                "Perplexity",
+                "openai/gpt-5"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
     @DisplayName("OpenRouter online model ids expose native web search capability")
     void supportsNativeWebSearch_whenOpenRouterOnlineModel_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
@@ -1135,12 +1244,36 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("OpenRouter Perplexity Sonar models expose native web search capability")
+    void supportsNativeWebSearch_whenOpenRouterPerplexitySonarModelSelected_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenRouter",
+                "perplexity/sonar-reasoning-pro"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
     @DisplayName("OpenRouter regular namespaced models do not expose native web search")
     void supportsNativeWebSearch_whenOpenRouterRegularNamespacedModel_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
                 ProviderCapabilities.chatModelsAndImages(),
                 "OpenRouter",
                 "openai/gpt-5-mini"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("OpenRouter deprecated Perplexity Sonar model ids are not enabled by prefix alone")
+    void supportsNativeWebSearch_whenOpenRouterDeprecatedPerplexitySonarModelSelected_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatModelsAndImages(),
+                "OpenRouter",
+                "perplexity/sonar-reasoning"
         );
 
         assertThat(supported).isFalse();
