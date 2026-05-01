@@ -595,12 +595,12 @@ public class ChatPanel extends JPanel {
         streamHistory.add(userMessage);
 
         if (visibleConversation) {
-            currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
-            currentAssistantThinkingBubble.setStreaming(true);
-            currentAssistantThinkingBubble.setVisible(false);
-            addThinkingBubble(currentAssistantThinkingBubble, null);
-
             if (sendJob.webSearchEnabled) {
+                currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+                currentAssistantThinkingBubble.setStreaming(true);
+                currentAssistantThinkingBubble.setVisible(false);
+                addThinkingBubble(currentAssistantThinkingBubble, null);
+
                 currentAssistantWebSearchBubble = new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
                 currentAssistantWebSearchBubble.setVisible(false);
                 addThinkingBubble(currentAssistantWebSearchBubble, null);
@@ -1615,12 +1615,12 @@ public class ChatPanel extends JPanel {
             historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
         }
 
-        currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
-        currentAssistantThinkingBubble.setStreaming(true);
-        currentAssistantThinkingBubble.setVisible(false);
-        addThinkingBubble(currentAssistantThinkingBubble, null);
-
         if (inputBar.isWebSearchEnabled()) {
+            currentAssistantThinkingBubble = new ThinkingBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+            currentAssistantThinkingBubble.setStreaming(true);
+            currentAssistantThinkingBubble.setVisible(false);
+            addThinkingBubble(currentAssistantThinkingBubble, null);
+
             currentAssistantWebSearchBubble = new ThinkingBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
             currentAssistantWebSearchBubble.setVisible(false);
             addThinkingBubble(currentAssistantWebSearchBubble, null);
@@ -1810,7 +1810,7 @@ public class ChatPanel extends JPanel {
         JPopupMenu popup = buildBubbleContextMenu(bubble);
         pane.setComponentPopupMenu(popup);
 
-        int shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        int shortcut = menuShortcutKeyMask();
         KeyStroke shiftCmdA = KeyStroke.getKeyStroke(KeyEvent.VK_A, shortcut | InputEvent.SHIFT_DOWN_MASK);
         pane.getInputMap(JComponent.WHEN_FOCUSED).put(shiftCmdA, "selectConversation");
         pane.getActionMap().put("selectConversation", new AbstractAction() {
@@ -1823,7 +1823,7 @@ public class ChatPanel extends JPanel {
 
     private JPopupMenu buildBubbleContextMenu(MessageBubble bubble) {
         JEditorPane pane = bubble.getEditorPane();
-        int shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        int shortcut = menuShortcutKeyMask();
 
         JMenuItem copyItem = buildChatMenuItem(
                 "Copy",
@@ -1906,6 +1906,12 @@ public class ChatPanel extends JPanel {
         });
 
         return popup;
+    }
+
+    private int menuShortcutKeyMask() {
+        return GraphicsEnvironment.isHeadless()
+                ? InputEvent.CTRL_DOWN_MASK
+                : Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
     }
 
     private JMenuItem buildChatMenuItem(String label, String iconPath, KeyStroke accelerator, Runnable action) {

@@ -27,6 +27,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -1436,7 +1437,7 @@ public class InputBar extends JPanel {
     }
 
     private JPopupMenu createEditContextMenu(JTextComponent target) {
-        int shortcut = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        int shortcut = menuShortcutKeyMask();
 
         JMenuItem cutItem = buildEditMenuItem(
                 target,
@@ -1485,6 +1486,12 @@ public class InputBar extends JPanel {
         });
 
         return popup;
+    }
+
+    private int menuShortcutKeyMask() {
+        return GraphicsEnvironment.isHeadless()
+                ? InputEvent.CTRL_DOWN_MASK
+                : Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
     }
 
     private JMenuItem buildEditMenuItem(

@@ -51,6 +51,9 @@ class ChatPanelTest {
     @BeforeEach
     void setUp() {
         subject = new ChatPanel();
+        subject.getInputBar().setWebSearchLockedEnabled(false);
+        subject.getInputBar().setWebSearchOptions(emptyList(), null);
+        subject.getInputBar().setWebSearchEnabled(false);
     }
 
     @Test

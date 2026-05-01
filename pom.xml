@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.2</version>
+    <version>26.5.3</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -37,6 +37,9 @@
         
         <chat4j.jpackage.input.dir>${project.build.directory}/jpackage-input</chat4j.jpackage.input.dir>
         <chat4j.jpackage.runtime.dir>${project.build.directory}/jpackage-runtime</chat4j.jpackage.runtime.dir>
+        <chat4j.jpackage.mac.skip>true</chat4j.jpackage.mac.skip>
+        <chat4j.jpackage.win.skip>true</chat4j.jpackage.win.skip>
+        <chat4j.jpackage.linux.skip>true</chat4j.jpackage.linux.skip>
 
         <!--
             OAuth client IDs used to populate src/main/resources/build.properties at build time:
@@ -347,12 +350,13 @@
                         <version>3.1.0</version>
                         <executions>
                             <execution>
-                                <id>prepare-jpackage-input</id>
+                                <id>prepare-jpackage-input-mac</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.mac.skip}</skip>
                                     <target>
                                         <delete dir="${chat4j.jpackage.input.dir}"/>
                                         <delete dir="${chat4j.jpackage.runtime.dir}"/>
@@ -381,6 +385,7 @@
                                     <goal>exec</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.mac.skip}</skip>
                                     <executable>${java.home}/bin/jlink</executable>
                                     <arguments>
                                         <argument>--output</argument>
@@ -395,12 +400,13 @@
                                 </configuration>
                             </execution>
                             <execution>
-                                <id>jpackage</id>
+                                <id>jpackage-mac</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.mac.skip}</skip>
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
@@ -446,12 +452,13 @@
                         <version>3.1.0</version>
                         <executions>
                             <execution>
-                                <id>prepare-jpackage-input</id>
+                                <id>prepare-jpackage-input-win</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.win.skip}</skip>
                                     <target>
                                         <delete dir="${chat4j.jpackage.input.dir}"/>
                                         <mkdir dir="${chat4j.jpackage.input.dir}"/>
@@ -473,12 +480,13 @@
                         <version>3.4.1</version>
                         <executions>
                             <execution>
-                                <id>jpackage</id>
+                                <id>jpackage-win</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.win.skip}</skip>
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
@@ -521,12 +529,13 @@
                         <version>3.1.0</version>
                         <executions>
                             <execution>
-                                <id>prepare-jpackage-input</id>
+                                <id>prepare-jpackage-input-linux</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>run</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.linux.skip}</skip>
                                     <target>
                                         <delete dir="${chat4j.jpackage.input.dir}"/>
                                         <mkdir dir="${chat4j.jpackage.input.dir}"/>
@@ -548,12 +557,13 @@
                         <version>3.4.1</version>
                         <executions>
                             <execution>
-                                <id>jpackage</id>
+                                <id>jpackage-linux</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
                                 <configuration>
+                                    <skip>${chat4j.jpackage.linux.skip}</skip>
                                     <executable>jpackage</executable>
                                     <arguments>
                                         <argument>--input</argument>
@@ -585,5 +595,43 @@
                 </plugins>
             </build>
         </profile>
+
+        <profile>
+            <id>jpackage-on-mac</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                </os>
+            </activation>
+            <properties>
+                <chat4j.jpackage.mac.skip>false</chat4j.jpackage.mac.skip>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>jpackage-on-windows</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <chat4j.jpackage.win.skip>false</chat4j.jpackage.win.skip>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>jpackage-on-linux</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <name>Linux</name>
+                </os>
+            </activation>
+            <properties>
+                <chat4j.jpackage.linux.skip>false</chat4j.jpackage.linux.skip>
+            </properties>
+        </profile>
+
     </profiles>
 </project>
