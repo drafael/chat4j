@@ -11,7 +11,7 @@ import java.util.UUID;
 
 public class CurrentConversationSaveDispatchCoordinator {
 
-    public boolean save(
+    public void save(
             UUID currentConversationId,
             AssistantRenderMode pendingUnsavedConversationRenderMode,
             List<Message> history,
@@ -41,10 +41,9 @@ public class CurrentConversationSaveDispatchCoordinator {
                     agentModeEnabled,
                     agentProjectRoot
             );
-            return uiApplyAction.apply(saveResult);
+            uiApplyAction.apply(saveResult);
         } catch (Exception e) {
             failureHandler.handle(e);
-            return false;
         }
     }
 
@@ -64,7 +63,7 @@ public class CurrentConversationSaveDispatchCoordinator {
 
     @FunctionalInterface
     public interface UiApplyAction {
-        boolean apply(CurrentConversationSaveCoordinator.SaveResult saveResult);
+        void apply(CurrentConversationSaveCoordinator.SaveResult saveResult);
     }
 
     @FunctionalInterface

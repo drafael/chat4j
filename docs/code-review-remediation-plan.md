@@ -37,6 +37,7 @@ This document tracks the **current remediation status** for code-review findings
 - `MainFrame` clear-chat confirmation UI was extracted to `ClearChatConfirmationDialog`.
 - `MainFrame` prompt-variable dialog UI was extracted to `PromptVariablesDialog`.
 - `MainFrame` shutdown save snapshot/action creation was extracted to `MainFrameShutdownSaveActionFactory`.
+- `CurrentConversationSaveDispatchCoordinator` no longer returns an unused UI-apply boolean to callers.
 - `MainFrame` constructor setup was split into focused helpers for window chrome, chat-panel wiring, close handlers, and desktop handlers.
 
 ## Open hardening backlog (current)
@@ -44,7 +45,7 @@ This document tracks the **current remediation status** for code-review findings
 - `MainFrame` maintainability refactors
   - Continue extracting remaining constructor wiring/composition concerns.
   - Consolidate mutable UI state into clearer holders.
-  - Simplify coordinator contracts where APIs carry unused return semantics.
+  - Continue simplifying coordinator contracts where APIs carry unused return semantics.
 
 - Shutdown responsiveness hardening
   - Ensure close/quit save paths avoid EDT blocking under slow storage conditions.

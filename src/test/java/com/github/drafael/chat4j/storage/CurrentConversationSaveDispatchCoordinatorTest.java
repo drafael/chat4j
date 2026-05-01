@@ -29,7 +29,7 @@ class CurrentConversationSaveDispatchCoordinatorTest {
         var capturedReasoningLevel = new AtomicReference<ReasoningLevel>();
         var appliedSaveResult = new AtomicReference<CurrentConversationSaveCoordinator.SaveResult>();
 
-        boolean applied = subject.save(
+        subject.save(
                 conversationId,
                 AssistantRenderMode.PREVIEW,
                 history,
@@ -56,15 +56,11 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                             false
                     );
                 },
-                saveResult -> {
-                    appliedSaveResult.set(saveResult);
-                    return true;
-                },
+                appliedSaveResult::set,
                 error -> {
                 }
         );
 
-        assertThat(applied).isTrue();
         assertThat(capturedConversationId.get()).isEqualTo(conversationId);
         assertThat(capturedSelectedModel.get()).isEqualTo("OpenAI > gpt-4.1");
         assertThat(capturedReasoningLevel.get()).isEqualTo(ReasoningLevel.HIGH);
@@ -73,12 +69,13 @@ class CurrentConversationSaveDispatchCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Save reports failure callback and returns false when save action throws")
-    void save_whenSaveThrows_reportsFailureAndReturnsFalse() {
+    @DisplayName("Save reports failure callback and skips UI apply when save action throws")
+    void save_whenSaveThrows_reportsFailureAndSkipsUiApply() {
         var subject = new CurrentConversationSaveDispatchCoordinator();
         var failures = new ArrayList<String>();
+        var appliedSaveResult = new AtomicReference<CurrentConversationSaveCoordinator.SaveResult>();
 
-        boolean applied = subject.save(
+        subject.save(
                 UUID.randomUUID(),
                 null,
                 emptyList(),
@@ -97,11 +94,11 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                  agentProjectRoot) -> {
                     throw new IllegalStateException("boom");
                 },
-                saveResult -> true,
+                appliedSaveResult::set,
                 error -> failures.add(error.getMessage())
         );
 
-        assertThat(applied).isFalse();
+        assertThat(appliedSaveResult).hasValue(null);
         assertThat(failures).containsExactly("boom");
     }
 
@@ -127,7 +124,8 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                  reasoningLevel,
                  agentModeEnabled,
                  agentProjectRoot) -> null,
-                saveResult -> true,
+                saveResult -> {
+                },
                 error -> {
                 }
         ))
@@ -144,7 +142,8 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 false,
                 null,
                 null,
-                saveResult -> true,
+                saveResult -> {
+                },
                 error -> {
                 }
         ))
