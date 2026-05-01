@@ -363,6 +363,7 @@ public class MainFrame extends JFrame {
     private final MenuPopupVisibleRunner menuPopupVisibleRunner = new MenuPopupVisibleRunner();
     private final ModelMenuDirtyRefreshCoordinator modelMenuDirtyRefreshCoordinator;
     private final ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator;
+    private final MainFrameModelMenuCoordinator modelMenuCoordinator;
     private final LookAndFeelMenuRefreshCoordinator lookAndFeelMenuRefreshCoordinator;
     private final PersistedMessageCounter persistedMessageCounter = new PersistedMessageCounter();
     private final MainFrameModelMenuState modelMenuState = new MainFrameModelMenuState();
@@ -455,6 +456,17 @@ public class MainFrame extends JFrame {
         var lifecycleWiring = dependencies.lifecycleWiring();
         this.modelMenuDirtyRefreshCoordinator = lifecycleWiring.modelMenuDirtyRefreshCoordinator();
         this.modelMenuDirtyRefreshTriggerCoordinator = lifecycleWiring.modelMenuDirtyRefreshTriggerCoordinator();
+        this.modelMenuCoordinator = new MainFrameModelMenuCoordinator(
+                providerMenuReadyDispatchCoordinator,
+                modelMenuStructureRebuildCoordinator,
+                modelMenuStructureRebuildApplyCoordinator,
+                modelMenuSelectionDispatchCoordinator,
+                modelMenuSelectionApplyCoordinator,
+                modelMenuSelectionChangeCoordinator,
+                modelMenuDirtyRefreshTriggerCoordinator,
+                providerMenuAvailabilityRefreshDispatchCoordinator,
+                providerMenuIconResolver
+        );
         this.lookAndFeelMenuRefreshCoordinator = lifecycleWiring.lookAndFeelMenuRefreshCoordinator();
         this.windowStateSettingsCoordinator = lifecycleWiring.windowStateSettingsCoordinator();
         this.windowStateRestoreCoordinator = lifecycleWiring.windowStateRestoreCoordinator();
@@ -1361,12 +1373,7 @@ public class MainFrame extends JFrame {
     }
 
     private void ensureModelsMenuReady() {
-        providerMenuReadyDispatchCoordinator.ensureReady(
-                modelMenuState.modelsMenuDirty(),
-                this::rebuildModelsMenuStructure,
-                this::refreshLocalProviderAvailabilityInMenu,
-                this::syncModelsMenuSelection
-        );
+        modelMenuCoordinator.ensureReady(modelMenuContext());
     }
 
     private void ensureThemesMenuReady() {
@@ -1394,7 +1401,7 @@ public class MainFrame extends JFrame {
     }
 
     private void markModelsMenuDirty() {
-        modelMenuState.markModelsMenuDirty();
+        modelMenuCoordinator.markDirty(modelMenuContext());
     }
 
     private void onLookAndFeelChanged() {
@@ -1408,67 +1415,25 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void rebuildModelsMenuStructure() {
-        ModelMenuStructureRebuildCoordinator.RebuildState rebuildState = modelMenuStructureRebuildCoordinator.rebuild(
-                boundMenusState.modelsMenu(),
-                menuItemsState.modelMenuItemsByKey(),
-                menuItemsState.providerHeaderItemsByName(),
-                ProviderRegistry.availableProviders(),
-                chatPanel::setSelectedModel,
-                modelMenuState.modelsMenuDirty(),
-                modelMenuState.lastMenuSelectedModelKey()
-        );
-
-        modelMenuStructureRebuildApplyCoordinator.apply(
-                rebuildState,
-                modelMenuState::setModelsMenuDirty,
-                modelMenuState::setLastMenuSelectedModelKey
-        );
-    }
-
-    private void syncModelsMenuSelection() {
-        String syncedSelection = modelMenuSelectionDispatchCoordinator.sync(
-                menuItemsState.modelMenuItemsByKey(),
-                chatPanel.getSelectedModel(),
-                modelMenuState.lastMenuSelectedModelKey(),
-                modelMenuState.modelsMenuDirty()
-        );
-
-        modelMenuSelectionApplyCoordinator.apply(
-                syncedSelection,
-                modelMenuState::setLastMenuSelectedModelKey
-        );
-    }
-
     private void onSelectedModelChanged(String modelKey) {
-        modelMenuSelectionChangeCoordinator.onSelectedModelChanged(
-                boundMenusState.modelsMenu(),
-                modelMenuState.modelsMenuDirty(),
-                this::syncModelsMenuSelection
-        );
+        modelMenuCoordinator.onSelectedModelChanged(modelMenuContext());
     }
 
     private void onModelFavoritesChanged() {
-        modelMenuDirtyRefreshTriggerCoordinator.trigger(
-                boundMenusState.modelsMenu(),
-                this::markModelsMenuDirty,
-                this::ensureModelsMenuReady
-        );
+        modelMenuCoordinator.onModelFavoritesChanged(modelMenuContext());
     }
 
     private void onModelCatalogChanged() {
-        modelMenuDirtyRefreshTriggerCoordinator.trigger(
-                boundMenusState.modelsMenu(),
-                this::markModelsMenuDirty,
-                this::ensureModelsMenuReady
-        );
+        modelMenuCoordinator.onModelCatalogChanged(modelMenuContext());
     }
 
-    private void refreshLocalProviderAvailabilityInMenu() {
-        providerMenuAvailabilityRefreshDispatchCoordinator.refresh(
-                menuItemsState.modelMenuItemsByKey(),
-                menuItemsState.providerHeaderItemsByName(),
-                providerMenuIconResolver
+    private MainFrameModelMenuCoordinator.ModelMenuContext modelMenuContext() {
+        return new MainFrameModelMenuCoordinator.ModelMenuContext(
+                boundMenusState,
+                menuItemsState,
+                modelMenuState,
+                chatPanel::getSelectedModel,
+                chatPanel::setSelectedModel
         );
     }
 
