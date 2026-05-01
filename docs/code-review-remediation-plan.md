@@ -31,10 +31,16 @@ This document tracks the **current remediation status** for code-review findings
 - Logging and diagnostics behavior is consolidated and test-covered for key failure and fallback paths.
 - Remaining work is mostly structural/maintainability and broader integration confidence, not a blocker for core runtime behavior.
 
+## Recent cleanup progress
+
+- `MainFrame` title-bar composition was extracted to `MainFrameTitleBarFactory`.
+- `MainFrame` clear-chat confirmation UI was extracted to `ClearChatConfirmationDialog`.
+- `MainFrame` constructor setup was split into focused helpers for window chrome, chat-panel wiring, close handlers, and desktop handlers.
+
 ## Open hardening backlog (current)
 
 - `MainFrame` maintainability refactors
-  - Extract constructor wiring/composition concerns.
+  - Continue extracting remaining constructor wiring/composition concerns.
   - Consolidate mutable UI state into clearer holders.
   - Simplify coordinator contracts where APIs carry unused return semantics.
 

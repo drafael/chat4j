@@ -25,7 +25,6 @@ import com.github.drafael.chat4j.menu.ViewMenuFactory;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
-import com.github.drafael.chat4j.util.TitleBarUiSupport;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
@@ -162,7 +161,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -213,6 +211,8 @@ public class MainFrame extends JFrame {
     private final SidebarToggleStateApplyCoordinator sidebarToggleStateApplyCoordinator =
             new SidebarToggleStateApplyCoordinator();
     private final MainFrameDependenciesFactory mainFrameDependenciesFactory = new MainFrameDependenciesFactory();
+    private final MainFrameTitleBarFactory titleBarFactory = new MainFrameTitleBarFactory();
+    private final ClearChatConfirmationDialog clearChatConfirmationDialog = new ClearChatConfirmationDialog();
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
@@ -469,99 +469,25 @@ public class MainFrame extends JFrame {
         this.assistantMessageCompletionFlowCoordinator = conversationWiring.assistantMessageCompletionFlowCoordinator();
         this.currentConversationSaveCoordinator = conversationWiring.currentConversationSaveCoordinator();
 
-        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(600, 400));
-        var iconImage = new ImageIcon(getClass().getResource("/icons/icon.png")).getImage();
-        setIconImage(iconImage);
-        if (Taskbar.isTaskbarSupported()) {
-            var taskbar = Taskbar.getTaskbar();
-            if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
-                taskbar.setIconImage(iconImage);
-            }
-        }
-
-        // macOS: transparent title bar with content underneath
-        getRootPane().putClientProperty("apple.awt.fullWindowContent", true);
-        getRootPane().putClientProperty("apple.awt.transparentTitleBar", true);
-        getRootPane().putClientProperty("apple.awt.fullscreenable", true);
-        setTitle(""); // Hide title text since buttons go in the title bar
-
-        // Restore window state
+        configureWindowChrome();
         restoreWindowState();
 
-        // Build UI
-        chatPanel = new ChatPanel(modelCacheService, modelFavoritesService);
-        chatPanel.setOnAssistantRenderModeChanged(this::onAssistantRenderModeChanged);
-        chatPanel.setOnSelectedModelChanged(this::onSelectedModelChanged);
-        chatPanel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
-        chatPanel.setOnModelCatalogChanged(this::onModelCatalogChanged);
-        chatPanel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
-        chatPanel.setOnClearChatRequested(this::confirmClearCurrentChat);
-        chatPanel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
-        chatPanel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
-        chatPanel.getInputBar().addWebSearchEnabledListener(this::persistWebSearchEnabled);
-        chatPanel.getInputBar().addWebSearchOptionListener(this::persistWebSearchOption);
-        chatPanel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
-        chatPanel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
-        chatPanel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
-        chatPanel.setConversationIdSupplier(conversationState::currentConversationId);
-        chatPanel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
-        chatPanel.setActiveConversationId(conversationState.currentConversationId());
+        chatPanel = createConfiguredChatPanel();
         applyProviderSettings();
         applyGeneralSettings();
         UIManager.addPropertyChangeListener(lookAndFeelListener);
 
-        // Title bar — embedded in macOS title bar area
-        JPanel titleBar = new JPanel(new BorderLayout());
-        titleBar.setOpaque(false);
-        titleBar.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-
-        // Left: sidebar toggle + new chat (after traffic lights)
-        JPanel leftButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
-        leftButtons.setOpaque(false);
-        leftButtons.setBorder(BorderFactory.createEmptyBorder(0, 78, 0, 0));
-
-        sidebarToggleState.setSidebarToggleFilledIcon(
-                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left-filled.svg")
+        MainFrameTitleBarFactory.TitleBar titleBar = titleBarFactory.create(
+                MainFrame.class,
+                chatPanel.getModelSelectorButton(),
+                this::toggleSidebar,
+                this::openChatSearch,
+                this::newChat
         );
-        sidebarToggleState.setSidebarToggleOutlineIcon(
-                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/panel-left.svg")
-        );
-        sidebarToggleState.setSidebarToggleButton(
-                TitleBarUiSupport.createButton(sidebarToggleState.sidebarToggleFilledIcon(), "Toggle Sidebar")
-        );
-        sidebarToggleState.sidebarToggleButton().addActionListener(e -> toggleSidebar());
-        leftButtons.add(sidebarToggleState.sidebarToggleButton());
-
-        JButton searchBtn = TitleBarUiSupport.createButton(
-                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/search.svg"),
-                "Search Chats"
-        );
-        searchBtn.addActionListener(e -> openChatSearch(searchBtn));
-        leftButtons.add(searchBtn);
-
-        JButton newChatBtn = TitleBarUiSupport.createButton(
-                TitleBarUiSupport.loadIcon(MainFrame.class, "/icons/titlebar/square-pen.svg"),
-                "New Chat"
-        );
-        newChatBtn.addActionListener(e -> newChat());
-        leftButtons.add(newChatBtn);
-
-        titleBar.add(leftButtons, BorderLayout.WEST);
-
-        // Center: model selector
-        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 2));
-        centerPanel.setOpaque(false);
-        centerPanel.add(chatPanel.getModelSelectorButton());
-        titleBar.add(centerPanel, BorderLayout.CENTER);
-
-        // Right: empty panel to balance left for centering
-        JPanel rightPanel = new JPanel();
-        rightPanel.setOpaque(false);
-        rightPanel.setPreferredSize(leftButtons.getPreferredSize());
-        titleBar.add(rightPanel, BorderLayout.EAST);
-
-        add(titleBar, BorderLayout.NORTH);
+        sidebarToggleState.setSidebarToggleFilledIcon(titleBar.sidebarToggleFilledIcon());
+        sidebarToggleState.setSidebarToggleOutlineIcon(titleBar.sidebarToggleOutlineIcon());
+        sidebarToggleState.setSidebarToggleButton(titleBar.sidebarToggleButton());
+        add(titleBar.panel(), BorderLayout.NORTH);
         sidebarPanel = new SidebarPanel(conversationRepo);
         chatPanel.setOnConversationStreamingChanged(event ->
                 sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
@@ -576,31 +502,75 @@ public class MainFrame extends JFrame {
 
         add(splitPane, BorderLayout.CENTER);
 
-        // Save state on close
+        installCloseHandlers();
+        installDesktopHandlers();
+        setupKeyboardShortcuts();
+
+        chatPanel.getInputBar().requestInputFocus();
+    }
+
+    private void configureWindowChrome() {
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        setMinimumSize(new Dimension(600, 400));
+        var iconImage = new ImageIcon(getClass().getResource("/icons/icon.png")).getImage();
+        setIconImage(iconImage);
+        if (Taskbar.isTaskbarSupported()) {
+            var taskbar = Taskbar.getTaskbar();
+            if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
+                taskbar.setIconImage(iconImage);
+            }
+        }
+
+        getRootPane().putClientProperty("apple.awt.fullWindowContent", true);
+        getRootPane().putClientProperty("apple.awt.transparentTitleBar", true);
+        getRootPane().putClientProperty("apple.awt.fullscreenable", true);
+        setTitle("");
+    }
+
+    private ChatPanel createConfiguredChatPanel() {
+        ChatPanel panel = new ChatPanel(modelCacheService, modelFavoritesService);
+        panel.setOnAssistantRenderModeChanged(this::onAssistantRenderModeChanged);
+        panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
+        panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
+        panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
+        panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
+        panel.setOnClearChatRequested(this::confirmClearCurrentChat);
+        panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
+        panel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
+        panel.getInputBar().addWebSearchEnabledListener(this::persistWebSearchEnabled);
+        panel.getInputBar().addWebSearchOptionListener(this::persistWebSearchOption);
+        panel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
+        panel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
+        panel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
+        panel.setConversationIdSupplier(conversationState::currentConversationId);
+        panel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
+        panel.setActiveConversationId(conversationState.currentConversationId());
+        return panel;
+    }
+
+    private void installCloseHandlers() {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
                 requestWindowClose();
             }
         });
+    }
 
-        // macOS application menu handlers
-        if (Desktop.isDesktopSupported()) {
-            Desktop desktop = Desktop.getDesktop();
-            desktop.setPreferencesHandler(e -> openSettings());
-            if (desktop.isSupported(Desktop.Action.APP_ABOUT)) {
-                desktop.setAboutHandler(e -> AboutDialog.show(this));
-            }
-            desktop.setQuitHandler((e, response) -> {
-                response.cancelQuit();
-                requestWindowClose();
-            });
+    private void installDesktopHandlers() {
+        if (!Desktop.isDesktopSupported()) {
+            return;
         }
 
-        // Keyboard shortcuts
-        setupKeyboardShortcuts();
-
-        chatPanel.getInputBar().requestInputFocus();
+        Desktop desktop = Desktop.getDesktop();
+        desktop.setPreferencesHandler(e -> openSettings());
+        if (desktop.isSupported(Desktop.Action.APP_ABOUT)) {
+            desktop.setAboutHandler(e -> AboutDialog.show(this));
+        }
+        desktop.setQuitHandler((e, response) -> {
+            response.cancelQuit();
+            requestWindowClose();
+        });
     }
 
     private void toggleSidebar() {
@@ -650,45 +620,11 @@ public class MainFrame extends JFrame {
     }
 
     private void confirmClearCurrentChat() {
-        if (!showClearChatConfirmation()) {
+        if (!clearChatConfirmationDialog.confirm(this)) {
             return;
         }
 
         clearCurrentChatMessages();
-    }
-
-    private boolean showClearChatConfirmation() {
-        JLabel titleLabel = new JLabel("Clear Chat", SwingConstants.CENTER);
-        Fonts.apply(titleLabel, Font.BOLD, Fonts.SIZE_BODY_LARGE);
-
-        JLabel messageLabel = new JLabel(
-                "<html><div style='text-align:center'>Are you sure you want to remove all<br>messages in the chat?</div></html>",
-                SwingConstants.CENTER
-        );
-
-        JPanel content = new JPanel(new BorderLayout(0, 10));
-        content.setOpaque(false);
-        content.add(titleLabel, BorderLayout.NORTH);
-        content.add(messageLabel, BorderLayout.CENTER);
-
-        Object[] options = {"Cancel", "Yes"};
-        var pane = new JOptionPane(content, JOptionPane.WARNING_MESSAGE, JOptionPane.YES_NO_OPTION, null, options, options[0]);
-        var dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                && event.getSource() == pane
-                && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
-        dialog.setVisible(true);
-        dialog.dispose();
-
-        return Objects.equals(pane.getValue(), options[1]);
     }
 
     private void clearCurrentChatMessages() {
