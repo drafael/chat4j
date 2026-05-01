@@ -102,7 +102,6 @@ class OpenAiModelCatalogClientTest {
                     AuthType.COPILOT_OAUTH,
                     null,
                     null,
-                    null,
                     "http://127.0.0.1:%d".formatted(port),
                     emptyList(),
                     ProviderCapabilities.chatAndModels(),
@@ -167,7 +166,6 @@ class OpenAiModelCatalogClientTest {
                     AuthType.COPILOT_OAUTH,
                     null,
                     null,
-                    null,
                     baseUrl,
                     emptyList(),
                     ProviderCapabilities.chatAndModels(),
@@ -213,7 +211,6 @@ class OpenAiModelCatalogClientTest {
             ProviderDescriptor descriptor = new ProviderDescriptor(
                     "GitHub Copilot",
                     AuthType.COPILOT_OAUTH,
-                    null,
                     null,
                     null,
                     "http://127.0.0.1:%d".formatted(port),
@@ -270,7 +267,6 @@ class OpenAiModelCatalogClientTest {
                     AuthType.COPILOT_OAUTH,
                     null,
                     null,
-                    null,
                     "http://127.0.0.1:%d".formatted(port),
                     emptyList(),
                     ProviderCapabilities.chatAndModels(),
@@ -322,7 +318,6 @@ class OpenAiModelCatalogClientTest {
             ProviderDescriptor descriptor = new ProviderDescriptor(
                     "GitHub Copilot",
                     AuthType.COPILOT_OAUTH,
-                    null,
                     null,
                     null,
                     "http://127.0.0.1:%d".formatted(port),
@@ -385,7 +380,6 @@ class OpenAiModelCatalogClientTest {
             ProviderDescriptor descriptor = new ProviderDescriptor(
                     "GitHub Copilot",
                     AuthType.COPILOT_OAUTH,
-                    null,
                     null,
                     null,
                     "http://127.0.0.1:%d".formatted(port),
@@ -453,7 +447,6 @@ class OpenAiModelCatalogClientTest {
                     AuthType.CODEX_OAUTH,
                     null,
                     null,
-                    null,
                     "http://127.0.0.1:%d".formatted(port),
                     emptyList(),
                     ProviderCapabilities.chatAndModels(),
@@ -498,7 +491,6 @@ class OpenAiModelCatalogClientTest {
         ProviderDescriptor descriptor = new ProviderDescriptor(
                 "OpenAI Codex",
                 AuthType.CODEX_OAUTH,
-                null,
                 null,
                 null,
                 "http://127.0.0.1:9",

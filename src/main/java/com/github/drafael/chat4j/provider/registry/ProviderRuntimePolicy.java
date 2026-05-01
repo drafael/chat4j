@@ -1,18 +1,19 @@
 package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
-import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import lombok.extern.slf4j.Slf4j;
 
+import javax.swing.SwingUtilities;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 final class ProviderRuntimePolicy {
@@ -22,24 +23,23 @@ final class ProviderRuntimePolicy {
 
     private static final Duration AUTH_STATUS_CACHE_TTL = Duration.ofSeconds(15);
 
-    private final CliOAuthRunner cliOAuthRunner;
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
-    private final ConcurrentHashMap<String, CliOauthStatusSnapshot> cliOauthStatusByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CopilotAuthStatusSnapshot> copilotAuthStatusByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AtomicBoolean> copilotAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CodexAuthStatusSnapshot> codexAuthStatusByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AtomicBoolean> codexAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = Map.of();
 
     ProviderRuntimePolicy() {
-        this(new CliOAuthRunner(), new CopilotAuthResolver(), new CodexAuthResolver());
+        this(new CopilotAuthResolver(), new CodexAuthResolver());
     }
 
-    ProviderRuntimePolicy(CliOAuthRunner cliOAuthRunner, CopilotAuthResolver copilotAuthResolver) {
-        this(cliOAuthRunner, copilotAuthResolver, new CodexAuthResolver());
+    ProviderRuntimePolicy(CopilotAuthResolver copilotAuthResolver) {
+        this(copilotAuthResolver, new CodexAuthResolver());
     }
 
-    ProviderRuntimePolicy(CliOAuthRunner cliOAuthRunner, CopilotAuthResolver copilotAuthResolver, CodexAuthResolver codexAuthResolver) {
-        this.cliOAuthRunner = cliOAuthRunner;
+    ProviderRuntimePolicy(CopilotAuthResolver copilotAuthResolver, CodexAuthResolver codexAuthResolver) {
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
     }
@@ -55,24 +55,10 @@ final class ProviderRuntimePolicy {
 
     boolean hasRequiredCredentials(ProviderDefinition providerDefinition) {
         return switch (providerDefinition.descriptor().authType()) {
-            case CLI_OAUTH -> hasCliOauthCredentials(providerDefinition);
             case COPILOT_OAUTH -> hasCopilotAuthCredentials(providerDefinition);
             case CODEX_OAUTH -> hasCodexAuthCredentials(providerDefinition);
             case ENV_VAR -> CredentialResolver.hasRequiredCredentials(providerDefinition.envVar());
         };
-    }
-
-    private boolean hasCliOauthCredentials(ProviderDefinition providerDefinition) {
-        String providerName = providerDefinition.name();
-        CliOauthStatusSnapshot cached = cliOauthStatusByProvider.get(providerName);
-        Instant now = Instant.now();
-        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
-            return cached.authorized();
-        }
-
-        boolean authorized = cliOAuthRunner.checkStatus(providerDefinition.descriptor().oauthCliSpec()).authorized();
-        cliOauthStatusByProvider.put(providerName, new CliOauthStatusSnapshot(authorized, now));
-        return authorized;
     }
 
     private boolean hasCopilotAuthCredentials(ProviderDefinition providerDefinition) {
@@ -83,9 +69,12 @@ final class ProviderRuntimePolicy {
             return cached.authorized();
         }
 
-        boolean authorized = copilotAuthResolver.resolveStatus().authorized();
-        copilotAuthStatusByProvider.put(providerName, new CopilotAuthStatusSnapshot(authorized, now));
-        return authorized;
+        if (SwingUtilities.isEventDispatchThread()) {
+            triggerCopilotAuthStatusRefresh(providerDefinition);
+            return cached != null && cached.authorized();
+        }
+
+        return refreshCopilotAuthStatus(providerDefinition, now);
     }
 
     private boolean hasCodexAuthCredentials(ProviderDefinition providerDefinition) {
@@ -96,9 +85,56 @@ final class ProviderRuntimePolicy {
             return cached.authorized();
         }
 
-        boolean authorized = codexAuthResolver.resolveStatus().authorized();
-        codexAuthStatusByProvider.put(providerName, new CodexAuthStatusSnapshot(authorized, now));
+        if (SwingUtilities.isEventDispatchThread()) {
+            triggerCodexAuthStatusRefresh(providerDefinition);
+            return cached != null && cached.authorized();
+        }
+
+        return refreshCodexAuthStatus(providerDefinition, now);
+    }
+
+    private boolean refreshCopilotAuthStatus(ProviderDefinition providerDefinition, Instant checkedAt) {
+        boolean authorized = copilotAuthResolver.resolveStatus().authorized();
+        copilotAuthStatusByProvider.put(providerDefinition.name(), new CopilotAuthStatusSnapshot(authorized, checkedAt));
         return authorized;
+    }
+
+    private boolean refreshCodexAuthStatus(ProviderDefinition providerDefinition, Instant checkedAt) {
+        boolean authorized = codexAuthResolver.resolveStatus().authorized();
+        codexAuthStatusByProvider.put(providerDefinition.name(), new CodexAuthStatusSnapshot(authorized, checkedAt));
+        return authorized;
+    }
+
+    private void triggerCopilotAuthStatusRefresh(ProviderDefinition providerDefinition) {
+        AtomicBoolean inFlight = copilotAuthRefreshInFlightByProvider
+                .computeIfAbsent(providerDefinition.name(), ignored -> new AtomicBoolean());
+        if (!inFlight.compareAndSet(false, true)) {
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                refreshCopilotAuthStatus(providerDefinition, Instant.now());
+            } finally {
+                inFlight.set(false);
+            }
+        });
+    }
+
+    private void triggerCodexAuthStatusRefresh(ProviderDefinition providerDefinition) {
+        AtomicBoolean inFlight = codexAuthRefreshInFlightByProvider
+                .computeIfAbsent(providerDefinition.name(), ignored -> new AtomicBoolean());
+        if (!inFlight.compareAndSet(false, true)) {
+            return;
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                refreshCodexAuthStatus(providerDefinition, Instant.now());
+            } finally {
+                inFlight.set(false);
+            }
+        });
     }
 
     /**
@@ -109,14 +145,18 @@ final class ProviderRuntimePolicy {
     void warmOAuthStatusCache(List<ProviderDefinition> providers) {
         List<ProviderDefinition> oauthProviders = providers.stream()
                 .filter(this::isEnabled)
-                .filter(p -> p.descriptor().authType() == AuthType.CLI_OAUTH
-                        || p.descriptor().authType() == AuthType.COPILOT_OAUTH
+                .filter(p -> p.descriptor().authType() == AuthType.COPILOT_OAUTH
                         || p.descriptor().authType() == AuthType.CODEX_OAUTH)
                 .toList();
 
         List<CompletableFuture<Void>> futures = oauthProviders.stream()
                 .map(p -> CompletableFuture.runAsync(() -> hasRequiredCredentials(p)))
                 .toList();
+        if (SwingUtilities.isEventDispatchThread()) {
+            log.debug("Scheduled OAuth status cache warm-up from EDT: providers={}", oauthProviders.size());
+            return;
+        }
+
         futures.forEach(CompletableFuture::join);
 
         long authorizedCount = oauthProviders.stream()
@@ -131,9 +171,6 @@ final class ProviderRuntimePolicy {
             return providerDefinition.baseUrl();
         }
         return runtimeConfig.baseUrl().trim();
-    }
-
-    private record CliOauthStatusSnapshot(boolean authorized, Instant checkedAt) {
     }
 
     private record CopilotAuthStatusSnapshot(boolean authorized, Instant checkedAt) {

@@ -1219,7 +1219,7 @@ public class MainFrame extends JFrame {
                     chatPanel::refreshProviders,
                     this::markModelsMenuDirty
             );
-            logProviderAndModelSummary();
+            Thread.startVirtualThread(this::logProviderAndModelSummary);
         } catch (Exception e) {
             warnWithoutStack("Failed to apply provider settings", e);
             throw e;
@@ -1416,11 +1416,13 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        try {
-            conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
-        } catch (Exception e) {
-            log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
-        }
+        Thread.startVirtualThread(() -> {
+            try {
+                conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
+            } catch (Exception e) {
+                log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
+            }
+        });
     }
 
     private void persistWebSearchEnabled(boolean enabled) {
@@ -1432,11 +1434,13 @@ public class MainFrame extends JFrame {
     }
 
     private void persistWebBrowseTopN(int topN) {
-        try {
-            settingsRepo.put(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, String.valueOf(topN));
-        } catch (Exception e) {
-            log.debug("Failed to persist Web Search browse-top setting", e);
-        }
+        Thread.startVirtualThread(() -> {
+            try {
+                settingsRepo.put(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, String.valueOf(topN));
+            } catch (Exception e) {
+                log.debug("Failed to persist Web Search browse-top setting", e);
+            }
+        });
     }
 
     private void persistCurrentConversationWebSearchSettings() {
@@ -1445,15 +1449,19 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        try {
-            conversationRepo.updateWebSearchSettings(
-                    currentConversationId,
-                    chatPanel.getInputBar().isWebSearchEnabled(),
-                    chatPanel.getInputBar().getWebSearchOptionId()
-            );
-        } catch (Exception e) {
-            log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, e);
-        }
+        boolean webSearchEnabled = chatPanel.getInputBar().isWebSearchEnabled();
+        String webSearchOptionId = chatPanel.getInputBar().getWebSearchOptionId();
+        Thread.startVirtualThread(() -> {
+            try {
+                conversationRepo.updateWebSearchSettings(
+                        currentConversationId,
+                        webSearchEnabled,
+                        webSearchOptionId
+                );
+            } catch (Exception e) {
+                log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, e);
+            }
+        });
     }
 
     private void persistAgentModeEnabled(boolean enabled) {
@@ -1470,15 +1478,19 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        try {
-            conversationRepo.updateAgentSettings(
-                    currentConversationId,
-                    chatPanel.getInputBar().isAgentModeRequested(),
-                    chatPanel.getInputBar().getAgentProjectRoot()
-            );
-        } catch (Exception e) {
-            log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, e);
-        }
+        boolean agentModeRequested = chatPanel.getInputBar().isAgentModeRequested();
+        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
+        Thread.startVirtualThread(() -> {
+            try {
+                conversationRepo.updateAgentSettings(
+                        currentConversationId,
+                        agentModeRequested,
+                        agentProjectRoot
+                );
+            } catch (Exception e) {
+                log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, e);
+            }
+        });
     }
 
     private void applyMenuBarSetting(boolean enabled) {

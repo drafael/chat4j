@@ -146,11 +146,15 @@ public class ChatPanel extends JPanel {
     private String selectedProviderName;
     private String selectedModelId;
     private ProviderService currentProvider;
+    private String currentProviderApiKey;
+    private volatile boolean currentProviderResolving;
     private ThinkingBubble currentAssistantWebSearchBubble;
     private ThinkingBubble currentAssistantThinkingBubble;
     private MessageBubble currentAssistantBubble;
     private final AtomicLong sendJobCounter = new AtomicLong();
     private final AtomicLong streamSessionCounter = new AtomicLong();
+    private final AtomicLong providerSelectionCounter = new AtomicLong();
+    private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
     private volatile long activeStreamSessionId = -1L;
@@ -388,7 +392,11 @@ public class ChatPanel extends JPanel {
     }
 
     private void populateModels() {
-        providerMap = ProviderRegistry.availableProviders().stream()
+        applyProviderModels(ProviderRegistry.availableProviders());
+    }
+
+    private void applyProviderModels(List<ProviderRegistry.ProviderDef> providers) {
+        providerMap = providers.stream()
                 .collect(Collectors.toMap(
                     ProviderRegistry.ProviderDef::name,
                     Function.identity(),
@@ -418,7 +426,7 @@ public class ChatPanel extends JPanel {
                     .findFirst()
                     .ifPresent(selection -> selectModel(selection.providerName(), selection.models().getFirst()));
 
-            if (currentProvider != null) {
+            if (selectedProviderName != null && selectedModelId != null) {
                 return;
             }
 
@@ -435,9 +443,12 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        providerSelectionCounter.incrementAndGet();
         selectedProviderName = null;
         selectedModelId = null;
         currentProvider = null;
+        currentProviderApiKey = null;
+        currentProviderResolving = false;
         modelSelectorBtn.setSelection("", "");
         inputBar.setThinkingAvailable(false);
         inputBar.setWebSearchOptions(emptyList(), null);
@@ -484,23 +495,87 @@ public class ChatPanel extends JPanel {
     }
 
     private void selectModel(String providerName, String modelId) {
+        long selectionId = providerSelectionCounter.incrementAndGet();
         selectedProviderName = providerName;
         selectedModelId = modelId;
         modelSelectorBtn.setSelection(providerName, modelId);
 
         currentProvider = null;
+        currentProviderApiKey = null;
+        currentProviderResolving = false;
         ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
         if (providerDef != null) {
-            currentProvider = providerDef.factory().create(modelId);
+            resolveCurrentProviderAsync(selectionId, providerDef, modelId);
         }
 
-        updateThinkingToggleAvailability();
-        updateWebSearchAvailability();
-        updateAgentToggleAvailability();
+        updateThinkingToggleAvailability(selectionId);
+        updateWebSearchAvailability(selectionId);
+        updateAgentToggleAvailability(selectionId);
 
         if (selectedModelChangedListener != null) {
             selectedModelChangedListener.accept(getSelectedModel());
         }
+    }
+
+    private void resolveCurrentProviderAsync(
+            long selectionId,
+            ProviderRegistry.ProviderDef providerDef,
+            String modelId
+    ) {
+        currentProviderResolving = true;
+        String providerNameSnapshot = providerDef.name();
+        Thread.startVirtualThread(() -> {
+            try {
+                ProviderService resolvedProvider = providerDef.factory().create(modelId);
+                String resolvedApiKey = resolveProviderApiKey(providerDef);
+                SwingUtilities.invokeLater(() -> applyResolvedProvider(
+                        selectionId,
+                        providerNameSnapshot,
+                        modelId,
+                        resolvedProvider,
+                        resolvedApiKey
+                ));
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> applyProviderResolutionFailure(
+                        selectionId,
+                        providerNameSnapshot,
+                        modelId,
+                        e
+                ));
+            }
+        });
+    }
+
+    private void applyResolvedProvider(
+            long selectionId,
+            String providerName,
+            String modelId,
+            ProviderService resolvedProvider,
+            String resolvedApiKey
+    ) {
+        if (!isSelectedModel(selectionId, providerName, modelId)) {
+            return;
+        }
+
+        currentProvider = resolvedProvider;
+        currentProviderApiKey = resolvedApiKey;
+        currentProviderResolving = false;
+    }
+
+    private void applyProviderResolutionFailure(
+            long selectionId,
+            String providerName,
+            String modelId,
+            Exception error
+    ) {
+        if (!isSelectedModel(selectionId, providerName, modelId)) {
+            return;
+        }
+
+        currentProvider = null;
+        currentProviderApiKey = null;
+        currentProviderResolving = false;
+        log.warn("Failed to prepare provider {}::{}: {}", providerName, modelId, ExceptionUtils.getMessage(error));
     }
 
     private void onSend() {
@@ -514,6 +589,10 @@ public class ChatPanel extends JPanel {
         }
 
         ProviderService provider = currentProvider;
+        if (currentProviderResolving) {
+            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
+            return;
+        }
         if (provider == null) {
             inputBar.showValidationMessage("Select a model/provider before sending.");
             return;
@@ -1123,7 +1202,7 @@ public class ChatPanel extends JPanel {
         return "%s (%s) uses text-only fallback for file attachments.".formatted(providerLabel, modelLabel);
     }
 
-    private void updateThinkingToggleAvailability() {
+    private void updateThinkingToggleAvailability(long selectionId) {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setThinkingAvailable(false);
@@ -1158,9 +1237,7 @@ public class ChatPanel extends JPanel {
                 );
 
                 SwingUtilities.invokeLater(() -> {
-                    if (!StringUtils.equals(selectedProviderName, providerNameSnapshot)
-                            || !StringUtils.equals(selectedModelId, modelIdSnapshot)
-                    ) {
+                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
                         return;
                     }
 
@@ -1173,7 +1250,7 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private void updateWebSearchAvailability() {
+    private void updateWebSearchAvailability(long selectionId) {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setWebSearchLockedEnabled(false);
@@ -1188,9 +1265,52 @@ public class ChatPanel extends JPanel {
         );
         inputBar.setWebSearchLockedEnabled(StringUtils.equals(providerDef.name(), "Perplexity"));
         inputBar.setWebSearchOptions(availability.options(), availability.defaultOptionId());
+
+        if (StringUtils.isBlank(providerDef.baseUrl())) {
+            return;
+        }
+
+        String providerNameSnapshot = providerDef.name();
+        String modelIdSnapshot = selectedModelId;
+        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
+        String baseUrlSnapshot = providerDef.baseUrl();
+        List<ProviderRegistry.ProviderDef> providersSnapshot = new ArrayList<>(providerMap.values());
+
+        Thread.startVirtualThread(() -> {
+            try {
+                String apiKey = resolveProviderApiKey(providerDef);
+                boolean resolvedSupportsNative = ProviderCapabilityResolver.supportsNativeWebSearch(
+                        capabilitiesSnapshot,
+                        providerNameSnapshot,
+                        modelIdSnapshot,
+                        baseUrlSnapshot,
+                        apiKey
+                );
+                WebSearchAvailability resolvedAvailability = webSearchAvailabilityResolver.resolve(
+                        providerDef,
+                        modelIdSnapshot,
+                        providersSnapshot,
+                        resolvedSupportsNative
+                );
+
+                SwingUtilities.invokeLater(() -> {
+                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
+                        return;
+                    }
+
+                    inputBar.setWebSearchOptions(
+                            resolvedAvailability.options(),
+                            resolvedAvailability.defaultOptionId()
+                    );
+                });
+            } catch (Exception e) {
+                log.debug("Failed to refresh web search capability for {}::{}",
+                        providerNameSnapshot, modelIdSnapshot, e);
+            }
+        });
     }
 
-    private void updateAgentToggleAvailability() {
+    private void updateAgentToggleAvailability(long selectionId) {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setAgentModeAvailable(false);
@@ -1225,9 +1345,7 @@ public class ChatPanel extends JPanel {
                 );
 
                 SwingUtilities.invokeLater(() -> {
-                    if (!StringUtils.equals(selectedProviderName, providerNameSnapshot)
-                            || !StringUtils.equals(selectedModelId, modelIdSnapshot)
-                    ) {
+                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
                         return;
                     }
 
@@ -1240,13 +1358,24 @@ public class ChatPanel extends JPanel {
         });
     }
 
+    private boolean isSelectedModel(long selectionId, String providerName, String modelId) {
+        return providerSelectionCounter.get() == selectionId
+                && StringUtils.equals(selectedProviderName, providerName)
+                && StringUtils.equals(selectedModelId, modelId);
+    }
+
     private ProviderSelectionSnapshot captureProviderSelection() {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         ProviderCapabilities capabilities = providerDef == null ? null : providerDef.capabilities();
         String baseUrl = providerDef == null ? null : providerDef.baseUrl();
-        String apiKey = resolveProviderApiKey(providerDef);
 
-        return new ProviderSelectionSnapshot(selectedProviderName, selectedModelId, capabilities, baseUrl, apiKey);
+        return new ProviderSelectionSnapshot(
+                selectedProviderName,
+                selectedModelId,
+                capabilities,
+                baseUrl,
+                currentProviderApiKey
+        );
     }
 
     private String resolveProviderApiKey(ProviderRegistry.ProviderDef providerDef) {
@@ -1590,6 +1719,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void regenerateFromBubble(MessageBubble bubble) {
+        if (currentProviderResolving) {
+            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
+            return;
+        }
         if (currentProvider == null) {
             inputBar.showValidationMessage("Select a model/provider before regenerating.");
             return;
@@ -2587,11 +2720,21 @@ public class ChatPanel extends JPanel {
     }
 
     public void refreshProviders() {
-        populateModels();
-        if (modelPopup != null) {
-            modelPopup.invalidateModelList();
-            SwingUtilities.invokeLater(this::preloadModelPopup);
-        }
+        long refreshId = providerRefreshCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            List<ProviderRegistry.ProviderDef> providers = ProviderRegistry.availableProviders();
+            SwingUtilities.invokeLater(() -> {
+                if (providerRefreshCounter.get() != refreshId) {
+                    return;
+                }
+
+                applyProviderModels(providers);
+                if (modelPopup != null) {
+                    modelPopup.invalidateModelList();
+                    SwingUtilities.invokeLater(this::preloadModelPopup);
+                }
+            });
+        });
     }
 
     public void setAutoScrollEnabled(boolean autoScrollEnabled) {

@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.provider.registry;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
-import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
@@ -29,7 +28,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(new CliOAuthRunner(), resolver);
+        var subject = new ProviderRuntimePolicy(resolver);
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isFalse();
@@ -45,7 +44,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(new CliOAuthRunner(), resolver);
+        var subject = new ProviderRuntimePolicy(resolver);
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
@@ -61,7 +60,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(new CliOAuthRunner(), new CopilotAuthResolver(), resolver);
+        var subject = new ProviderRuntimePolicy(new CopilotAuthResolver(), resolver);
         var providerDefinition = codexAuthProvider("OpenAI Codex");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isFalse();
@@ -77,7 +76,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(new CliOAuthRunner(), new CopilotAuthResolver(), resolver);
+        var subject = new ProviderRuntimePolicy(new CopilotAuthResolver(), resolver);
         var providerDefinition = codexAuthProvider("OpenAI Codex");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
@@ -87,7 +86,6 @@ class ProviderRuntimePolicyTest {
         var descriptor = new ProviderDescriptor(
                 name,
                 AuthType.COPILOT_OAUTH,
-                null,
                 null,
                 null,
                 "https://api.githubcopilot.com",
@@ -120,7 +118,6 @@ class ProviderRuntimePolicyTest {
         var descriptor = new ProviderDescriptor(
                 name,
                 AuthType.CODEX_OAUTH,
-                null,
                 null,
                 null,
                 "https://api.openai.com/v1",

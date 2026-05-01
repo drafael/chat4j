@@ -9,7 +9,6 @@ public record ProviderDescriptor(
     AuthType authType,
     String credentialEnvVar,
     String fallbackApiKey,
-    OAuthCliSpec oauthCliSpec,
     String defaultBaseUrl,
     List<String> seedModels,
     ProviderCapabilities capabilities,

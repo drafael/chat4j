@@ -205,7 +205,6 @@ class OpenAiChatCompletionClientTest {
                         AuthType.COPILOT_OAUTH,
                         null,
                         null,
-                        null,
                         "https://api.githubcopilot.com",
                         emptyList(),
                         ProviderCapabilities.chatAndModels(),

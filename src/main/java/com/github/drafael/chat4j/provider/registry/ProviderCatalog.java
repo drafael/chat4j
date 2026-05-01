@@ -35,14 +35,12 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         GOOGLE_AI_ENV_VARS,
                         null,
-                        null,
                         "https://generativelanguage.googleapis.com/v1beta/openai",
                         COPILOT_MODEL_METADATA_STORE
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI Codex",
                         AuthType.CODEX_OAUTH,
-                        null,
                         null,
                         null,
                         "https://api.openai.com/v1",
@@ -53,7 +51,6 @@ final class ProviderCatalog {
                         AuthType.COPILOT_OAUTH,
                         null,
                         null,
-                        null,
                         "https://api.githubcopilot.com",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -62,7 +59,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         "OPENAI_API_KEY",
                         null,
-                        null,
                         "https://api.openai.com/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -70,7 +66,6 @@ final class ProviderCatalog {
                         "Perplexity",
                         AuthType.ENV_VAR,
                         "PERPLEXITY_API_KEY",
-                        null,
                         null,
                         "https://api.perplexity.ai",
                         COPILOT_MODEL_METADATA_STORE,
@@ -82,7 +77,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         "OPENROUTER_API_KEY",
                         null,
-                        null,
                         "https://openrouter.ai/api/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -90,7 +84,6 @@ final class ProviderCatalog {
                         "Groq",
                         AuthType.ENV_VAR,
                         "GROQ_API_KEY",
-                        null,
                         null,
                         "https://api.groq.com/openai/v1",
                         COPILOT_MODEL_METADATA_STORE
@@ -100,7 +93,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         "DEEPSEEK_API_KEY",
                         null,
-                        null,
                         "https://api.deepseek.com",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -108,7 +100,6 @@ final class ProviderCatalog {
                         "Mistral",
                         AuthType.ENV_VAR,
                         "MISTRAL_API_KEY",
-                        null,
                         null,
                         "https://api.mistral.ai/v1",
                         COPILOT_MODEL_METADATA_STORE
@@ -118,7 +109,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         "XAI_API_KEY",
                         null,
-                        null,
                         "https://api.x.ai/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -127,7 +117,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         null,
                         "lmstudio",
-                        null,
                         "http://localhost:1234/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ),
@@ -136,7 +125,6 @@ final class ProviderCatalog {
                         AuthType.ENV_VAR,
                         null,
                         "ollama",
-                        null,
                         "http://localhost:11434/v1",
                         COPILOT_MODEL_METADATA_STORE
                 ));

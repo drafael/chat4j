@@ -3,8 +3,6 @@ package com.github.drafael.chat4j.settings;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.AuthType;
-import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
-import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
@@ -47,7 +45,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 @Slf4j
 public class ProvidersPanel extends AbstractSettingsPanel {
 
-    private static final CliOAuthRunner CLI_OAUTH_RUNNER = new CliOAuthRunner();
     private static final CopilotAuthResolver COPILOT_AUTH_RESOLVER = new CopilotAuthResolver();
     private static final CodexAuthResolver CODEX_AUTH_RESOLVER = new CodexAuthResolver();
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -109,10 +106,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final Map<String, Icon> PROVIDER_BASE_ICON_CACHE = new ConcurrentHashMap<>();
     private static final Map<ProviderStatusIconKey, Icon> PROVIDER_STATUS_ICON_CACHE = new ConcurrentHashMap<>();
 
-    private final Map<String, CliOauthAvailabilitySnapshot> cliOauthAvailabilityByProvider = new ConcurrentHashMap<>();
-    private final Map<String, AtomicBoolean> cliOauthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final Map<String, AtomicBoolean> copilotAuthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final Map<String, AtomicBoolean> codexAuthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final JList<String> providerList;
 
     static {
@@ -225,7 +222,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         String configuredBaseUrl = readString(providerBaseUrlKey(name), info.defaultBaseUrl());
         boolean localReachable = info.authType() == AuthType.ENV_VAR
                 && info.envVar() == null
-                && LocalServiceHealth.isReachable(configuredBaseUrl);
+                && LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
 
         row = addSectionHeader(panel, gbc, row, "Connection");
 
@@ -275,17 +272,18 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             Validators.httpUrl("Invalid base URL. Use http(s)://host"),
             updatedBaseUrl -> {
                 if (info.envVar() == null && info.authType() == AuthType.ENV_VAR) {
-                    boolean reachable = LocalServiceHealth.isReachable(updatedBaseUrl);
-                    applyLocalStatus(statusLabel, updatedBaseUrl, reachable);
+                    applyLocalStatus(statusLabel, updatedBaseUrl, LocalServiceHealth.isReachableNonBlocking(updatedBaseUrl));
+                    Thread.startVirtualThread(() -> {
+                        boolean reachable = LocalServiceHealth.isReachable(updatedBaseUrl);
+                        SwingUtilities.invokeLater(() -> applyLocalStatus(statusLabel, updatedBaseUrl, reachable));
+                    });
                 }
                 providerList.repaint();
             }
         );
         panel.add(baseUrl, gbc);
 
-        if (info.authType() == AuthType.CLI_OAUTH
-                || info.authType() == AuthType.COPILOT_OAUTH
-                || info.authType() == AuthType.CODEX_OAUTH) {
+        if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
             row = addSectionHeader(panel, gbc, row + 1, "Authentication");
 
             gbc.gridx = 0;
@@ -298,9 +296,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             JButton authButton = new JButton("Login");
             panel.add(wrapLeading(authButton), gbc);
 
-            if (info.authType() == AuthType.CLI_OAUTH) {
-                configureOAuthAction(name, info, statusLabel, authButton);
-            } else if (info.authType() == AuthType.COPILOT_OAUTH) {
+            if (info.authType() == AuthType.COPILOT_OAUTH) {
                 configureCopilotAuthAction(name, statusLabel, authButton);
             } else {
                 configureCodexAuthAction(name, statusLabel, authButton);
@@ -332,24 +328,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JLabel status = new JLabel();
         Fonts.apply(status, Font.PLAIN, Fonts.SIZE_BODY);
 
-        if (info.authType() == AuthType.CLI_OAUTH) {
-            CliOAuthRunner.OAuthStatus oauthStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-            cacheCliOauthAvailability(providerName, oauthStatus.authorized());
-            applyOAuthStatus(status, oauthStatus);
-            return status;
-        }
-
-        if (info.authType() == AuthType.COPILOT_OAUTH) {
-            CopilotAuthResolver.CopilotAuthStatus copilotAuthStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
-            cacheCopilotAuthAvailability(providerName, copilotAuthStatus.authorized());
-            applyCopilotAuthStatus(status, copilotAuthStatus);
-            return status;
-        }
-
-        if (info.authType() == AuthType.CODEX_OAUTH) {
-            CodexAuthResolver.CodexAuthStatus codexAuthStatus = CODEX_AUTH_RESOLVER.resolveStatus();
-            cacheCodexAuthAvailability(providerName, codexAuthStatus.authorized());
-            applyCodexAuthStatus(status, codexAuthStatus);
+        if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
+            applyAuthCheckingStatus(status);
             return status;
         }
 
@@ -535,37 +515,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
     }
 
-    private void configureOAuthAction(String providerName, ProviderInfo info, JLabel statusLabel, JButton authButton) {
-        CliOAuthRunner.OAuthStatus status = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-        applyOAuthControls(providerName, statusLabel, authButton, status, null);
-
-        authButton.addActionListener(e -> {
-            authButton.setEnabled(false);
-            authButton.setText("Working...");
-
-            Thread.startVirtualThread(() -> {
-                CliOAuthRunner.OAuthStatus initialStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-                CliOAuthRunner.OAuthActionResult actionResult = !initialStatus.cliAvailable()
-                        ? CliOAuthRunner.OAuthActionResult.failure(initialStatus.message())
-                        : (initialStatus.authorized()
-                            ? CLI_OAUTH_RUNNER.logout(info.oauthCliSpec())
-                            : CLI_OAUTH_RUNNER.login(info.oauthCliSpec()));
-                CliOAuthRunner.OAuthStatus updatedStatus = CLI_OAUTH_RUNNER.checkStatus(info.oauthCliSpec());
-
-                SwingUtilities.invokeLater(() -> applyOAuthControls(
-                    providerName,
-                    statusLabel,
-                    authButton,
-                    updatedStatus,
-                    actionResult.success() ? null : actionResult.message()
-                ));
-            });
-        });
-    }
-
     private void configureCopilotAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
-        applyCopilotAuthControls(providerName, statusLabel, authButton, status, null);
+        applyAuthCheckingControls(statusLabel, authButton);
+        refreshCopilotAuthControlsAsync(providerName, statusLabel, authButton);
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
@@ -612,8 +564,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
+        applyAuthCheckingControls(statusLabel, authButton);
+        refreshCodexAuthControlsAsync(providerName, statusLabel, authButton);
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
@@ -894,39 +846,33 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return dialog;
     }
 
-    private void applyOAuthControls(
-        String providerName,
-        JLabel statusLabel,
-        JButton authButton,
-        CliOAuthRunner.OAuthStatus status,
-        String failureMessage
-    ) {
-        cacheCliOauthAvailability(providerName, status.authorized());
-        applyOAuthStatus(statusLabel, status);
+    private void applyAuthCheckingControls(JLabel statusLabel, JButton authButton) {
+        applyAuthCheckingStatus(statusLabel);
+        authButton.setText("Checking...");
+        authButton.setEnabled(false);
+        authButton.setForeground(UIManager.getColor("Button.foreground"));
+        authButton.setBackground(UIManager.getColor("Button.background"));
+        authButton.setOpaque(true);
+        authButton.setToolTipText(null);
+    }
 
-        if (!status.cliAvailable()) {
-            authButton.setText("Install required CLI");
-            authButton.setEnabled(false);
-            authButton.setForeground(UIManager.getColor("Button.foreground"));
-            authButton.setBackground(UIManager.getColor("Button.background"));
-            authButton.setOpaque(true);
-            authButton.setToolTipText(status.message());
-        } else {
-            boolean authorized = status.authorized();
-            authButton.setText(authorized ? "Log out" : "Login");
-            authButton.setEnabled(true);
-            authButton.setForeground(authorized ? Color.WHITE : UIManager.getColor("Button.foreground"));
-            authButton.setBackground(authorized ? new Color(229, 57, 53) : UIManager.getColor("Button.background"));
-            authButton.setOpaque(true);
-            authButton.setToolTipText(null);
-        }
+    private void applyAuthCheckingStatus(JLabel statusLabel) {
+        statusLabel.setText("Checking authentication...");
+        statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
+    }
 
-        if (StringUtils.isNotBlank(failureMessage)) {
-            statusLabel.setText(failureMessage);
-            statusLabel.setForeground(new Color(200, 50, 50));
-        }
+    private void refreshCopilotAuthControlsAsync(String providerName, JLabel statusLabel, JButton authButton) {
+        Thread.startVirtualThread(() -> {
+            CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
+            SwingUtilities.invokeLater(() -> applyCopilotAuthControls(providerName, statusLabel, authButton, status, null));
+        });
+    }
 
-        providerList.repaint();
+    private void refreshCodexAuthControlsAsync(String providerName, JLabel statusLabel, JButton authButton) {
+        Thread.startVirtualThread(() -> {
+            CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+            SwingUtilities.invokeLater(() -> applyCodexAuthControls(providerName, statusLabel, authButton, status, null));
+        });
     }
 
     private void applyCopilotAuthControls(
@@ -1021,11 +967,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
 
         providerList.repaint();
-    }
-
-    private void applyOAuthStatus(JLabel statusLabel, CliOAuthRunner.OAuthStatus status) {
-        statusLabel.setText(status.message());
-        statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
     }
 
     private void applyCopilotAuthStatus(JLabel statusLabel, CopilotAuthResolver.CopilotAuthStatus status) {
@@ -1319,10 +1260,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return false;
         }
 
-        if (info.authType() == AuthType.CLI_OAUTH) {
-            return isCliOauthAvailable(providerName, info);
-        }
-
         if (info.authType() == AuthType.COPILOT_OAUTH) {
             return isCopilotAuthAvailable(providerName);
         }
@@ -1333,21 +1270,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         if (info.envVar() == null) {
             String configuredBaseUrl = readString(providerBaseUrlKey(providerName), info.defaultBaseUrl());
-            return LocalServiceHealth.isReachable(configuredBaseUrl);
+            return LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
         }
 
         return CredentialResolver.hasRequiredCredentials(info.envVar());
-    }
-
-    private boolean isCliOauthAvailable(String providerName, ProviderInfo info) {
-        Instant now = Instant.now();
-        CliOauthAvailabilitySnapshot cached = cliOauthAvailabilityByProvider.get(providerName);
-        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_AVAILABILITY_TTL))) {
-            return cached.authorized();
-        }
-
-        triggerCliOauthAvailabilityRefresh(providerName, info.oauthCliSpec());
-        return cached != null && cached.authorized();
     }
 
     private boolean isCopilotAuthAvailable(String providerName) {
@@ -1357,9 +1283,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return cached.authorized();
         }
 
-        CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
-        cacheCopilotAuthAvailability(providerName, status.authorized());
-        return status.authorized();
+        triggerCopilotAuthAvailabilityRefresh(providerName);
+        return cached != null && cached.authorized();
     }
 
     private boolean isCodexAuthAvailable(String providerName) {
@@ -1369,13 +1294,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return cached.authorized();
         }
 
-        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-        cacheCodexAuthAvailability(providerName, status.authorized());
-        return status.authorized();
-    }
-
-    private void cacheCliOauthAvailability(String providerName, boolean authorized) {
-        cliOauthAvailabilityByProvider.put(providerName, new CliOauthAvailabilitySnapshot(authorized, Instant.now()));
+        triggerCodexAuthAvailabilityRefresh(providerName);
+        return cached != null && cached.authorized();
     }
 
     private void cacheCopilotAuthAvailability(String providerName, boolean authorized) {
@@ -1386,8 +1306,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         codexAuthAvailabilityByProvider.put(providerName, new CodexAuthAvailabilitySnapshot(authorized, Instant.now()));
     }
 
-    private void triggerCliOauthAvailabilityRefresh(String providerName, OAuthCliSpec oauthCliSpec) {
-        AtomicBoolean inFlight = cliOauthAvailabilityRefreshInFlightByProvider
+    private void triggerCopilotAuthAvailabilityRefresh(String providerName) {
+        AtomicBoolean inFlight = copilotAuthAvailabilityRefreshInFlightByProvider
                 .computeIfAbsent(providerName, ignored -> new AtomicBoolean());
         if (!inFlight.compareAndSet(false, true)) {
             return;
@@ -1395,8 +1315,26 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         Thread.startVirtualThread(() -> {
             try {
-                CliOAuthRunner.OAuthStatus status = CLI_OAUTH_RUNNER.checkStatus(oauthCliSpec);
-                cacheCliOauthAvailability(providerName, status.authorized());
+                CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
+                cacheCopilotAuthAvailability(providerName, status.authorized());
+                SwingUtilities.invokeLater(providerList::repaint);
+            } finally {
+                inFlight.set(false);
+            }
+        });
+    }
+
+    private void triggerCodexAuthAvailabilityRefresh(String providerName) {
+        AtomicBoolean inFlight = codexAuthAvailabilityRefreshInFlightByProvider
+                .computeIfAbsent(providerName, ignored -> new AtomicBoolean());
+        if (!inFlight.compareAndSet(false, true)) {
+            return;
+        }
+
+        Thread.startVirtualThread(() -> {
+            try {
+                CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+                cacheCodexAuthAvailability(providerName, status.authorized());
                 SwingUtilities.invokeLater(providerList::repaint);
             } finally {
                 inFlight.set(false);
@@ -1513,35 +1451,28 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private record ProviderStatusIconKey(String providerName, boolean available) {
     }
 
-    private record CliOauthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
-    }
-
     private record CopilotAuthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
     }
 
     private record CodexAuthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
     }
 
-    record ProviderInfo(String envVar, String defaultBaseUrl, AuthType authType, OAuthCliSpec oauthCliSpec) {
+    record ProviderInfo(String envVar, String defaultBaseUrl, AuthType authType) {
 
         static ProviderInfo envVar(String envVar, String baseUrl) {
-            return new ProviderInfo(envVar, baseUrl, AuthType.ENV_VAR, null);
+            return new ProviderInfo(envVar, baseUrl, AuthType.ENV_VAR);
         }
 
         static ProviderInfo local(String baseUrl) {
-            return new ProviderInfo(null, baseUrl, AuthType.ENV_VAR, null);
-        }
-
-        static ProviderInfo cliOAuth(String baseUrl, OAuthCliSpec oauthCliSpec) {
-            return new ProviderInfo(null, baseUrl, AuthType.CLI_OAUTH, oauthCliSpec);
+            return new ProviderInfo(null, baseUrl, AuthType.ENV_VAR);
         }
 
         static ProviderInfo copilotOAuth(String baseUrl) {
-            return new ProviderInfo(null, baseUrl, AuthType.COPILOT_OAUTH, null);
+            return new ProviderInfo(null, baseUrl, AuthType.COPILOT_OAUTH);
         }
 
         static ProviderInfo codexOAuth(String baseUrl) {
-            return new ProviderInfo(null, baseUrl, AuthType.CODEX_OAUTH, null);
+            return new ProviderInfo(null, baseUrl, AuthType.CODEX_OAUTH);
         }
     }
 

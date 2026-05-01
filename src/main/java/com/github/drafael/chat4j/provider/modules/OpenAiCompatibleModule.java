@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.provider.modules;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
-import com.github.drafael.chat4j.provider.api.OAuthCliSpec;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
@@ -31,7 +30,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
         String fallbackApiKey,
         String defaultBaseUrl
     ) {
-        this(providerName, AuthType.ENV_VAR, credentialEnvVar, fallbackApiKey, null, defaultBaseUrl, new CopilotModelMetadataStore());
+        this(providerName, AuthType.ENV_VAR, credentialEnvVar, fallbackApiKey, defaultBaseUrl, new CopilotModelMetadataStore());
     }
 
     public OpenAiCompatibleModule(
@@ -39,7 +38,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
         AuthType authType,
         String credentialEnvVar,
         String fallbackApiKey,
-        OAuthCliSpec oauthCliSpec,
         String defaultBaseUrl,
         CopilotModelMetadataStore copilotModelMetadataStore
     ) {
@@ -48,7 +46,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
                 authType,
                 credentialEnvVar,
                 fallbackApiKey,
-                oauthCliSpec,
                 defaultBaseUrl,
                 copilotModelMetadataStore,
                 emptyList(),
@@ -61,7 +58,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
         AuthType authType,
         String credentialEnvVar,
         String fallbackApiKey,
-        OAuthCliSpec oauthCliSpec,
         String defaultBaseUrl,
         CopilotModelMetadataStore copilotModelMetadataStore,
         List<String> seedModels,
@@ -72,7 +68,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
             authType,
             credentialEnvVar,
             fallbackApiKey,
-            oauthCliSpec,
             defaultBaseUrl,
             seedModels,
             capabilities,

@@ -118,7 +118,6 @@ class PerplexityChatCompletionClientTest {
                         AuthType.ENV_VAR,
                         "PERPLEXITY_API_KEY",
                         null,
-                        null,
                         "https://api.perplexity.ai",
                         List.of("sonar"),
                         ProviderCapabilities.chatModelsAndNativeWebSearch(),

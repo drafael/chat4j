@@ -28,7 +28,6 @@ public class AnthropicModule implements ProviderModule {
             AuthType.ENV_VAR,
             credentialEnvVar,
             null,
-            null,
             defaultBaseUrl,
             emptyList(),
             ProviderCapabilities.chatModelsAndImages(),

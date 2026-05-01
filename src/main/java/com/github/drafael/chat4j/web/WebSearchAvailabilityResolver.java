@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.web;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import org.apache.commons.lang3.StringUtils;
 
@@ -19,8 +18,22 @@ public class WebSearchAvailabilityResolver {
             String selectedModelId,
             List<ProviderRegistry.ProviderDef> availableProviders
     ) {
+        return resolve(
+                selectedProvider,
+                selectedModelId,
+                availableProviders,
+                supportsNative(selectedProvider, selectedModelId)
+        );
+    }
+
+    public WebSearchAvailability resolve(
+            ProviderRegistry.ProviderDef selectedProvider,
+            String selectedModelId,
+            List<ProviderRegistry.ProviderDef> availableProviders,
+            boolean nativeWebSearchSupported
+    ) {
         List<WebSearchOption> options = new ArrayList<>();
-        if (supportsNative(selectedProvider, selectedModelId)) {
+        if (nativeWebSearchSupported) {
             options.add(new WebSearchOption(NATIVE_OPTION_ID, "Native", WebSearchMode.NATIVE, true));
         }
 
@@ -47,9 +60,7 @@ public class WebSearchAvailabilityResolver {
         return ProviderCapabilityResolver.supportsNativeWebSearch(
                 capabilities,
                 selectedProvider.name(),
-                selectedModelId,
-                selectedProvider.baseUrl(),
-                CredentialResolver.resolveApiKey(selectedProvider.envVar(), null)
+                selectedModelId
         );
     }
 

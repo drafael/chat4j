@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -79,8 +80,10 @@ public class ModelSelectorPopup extends JDialog {
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
     private final Set<ModelCapabilityKey> capabilityRefreshInFlight = ConcurrentHashMap.newKeySet();
+    private final AtomicLong providerLoadCounter = new AtomicLong();
 
     private boolean preloaded;
+    private boolean loadingProviders;
     private String currentProvider;
     private String currentModel;
     private ViewMode viewMode = ViewMode.ALL;
@@ -284,7 +287,9 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public void invalidateModelList() {
+        providerLoadCounter.incrementAndGet();
         preloaded = false;
+        loadingProviders = false;
         entries.clear();
     }
 
@@ -640,11 +645,47 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void ensureListBuilt() {
-        if (preloaded) {
+        if (preloaded || loadingProviders) {
             return;
         }
 
-        buildList(ProviderRegistry.availableProviders());
+        showProviderLoadingState();
+        loadingProviders = true;
+        long loadId = providerLoadCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            List<ProviderDef> providers = ProviderRegistry.availableProviders();
+            SwingUtilities.invokeLater(() -> applyLoadedProviders(loadId, providers));
+        });
+    }
+
+    private void applyLoadedProviders(long loadId, List<ProviderDef> providers) {
+        if (providerLoadCounter.get() != loadId) {
+            return;
+        }
+
+        loadingProviders = false;
+        buildList(providers);
+        if (isVisible()) {
+            setSize(computePopupSize());
+            if (triggerComponent != null && triggerComponent.isShowing()) {
+                positionRelativeTo(triggerComponent);
+            } else {
+                centerOnScreen();
+            }
+            fetchModelsAsync();
+        }
+    }
+
+    private void showProviderLoadingState() {
+        listPanel.removeAll();
+        groups.clear();
+        JLabel loadingState = new JLabel("Loading models...");
+        loadingState.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        loadingState.setForeground(UIManager.getColor("Label.disabledForeground"));
+        loadingState.setAlignmentX(Component.LEFT_ALIGNMENT);
+        listPanel.add(loadingState);
+        listPanel.revalidate();
+        listPanel.repaint();
     }
 
     private void buildList(List<ProviderDef> providers) {

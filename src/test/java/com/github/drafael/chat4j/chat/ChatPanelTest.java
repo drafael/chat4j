@@ -15,6 +15,7 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,7 @@ import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -61,8 +63,9 @@ class ChatPanelTest {
     void setSelectedModel_whenModelIsNotPartOfSeedModels_createsProviderForSelectedProvider() throws Exception {
         subject.setSelectedModel("Ollama > llama3.2:latest");
 
-        Object currentProvider = readCurrentProvider(subject);
+        awaitProviderResolved(subject);
 
+        Object currentProvider = readCurrentProvider(subject);
         assertThat(subject.getSelectedModel()).isEqualTo("Ollama > llama3.2:latest");
         assertThat(currentProvider).isNotNull();
         assertThat(currentProvider).isInstanceOf(ProviderService.class);
@@ -72,11 +75,89 @@ class ChatPanelTest {
     @DisplayName("Selecting an unavailable provider clears any previously selected runtime provider")
     void setSelectedModel_whenProviderIsUnavailable_clearsPreviousRuntimeProvider() throws Exception {
         subject.setSelectedModel("Ollama > llama3.2:latest");
+        awaitProviderResolved(subject);
         assertThat(readCurrentProvider(subject)).isNotNull();
 
         subject.setSelectedModel("UnavailableProvider > some-model");
 
         assertThat(readCurrentProvider(subject)).isNull();
+    }
+
+    @Test
+    @DisplayName("Selecting a model does not block the UI while provider creation is still running")
+    void setSelectedModel_whenProviderFactoryBlocks_returnsBeforeProviderIsReady() throws Exception {
+        var factoryStarted = new CountDownLatch(1);
+        var releaseFactory = new CountDownLatch(1);
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "SlowProvider",
+                null,
+                null,
+                List.of("slow-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    factoryStarted.countDown();
+                    try {
+                        releaseFactory.await(2, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return immediateProvider("ok");
+                },
+                List::of
+        );
+        setField(subject, "providerMap", Map.of(provider.name(), provider));
+
+        long startedAt = System.nanoTime();
+        SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("SlowProvider > slow-model"));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+        assertThat(elapsedMs).isLessThan(300);
+        assertThat(factoryStarted.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(readCurrentProvider(subject)).isNull();
+        assertThat((boolean) readField(subject, "currentProviderResolving")).isTrue();
+
+        releaseFactory.countDown();
+        awaitProviderResolved(subject);
+    }
+
+    @Test
+    @DisplayName("Selecting an LM Studio model keeps the UI responsive while local probes run")
+    void setSelectedModel_whenLmStudioModelSelected_runsLocalProbesOffEdt() throws Exception {
+        var requestCount = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            requestCount.incrementAndGet();
+            try {
+                TimeUnit.MILLISECONDS.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            var provider = new ProviderRegistry.ProviderDef(
+                    "LM Studio",
+                    null,
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    List.of("local-model"),
+                    ProviderCapabilities.chatAndModels(),
+                    model -> immediateProvider("ok"),
+                    List::of
+            );
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+
+            long startedAt = System.nanoTime();
+            SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("LM Studio > local-model"));
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+            assertThat(elapsedMs).isLessThan(300);
+            awaitCondition(2, TimeUnit.SECONDS, () -> requestCount.get() > 0);
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -1427,6 +1508,11 @@ class ChatPanelTest {
 
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
         return readField(chatPanel, "currentProvider");
+    }
+
+    private static void awaitProviderResolved(ChatPanel chatPanel) throws Exception {
+        awaitCondition(2, TimeUnit.SECONDS, () -> readCurrentProvider(chatPanel) != null
+                && !(boolean) readField(chatPanel, "currentProviderResolving"));
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {

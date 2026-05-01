@@ -4,7 +4,6 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.auth.CredentialStrategy;
-import com.github.drafael.chat4j.provider.capability.auth.impl.CliOAuthRunner;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
@@ -49,14 +48,12 @@ class ProviderFacadeTest {
 
         var subject = new ProviderFacade(
                 credentialStrategy,
-                new CliOAuthRunner(),
                 copilotAuthResolver,
                 new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
         );
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
                 AuthType.COPILOT_OAUTH,
-                null,
                 null,
                 null,
                 "https://api.githubcopilot.com",
@@ -106,11 +103,10 @@ class ProviderFacadeTest {
                 List.of(new CopilotModelMetadataStore.ModelMetadata("claude-sonnet-4.6", List.of("/chat/completions")))
         );
 
-        var subject = new ProviderFacade(credentialStrategy, new CliOAuthRunner(), copilotAuthResolver, metadataStore);
+        var subject = new ProviderFacade(credentialStrategy, copilotAuthResolver, metadataStore);
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
                 AuthType.COPILOT_OAUTH,
-                null,
                 null,
                 null,
                 "https://api.githubcopilot.com",
@@ -166,7 +162,6 @@ class ProviderFacadeTest {
 
         var subject = new ProviderFacade(
                 credentialStrategy,
-                new CliOAuthRunner(),
                 copilotAuthResolver,
                 codexAuthResolver,
                 new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
@@ -174,7 +169,6 @@ class ProviderFacadeTest {
         var descriptor = new ProviderDescriptor(
                 "OpenAI Codex",
                 AuthType.CODEX_OAUTH,
-                null,
                 null,
                 null,
                 "https://api.openai.com/v1",
