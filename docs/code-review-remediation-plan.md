@@ -46,6 +46,7 @@ This document tracks the **current remediation status** for code-review findings
 - `MainFrame` provider/model menu ready, dirty-refresh, selection-sync, and availability-refresh orchestration was extracted to `MainFrameModelMenuCoordinator`.
 - `MainFrame` theme menu ready, rebuild, selection-sync, and apply orchestration was extracted to `MainFrameThemeMenuCoordinator`.
 - `MainFrame` font menu ready, rebuild, selection-sync, apply, restore, and size-adjust orchestration was extracted to `MainFrameFontMenuCoordinator`.
+- `MainFrame` conversation runtime settings apply/reset/persistence logic was extracted to `MainFrameConversationRuntimeSettingsCoordinator`.
 
 ## Open hardening backlog (current)
 

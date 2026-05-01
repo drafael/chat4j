@@ -140,7 +140,6 @@ import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.PersistedMessageCounter;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
@@ -148,7 +147,6 @@ import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -246,7 +244,7 @@ public class MainFrame extends JFrame {
     private final ModelMenuStructureRebuildApplyCoordinator modelMenuStructureRebuildApplyCoordinator =
             new ModelMenuStructureRebuildApplyCoordinator();
     private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
-    private final AgentModeSettingsCoordinator agentModeSettingsCoordinator;
+    private final MainFrameConversationRuntimeSettingsCoordinator conversationRuntimeSettingsCoordinator;
     private final AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator;
     private final AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator =
             new AssistantRenderModeChangeUiApplyCoordinator();
@@ -385,7 +383,11 @@ public class MainFrame extends JFrame {
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
-        this.agentModeSettingsCoordinator = new AgentModeSettingsCoordinator(settingsRepo);
+        this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
+                conversationRepo,
+                settingsRepo,
+                new AgentModeSettingsCoordinator(settingsRepo)
+        );
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
@@ -818,62 +820,25 @@ public class MainFrame extends JFrame {
         );
 
         if (applied) {
-            applyLoadedConversationReasoningSettings(conversation);
-            applyLoadedConversationWebSearchSettings(conversation);
-            applyLoadedConversationAgentSettings(conversation);
+            conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
+                    conversation.orElse(null),
+                    runtimeSettingsTarget()
+            );
         }
-    }
-
-    private void applyLoadedConversationReasoningSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
-        ReasoningLevel level = conversation
-                .map(ConversationRepo.ConversationRecord::reasoningLevel)
-                .map(value -> ReasoningLevel.fromSettingValue(value, ReasoningLevel.OFF))
-                .orElse(ReasoningLevel.OFF);
-
-        chatPanel.getInputBar().setReasoningLevel(level);
-    }
-
-    private void applyLoadedConversationWebSearchSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
-        boolean enabled = conversation
-                .map(ConversationRepo.ConversationRecord::webSearchEnabled)
-                .orElse(false);
-        String option = conversation
-                .map(ConversationRepo.ConversationRecord::webSearchOption)
-                .orElse(null);
-
-        if (StringUtils.isNotBlank(option)) {
-            chatPanel.getInputBar().setWebSearchOptionId(option);
-        }
-        chatPanel.getInputBar().setWebSearchEnabled(enabled);
-    }
-
-    private void applyLoadedConversationAgentSettings(Optional<ConversationRepo.ConversationRecord> conversation) {
-        ConversationRepo.ConversationRecord record = conversation.orElse(null);
-
-        Path projectRoot = null;
-        boolean enabled = false;
-        if (record != null && StringUtils.isNotBlank(record.agentProjectRoot())) {
-            try {
-                Path normalized = Path.of(record.agentProjectRoot()).toAbsolutePath().normalize();
-                if (Files.isDirectory(normalized)) {
-                    projectRoot = normalized;
-                    enabled = record.agentModeEnabled();
-                }
-            } catch (Exception e) {
-                log.debug("Ignoring invalid persisted Agent project root: {}", record.agentProjectRoot(), e);
-                projectRoot = null;
-            }
-        }
-
-        chatPanel.getInputBar().setAgentProjectRoot(projectRoot);
-        chatPanel.getInputBar().setAgentModeEnabled(enabled);
     }
 
     private void resetConversationRuntimeState() {
-        chatPanel.getInputBar().setAgentProjectRoot(null);
-        chatPanel.getInputBar().setAgentModeEnabled(false);
-        chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.OFF);
-        chatPanel.getInputBar().setWebSearchEnabled(false);
+        conversationRuntimeSettingsCoordinator.resetRuntimeState(runtimeSettingsTarget());
+    }
+
+    private MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget runtimeSettingsTarget() {
+        return new MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget(
+                chatPanel.getInputBar()::setReasoningLevel,
+                chatPanel.getInputBar()::setWebSearchEnabled,
+                chatPanel.getInputBar()::setWebSearchOptionId,
+                chatPanel.getInputBar()::setAgentProjectRoot,
+                chatPanel.getInputBar()::setAgentModeEnabled
+        );
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
@@ -1222,36 +1187,18 @@ public class MainFrame extends JFrame {
     }
 
     private void applyAgentModeSettings() {
-        try {
-            chatPanel.setAgentSystemPromptAppend(agentModeSettingsCoordinator.resolveSystemPromptAppend());
-        } catch (Exception e) {
-            log.debug("Failed to resolve Agent Mode settings", e);
-        }
+        conversationRuntimeSettingsCoordinator.applyAgentModeSettings(chatPanel::setAgentSystemPromptAppend);
     }
 
     private void applyWebSearchSettings() {
-        try {
-            int topN = Integer.parseInt(settingsRepo.get(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, "3"));
-            chatPanel.getInputBar().setWebBrowseTopN(topN);
-        } catch (Exception e) {
-            log.debug("Failed to resolve Web Search settings", e);
-            chatPanel.getInputBar().setWebBrowseTopN(3);
-        }
+        conversationRuntimeSettingsCoordinator.applyWebSearchSettings(chatPanel.getInputBar()::setWebBrowseTopN);
     }
 
     private void persistCurrentConversationReasoningLevel(ReasoningLevel reasoningLevel) {
-        UUID currentConversationId = conversationState.currentConversationId();
-        if (currentConversationId == null) {
-            return;
-        }
-
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
-            }
-        });
+        conversationRuntimeSettingsCoordinator.persistReasoningLevel(
+                conversationState.currentConversationId(),
+                reasoningLevel
+        );
     }
 
     private void persistWebSearchEnabled(boolean enabled) {
@@ -1263,34 +1210,15 @@ public class MainFrame extends JFrame {
     }
 
     private void persistWebBrowseTopN(int topN) {
-        Thread.startVirtualThread(() -> {
-            try {
-                settingsRepo.put(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, String.valueOf(topN));
-            } catch (Exception e) {
-                log.debug("Failed to persist Web Search browse-top setting", e);
-            }
-        });
+        conversationRuntimeSettingsCoordinator.persistWebBrowseTopN(topN);
     }
 
     private void persistCurrentConversationWebSearchSettings() {
-        UUID currentConversationId = conversationState.currentConversationId();
-        if (currentConversationId == null) {
-            return;
-        }
-
-        boolean webSearchEnabled = chatPanel.getInputBar().isWebSearchEnabled();
-        String webSearchOptionId = chatPanel.getInputBar().getWebSearchOptionId();
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateWebSearchSettings(
-                        currentConversationId,
-                        webSearchEnabled,
-                        webSearchOptionId
-                );
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, e);
-            }
-        });
+        conversationRuntimeSettingsCoordinator.persistWebSearchSettings(
+                conversationState.currentConversationId(),
+                chatPanel.getInputBar().isWebSearchEnabled(),
+                chatPanel.getInputBar().getWebSearchOptionId()
+        );
     }
 
     private void persistAgentModeEnabled(boolean enabled) {
@@ -1302,24 +1230,11 @@ public class MainFrame extends JFrame {
     }
 
     private void persistCurrentConversationAgentSettings() {
-        UUID currentConversationId = conversationState.currentConversationId();
-        if (currentConversationId == null) {
-            return;
-        }
-
-        boolean agentModeRequested = chatPanel.getInputBar().isAgentModeRequested();
-        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateAgentSettings(
-                        currentConversationId,
-                        agentModeRequested,
-                        agentProjectRoot
-                );
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, e);
-            }
-        });
+        conversationRuntimeSettingsCoordinator.persistAgentSettings(
+                conversationState.currentConversationId(),
+                chatPanel.getInputBar().isAgentModeRequested(),
+                chatPanel.getInputBar().getAgentProjectRoot()
+        );
     }
 
     private void applyMenuBarSetting(boolean enabled) {
