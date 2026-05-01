@@ -298,6 +298,7 @@ public class MainFrame extends JFrame {
     private final ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator =
             new ThemeMenuSelectionApplyCoordinator();
     private final ThemeMenuSelectionFlowCoordinator themeMenuSelectionFlowCoordinator;
+    private final MainFrameThemeMenuCoordinator themeMenuCoordinator;
     private final FontMenuStructureRebuilder fontMenuStructureRebuilder =
             new FontMenuStructureRebuilder(menuSectionHeaderFactory);
     private final FontMenuStructureRebuildCoordinator fontMenuStructureRebuildCoordinator =
@@ -452,6 +453,14 @@ public class MainFrame extends JFrame {
         this.themeMenuSelectionRefreshCoordinator = settingsWiring.themeMenuSelectionRefreshCoordinator();
         this.themeMenuSelectionDispatchCoordinator = settingsWiring.themeMenuSelectionDispatchCoordinator();
         this.themeMenuSelectionFlowCoordinator = settingsWiring.themeMenuSelectionFlowCoordinator();
+        this.themeMenuCoordinator = new MainFrameThemeMenuCoordinator(
+                themeMenuReadyDispatchCoordinator,
+                themeMenuStructureRebuildCoordinator,
+                themeMenuStructureRebuildApplyCoordinator,
+                themeMenuSelectionFlowCoordinator,
+                themeMenuApplyDispatchCoordinator,
+                themeMenuApplyCoordinator
+        );
 
         var lifecycleWiring = dependencies.lifecycleWiring();
         this.modelMenuDirtyRefreshCoordinator = lifecycleWiring.modelMenuDirtyRefreshCoordinator();
@@ -1377,11 +1386,7 @@ public class MainFrame extends JFrame {
     }
 
     private void ensureThemesMenuReady() {
-        themeMenuReadyDispatchCoordinator.ensureReady(
-                themeMenuState.themesMenuBuilt(),
-                this::rebuildThemesMenuStructure,
-                this::syncThemeMenuSelection
-        );
+        themeMenuCoordinator.ensureReady(themeMenuContext());
     }
 
     private void ensureFontMenuReady() {
@@ -1438,30 +1443,11 @@ public class MainFrame extends JFrame {
     }
 
     private void rebuildThemesMenuStructure() {
-        ThemeMenuStructureRebuildCoordinator.RebuildState rebuildState =
-                themeMenuStructureRebuildCoordinator.rebuild(
-                        boundMenusState.themesMenu(),
-                        menuItemsState.themeMenuItemsByName(),
-                        this::applyThemeFromMenu,
-                        themeMenuState.themesMenuBuilt(),
-                        themeMenuState.lastMenuSelectedTheme()
-                );
-
-        themeMenuStructureRebuildApplyCoordinator.apply(
-                rebuildState,
-                themeMenuState::setThemesMenuBuilt,
-                themeMenuState::setLastMenuSelectedTheme
-        );
+        themeMenuCoordinator.rebuildStructure(themeMenuContext());
     }
 
     private void syncThemeMenuSelection() {
-        themeMenuSelectionFlowCoordinator.refreshAndApply(
-                menuItemsState.themeMenuItemsByName(),
-                themeMenuState.lastMenuSelectedTheme(),
-                themeMenuState.themesMenuBuilt(),
-                ThemeSettingsResolver.DEFAULT_THEME,
-                themeMenuState::setLastMenuSelectedTheme
-        );
+        themeMenuCoordinator.syncSelection(themeMenuContext());
     }
 
     private void rebuildFontMenuStructure() {
@@ -1557,12 +1543,15 @@ public class MainFrame extends JFrame {
     }
 
     private void applyThemeFromMenu(String themeName, String className) {
-        themeMenuApplyDispatchCoordinator.apply(
-                themeName,
-                className,
-                themeMenuApplyCoordinator::apply,
+        themeMenuCoordinator.applyTheme(themeName, className, themeMenuContext());
+    }
+
+    private MainFrameThemeMenuCoordinator.ThemeMenuContext themeMenuContext() {
+        return new MainFrameThemeMenuCoordinator.ThemeMenuContext(
+                boundMenusState,
+                menuItemsState,
+                themeMenuState,
                 this::markModelsMenuDirty,
-                this::syncThemeMenuSelection,
                 this::syncFontMenuSelection,
                 message -> JOptionPane.showMessageDialog(this, message, "Theme Error", JOptionPane.ERROR_MESSAGE)
         );
