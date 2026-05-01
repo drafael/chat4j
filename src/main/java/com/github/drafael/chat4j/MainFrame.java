@@ -22,7 +22,6 @@ import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
-import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import com.github.drafael.chat4j.provider.api.Message;
@@ -118,7 +117,6 @@ import com.github.drafael.chat4j.prompts.PromptCommandCenter;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptTemplateRenderer;
 import com.github.drafael.chat4j.prompts.PromptVariable;
-import com.github.drafael.chat4j.prompts.PromptVariableType;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
@@ -150,8 +148,6 @@ import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
@@ -218,6 +214,7 @@ public class MainFrame extends JFrame {
     private final SettingsRepo settingsRepo;
     private final PromptCatalogRepo promptCatalogRepo;
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
+    private final PromptVariablesDialog promptVariablesDialog = new PromptVariablesDialog();
     private PromptCommandCenter promptCommandCenter;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
@@ -1016,7 +1013,7 @@ public class MainFrame extends JFrame {
                 .filter(variable -> StringUtils.isBlank(values.get(variable.name())))
                 .toList();
         if (!missingVariables.isEmpty()) {
-            Optional<Map<String, String>> collectedValues = showPromptVariablesDialog(promptTemplate, missingVariables);
+            Optional<Map<String, String>> collectedValues = promptVariablesDialog.show(this, promptTemplate, missingVariables);
             if (collectedValues.isEmpty()) {
                 chatPanel.getInputBar().requestInputFocus();
                 return;
@@ -1030,108 +1027,6 @@ public class MainFrame extends JFrame {
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, e.getMessage(), "Prompt Error", JOptionPane.ERROR_MESSAGE);
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Optional<Map<String, String>> showPromptVariablesDialog(
-            PromptTemplate promptTemplate,
-            List<PromptVariable> variables
-    ) {
-        JDialog dialog = new JDialog(this, true);
-        dialog.setUndecorated(true);
-        dialog.setLayout(new BorderLayout());
-        dialog.getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "close");
-        dialog.getRootPane().getActionMap().put("close", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                dialog.dispose();
-            }
-        });
-
-        JPanel content = new JPanel(new GridBagLayout());
-        Color borderColor = UIManager.getColor("Component.borderColor");
-        if (borderColor == null) {
-            borderColor = Color.GRAY;
-        }
-        content.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(borderColor, 1),
-                BorderFactory.createEmptyBorder(14, 14, 12, 14)
-        ));
-
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 0, 5, 8);
-        gbc.anchor = GridBagConstraints.WEST;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-
-        JLabel title = new JLabel(promptTemplate.title());
-        Fonts.apply(title, Font.BOLD, Fonts.SIZE_SUBTITLE);
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        gbc.gridwidth = 2;
-        gbc.weightx = 1;
-        content.add(title, gbc);
-
-        Map<PromptVariable, JComponent> fields = new LinkedHashMap<>();
-        int[] row = {1};
-        variables.forEach(variable -> {
-            gbc.gridy = row[0];
-            gbc.gridwidth = 1;
-            gbc.gridx = 0;
-            gbc.weightx = 0;
-            content.add(new JLabel(variable.name()), gbc);
-
-            JComponent field = variable.type() == PromptVariableType.SELECT
-                    ? new JComboBox<>(variable.options().toArray(String[]::new))
-                    : new JTextArea(4, 36);
-            if (field instanceof JTextArea textArea) {
-                textArea.setLineWrap(true);
-                textArea.setWrapStyleWord(true);
-                field = new JScrollPane(textArea);
-            }
-            fields.put(variable, field);
-
-            gbc.gridx = 1;
-            gbc.weightx = 1;
-            content.add(field, gbc);
-            row[0]++;
-        });
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        JButton cancelButton = new JButton("Cancel");
-        JButton insertButton = new JButton("Insert");
-        buttons.add(cancelButton);
-        buttons.add(insertButton);
-        gbc.gridx = 0;
-        gbc.gridy = row[0];
-        gbc.gridwidth = 2;
-        content.add(buttons, gbc);
-
-        Optional<Map<String, String>>[] result = new Optional[]{Optional.empty()};
-        cancelButton.addActionListener(e -> dialog.dispose());
-        insertButton.addActionListener(e -> {
-            Map<String, String> collected = new LinkedHashMap<>();
-            fields.forEach((variable, field) -> collected.put(variable.name(), readPromptVariableField(field)));
-            result[0] = Optional.of(collected);
-            dialog.dispose();
-        });
-
-        dialog.add(content, BorderLayout.CENTER);
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
-        dialog.setVisible(true);
-        return result[0];
-    }
-
-    private String readPromptVariableField(JComponent field) {
-        if (field instanceof JComboBox<?> comboBox) {
-            Object selected = comboBox.getSelectedItem();
-            return selected == null ? "" : selected.toString();
-        }
-        if (field instanceof JScrollPane scrollPane && scrollPane.getViewport().getView() instanceof JTextArea textArea) {
-            return textArea.getText();
-        }
-        return "";
     }
 
     private void openSettings() {
