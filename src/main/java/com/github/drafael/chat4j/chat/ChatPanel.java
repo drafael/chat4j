@@ -753,6 +753,9 @@ public class ChatPanel extends JPanel {
                 token -> handleAssistantToken(session, sendJob, token),
                 thinkingToken -> handleAssistantThinkingToken(session, sendJob, thinkingToken),
                 () -> {
+                    if (!session.beginTerminalCallback()) {
+                        return;
+                    }
                     flushThinkTagParser(session, sendJob);
                     SwingUtilities.invokeLater(() -> {
                         if (!session.isLive()) {
@@ -774,7 +777,7 @@ public class ChatPanel extends JPanel {
                     });
                 },
                 error -> {
-                    if (!session.isLive()) {
+                    if (!session.beginTerminalCallback()) {
                         return;
                     }
                     String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(error), "Unknown error");
@@ -3153,6 +3156,7 @@ public class ChatPanel extends JPanel {
         final ProviderService provider;
         final AtomicBoolean cancelled = new AtomicBoolean(false);
         final AtomicBoolean persisted = new AtomicBoolean(false);
+        final AtomicBoolean terminalCallbackStarted = new AtomicBoolean(false);
         final StringBuilder response = new StringBuilder();
         final StringBuilder thinking = new StringBuilder();
         final StringBuilder webSearchActivity = new StringBuilder();
@@ -3168,6 +3172,10 @@ public class ChatPanel extends JPanel {
 
         boolean isLive() {
             return !finished && !cancelled.get();
+        }
+
+        boolean beginTerminalCallback() {
+            return isLive() && terminalCallbackStarted.compareAndSet(false, true);
         }
     }
 
