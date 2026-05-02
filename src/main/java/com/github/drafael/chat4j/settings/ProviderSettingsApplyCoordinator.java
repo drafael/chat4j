@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.Validate;
 
@@ -13,7 +14,7 @@ public class ProviderSettingsApplyCoordinator {
     private final RuntimeSettingsResolver runtimeSettingsResolver;
     private final RuntimeConfigApplier runtimeConfigApplier;
 
-    public ProviderSettingsApplyCoordinator(ProviderRuntimeSettingsResolver providerRuntimeSettingsResolver) {
+    public ProviderSettingsApplyCoordinator(@NonNull ProviderRuntimeSettingsResolver providerRuntimeSettingsResolver) {
         this(
                 providerRuntimeSettingsResolver::resolveAll,
                 ProviderRegistry::applyRuntimeConfig
@@ -28,11 +29,11 @@ public class ProviderSettingsApplyCoordinator {
         this.runtimeConfigApplier = Validate.notNull(runtimeConfigApplier, "runtimeConfigApplier must not be null");
     }
 
-    public void apply(List<ProviderRegistry.ProviderDef> providers, Runnable refreshProviders, Runnable markModelsMenuDirty) {
-        Validate.notNull(providers, "providers must not be null");
-        Validate.notNull(refreshProviders, "refreshProviders must not be null");
-        Validate.notNull(markModelsMenuDirty, "markModelsMenuDirty must not be null");
-
+    public void apply(
+            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull Runnable refreshProviders,
+            @NonNull Runnable markModelsMenuDirty
+    ) {
         Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider =
                 runtimeSettingsResolver.resolve(providers);
         runtimeConfigApplier.apply(runtimeConfigByProvider);

@@ -52,6 +52,7 @@ import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
 import com.formdev.flatlaf.util.SystemInfo;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -374,10 +375,10 @@ public class MainFrame extends JFrame {
     };
 
     public MainFrame(
-        ConversationRepo conversationRepo,
-        SettingsRepo settingsRepo,
-        ProviderModelCacheService modelCacheService,
-        ModelFavoritesService modelFavoritesService
+        @NonNull ConversationRepo conversationRepo,
+        @NonNull SettingsRepo settingsRepo,
+        @NonNull ProviderModelCacheService modelCacheService,
+        @NonNull ModelFavoritesService modelFavoritesService
     ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;

@@ -130,7 +130,7 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("history must not be null");
+                .hasMessageContaining("history is marked non-null");
 
         assertThatThrownBy(() -> subject.save(
                 UUID.randomUUID(),
@@ -148,6 +148,6 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveAction must not be null");
+                .hasMessageContaining("saveAction is marked non-null");
     }
 }

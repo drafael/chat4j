@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.storage;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -14,22 +14,16 @@ public class CurrentConversationSaveDispatchCoordinator {
     public void save(
             UUID currentConversationId,
             AssistantRenderMode pendingUnsavedConversationRenderMode,
-            List<Message> history,
+            @NonNull List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode,
+            @NonNull AssistantRenderMode currentAssistantRenderMode,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
-            SaveAction saveAction,
-            UiApplyAction uiApplyAction,
-            FailureHandler failureHandler
+            @NonNull SaveAction saveAction,
+            @NonNull UiApplyAction uiApplyAction,
+            @NonNull FailureHandler failureHandler
     ) {
-        Validate.notNull(history, "history must not be null");
-        Validate.notNull(currentAssistantRenderMode, "currentAssistantRenderMode must not be null");
-        Validate.notNull(saveAction, "saveAction must not be null");
-        Validate.notNull(uiApplyAction, "uiApplyAction must not be null");
-        Validate.notNull(failureHandler, "failureHandler must not be null");
-
         try {
             CurrentConversationSaveCoordinator.SaveResult saveResult = saveAction.save(
                     currentConversationId,
@@ -52,9 +46,9 @@ public class CurrentConversationSaveDispatchCoordinator {
         CurrentConversationSaveCoordinator.SaveResult save(
                 UUID currentConversationId,
                 AssistantRenderMode pendingUnsavedConversationRenderMode,
-                List<Message> history,
+                @NonNull List<Message> history,
                 String selectedModelKey,
-                AssistantRenderMode currentAssistantRenderMode,
+                @NonNull AssistantRenderMode currentAssistantRenderMode,
                 ReasoningLevel reasoningLevel,
                 boolean agentModeEnabled,
                 Path agentProjectRoot
@@ -63,11 +57,11 @@ public class CurrentConversationSaveDispatchCoordinator {
 
     @FunctionalInterface
     public interface UiApplyAction {
-        void apply(CurrentConversationSaveCoordinator.SaveResult saveResult);
+        void apply(@NonNull CurrentConversationSaveCoordinator.SaveResult saveResult);
     }
 
     @FunctionalInterface
     public interface FailureHandler {
-        void handle(Exception error);
+        void handle(@NonNull Exception error);
     }
 }

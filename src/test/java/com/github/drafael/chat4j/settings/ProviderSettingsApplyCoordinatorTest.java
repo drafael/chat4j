@@ -58,17 +58,17 @@ class ProviderSettingsApplyCoordinatorTest {
         }, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("providers must not be null");
+                .hasMessageContaining("providers is marked non-null");
 
         assertThatThrownBy(() -> subject.apply(List.of(), null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshProviders must not be null");
+                .hasMessageContaining("refreshProviders is marked non-null");
 
         assertThatThrownBy(() -> subject.apply(List.of(), () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("markModelsMenuDirty must not be null");
+                .hasMessageContaining("markModelsMenuDirty is marked non-null");
     }
 
     private ProviderRegistry.ProviderDef provider(String name) {

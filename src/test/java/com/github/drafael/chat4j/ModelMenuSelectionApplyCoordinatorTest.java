@@ -29,6 +29,6 @@ class ModelMenuSelectionApplyCoordinatorTest {
 
         assertThatThrownBy(() -> subject.apply("OpenAI > gpt-4.1", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedModelKey must not be null");
+                .hasMessageContaining("setLastMenuSelectedModelKey is marked non-null");
     }
 }

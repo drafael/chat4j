@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j;
 
-import org.apache.commons.lang3.StringUtils;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.AbstractAction;
@@ -17,16 +17,14 @@ public final class MainFrameShortcutBinder {
     private MainFrameShortcutBinder() {
     }
 
-    public static void bindDefault(JRootPane rootPane, ShortcutActions actions) {
+    public static void bindDefault(@NonNull JRootPane rootPane, @NonNull ShortcutActions actions) {
         String modifier = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx() == InputEvent.META_DOWN_MASK
                 ? "meta"
                 : "ctrl";
         bind(rootPane, modifier, actions);
     }
 
-    static void bind(JRootPane rootPane, String modifier, ShortcutActions actions) {
-        Validate.notNull(rootPane, "rootPane must not be null");
-        Validate.notNull(actions, "actions must not be null");
+    static void bind(@NonNull JRootPane rootPane, String modifier, @NonNull ShortcutActions actions) {
         Validate.notBlank(modifier, "modifier must not be blank");
 
         String normalizedModifier = modifier.trim().toLowerCase();
@@ -49,12 +47,11 @@ public final class MainFrameShortcutBinder {
             String modifier,
             String key,
             String actionKey,
-            Runnable action
+            @NonNull Runnable action
     ) {
         Validate.notBlank(modifier, "modifier must not be blank");
         Validate.notBlank(key, "key must not be blank");
         Validate.notBlank(actionKey, "actionKey must not be blank");
-        Validate.notNull(action, "action must not be null");
 
         KeyStroke keyStroke = KeyStroke.getKeyStroke("%s %s".formatted(modifier, key));
         Validate.validState(keyStroke != null, "Invalid key stroke: %s %s".formatted(modifier, key));
@@ -63,7 +60,7 @@ public final class MainFrameShortcutBinder {
         rootPane.getActionMap().put(actionKey, runnableAction(action));
     }
 
-    private static Action runnableAction(Runnable action) {
+    private static Action runnableAction(@NonNull Runnable action) {
         return new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -73,26 +70,12 @@ public final class MainFrameShortcutBinder {
     }
 
     public record ShortcutActions(
-            Runnable newChat,
-            Runnable openSettings,
-            Runnable toggleSidebar,
-            Runnable openChatSearch,
-            Runnable openCommandCenter,
-            Runnable toggleModelDropdown
+            @NonNull Runnable newChat,
+            @NonNull Runnable openSettings,
+            @NonNull Runnable toggleSidebar,
+            @NonNull Runnable openChatSearch,
+            @NonNull Runnable openCommandCenter,
+            @NonNull Runnable toggleModelDropdown
     ) {
-
-        public ShortcutActions {
-            newChat = validateAction(newChat, "newChat");
-            openSettings = validateAction(openSettings, "openSettings");
-            toggleSidebar = validateAction(toggleSidebar, "toggleSidebar");
-            openChatSearch = validateAction(openChatSearch, "openChatSearch");
-            openCommandCenter = validateAction(openCommandCenter, "openCommandCenter");
-            toggleModelDropdown = validateAction(toggleModelDropdown, "toggleModelDropdown");
-        }
-
-        private static Runnable validateAction(Runnable action, String name) {
-            Validate.notBlank(name, "name must not be blank");
-            return Validate.notNull(action, "%s action must not be null".formatted(StringUtils.defaultString(name)));
-        }
     }
 }
