@@ -145,6 +145,7 @@ import com.github.drafael.chat4j.storage.SettingsRepo;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.InputEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
@@ -925,9 +926,10 @@ public class MainFrame extends JFrame {
     }
 
     private List<CommandCenterAction> commandCenterActions() {
+        String shortcut = menuShortcutSymbol();
         return List.of(
-                new CommandCenterAction("New chat", this::newChat, this::canUseCommandCenterAction),
-                new CommandCenterAction("Search chats", () -> openChatSearch(null), this::canUseCommandCenterAction),
+                new CommandCenterAction("New chat", this::newChat, this::canUseCommandCenterAction, "%sN".formatted(shortcut)),
+                new CommandCenterAction("Search chats", () -> openChatSearch(null), this::canUseCommandCenterAction, "%s⇧F".formatted(shortcut)),
                 new CommandCenterAction(
                         "Copy recent response",
                         chatPanel::copyRecentResponseToClipboard,
@@ -943,7 +945,7 @@ public class MainFrame extends JFrame {
                         chatPanel::requestClearChat,
                         () -> canUseCommandCenterAction() && chatPanel.canClearChat()
                 ),
-                new CommandCenterAction("Toggle sidebar", this::toggleSidebar, this::canUseCommandCenterAction),
+                new CommandCenterAction("Toggle sidebar", this::toggleSidebar, this::canUseCommandCenterAction, "%sB".formatted(shortcut)),
                 new CommandCenterAction(
                         "Toggle agent mode",
                         chatPanel.getInputBar()::toggleAgentMode,
@@ -954,8 +956,12 @@ public class MainFrame extends JFrame {
                         () -> chatPanel.showModelPopupCentered(),
                         this::canUseCommandCenterAction
                 ),
-                new CommandCenterAction("Open settings", this::openSettings, this::canUseCommandCenterAction)
+                new CommandCenterAction("Open settings", this::openSettings, this::canUseCommandCenterAction, "%s,".formatted(shortcut))
         );
+    }
+
+    private String menuShortcutSymbol() {
+        return Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx() == InputEvent.META_DOWN_MASK ? "⌘" : "Ctrl+";
     }
 
     private boolean canUseCommandCenterAction() {

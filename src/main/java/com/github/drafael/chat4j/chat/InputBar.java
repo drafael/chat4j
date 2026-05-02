@@ -263,7 +263,7 @@ public class InputBar extends JPanel {
         agentModeButton.setPreferredSize(new Dimension(24, 24));
         agentModeButton.setMinimumSize(new Dimension(24, 24));
         agentModeButton.setMaximumSize(new Dimension(24, 24));
-        agentModeButton.setToolTipText("Agent Mode");
+        agentModeButton.setToolTipText("Agent mode");
         agentModeButton.setVisible(false);
         agentModeButton.addActionListener(e -> onAgentModeButtonClicked());
 
@@ -949,7 +949,7 @@ public class InputBar extends JPanel {
         agentModeButton.setEnabled(isEnabled() && agentModeAvailable);
         agentModeButton.setSelected(isEnabled() && agentModeAvailable && agentModeEnabled);
         agentModeButton.setIcon(agentModeIcon(resolveInputIconTint(agentModeAvailable && agentModeEnabled)));
-        agentModeButton.setToolTipText(agentModeAvailable ? "Agent Mode" : null);
+        agentModeButton.setToolTipText(agentModeAvailable ? "Agent mode" : null);
         updateProjectRootPresentation();
         revalidate();
         repaint();

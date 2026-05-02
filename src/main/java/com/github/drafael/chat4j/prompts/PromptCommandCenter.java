@@ -333,8 +333,12 @@ public class PromptCommandCenter extends JDialog {
             return prompt != null ? prompt.title() : command.title();
         }
 
-        String type() {
-            return prompt != null ? "Prompt" : "Command";
+        String metadata() {
+            if (prompt != null) {
+                return "Prompt";
+            }
+
+            return StringUtils.defaultIfBlank(command.keyBinding(), "Command");
         }
 
         void invoke(Consumer<PromptTemplate> promptSelected) {
@@ -371,7 +375,7 @@ public class PromptCommandCenter extends JDialog {
                 boolean cellHasFocus
         ) {
             title.setText(value.title());
-            type.setText(value.type());
+            type.setText(value.metadata());
             setBackground(isSelected ? UIManager.getColor("List.selectionBackground") : resolvePopupBackground());
             title.setForeground(isSelected ? UIManager.getColor("List.selectionForeground") : UIManager.getColor("Label.foreground"));
             type.setForeground(isSelected ? UIManager.getColor("List.selectionForeground") : UIManager.getColor("Label.disabledForeground"));
