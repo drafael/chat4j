@@ -37,7 +37,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -107,9 +106,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final Map<ProviderStatusIconKey, Icon> PROVIDER_STATUS_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
-    private final Map<String, AtomicBoolean> copilotAuthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
-    private final Map<String, AtomicBoolean> codexAuthAvailabilityRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final JList<String> providerList;
 
     static {
@@ -328,8 +325,17 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JLabel status = new JLabel();
         Fonts.apply(status, Font.PLAIN, Fonts.SIZE_BODY);
 
-        if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
-            applyAuthCheckingStatus(status);
+        if (info.authType() == AuthType.COPILOT_OAUTH) {
+            CopilotAuthResolver.CopilotAuthStatus copilotAuthStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
+            cacheCopilotAuthAvailability(providerName, copilotAuthStatus.authorized());
+            applyCopilotAuthStatus(status, copilotAuthStatus);
+            return status;
+        }
+
+        if (info.authType() == AuthType.CODEX_OAUTH) {
+            CodexAuthResolver.CodexAuthStatus codexAuthStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+            cacheCodexAuthAvailability(providerName, codexAuthStatus.authorized());
+            applyCodexAuthStatus(status, codexAuthStatus);
             return status;
         }
 
@@ -516,8 +522,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void configureCopilotAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        applyAuthCheckingControls(statusLabel, authButton);
-        refreshCopilotAuthControlsAsync(providerName, statusLabel, authButton);
+        CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
+        applyCopilotAuthControls(providerName, statusLabel, authButton, status, null);
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
@@ -564,8 +570,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        applyAuthCheckingControls(statusLabel, authButton);
-        refreshCodexAuthControlsAsync(providerName, statusLabel, authButton);
+        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
 
         authButton.addActionListener(event -> {
             authButton.setEnabled(false);
@@ -844,35 +850,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
         return dialog;
-    }
-
-    private void applyAuthCheckingControls(JLabel statusLabel, JButton authButton) {
-        applyAuthCheckingStatus(statusLabel);
-        authButton.setText("Checking...");
-        authButton.setEnabled(false);
-        authButton.setForeground(UIManager.getColor("Button.foreground"));
-        authButton.setBackground(UIManager.getColor("Button.background"));
-        authButton.setOpaque(true);
-        authButton.setToolTipText(null);
-    }
-
-    private void applyAuthCheckingStatus(JLabel statusLabel) {
-        statusLabel.setText("Checking authentication...");
-        statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-    }
-
-    private void refreshCopilotAuthControlsAsync(String providerName, JLabel statusLabel, JButton authButton) {
-        Thread.startVirtualThread(() -> {
-            CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
-            SwingUtilities.invokeLater(() -> applyCopilotAuthControls(providerName, statusLabel, authButton, status, null));
-        });
-    }
-
-    private void refreshCodexAuthControlsAsync(String providerName, JLabel statusLabel, JButton authButton) {
-        Thread.startVirtualThread(() -> {
-            CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-            SwingUtilities.invokeLater(() -> applyCodexAuthControls(providerName, statusLabel, authButton, status, null));
-        });
     }
 
     private void applyCopilotAuthControls(
@@ -1283,8 +1260,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return cached.authorized();
         }
 
-        triggerCopilotAuthAvailabilityRefresh(providerName);
-        return cached != null && cached.authorized();
+        CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
+        cacheCopilotAuthAvailability(providerName, status.authorized());
+        return status.authorized();
     }
 
     private boolean isCodexAuthAvailable(String providerName) {
@@ -1294,8 +1272,9 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return cached.authorized();
         }
 
-        triggerCodexAuthAvailabilityRefresh(providerName);
-        return cached != null && cached.authorized();
+        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
+        cacheCodexAuthAvailability(providerName, status.authorized());
+        return status.authorized();
     }
 
     private void cacheCopilotAuthAvailability(String providerName, boolean authorized) {
@@ -1304,42 +1283,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private void cacheCodexAuthAvailability(String providerName, boolean authorized) {
         codexAuthAvailabilityByProvider.put(providerName, new CodexAuthAvailabilitySnapshot(authorized, Instant.now()));
-    }
-
-    private void triggerCopilotAuthAvailabilityRefresh(String providerName) {
-        AtomicBoolean inFlight = copilotAuthAvailabilityRefreshInFlightByProvider
-                .computeIfAbsent(providerName, ignored -> new AtomicBoolean());
-        if (!inFlight.compareAndSet(false, true)) {
-            return;
-        }
-
-        Thread.startVirtualThread(() -> {
-            try {
-                CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
-                cacheCopilotAuthAvailability(providerName, status.authorized());
-                SwingUtilities.invokeLater(providerList::repaint);
-            } finally {
-                inFlight.set(false);
-            }
-        });
-    }
-
-    private void triggerCodexAuthAvailabilityRefresh(String providerName) {
-        AtomicBoolean inFlight = codexAuthAvailabilityRefreshInFlightByProvider
-                .computeIfAbsent(providerName, ignored -> new AtomicBoolean());
-        if (!inFlight.compareAndSet(false, true)) {
-            return;
-        }
-
-        Thread.startVirtualThread(() -> {
-            try {
-                CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-                cacheCodexAuthAvailability(providerName, status.authorized());
-                SwingUtilities.invokeLater(providerList::repaint);
-            } finally {
-                inFlight.set(false);
-            }
-        });
     }
 
     private static Icon iconForProvider(String providerName, boolean available) {
