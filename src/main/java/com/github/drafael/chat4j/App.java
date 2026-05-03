@@ -10,13 +10,16 @@ import javax.swing.*;
 import java.awt.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 public class App {
 
     private static final String APP_PATH_PROPERTY = "jpackage.app-path";
     private static final String DOCTOR_SCRIPT_RELATIVE_PATH = "Contents/app/tools/chat4j-doctor.sh";
+    private static final String JAVA2D_METAL_PROPERTY = "sun.java2d.metal";
 
     public static void main(String[] args) {
+        configureNativeGraphicsPipeline();
         StartupFallbackLogger.info("Chat4J startup entrypoint invoked");
 
         try {
@@ -33,6 +36,16 @@ public class App {
             showStartupFailureDialog(t);
             System.exit(1);
         }
+    }
+
+    static void configureNativeGraphicsPipeline() {
+        if (isMacOs() && System.getProperty(JAVA2D_METAL_PROPERTY) == null) {
+            System.setProperty(JAVA2D_METAL_PROPERTY, "false");
+        }
+    }
+
+    private static boolean isMacOs() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
     }
 
     private static void showStartupFailureDialog(Throwable throwable) {

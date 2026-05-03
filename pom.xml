@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.19</version>
+    <version>26.5.21</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -425,6 +425,8 @@
                                         <argument>--enable-preview</argument>
                                         <argument>--java-options</argument>
                                         <argument>-Dapple.awt.application.name=Chat4J</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>-Dsun.java2d.metal=false</argument>
                                         <argument>--icon</argument>
                                         <argument>${project.basedir}/src/main/resources/icons/icon.icns</argument>
                                         <argument>--mac-package-name</argument>
