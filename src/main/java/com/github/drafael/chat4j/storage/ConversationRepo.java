@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ContentParts;
@@ -35,6 +36,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import org.apache.commons.lang3.StringUtils;
+
+import static java.util.Collections.emptyList;
 
 public class ConversationRepo {
 
@@ -533,7 +536,26 @@ public class ConversationRepo {
         node.put("error", value.error());
         node.put("assistantThinking", value.assistantThinking());
         node.put("assistantWebSearch", value.assistantWebSearch());
+
+        ArrayNode agentToolActivities = JSON.createArrayNode();
+        value.agentToolActivities().stream()
+                .map(this::serializeAgentToolActivity)
+                .forEach(agentToolActivities::add);
+        node.set("agentToolActivities", agentToolActivities);
         return node.toString();
+    }
+
+    private ObjectNode serializeAgentToolActivity(AgentToolActivityMeta activity) {
+        AgentToolActivityMeta value = activity == null
+                ? new AgentToolActivityMeta("", "unknown", "STARTED", "", "")
+                : activity;
+        ObjectNode node = JSON.createObjectNode();
+        node.put("invocationId", value.invocationId());
+        node.put("toolName", value.toolName());
+        node.put("status", value.status());
+        node.put("argumentsSummary", value.argumentsSummary());
+        node.put("message", value.message());
+        return node;
     }
 
     private Message deserializeMessage(String role,
@@ -619,11 +641,34 @@ public class ConversationRepo {
                     node.path("cancelled").asBoolean(false),
                     node.path("error").asText(""),
                     node.path("assistantThinking").asText(""),
-                    node.path("assistantWebSearch").asText("")
+                    node.path("assistantWebSearch").asText(""),
+                    deserializeAgentToolActivities(node.path("agentToolActivities"))
             );
         } catch (Exception e) {
             return MessageMeta.empty();
         }
+    }
+
+    private List<AgentToolActivityMeta> deserializeAgentToolActivities(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return emptyList();
+        }
+
+        List<AgentToolActivityMeta> activities = new ArrayList<>();
+        node.forEach(activityNode -> {
+            if (activityNode == null || !activityNode.isObject()) {
+                return;
+            }
+
+            activities.add(new AgentToolActivityMeta(
+                    activityNode.path("invocationId").asText(""),
+                    activityNode.path("toolName").asText("unknown"),
+                    activityNode.path("status").asText("STARTED"),
+                    activityNode.path("argumentsSummary").asText(""),
+                    activityNode.path("message").asText("")
+            ));
+        });
+        return List.copyOf(activities);
     }
 
     private AttachmentRef deserializeAttachment(JsonNode node) {

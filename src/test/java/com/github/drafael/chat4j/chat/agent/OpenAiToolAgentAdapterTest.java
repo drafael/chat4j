@@ -106,6 +106,91 @@ class OpenAiToolAgentAdapterTest {
     }
 
     @Test
+    @DisplayName("Adapter passes DeepSeek reasoning content back with tool results")
+    void executeTurn_whenDeepSeekToolCallIncludesReasoningContent_preservesReasoningContent() throws Exception {
+        String firstResponse = """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "content": "",
+                        "reasoning_content": "Need to list the folder first.",
+                        "tool_calls": [
+                          {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                              "name": "ls",
+                              "arguments": "{\\\"path\\\":\\\".\\\"}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """;
+        String secondResponse = """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "content": "done"
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        List<String> requestBodies = new ArrayList<>();
+        HttpServer server = createChatCompletionsServer(List.of(firstResponse, secondResponse), requestBodies, List.of(200, 200));
+        try {
+            int port = server.getAddress().getPort();
+            OpenAiToolAgentAdapter subject = new OpenAiToolAgentAdapter(
+                    "DeepSeek",
+                    "deepseek-v4-pro",
+                    "http://127.0.0.1:%d/v1".formatted(port),
+                    "test-key"
+            );
+
+            List<String> thinkingTokens = new ArrayList<>();
+            AgentTurnResult firstTurn = subject.executeTurn(
+                    new AgentRunRequest(List.of(Message.user("explore folder")), ReasoningLevel.HIGH, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunCallbacks(token -> {
+                    }, thinkingTokens::add, () -> {
+                    }, error -> {
+                    })
+            );
+
+            assertThat(firstTurn.completed()).isFalse();
+            assertThat(firstTurn.toolInvocations()).hasSize(1);
+            assertThat(thinkingTokens).containsExactly("Need to list the folder first.");
+
+            AgentTurnResult secondTurn = subject.executeTurn(
+                    new AgentRunRequest(
+                            List.of(Message.user("explore folder")),
+                            ReasoningLevel.HIGH,
+                            java.nio.file.Path.of("."),
+                            List.of(new ToolInvocationResult("call_1", "ls", true, "note.txt", "")),
+                            () -> false
+                    ),
+                    new AgentRunCallbacks(token -> {
+                    }, thinking -> {
+                    }, () -> {
+                    }, error -> {
+                    })
+            );
+
+            assertThat(secondTurn.completed()).isTrue();
+            assertThat(requestBodies).hasSize(2);
+            assertThat(requestBodies.get(1)).contains("\"reasoning_content\":\"Need to list the folder first.\"");
+            assertThat(requestBodies.get(1)).contains("\"tool_call_id\":\"call_1\"");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Adapter emits assistant text when completion has no tool calls")
     void executeTurn_whenModelReturnsAssistantText_emitsTokenAndCompletes() throws Exception {
         String response = """

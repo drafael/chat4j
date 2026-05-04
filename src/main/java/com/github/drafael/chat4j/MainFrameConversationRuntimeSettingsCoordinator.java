@@ -162,8 +162,8 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
             }
         }
 
-        target.setAgentProjectRoot().accept(projectRoot);
         target.setAgentModeEnabled().accept(enabled);
+        target.setAgentProjectRoot().accept(projectRoot);
     }
 
     public record RuntimeSettingsTarget(

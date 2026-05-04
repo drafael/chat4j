@@ -2,19 +2,20 @@ package com.github.drafael.chat4j.chat.agent;
 
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
-public final class AgentOrchestrator {
+import static java.lang.Math.min;
+import static java.util.stream.Collectors.joining;
 
-    private static final Logger log = LoggerFactory.getLogger(AgentOrchestrator.class);
+@Slf4j
+public final class AgentOrchestrator {
     private static final int MAX_TOOL_ROUNDS = 8;
     private static final int LOOP_GUARD_REPEAT_THRESHOLD = 3;
     private static final Set<String> LOOP_GUARD_TOOL_NAMES = Set.of("ls", "find", "grep", "read");
@@ -89,10 +90,11 @@ public final class AgentOrchestrator {
                         modelId,
                         repeatedToolBatchCount,
                         summarizeToolInvocations(toolInvocations));
+                emitSkippedToolActivities(toolInvocations, callbacks, "Loop guard skipped repeated read-only tool call");
                 toolResults = loopGuardResults(toolInvocations, repeatedToolBatchCount);
             } else {
                 toolResults = toolInvocations.stream()
-                        .map(toolInvocation -> toolRuntime.execute(toolInvocation, projectRoot, request.isCancelled()))
+                        .map(toolInvocation -> executeToolInvocation(toolInvocation, projectRoot, request, callbacks))
                         .toList();
             }
         }
@@ -122,6 +124,11 @@ public final class AgentOrchestrator {
                             toolSummary
                     );
             log.warn(notice);
+            emitSkippedToolActivities(
+                    finalTurnResult.toolInvocations(),
+                    callbacks,
+                    "Loop guard stopped repeated read-only tool calls"
+            );
             callbacks.onToken().accept("\n\n[Agent notice: Repeated read-only tool calls were stopped to avoid a loop. "
                     + "Proceeding with the best available context.]\n");
             callbacks.onComplete().run();
@@ -140,6 +147,28 @@ public final class AgentOrchestrator {
         callbacks.onError().accept(new IllegalStateException(message));
     }
 
+    private ToolInvocationResult executeToolInvocation(
+            ToolInvocationRequest toolInvocation,
+            Path projectRoot,
+            AgentRunRequest request,
+            AgentRunCallbacks callbacks
+    ) {
+        callbacks.onToolActivity().accept(AgentToolActivityFormatter.started(toolInvocation));
+        ToolInvocationResult result = toolRuntime.execute(toolInvocation, projectRoot, request.isCancelled());
+        callbacks.onToolActivity().accept(AgentToolActivityFormatter.completed(toolInvocation, result));
+        return result;
+    }
+
+    private void emitSkippedToolActivities(
+            List<ToolInvocationRequest> toolInvocations,
+            AgentRunCallbacks callbacks,
+            String message
+    ) {
+        toolInvocations.stream()
+                .map(toolInvocation -> AgentToolActivityFormatter.skipped(toolInvocation, message))
+                .forEach(callbacks.onToolActivity());
+    }
+
     private String toolBatchSignature(List<ToolInvocationRequest> toolInvocations) {
         if (toolInvocations == null || toolInvocations.isEmpty()) {
             return "none";
@@ -150,7 +179,7 @@ public final class AgentOrchestrator {
                         StringUtils.defaultString(invocation.name()),
                         StringUtils.defaultString(invocation.argumentsJson()).trim()
                 ))
-                .collect(java.util.stream.Collectors.joining("||"));
+                .collect(joining("||"));
     }
 
     private boolean shouldApplyLoopGuard(List<ToolInvocationRequest> toolInvocations, int repeatedToolBatchCount) {
@@ -198,7 +227,7 @@ public final class AgentOrchestrator {
             return "unknown";
         }
 
-        int limit = Math.min(6, names.size());
+        int limit = min(6, names.size());
         String joined = String.join(",", names.subList(0, limit));
         if (names.size() > limit) {
             return joined + ",+" + (names.size() - limit) + " more";

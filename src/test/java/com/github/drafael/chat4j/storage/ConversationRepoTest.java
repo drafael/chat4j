@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.storage;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
@@ -109,6 +110,31 @@ class ConversationRepoTest {
             assertThat(rs.next()).isTrue();
             assertThat(rs.getString(1)).contains("\"assistantThinking\":\"Thinking trace\"");
         }
+    }
+
+    @Test
+    @DisplayName("Assistant agent tool activity metadata is serialized and restored")
+    void addMessage_whenAssistantContainsAgentToolActivities_persistsAndRestoresMeta() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-agent-tool-meta");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+
+        ConversationRepo subject = new ConversationRepo(dataSource);
+        List<AgentToolActivityMeta> toolActivities = List.of(
+                new AgentToolActivityMeta("read-note", "read", "SUCCEEDED", "path=note.txt", ""),
+                new AgentToolActivityMeta("grep-error", "grep", "FAILED", "path=., query=todo", "no matches")
+        );
+        Message message = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "", "", toolActivities)
+        );
+
+        subject.addMessage(conversationId, message);
+
+        Message restored = subject.getMessages(conversationId).getFirst().message();
+        assertThat(restored.meta().agentToolActivities()).containsExactlyElementsOf(toolActivities);
     }
 
     @Test

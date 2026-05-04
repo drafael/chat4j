@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -64,6 +65,7 @@ class ProviderServiceAgentAdapterTest {
         };
 
         ProviderServiceAgentAdapter subject = new ProviderServiceAgentAdapter(providerService, "Use concise summaries");
+        List<AgentToolActivity> toolActivities = new ArrayList<>();
 
         AgentTurnResult result = subject.executeTurn(
                 new AgentRunRequest(
@@ -73,11 +75,17 @@ class ProviderServiceAgentAdapterTest {
                         emptyList(),
                         () -> false
                 ),
-                new AgentRunCallbacks(token -> {
-                }, thinking -> {
-                }, () -> {
-                }, error -> {
-                })
+                new AgentRunCallbacks(
+                        token -> {
+                        },
+                        thinking -> {
+                        },
+                        toolActivities::add,
+                        () -> {
+                        },
+                        error -> {
+                        }
+                )
         );
 
         assertThat(result.completed()).isTrue();
@@ -87,6 +95,11 @@ class ProviderServiceAgentAdapterTest {
         assertThat(observedHistory.get().getFirst().role()).isEqualTo(com.github.drafael.chat4j.provider.api.Role.SYSTEM);
         assertThat(observedHistory.get().getFirst().content()).contains("Selected agent root: " + tempDir.toAbsolutePath().normalize());
         assertThat(observedHistory.get().getFirst().content()).contains("Top-level entries");
+        assertThat(toolActivities).hasSize(1);
+        assertThat(toolActivities.getFirst().toolName()).isEqualTo("workspace-context");
+        assertThat(toolActivities.getFirst().status()).isEqualTo(AgentToolActivity.Status.SUCCEEDED);
+        assertThat(toolActivities.getFirst().argumentsSummary()).isEqualTo("path=%s".formatted(tempDir.getFileName()));
+        assertThat(toolActivities.getFirst().message()).isEqualTo("using workspace snapshot");
         assertThat(ExecutionDirectoryContext.currentDirectory()).isEmpty();
         assertThat(AgentSystemPromptContext.currentPromptAppend()).isEmpty();
     }

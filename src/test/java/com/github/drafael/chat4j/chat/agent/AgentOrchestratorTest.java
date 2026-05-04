@@ -6,8 +6,10 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -116,7 +118,7 @@ class AgentOrchestratorTest {
     @DisplayName("Agent orchestrator executes tool requests and continues loop with tool results")
     void streamCompletion_whenAdapterRequestsTools_executesToolsAndContinuesLoop() throws Exception {
         Path projectRoot = Files.createTempDirectory("chat4j-agent-loop");
-        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", StandardCharsets.UTF_8);
 
         AtomicInteger turns = new AtomicInteger(0);
         AtomicReference<List<ToolInvocationResult>> secondTurnResults = new AtomicReference<>();
@@ -151,6 +153,7 @@ class AgentOrchestratorTest {
         var request = new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, projectRoot, emptyList(), () -> false);
 
         AtomicBoolean completed = new AtomicBoolean(false);
+        List<AgentToolActivity> toolActivities = new ArrayList<>();
         subject.streamCompletion(
                 "OpenAI",
                 "gpt-5-mini",
@@ -164,6 +167,7 @@ class AgentOrchestratorTest {
                         },
                         ignored -> {
                         },
+                        toolActivities::add,
                         () -> completed.set(true),
                         error -> {
                         }
@@ -175,13 +179,19 @@ class AgentOrchestratorTest {
         assertThat(secondTurnResults.get().getFirst().success()).isTrue();
         assertThat(secondTurnResults.get().getFirst().output()).contains("hello tool");
         assertThat(completed.get()).isTrue();
+        assertThat(toolActivities)
+                .extracting(AgentToolActivity::status)
+                .containsExactly(AgentToolActivity.Status.STARTED, AgentToolActivity.Status.SUCCEEDED);
+        assertThat(toolActivities)
+                .extracting(AgentToolActivity::toolName)
+                .containsExactly("read", "read");
     }
 
     @Test
     @DisplayName("Agent orchestrator allows one final completion turn after max tool rounds")
     void streamCompletion_whenToolRoundsHitLimit_allowsFinalCompletionTurn() throws Exception {
         Path projectRoot = Files.createTempDirectory("chat4j-agent-max-rounds-final");
-        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", StandardCharsets.UTF_8);
 
         AtomicInteger turns = new AtomicInteger(0);
         AtomicBoolean completed = new AtomicBoolean(false);
@@ -244,7 +254,7 @@ class AgentOrchestratorTest {
     @DisplayName("Agent orchestrator reports error when tool loop still exceeds max rounds after final turn")
     void streamCompletion_whenToolLoopNeverSettles_reportsMaxRoundsError() throws Exception {
         Path projectRoot = Files.createTempDirectory("chat4j-agent-max-rounds-error");
-        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", java.nio.charset.StandardCharsets.UTF_8);
+        Files.writeString(projectRoot.resolve("note.txt"), "hello tool", StandardCharsets.UTF_8);
 
         AtomicInteger turns = new AtomicInteger(0);
         AtomicReference<Exception> error = new AtomicReference<>();
@@ -307,6 +317,7 @@ class AgentOrchestratorTest {
         AtomicInteger turns = new AtomicInteger(0);
         AtomicBoolean completed = new AtomicBoolean(false);
         AtomicReference<Exception> error = new AtomicReference<>();
+        List<AgentToolActivity> toolActivities = new ArrayList<>();
 
         AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory() {
             @Override
@@ -352,6 +363,7 @@ class AgentOrchestratorTest {
                         },
                         ignored -> {
                         },
+                        toolActivities::add,
                         () -> completed.set(true),
                         error::set
                 )
@@ -360,6 +372,9 @@ class AgentOrchestratorTest {
         assertThat(turns.get()).isEqualTo(4);
         assertThat(error.get()).isNull();
         assertThat(completed.get()).isTrue();
+        assertThat(toolActivities)
+                .extracting(AgentToolActivity::status)
+                .contains(AgentToolActivity.Status.SKIPPED);
     }
 
     private ProviderService immediateProvider() {

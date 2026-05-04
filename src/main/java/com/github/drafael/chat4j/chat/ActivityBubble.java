@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -14,12 +15,11 @@ import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.util.regex.Pattern;
 
-public class ThinkingBubble extends JPanel {
+public class ActivityBubble extends JPanel {
 
     private static final int ARC = 18;
     private static final int COLLAPSE_DEBOUNCE_MS = 90;
-    private static final Insets EXPANDED_INSETS = new Insets(8, 10, 8, 10);
-    private static final Insets COLLAPSED_INSETS = new Insets(4, 10, 4, 10);
+    private static final Insets BUBBLE_INSETS = new Insets(5, 8, 4, 8);
     private static final int COPY_BUTTON_SIZE = 20;
     private static final int COPY_ICON_SIZE = 13;
     private static final int TOGGLE_BUTTON_SIZE = 18;
@@ -44,26 +44,27 @@ public class ThinkingBubble extends JPanel {
 
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
     private boolean collapsed;
+    private boolean collapsible = true;
     private boolean streaming;
     private boolean renderValidationScheduled;
 
-    public ThinkingBubble() {
+    public ActivityBubble() {
         this("Thinking", false);
     }
 
-    public ThinkingBubble(boolean defaultCollapsed) {
+    public ActivityBubble(boolean defaultCollapsed) {
         this("Thinking", defaultCollapsed);
     }
 
-    public ThinkingBubble(String title, boolean defaultCollapsed) {
+    public ActivityBubble(String title, boolean defaultCollapsed) {
         setLayout(new BorderLayout(0, 4));
         setOpaque(false);
         setDoubleBuffered(true);
         setBorder(BorderFactory.createEmptyBorder(
-                EXPANDED_INSETS.top,
-                EXPANDED_INSETS.left,
-                EXPANDED_INSETS.bottom,
-                EXPANDED_INSETS.right
+                BUBBLE_INSETS.top,
+                BUBBLE_INSETS.left,
+                BUBBLE_INSETS.bottom,
+                BUBBLE_INSETS.right
         ));
 
         foldButton = new JButton();
@@ -79,7 +80,7 @@ public class ThinkingBubble extends JPanel {
 
         String titleText = StringUtils.defaultIfBlank(title, "Thinking");
         titleLabel = new JLabel(titleText);
-        titleLabel.putClientProperty("FlatLaf.styleClass", "small");
+        Fonts.apply(titleLabel, Font.PLAIN, Fonts.SIZE_BODY);
         titleLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         titleLabel.setToolTipText("Toggle %s".formatted(titleText.toLowerCase()));
         titleLabel.addMouseListener(new MouseAdapter() {
@@ -123,10 +124,20 @@ public class ThinkingBubble extends JPanel {
         copyButtonSlot.setMaximumSize(copyButtonDimension);
         copyButtonSlot.add(copyButton);
 
-        JPanel headerStart = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        JPanel headerStart = new JPanel(new GridBagLayout());
         headerStart.setOpaque(false);
-        headerStart.add(foldButton);
-        headerStart.add(titleLabel);
+        GridBagConstraints foldConstraints = new GridBagConstraints();
+        foldConstraints.gridx = 0;
+        foldConstraints.gridy = 0;
+        foldConstraints.anchor = GridBagConstraints.CENTER;
+        foldConstraints.insets = new Insets(0, 0, 0, 4);
+        headerStart.add(foldButton, foldConstraints);
+
+        GridBagConstraints titleConstraints = new GridBagConstraints();
+        titleConstraints.gridx = 1;
+        titleConstraints.gridy = 0;
+        titleConstraints.anchor = GridBagConstraints.CENTER;
+        headerStart.add(titleLabel, titleConstraints);
 
         JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
@@ -194,6 +205,29 @@ public class ThinkingBubble extends JPanel {
         return collapsed;
     }
 
+    public void setTitle(String title) {
+        String titleText = StringUtils.defaultIfBlank(title, "Thinking");
+        titleLabel.setText(titleText);
+        titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(titleText.toLowerCase()) : null);
+        copyButton.setToolTipText("Copy %s".formatted(titleText.toLowerCase()));
+    }
+
+    public void setCollapsible(boolean collapsible) {
+        if (this.collapsible == collapsible) {
+            return;
+        }
+
+        this.collapsible = collapsible;
+        foldButton.setVisible(collapsible);
+        titleLabel.setCursor(collapsible
+                ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                : Cursor.getDefaultCursor());
+        titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(titleLabel.getText().toLowerCase()) : null);
+        if (!collapsible) {
+            applyCollapsedState(true);
+        }
+    }
+
     public void setAssistantRenderMode(AssistantRenderMode assistantRenderMode) {
         if (assistantRenderMode == null || this.assistantRenderMode == assistantRenderMode) {
             return;
@@ -212,6 +246,10 @@ public class ThinkingBubble extends JPanel {
     }
 
     private void toggleCollapsedDebounced() {
+        if (!collapsible) {
+            return;
+        }
+
         boolean baseState = pendingCollapsedState != null ? pendingCollapsedState : collapsed;
         requestCollapsed(!baseState);
     }
@@ -222,16 +260,22 @@ public class ThinkingBubble extends JPanel {
     }
 
     private void applyCollapsedState(boolean collapsed) {
-        if (this.collapsed == collapsed) {
+        boolean effectiveCollapsed = !collapsible || collapsed;
+        if (this.collapsed == effectiveCollapsed) {
             return;
         }
 
-        this.collapsed = collapsed;
-        contentPanel.setVisible(!collapsed);
-        foldButton.setText(collapsed ? "▸" : "▾");
+        this.collapsed = effectiveCollapsed;
+        contentPanel.setVisible(!effectiveCollapsed);
+        foldButton.setText(effectiveCollapsed ? "▸" : "▾");
+        foldButton.setVisible(collapsible);
 
-        Insets insets = collapsed ? COLLAPSED_INSETS : EXPANDED_INSETS;
-        setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom, insets.right));
+        setBorder(BorderFactory.createEmptyBorder(
+                BUBBLE_INSETS.top,
+                BUBBLE_INSETS.left,
+                BUBBLE_INSETS.bottom,
+                BUBBLE_INSETS.right
+        ));
 
         // Avoid forcing a full re-layout/re-render cycle here to reduce chat flicker.
         // setVisible() already triggers the needed invalidation/paint for contentPanel.
@@ -251,8 +295,12 @@ public class ThinkingBubble extends JPanel {
     public void updateUI() {
         super.updateUI();
         if (titleLabel != null) {
-            Insets insets = collapsed ? COLLAPSED_INSETS : EXPANDED_INSETS;
-            setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom, insets.right));
+            setBorder(BorderFactory.createEmptyBorder(
+                    BUBBLE_INSETS.top,
+                    BUBBLE_INSETS.left,
+                    BUBBLE_INSETS.bottom,
+                    BUBBLE_INSETS.right
+            ));
             updateColors();
             refreshContent();
         }
@@ -403,7 +451,7 @@ public class ThinkingBubble extends JPanel {
                 }
 
                 Point screenPoint = new Point(e.getXOnScreen(), e.getYOnScreen());
-                SwingUtilities.convertPointFromScreen(screenPoint, ThinkingBubble.this);
+                SwingUtilities.convertPointFromScreen(screenPoint, ActivityBubble.this);
                 if (!contains(screenPoint)) {
                     setCopyButtonVisible(false);
                 }
@@ -471,7 +519,7 @@ public class ThinkingBubble extends JPanel {
     }
 
     private Icon loadTintedIcon(String path, Color tint, int size) {
-        URL iconUrl = ThinkingBubble.class.getResource(path);
+        URL iconUrl = ActivityBubble.class.getResource(path);
         if (iconUrl == null) {
             return null;
         }

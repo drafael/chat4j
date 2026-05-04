@@ -29,13 +29,14 @@ public final class AgentSystemPromptBuilder {
                 - ls: List files in a directory
                 - find: Find files recursively by name pattern
                 - grep: Search for text in files
-                - bash: Execute a shell command within the selected folder root
+                - bash: Execute a bash shell command with the selected folder root as working directory
 
                 Guidelines:
                 - For folder-specific requests, call at least one tool before your final answer.
                 - Do not claim you explored/read/searched the folder unless you actually called tools.
                 - Do not output preparatory promises like "let me explore"; call tools immediately instead.
                 - Prefer ls/find/grep/read for fast folder exploration before broad bash commands.
+                - Filesystem tools are confined to the selected root, but bash is not sandboxed; use bash only when command execution is needed.
                 - Avoid repeating the same tool call with identical arguments unless the user asked for re-check.
                 - If repeated tool outputs stop yielding new information, stop tool use and provide your best final answer.
                 - Reference concrete file paths in your final answer when relevant.
@@ -44,7 +45,7 @@ public final class AgentSystemPromptBuilder {
 
         String normalizedAppend = StringUtils.trimToEmpty(append);
         if (StringUtils.isNotBlank(normalizedAppend)) {
-            prompt += "\n\nAdditional instructions:\n" + normalizedAppend;
+            prompt = "%s\n\nAdditional instructions:\n%s".formatted(prompt, normalizedAppend);
         }
 
         return "%s\n\nCurrent date: %s\nCurrent working directory: %s"
@@ -59,7 +60,7 @@ public final class AgentSystemPromptBuilder {
         lines.add("");
         lines.add("Codex fallback runtime notes:");
         lines.add("- You are running through Codex CLI fallback because provider-native tool calling is unavailable.");
-        lines.add("- You may run read-only discovery commands to inspect the selected folder and answer the user request.");
+        lines.add("- You may inspect the selected folder and answer the user request.");
         lines.add("- Do not modify files in fallback mode.");
 
         return String.join("\n", lines);

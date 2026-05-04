@@ -27,6 +27,16 @@ public class AgentProviderAdapterFactory {
             return providerServiceAdapter;
         }
 
+        if (supportsCopilotAnthropicToolAdapter(providerName, modelId, baseUrl, apiKey)) {
+            AgentProviderAdapter copilotAnthropicToolAdapter = AnthropicToolAgentAdapter.forCopilot(
+                    modelId,
+                    baseUrl,
+                    apiKey,
+                    agentSystemPromptAppend
+            );
+            return new OpenAiCompatibleFallbackAgentAdapter(providerName, copilotAnthropicToolAdapter, providerServiceAdapter);
+        }
+
         if (supportsOpenAiCompatibleToolAdapter(providerName, modelId, baseUrl, apiKey)) {
             AgentProviderAdapter openAiToolAdapter = new OpenAiToolAgentAdapter(
                     providerName,
@@ -59,6 +69,19 @@ public class AgentProviderAdapterFactory {
         }
 
         return !StringUtils.equalsIgnoreCase(providerName, "Anthropic");
+    }
+
+    private boolean supportsCopilotAnthropicToolAdapter(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        return StringUtils.equalsIgnoreCase(providerName, "GitHub Copilot")
+                && StringUtils.isNotBlank(modelId)
+                && StringUtils.isNotBlank(baseUrl)
+                && StringUtils.isNotBlank(apiKey)
+                && StringUtils.startsWithIgnoreCase(modelId.trim(), "claude-");
     }
 
     private boolean shouldUseCodexCliOnly(String providerName) {

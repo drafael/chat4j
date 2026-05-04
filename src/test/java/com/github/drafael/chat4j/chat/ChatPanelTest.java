@@ -4,11 +4,13 @@ import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
 import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
+import com.github.drafael.chat4j.chat.agent.ToolInvocationRequest;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
@@ -16,6 +18,7 @@ import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.sun.net.httpserver.HttpServer;
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -381,6 +384,121 @@ class ChatPanelTest {
         });
 
         assertThat(subject.getHistory().get(1).content()).isEqualTo("agent-response");
+    }
+
+    @Test
+    @DisplayName("Agent mode renders tool bubbles before the final answer when tools run first")
+    void onSend_whenAgentModeUsesToolsBeforeAnswer_rendersSeparateToolBubblesBeforeAssistantAnswer() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-tools-bubble");
+        Files.writeString(projectRoot.resolve("note.txt"), "hello tool");
+        AtomicInteger turns = new AtomicInteger();
+
+        subject.getInputBar().setAgentModeAvailable(true);
+        subject.getInputBar().setAgentProjectRoot(projectRoot);
+        subject.getInputBar().setAgentModeEnabled(true);
+
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+            @Override
+            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    if (turns.incrementAndGet() == 1) {
+                        return AgentTurnResult.continueWithTools(List.of(
+                                new ToolInvocationRequest(
+                                        "list-root",
+                                        "ls",
+                                        "{\"path\":\".\"}"
+                                ),
+                                new ToolInvocationRequest(
+                                        "read-note",
+                                        "read",
+                                        "{\"path\":\"note.txt\"}"
+                                )
+                        ));
+                    }
+
+                    callbacks.onToken().accept("agent-response");
+                    return AgentTurnResult.complete();
+                };
+            }
+        }, new LocalToolRuntime()));
+
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
+                .filter(bubble -> thinkingBubbleTitle(bubble).startsWith("✓ "))
+                .toList();
+
+        assertThat(toolBubbles).hasSize(2);
+        assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ ls .");
+        assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✓ read note.txt");
+        assertThat(hasVisibleCollapseToggle(toolBubbles.getFirst())).isFalse();
+        assertThat(hasVisibleCollapseToggle(toolBubbles.get(1))).isFalse();
+        assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+        assertThat(messageRowIndex(messagesPanel, toolBubbles.get(1)))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+
+        Message assistantMessage = subject.getHistory().get(1);
+        assertThat(assistantMessage.meta().agentToolActivities())
+                .extracting(AgentToolActivityMeta::toolName)
+                .containsExactly("ls", "read");
+        assertThat(assistantMessage.meta().agentToolActivities())
+                .extracting(AgentToolActivityMeta::status)
+                .containsExactly("SUCCEEDED", "SUCCEEDED");
+    }
+
+    @Test
+    @DisplayName("Loading history restores persisted agent tool invocation bubbles")
+    void loadHistory_whenAssistantHasAgentToolActivities_restoresToolBubbles() throws Exception {
+        Message assistantMessage = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("done")),
+                Instant.now(),
+                new MessageMeta(
+                        emptyList(),
+                        emptyList(),
+                        false,
+                        "",
+                        "",
+                        "",
+                        List.of(
+                                new AgentToolActivityMeta("read-note", "read", "SUCCEEDED", "path=note.txt", ""),
+                                new AgentToolActivityMeta("grep-error", "grep", "FAILED", "path=., query=todo", "no matches")
+                        )
+                )
+        );
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(List.of(Message.user("run tools"), assistantMessage)));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
+                .filter(bubble -> !hasVisibleCollapseToggle(bubble))
+                .toList();
+
+        assertThat(toolBubbles).hasSize(2);
+        assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ read note.txt");
+        assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✗ grep . todo — no matches");
+        assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
+                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
     }
 
     @Test
@@ -768,7 +886,7 @@ class ChatPanelTest {
 
     @Test
     @DisplayName("Thinking bubble is created only when thinking tokens are emitted")
-    void onSend_whenProviderDoesNotEmitThinking_doesNotRenderThinkingBubble() throws Exception {
+    void onSend_whenProviderDoesNotEmitThinking_doesNotRenderActivityBubble() throws Exception {
         setField(subject, "currentProvider", immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -781,12 +899,12 @@ class ChatPanelTest {
         });
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
     }
 
     @Test
     @DisplayName("Loading history skips thinking bubbles when thinking text has no visible content")
-    void loadHistory_whenAssistantThinkingIsInvisible_doesNotRenderThinkingBubble() throws Exception {
+    void loadHistory_whenAssistantThinkingIsInvisible_doesNotRenderActivityBubble() throws Exception {
         List<Message> messages = List.of(
                 Message.user("question"),
                 new Message(
@@ -800,12 +918,12 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
     }
 
     @Test
     @DisplayName("Thinking bubbles loaded from history are collapsed by default")
-    void loadHistory_whenAssistantThinkingExists_rendersCollapsedThinkingBubbleByDefault() throws Exception {
+    void loadHistory_whenAssistantThinkingExists_rendersCollapsedActivityBubbleByDefault() throws Exception {
         List<Message> messages = List.of(
                 Message.user("question"),
                 new Message(
@@ -819,7 +937,7 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().isCollapsed()).isTrue();
     }
@@ -880,7 +998,7 @@ class ChatPanelTest {
         flushEdt();
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
 
         List<JEditorPane> panes = findComponents(thinkingBubbles.getFirst(), JEditorPane.class);
@@ -936,10 +1054,10 @@ class ChatPanelTest {
         });
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
 
-        ThinkingBubble thinkingBubble = thinkingBubbles.getFirst();
+        ActivityBubble thinkingBubble = thinkingBubbles.getFirst();
         assertThat(findComponents(thinkingBubble, JScrollPane.class)).isEmpty();
 
         List<JEditorPane> panes = findComponents(thinkingBubble, JEditorPane.class);
@@ -949,7 +1067,7 @@ class ChatPanelTest {
 
     @Test
     @DisplayName("Thinking bubble copy button appears on hover")
-    void loadHistory_whenThinkingBubbleHovered_showsCopyButton() throws Exception {
+    void loadHistory_whenActivityBubbleHovered_showsCopyButton() throws Exception {
         List<Message> messages = List.of(
                 Message.user("question"),
                 new Message(
@@ -963,7 +1081,7 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        ThinkingBubble thinkingBubble = findComponents(messagesPanel, ThinkingBubble.class).getFirst();
+        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).getFirst();
         JButton copyButton = findComponents(thinkingBubble, JButton.class).stream()
                 .filter(button -> "Copy thinking".equals(button.getToolTipText()))
                 .findFirst()
@@ -1004,7 +1122,7 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        ThinkingBubble thinkingBubble = findComponents(messagesPanel, ThinkingBubble.class).getFirst();
+        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).getFirst();
         JLabel titleLabel = findComponents(thinkingBubble, JLabel.class).stream()
                 .filter(label -> "Thinking".equals(label.getText()))
                 .findFirst()
@@ -1092,7 +1210,7 @@ class ChatPanelTest {
         assertThat(assistant.meta().assistantThinking()).isEmpty();
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ThinkingBubble.class)).isEmpty();
+        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
     }
 
     @Test
@@ -1150,7 +1268,7 @@ class ChatPanelTest {
         assertThat(assistant.meta().assistantThinking()).doesNotContain("\u001B");
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("First visible part");
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("second visible part");
@@ -1262,7 +1380,7 @@ class ChatPanelTest {
         assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
         assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
@@ -1271,7 +1389,7 @@ class ChatPanelTest {
 
     @Test
     @DisplayName("Think tags in answer tokens render as thinking even when reasoning is disabled")
-    void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersThinkingBubble() throws Exception {
+    void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersActivityBubble() throws Exception {
         subject.getInputBar().setThinkingAvailable(false);
         subject.getInputBar().setThinkingEnabled(false);
         setField(subject, "currentProvider", immediateProvider("<think>hidden reasoning</think>visible answer"));
@@ -1290,7 +1408,7 @@ class ChatPanelTest {
         assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
         assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
@@ -1299,7 +1417,7 @@ class ChatPanelTest {
 
     @Test
     @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
-    void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersThinkingBubble() throws Exception {
+    void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersActivityBubble() throws Exception {
         subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
@@ -1349,7 +1467,7 @@ class ChatPanelTest {
         assertThat(assistant.meta().assistantThinking()).contains("compare enum features");
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ThinkingBubble> thinkingBubbles = findComponents(messagesPanel, ThinkingBubble.class);
+        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
         assertThat(thinkingBubbles).hasSize(1);
         assertThat(thinkingBubbles.getFirst().getFullText()).contains("compare enum features");
         assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
@@ -1682,11 +1800,38 @@ class ChatPanelTest {
         boolean getAsBoolean() throws Exception;
     }
 
+    private static String thinkingBubbleTitle(ActivityBubble bubble) {
+        return findComponents(bubble, JLabel.class).stream()
+                .map(JLabel::getText)
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse("");
+    }
+
+    private static boolean hasVisibleCollapseToggle(ActivityBubble bubble) {
+        return findComponents(bubble, JButton.class).stream()
+                .filter(Component::isVisible)
+                .map(AbstractButton::getText)
+                .anyMatch(text -> StringUtils.equalsAny(text, "▸", "▾"));
+    }
+
     private static MessageBubble assistantBubble(JPanel messagesPanel) {
         return findComponents(messagesPanel, MessageBubble.class).stream()
                 .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                .filter(bubble -> !hasAncestor(bubble, ActivityBubble.class))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private static boolean hasAncestor(Component component, Class<? extends Component> ancestorType) {
+        Component current = component.getParent();
+        while (current != null) {
+            if (ancestorType.isInstance(current)) {
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private static int messageRowIndex(JPanel messagesPanel, Component component) {

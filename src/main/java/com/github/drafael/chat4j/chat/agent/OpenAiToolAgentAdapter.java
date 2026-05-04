@@ -24,6 +24,12 @@ import static java.util.Collections.emptyList;
 final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String BASH_TOOL_DESCRIPTION = String.join(
+            " ",
+            "Execute a bash shell command with the project root as working directory.",
+            "This command is not sandboxed and can access files outside the project root",
+            "with the Chat4J app user's permissions."
+    );
     private static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 60;
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -36,6 +42,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private final String systemPromptAppend;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
     private List<Map<String, Object>> pendingToolCalls = emptyList();
+    private String pendingReasoningContent = "";
 
     OpenAiToolAgentAdapter(String providerName, String modelId, String baseUrl, String apiKey) {
         this(providerName, modelId, baseUrl, apiKey, "");
@@ -88,13 +95,20 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                 callbacks.onToken().accept(assistantText);
             }
 
+            String reasoningContent = extractReasoningContent(messageNode);
+            if (StringUtils.isNotBlank(reasoningContent)) {
+                callbacks.onThinkingToken().accept(reasoningContent);
+            }
+
             List<ToolInvocationRequest> toolInvocations = extractToolInvocations(messageNode.path("tool_calls"));
             if (!toolInvocations.isEmpty()) {
                 pendingToolCalls = toPendingToolCalls(messageNode.path("tool_calls"));
+                pendingReasoningContent = reasoningContent;
                 return AgentTurnResult.continueWithTools(toolInvocations);
             }
 
             pendingToolCalls = emptyList();
+            pendingReasoningContent = "";
             return AgentTurnResult.complete();
         } catch (HttpTimeoutException e) {
             callbacks.onError().accept(new IllegalStateException(buildTimeoutMessage(), e));
@@ -109,6 +123,9 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         Map<String, Object> assistantMessage = new LinkedHashMap<>();
         assistantMessage.put("role", "assistant");
         assistantMessage.put("content", null);
+        if (StringUtils.isNotBlank(pendingReasoningContent)) {
+            assistantMessage.put("reasoning_content", pendingReasoningContent);
+        }
         assistantMessage.put("tool_calls", pendingToolCalls);
         toolExchangeMessages.add(assistantMessage);
 
@@ -124,6 +141,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
 
         pendingToolCalls = emptyList();
+        pendingReasoningContent = "";
     }
 
     private List<Map<String, Object>> buildMessages(AgentRunRequest request) {
@@ -179,6 +197,19 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
 
         return collected.toString();
+    }
+
+    private String extractReasoningContent(JsonNode messageNode) {
+        if (messageNode == null || messageNode.isMissingNode()) {
+            return "";
+        }
+
+        List<String> keys = List.of("reasoning_content", "reasoning", "thinking", "thought");
+        return keys.stream()
+                .map(key -> messageNode.path(key).asText(""))
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse("");
     }
 
     private List<ToolInvocationRequest> extractToolInvocations(JsonNode toolCallsNode) {
@@ -286,8 +317,8 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                 return "%s tool turn failed (HTTP %d): %s"
                         .formatted(providerLabel, statusCode, message);
             }
-        } catch (Exception ignored) {
-            // fall through to generic message
+        } catch (Exception e) {
+            // Fall through to generic message.
         }
 
         return "%s tool turn failed with HTTP %d".formatted(providerLabel, statusCode);
@@ -327,7 +358,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                         "query", stringProperty("Text to search for"),
                         "path", stringProperty("Path to file or directory, defaults to .")
                 ), List.of("query")),
-                toolDefinition("bash", "Execute a shell command within the project root", Map.of(
+                toolDefinition("bash", BASH_TOOL_DESCRIPTION, Map.of(
                         "command", stringProperty("Command to execute"),
                         "timeoutSeconds", Map.of("type", "integer", "description", "Timeout in seconds")
                 ), List.of("command"))

@@ -42,7 +42,7 @@ class CodexCliChatCompletionClientTest {
 
         assertThat(prompt).contains("expert workspace assistant operating inside Chat4J Agent Mode");
         assertThat(prompt).contains(projectRoot.toAbsolutePath().normalize().toString());
-        assertThat(prompt).contains("run read-only discovery commands");
+        assertThat(prompt).contains("You may inspect the selected folder and answer the user request");
         assertThat(prompt).contains("Always mention module layout");
         assertThat(prompt).doesNotContain("Do not execute commands or modify files");
     }

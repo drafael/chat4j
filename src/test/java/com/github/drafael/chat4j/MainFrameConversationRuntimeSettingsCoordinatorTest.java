@@ -11,6 +11,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -51,6 +53,7 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
         assertThat(target.webSearchOptionId.get()).isEqualTo("browse");
         assertThat(target.agentProjectRoot.get()).isEqualTo(tempDir.toAbsolutePath().normalize());
         assertThat(target.agentModeEnabled.get()).isTrue();
+        assertThat(target.agentCalls).containsExactly("mode:true", "root:%s".formatted(tempDir.toAbsolutePath().normalize()));
     }
 
     @Test
@@ -127,14 +130,21 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
         private final AtomicReference<String> webSearchOptionId = new AtomicReference<>();
         private final AtomicReference<Path> agentProjectRoot = new AtomicReference<>();
         private final AtomicReference<Boolean> agentModeEnabled = new AtomicReference<>();
+        private final List<String> agentCalls = new ArrayList<>();
 
         private MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget target() {
             return new MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget(
                     reasoningLevel::set,
                     webSearchEnabled::set,
                     webSearchOptionId::set,
-                    agentProjectRoot::set,
-                    agentModeEnabled::set
+                    path -> {
+                        agentProjectRoot.set(path);
+                        agentCalls.add("root:%s".formatted(path));
+                    },
+                    enabled -> {
+                        agentModeEnabled.set(enabled);
+                        agentCalls.add("mode:%s".formatted(enabled));
+                    }
             );
         }
     }

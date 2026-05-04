@@ -8,9 +8,11 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,7 +66,7 @@ class AnthropicToolAgentAdapterTest {
             );
 
             AgentTurnResult firstTurn = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("read file")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("read file")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(token -> {
                     }, thinking -> {
                     }, () -> {
@@ -80,7 +82,7 @@ class AnthropicToolAgentAdapterTest {
                     new AgentRunRequest(
                             List.of(Message.user("read file")),
                             ReasoningLevel.OFF,
-                            java.nio.file.Path.of("."),
+                            Path.of("."),
                             List.of(new ToolInvocationResult("toolu_1", "read", true, "note content", "")),
                             () -> false
                     ),
@@ -133,7 +135,7 @@ class AnthropicToolAgentAdapterTest {
 
             List<String> tokens = new ArrayList<>();
             AgentTurnResult turnResult = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(tokens::add, thinking -> {
                     }, () -> {
                     }, error -> {
@@ -145,6 +147,68 @@ class AnthropicToolAgentAdapterTest {
             assertThat(tokens).containsExactly("hello from claude");
             assertThat(requestBodies).hasSize(1);
             assertThat(requestBodies.getFirst()).contains("expert workspace assistant operating inside Chat4J Agent Mode");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot Anthropic adapter uses bearer auth and Copilot headers")
+    void executeTurn_whenCopilotAdapterUsed_sendsCopilotAuthHeaders() throws Exception {
+        String response = """
+                {
+                  "id": "msg_1",
+                  "type": "message",
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "tool_use",
+                      "id": "toolu_1",
+                      "name": "ls",
+                      "input": {
+                        "path": "."
+                      }
+                    }
+                  ],
+                  "stop_reason": "tool_use"
+                }
+                """;
+
+        AtomicReference<String> authorizationHeader = new AtomicReference<>();
+        AtomicReference<String> copilotIntegrationHeader = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/messages", exchange -> {
+            authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            copilotIntegrationHeader.set(exchange.getRequestHeaders().getFirst("Copilot-Integration-Id"));
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            AnthropicToolAgentAdapter subject = AnthropicToolAgentAdapter.forCopilot(
+                    "claude-haiku-4.5",
+                    "http://127.0.0.1:%d".formatted(port),
+                    "test-token",
+                    ""
+            );
+
+            AgentTurnResult result = subject.executeTurn(
+                    new AgentRunRequest(List.of(Message.user("list files")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
+                    new AgentRunCallbacks(token -> {
+                    }, thinking -> {
+                    }, () -> {
+                    }, error -> {
+                    })
+            );
+
+            assertThat(result.toolInvocations()).hasSize(1);
+            assertThat(authorizationHeader.get()).isEqualTo("Bearer test-token");
+            assertThat(copilotIntegrationHeader.get()).isEqualTo("copilot-developer-cli");
         } finally {
             server.stop(0);
         }

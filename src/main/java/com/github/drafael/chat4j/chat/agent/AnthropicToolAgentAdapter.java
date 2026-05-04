@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import org.apache.commons.lang3.StringUtils;
 
 import java.net.URI;
@@ -23,6 +24,12 @@ import static java.util.Collections.emptyList;
 final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String BASH_TOOL_DESCRIPTION = String.join(
+            " ",
+            "Execute a bash shell command with the project root as working directory.",
+            "This command is not sandboxed and can access files outside the project root",
+            "with the Chat4J app user's permissions."
+    );
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -31,6 +38,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
     private final String baseUrl;
     private final String apiKey;
     private final String systemPromptAppend;
+    private final AuthMode authMode;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
     private List<Map<String, Object>> pendingToolUses = emptyList();
 
@@ -39,10 +47,19 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
     }
 
     AnthropicToolAgentAdapter(String modelId, String baseUrl, String apiKey, String systemPromptAppend) {
+        this(modelId, baseUrl, apiKey, systemPromptAppend, AuthMode.ANTHROPIC_API_KEY);
+    }
+
+    static AnthropicToolAgentAdapter forCopilot(String modelId, String baseUrl, String apiKey, String systemPromptAppend) {
+        return new AnthropicToolAgentAdapter(modelId, baseUrl, apiKey, systemPromptAppend, AuthMode.COPILOT_BEARER);
+    }
+
+    private AnthropicToolAgentAdapter(String modelId, String baseUrl, String apiKey, String systemPromptAppend, AuthMode authMode) {
         this.modelId = StringUtils.defaultString(modelId);
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.apiKey = apiKey;
         this.systemPromptAppend = StringUtils.defaultString(systemPromptAppend);
+        this.authMode = authMode;
     }
 
     @Override
@@ -69,9 +86,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
                     .header("anthropic-version", "2023-06-01")
                     .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(payload), StandardCharsets.UTF_8));
 
-            if (StringUtils.isNotBlank(apiKey)) {
-                requestBuilder.header("x-api-key", apiKey);
-            }
+            applyAuthHeaders(requestBuilder);
 
             HttpResponse<String> response = HTTP_CLIENT.send(
                     requestBuilder.build(),
@@ -102,6 +117,20 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
             callbacks.onError().accept(e);
             return new AgentTurnResult(false, emptyList());
         }
+    }
+
+    private void applyAuthHeaders(HttpRequest.Builder requestBuilder) {
+        if (StringUtils.isBlank(apiKey)) {
+            return;
+        }
+
+        if (authMode == AuthMode.COPILOT_BEARER) {
+            requestBuilder.header("Authorization", "Bearer %s".formatted(apiKey));
+            CopilotRequestHeaders.asMap().forEach(requestBuilder::header);
+            return;
+        }
+
+        requestBuilder.header("x-api-key", apiKey);
     }
 
     private String resolveSystemPrompt(List<Message> history) {
@@ -271,7 +300,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
                         "query", stringProperty("Text to search for"),
                         "path", stringProperty("Path to file or directory, defaults to .")
                 ), List.of("query")),
-                toolDefinition("bash", "Execute a shell command within the project root", Map.of(
+                toolDefinition("bash", BASH_TOOL_DESCRIPTION, Map.of(
                         "command", stringProperty("Command to execute"),
                         "timeoutSeconds", Map.of("type", "integer", "description", "Timeout in seconds")
                 ), List.of("command"))
@@ -301,5 +330,10 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         property.put("type", "string");
         property.put("description", description);
         return property;
+    }
+
+    private enum AuthMode {
+        ANTHROPIC_API_KEY,
+        COPILOT_BEARER
     }
 }

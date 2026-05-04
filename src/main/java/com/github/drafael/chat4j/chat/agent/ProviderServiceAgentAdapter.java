@@ -58,6 +58,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
     public AgentTurnResult executeTurn(AgentRunRequest request, AgentRunCallbacks callbacks) {
         AtomicBoolean completed = new AtomicBoolean(false);
         AtomicBoolean failed = new AtomicBoolean(false);
+        emitLocalToolsUnavailableActivity(request, callbacks);
 
         try (ExecutionDirectoryContext.Scope ignored = ExecutionDirectoryContext.open(request.projectRoot());
              AgentSystemPromptContext.Scope promptScope = AgentSystemPromptContext.open(agentSystemPromptAppend)) {
@@ -84,6 +85,27 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
         }
 
         return completed.get() ? AgentTurnResult.complete() : new AgentTurnResult(false, emptyList());
+    }
+
+    private void emitLocalToolsUnavailableActivity(AgentRunRequest request, AgentRunCallbacks callbacks) {
+        if (request == null || request.projectRoot() == null || callbacks == null) {
+            return;
+        }
+
+        callbacks.onToolActivity().accept(new AgentToolActivity(
+                "",
+                "workspace-context",
+                AgentToolActivity.Status.SUCCEEDED,
+                "path=%s".formatted(workspaceDisplayName(request.projectRoot())),
+                "using workspace snapshot"
+        ));
+    }
+
+    private String workspaceDisplayName(Path projectRoot) {
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        return normalizedRoot.getFileName() == null
+                ? normalizedRoot.toString()
+                : normalizedRoot.getFileName().toString();
     }
 
     private List<Message> augmentHistoryWithWorkspaceSnapshot(List<Message> history, Path rootFolder) {
