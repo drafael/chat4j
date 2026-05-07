@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyList;
 
 class ProviderMenuAvailabilityRefreshDispatchCoordinatorTest {
 
@@ -24,7 +25,7 @@ class ProviderMenuAvailabilityRefreshDispatchCoordinatorTest {
         ProviderMenuIconResolver iconResolver = new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), Object.class);
 
         var capturedProviders = new AtomicReference<List<ProviderRegistry.ProviderDef>>();
-        var suppliedProviders = List.<ProviderRegistry.ProviderDef>of();
+        List<ProviderRegistry.ProviderDef> suppliedProviders = emptyList();
 
         var subject = new ProviderMenuAvailabilityRefreshDispatchCoordinator(
                 (modelMenuItemsByKey, providerHeaderItemsByName, providers, resolver) -> {

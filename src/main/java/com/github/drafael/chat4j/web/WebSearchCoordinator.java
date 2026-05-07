@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.web;
 
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
@@ -97,7 +98,7 @@ public class WebSearchCoordinator {
             int resultCount,
             BooleanSupplier isCancelled
     ) {
-        if (responses == null || responses.isEmpty() || shouldStop(isCancelled)) {
+        if (ObjectUtils.isEmpty(responses) || shouldStop(isCancelled)) {
             return emptyList();
         }
 

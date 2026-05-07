@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -284,12 +285,12 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private void applyAuthHeaders(HttpRequest.Builder requestBuilder) {
         if (StringUtils.isNotBlank(apiKey)) {
             requestBuilder.header("Authorization", "Bearer %s".formatted(apiKey));
-            if (StringUtils.containsIgnoreCase(providerName, "google")) {
+            if (Strings.CI.contains(providerName, "google")) {
                 requestBuilder.header("x-goog-api-key", apiKey);
             }
         }
 
-        if (StringUtils.equals(providerName, "GitHub Copilot")) {
+        if (Strings.CS.equals(providerName, "GitHub Copilot")) {
             CopilotRequestHeaders.asMap().forEach(requestBuilder::header);
         }
     }
@@ -303,7 +304,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             String message = sanitizeErrorMessage(errorNode.path("message").asText(""));
             String code = StringUtils.trimToEmpty(errorNode.path("code").asText(""));
 
-            if (statusCode == 429 && StringUtils.equalsIgnoreCase(code, "insufficient_quota")) {
+            if (statusCode == 429 && Strings.CI.equals(code, "insufficient_quota")) {
                 return "%s tool-calling is unavailable due to insufficient_quota (HTTP 429)."
                         .formatted(providerLabel);
             }
@@ -317,7 +318,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                 return "%s tool turn failed (HTTP %d): %s"
                         .formatted(providerLabel, statusCode, message);
             }
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Fall through to generic message.
         }
 

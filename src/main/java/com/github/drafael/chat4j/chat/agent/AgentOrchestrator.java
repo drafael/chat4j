@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat.agent;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
@@ -170,7 +171,7 @@ public final class AgentOrchestrator {
     }
 
     private String toolBatchSignature(List<ToolInvocationRequest> toolInvocations) {
-        if (toolInvocations == null || toolInvocations.isEmpty()) {
+        if (ObjectUtils.isEmpty(toolInvocations)) {
             return "none";
         }
 
@@ -213,7 +214,7 @@ public final class AgentOrchestrator {
     }
 
     private String summarizeToolInvocations(List<ToolInvocationRequest> toolInvocations) {
-        if (toolInvocations == null || toolInvocations.isEmpty()) {
+        if (ObjectUtils.isEmpty(toolInvocations)) {
             return "none";
         }
 

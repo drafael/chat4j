@@ -3,12 +3,14 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import static java.util.Collections.emptyMap;
 
 public class ProviderRuntimeSettingsResolver {
 
@@ -19,8 +21,8 @@ public class ProviderRuntimeSettingsResolver {
     }
 
     public Map<String, ProviderRegistry.ProviderRuntimeConfig> resolveAll(List<ProviderRegistry.ProviderDef> providers) {
-        if (providers == null || providers.isEmpty()) {
-            return Map.of();
+        if (ObjectUtils.isEmpty(providers)) {
+            return emptyMap();
         }
 
         Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider = new LinkedHashMap<>();

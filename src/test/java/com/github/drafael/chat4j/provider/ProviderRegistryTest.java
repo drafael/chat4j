@@ -10,12 +10,13 @@ import java.lang.reflect.Method;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyMap;
 
 class ProviderRegistryTest {
 
     @AfterEach
     void tearDown() {
-        ProviderRegistry.applyRuntimeConfig(Map.of());
+        ProviderRegistry.applyRuntimeConfig(emptyMap());
     }
 
     @Test
@@ -70,7 +71,7 @@ class ProviderRegistryTest {
         try {
             Object value = readField(provider, "baseUrl");
             return value == null ? null : value.toString();
-        } catch (NoSuchFieldException ignored) {
+        } catch (NoSuchFieldException e) {
             Object runtime = readField(provider, "runtime");
             Method baseUrl = runtime.getClass().getDeclaredMethod("baseUrl");
             baseUrl.setAccessible(true);

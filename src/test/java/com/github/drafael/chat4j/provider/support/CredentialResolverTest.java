@@ -12,12 +12,13 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class CredentialResolverTest {
 
     @AfterEach
     void tearDown() {
-        CredentialResolver.init(Map.of());
+        CredentialResolver.init(emptyMap());
     }
 
     @Test

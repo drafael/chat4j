@@ -25,4 +25,10 @@ public record ProviderDescriptor(
     public String normalizeBaseUrl(String configuredBaseUrl) {
         return baseUrlNormalizer.apply(configuredBaseUrl);
     }
+
+    @Override
+    public String toString() {
+        return "ProviderDescriptor[name=%s, authType=%s, credentialEnvVar=%s, fallbackApiKey=<masked>, defaultBaseUrl=%s, seedModels=%s, capabilities=%s, baseUrlNormalizer=%s]"
+                .formatted(name, authType, credentialEnvVar, defaultBaseUrl, seedModels, capabilities, baseUrlNormalizer);
+    }
 }

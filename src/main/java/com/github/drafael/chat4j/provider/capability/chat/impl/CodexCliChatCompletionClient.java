@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -31,7 +32,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static java.util.Collections.emptyMap;
-import org.apache.commons.lang3.StringUtils;
 
 public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
@@ -101,13 +101,13 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             try {
                 streamViaExec(runtime, history, onToken, isCancelled, registerActiveStream, clearActiveStream);
                 updateDiagnostics("exec-fallback", false, true, null, appServerFailure);
-            } catch (Exception x) {
-                String fallbackFailure = firstLine(x.getMessage());
+            } catch (Exception ex) {
+                String fallbackFailure = firstLine(ex.getMessage());
                 updateDiagnostics("exec-fallback-failed", false, true, fallbackFailure, appServerFailure);
                 throw new IllegalStateException(
                         "codex app-server failed: %s | codex exec fallback failed: %s"
                                 .formatted(appServerFailure, fallbackFailure),
-                        x
+                        ex
                 );
             }
         }

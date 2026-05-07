@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -45,7 +46,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import static java.util.Collections.emptyList;
 
@@ -129,8 +129,7 @@ public class InputBar extends JPanel {
     private boolean clearChatAvailable = false;
     private Path agentProjectRoot;
     private int slashTokenStart = -1;
-    private Function<Component, Optional<Path>> projectRootChooser =
-            parent -> showProjectRootChooser(parent, null);
+    private ProjectRootChooser projectRootChooser = parent -> showProjectRootChooser(parent, null);
 
     public InputBar() {
         setLayout(new BorderLayout());
@@ -545,7 +544,7 @@ public class InputBar extends JPanel {
 
     public void setWebSearchOptionId(String optionId) {
         boolean available = webSearchOptions.stream()
-                .anyMatch(option -> option.available() && StringUtils.equals(option.id(), optionId));
+                .anyMatch(option -> option.available() && Strings.CS.equals(option.id(), optionId));
         if (available) {
             selectWebSearchOption(optionId, false);
         }
@@ -595,10 +594,10 @@ public class InputBar extends JPanel {
         webSearchAvailable = webSearchOptions.stream().anyMatch(WebSearchOption::available);
 
         boolean currentStillAvailable = webSearchOptions.stream()
-                .anyMatch(option -> option.available() && StringUtils.equals(option.id(), webSearchOptionId));
+                .anyMatch(option -> option.available() && Strings.CS.equals(option.id(), webSearchOptionId));
         if (!currentStillAvailable) {
             webSearchOptionId = webSearchOptions.stream()
-                    .filter(option -> option.available() && StringUtils.equals(option.id(), defaultOptionId))
+                    .filter(option -> option.available() && Strings.CS.equals(option.id(), defaultOptionId))
                     .findFirst()
                     .or(() -> webSearchOptions.stream().filter(WebSearchOption::available).findFirst())
                     .map(WebSearchOption::id)
@@ -680,7 +679,7 @@ public class InputBar extends JPanel {
         }
     }
 
-    void setProjectRootChooserForTests(Function<Component, Optional<Path>> chooser) {
+    void setProjectRootChooserForTests(ProjectRootChooser chooser) {
         if (chooser != null) {
             this.projectRootChooser = chooser;
         }
@@ -794,7 +793,7 @@ public class InputBar extends JPanel {
                     .filter(WebSearchOption::available)
                     .forEach(option -> {
                         JRadioButtonMenuItem item = new JRadioButtonMenuItem(option.label());
-                        item.setSelected(StringUtils.equals(option.id(), webSearchOptionId));
+                        item.setSelected(Strings.CS.equals(option.id(), webSearchOptionId));
                         item.addActionListener(e -> selectWebSearchOption(option.id(), true));
                         optionGroup.add(item);
                         webSearchOptionItems.put(option.id(), item);
@@ -819,12 +818,12 @@ public class InputBar extends JPanel {
     }
 
     private void selectWebSearchOption(String optionId, boolean notify) {
-        if (StringUtils.equals(webSearchOptionId, optionId)) {
+        if (Strings.CS.equals(webSearchOptionId, optionId)) {
             return;
         }
 
         webSearchOptionId = optionId;
-        webSearchOptionItems.forEach((id, item) -> item.setSelected(StringUtils.equals(id, optionId)));
+        webSearchOptionItems.forEach((id, item) -> item.setSelected(Strings.CS.equals(id, optionId)));
         updateWebSearchPresentation();
         if (notify) {
             notifyWebSearchOptionChanged(optionId);
@@ -841,7 +840,7 @@ public class InputBar extends JPanel {
         webSearchButton.setSelected(isEnabled() && webSearchAvailable && webSearchEnabled);
         webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(isWebSearchEnabled())));
         String optionLabel = webSearchOptions.stream()
-                .filter(option -> StringUtils.equals(option.id(), webSearchOptionId))
+                .filter(option -> Strings.CS.equals(option.id(), webSearchOptionId))
                 .findFirst()
                 .map(WebSearchOption::label)
                 .orElse("Web Search");
@@ -896,7 +895,7 @@ public class InputBar extends JPanel {
     }
 
     private Optional<Path> chooseProjectRoot() {
-        return projectRootChooser.apply(this)
+        return projectRootChooser.choose(this)
                 .map(Path::normalize)
                 .filter(Files::isDirectory);
     }
@@ -2828,7 +2827,7 @@ public class InputBar extends JPanel {
         protected Transferable createTransferable(JComponent c) {
             if (c instanceof JTextComponent textComponent) {
                 String selected = textComponent.getSelectedText();
-                if (selected != null && !selected.isEmpty()) {
+                if (StringUtils.isNotEmpty(selected)) {
                     return new StringSelection(selected);
                 }
             }
@@ -2880,6 +2879,11 @@ public class InputBar extends JPanel {
 
             return false;
         }
+    }
+
+    @FunctionalInterface
+    interface ProjectRootChooser {
+        Optional<Path> choose(Component parent);
     }
 
     private record SkillCommand(String name, String description) {

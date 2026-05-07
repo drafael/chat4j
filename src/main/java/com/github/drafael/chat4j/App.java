@@ -65,7 +65,7 @@ public class App {
                 %s
                 """.formatted(reason, fallbackLogPath, doctorHint);
 
-        System.err.println(message);
+        StartupFallbackLogger.error(message, null);
 
         if (GraphicsEnvironment.isHeadless()) {
             return;
@@ -103,7 +103,7 @@ public class App {
             }
 
             return "chat4j-doctor --app \"%s\"".formatted(appBundle);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return "chat4j-doctor --app \"/Applications/Chat4J.app\"";
         }
     }

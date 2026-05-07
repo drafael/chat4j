@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,7 +12,7 @@ final class MarkdownBlockRenderer {
     }
 
     static String render(String markdown, Palette palette) {
-        if (markdown == null || markdown.isEmpty()) {
+        if (StringUtils.isEmpty(markdown)) {
             return "";
         }
 
@@ -292,7 +293,7 @@ final class MarkdownBlockRenderer {
         html.append("<table class=\"").append(tableClass).append("\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
-        if (lang != null && !lang.isEmpty()) {
+        if (StringUtils.isNotEmpty(lang)) {
             html.append("<tr><td bgcolor=\"").append(headerBackground).append("\"")
                     .append(" style=\"border: 1px ").append(borderStyle).append(" ").append(blockBorder)
                     .append("; border-bottom: none; padding: 2px 8px; font-size: ").append(languageFontSize).append("px;\">");
@@ -330,7 +331,7 @@ final class MarkdownBlockRenderer {
     }
 
     private static int headingLevel(String line) {
-        if (line == null || line.isEmpty() || line.charAt(0) != '#') {
+        if (StringUtils.isEmpty(line) || line.charAt(0) != '#') {
             return 0;
         }
 

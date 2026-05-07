@@ -138,5 +138,10 @@ public final class H2DataSourceFactory {
     }
 
     private record DatabaseCredentials(String user, String password) {
+
+        @Override
+        public String toString() {
+            return "DatabaseCredentials[user=%s, password=<masked>]".formatted(user);
+        }
     }
 }

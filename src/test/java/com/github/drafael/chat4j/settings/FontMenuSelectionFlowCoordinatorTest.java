@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class FontMenuSelectionFlowCoordinatorTest {
 
@@ -102,8 +103,8 @@ class FontMenuSelectionFlowCoordinatorTest {
 
         assertThatThrownBy(() -> subject.refreshAndApply(
                 null,
-                Map.of(),
-                Map.of(),
+                emptyMap(),
+                emptyMap(),
                 null,
                 null,
                 null,
@@ -119,9 +120,9 @@ class FontMenuSelectionFlowCoordinatorTest {
                 .hasMessageContaining("appFontMenuItemsByFamily must not be null");
 
         assertThatThrownBy(() -> subject.refreshAndApply(
-                Map.of(),
-                Map.of(),
-                Map.of(),
+                emptyMap(),
+                emptyMap(),
+                emptyMap(),
                 null,
                 null,
                 null,

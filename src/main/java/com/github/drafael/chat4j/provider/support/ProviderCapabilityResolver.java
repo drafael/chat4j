@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.support;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import org.apache.commons.lang3.StringUtils;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -22,7 +23,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.StreamSupport;
 
 import static java.util.stream.Collectors.toSet;
-import org.apache.commons.lang3.StringUtils;
 
 public final class ProviderCapabilityResolver {
 

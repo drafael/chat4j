@@ -32,7 +32,7 @@ public class AgentModeSettingsCoordinator {
 
         try {
             settingsRepo.put(KEY_AGENT_SYSTEM_PROMPT_APPEND, normalized);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // best effort
         }
     }
@@ -40,7 +40,7 @@ public class AgentModeSettingsCoordinator {
     private void removeSystemPromptAppend() {
         try {
             settingsRepo.remove(KEY_AGENT_SYSTEM_PROMPT_APPEND);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // best effort
         }
     }

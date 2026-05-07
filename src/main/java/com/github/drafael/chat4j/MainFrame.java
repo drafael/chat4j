@@ -806,7 +806,7 @@ public class MainFrame extends JFrame {
             long requestId,
             UUID conversationId,
             List<MessageRecord> records,
-            Optional<ConversationRepo.ConversationRecord> conversation
+            ConversationRepo.ConversationRecord conversation
     ) {
         boolean applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
                 requestId,
@@ -823,7 +823,7 @@ public class MainFrame extends JFrame {
 
         if (applied) {
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
-                    conversation.orElse(null),
+                    conversation,
                     runtimeSettingsTarget()
             );
         }

@@ -347,7 +347,7 @@ public final class LocalToolRuntime {
                         min(remainingNanos, TimeUnit.MILLISECONDS.toNanos(100)),
                         TimeUnit.NANOSECONDS
                 );
-            } catch (TimeoutException e) {
+            } catch (TimeoutException ignored) {
                 // Poll again so cancellation can stop the running process promptly.
             }
         }
@@ -402,7 +402,7 @@ public final class LocalToolRuntime {
             }
         } catch (IllegalStateException e) {
             throw e;
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Best-effort grep; skip unreadable/binary files.
         }
         return false;

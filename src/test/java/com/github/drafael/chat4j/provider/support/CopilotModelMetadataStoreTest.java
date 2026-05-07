@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyList;
 
 class CopilotModelMetadataStoreTest {
 
@@ -25,7 +26,7 @@ class CopilotModelMetadataStoreTest {
         );
         subject.update(
                 "https://api.githubcopilot.com",
-                List.of(new CopilotModelMetadataStore.ModelMetadata("claude-sonnet-4.6", List.of()))
+                List.of(new CopilotModelMetadataStore.ModelMetadata("claude-sonnet-4.6", emptyList()))
         );
 
         assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "claude-sonnet-4.6"))

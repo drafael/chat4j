@@ -15,12 +15,13 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyMap;
 
 class ProviderCatalogTest {
 
     @AfterEach
     void tearDown() {
-        CredentialResolver.init(Map.of());
+        CredentialResolver.init(emptyMap());
     }
 
     @Test

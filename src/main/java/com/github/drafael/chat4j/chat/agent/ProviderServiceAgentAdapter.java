@@ -159,7 +159,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
                         return Files.isDirectory(path) ? name + "/" : name;
                     })
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return emptyList();
         }
     }
@@ -172,7 +172,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
                     .filter(this::isReadableSampleCandidate)
                     .limit(MAX_SAMPLE_FILES)
                     .toList();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return emptyList();
         }
     }
@@ -185,7 +185,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
             }
 
             return isLikelyTextFile(file);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return false;
         }
     }
@@ -218,7 +218,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
                 }
             }
             return false;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return true;
         }
     }

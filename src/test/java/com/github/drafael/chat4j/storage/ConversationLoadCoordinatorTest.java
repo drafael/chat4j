@@ -58,7 +58,7 @@ class ConversationLoadCoordinatorTest {
         var failure = new AtomicReference<Exception>();
         var loadedRequestId = new AtomicLong(-1L);
         var loadedRecords = new AtomicReference<List<ConversationRepo.MessageRecord>>();
-        var loadedConversation = new AtomicReference<Optional<ConversationRepo.ConversationRecord>>();
+        var loadedConversation = new AtomicReference<ConversationRepo.ConversationRecord>();
 
         long requestId = subject.loadAsync(conversationId, new ConversationLoadCoordinator.Listener() {
             @Override
@@ -66,7 +66,7 @@ class ConversationLoadCoordinatorTest {
                     long callbackRequestId,
                     UUID callbackConversationId,
                     List<ConversationRepo.MessageRecord> records,
-                    Optional<ConversationRepo.ConversationRecord> loadedConversationRecord
+                    ConversationRepo.ConversationRecord loadedConversationRecord
             ) {
                 loadedRecords.set(records);
                 loadedConversation.set(loadedConversationRecord);
@@ -86,7 +86,7 @@ class ConversationLoadCoordinatorTest {
         assertThat(loadedRequestId.get()).isEqualTo(requestId);
         assertThat(subject.isCurrentRequest(requestId)).isTrue();
         assertThat(loadedRecords.get()).containsExactly(record);
-        assertThat(loadedConversation.get()).contains(conversation);
+        assertThat(loadedConversation.get()).isEqualTo(conversation);
     }
 
     @Test
@@ -111,7 +111,7 @@ class ConversationLoadCoordinatorTest {
                     long callbackRequestId,
                     UUID callbackConversationId,
                     List<ConversationRepo.MessageRecord> records,
-                    Optional<ConversationRepo.ConversationRecord> conversation
+                    ConversationRepo.ConversationRecord conversation
             ) {
             }
 
@@ -178,7 +178,7 @@ class ConversationLoadCoordinatorTest {
                     long requestId,
                     UUID conversationId,
                     List<ConversationRepo.MessageRecord> records,
-                    Optional<ConversationRepo.ConversationRecord> conversation
+                    ConversationRepo.ConversationRecord conversation
             ) {
                 callbacks.countDown();
             }

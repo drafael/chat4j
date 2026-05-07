@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyList;
 
 class ConversationLoadApplyCoordinatorTest {
 
@@ -95,7 +96,7 @@ class ConversationLoadApplyCoordinatorTest {
 
         var plan = ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(
                 UUID.randomUUID(),
-                List.of(),
+                emptyList(),
                 0,
                 AssistantRenderMode.MARKDOWN,
                 null

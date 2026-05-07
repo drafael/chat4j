@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -203,7 +204,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
         StringBuilder collected = new StringBuilder();
         for (JsonNode blockNode : contentNode) {
-            if (StringUtils.equals(blockNode.path("type").asText(""), "text")) {
+            if (Strings.CS.equals(blockNode.path("type").asText(""), "text")) {
                 collected.append(blockNode.path("text").asText(""));
             }
         }
@@ -218,7 +219,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
         List<ToolInvocationRequest> invocations = new ArrayList<>();
         for (JsonNode blockNode : contentNode) {
-            if (!StringUtils.equals(blockNode.path("type").asText(""), "tool_use")) {
+            if (!Strings.CS.equals(blockNode.path("type").asText(""), "tool_use")) {
                 continue;
             }
 
@@ -245,7 +246,7 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
         List<Map<String, Object>> pending = new ArrayList<>();
         for (JsonNode blockNode : contentNode) {
-            if (!StringUtils.equals(blockNode.path("type").asText(""), "tool_use")) {
+            if (!Strings.CS.equals(blockNode.path("type").asText(""), "tool_use")) {
                 continue;
             }
 

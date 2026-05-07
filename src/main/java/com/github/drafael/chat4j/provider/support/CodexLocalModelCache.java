@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.support;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -64,7 +65,7 @@ public final class CodexLocalModelCache {
     }
 
     public static List<String> mergeIfCodexProvider(String providerName, List<String> modelIds) {
-        if (!StringUtils.equals(providerName, CODEX_PROVIDER_NAME)) {
+        if (!Strings.CS.equals(providerName, CODEX_PROVIDER_NAME)) {
             return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
         }
 

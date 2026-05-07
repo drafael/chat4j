@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.stream.Collectors.toMap;
 
 class ModelFavoritesServiceTest {
 
@@ -77,7 +78,7 @@ class ModelFavoritesServiceTest {
         public Map<String, String> findByPrefix(String prefix) {
             return entries.entrySet().stream()
                     .filter(entry -> entry.getKey().startsWith(prefix))
-                    .collect(Collectors.toMap(
+                    .collect(toMap(
                             Map.Entry::getKey,
                             Map.Entry::getValue,
                             (existing, replacement) -> existing,

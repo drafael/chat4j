@@ -84,7 +84,7 @@ public class ProviderFacade {
     ) {
         String effectiveEnvVar = envVarExpression == null ? descriptor.credentialEnvVar() : envVarExpression;
         String baseUrl = descriptor.normalizeBaseUrl(
-                configuredBaseUrl == null || configuredBaseUrl.isBlank()
+                StringUtils.isBlank(configuredBaseUrl)
                         ? descriptor.defaultBaseUrl()
                         : configuredBaseUrl
         );

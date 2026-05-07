@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyMap;
 
 class ProviderMenuAvailabilityApplierTest {
 
@@ -58,7 +59,7 @@ class ProviderMenuAvailabilityApplierTest {
         item.setEnabled(false);
 
         var iconResolver = new RecordingIconResolver();
-        subject.apply(modelItemsByKey, Map.of(), Map.of(), iconResolver);
+        subject.apply(modelItemsByKey, emptyMap(), emptyMap(), iconResolver);
 
         assertThat(item.isEnabled()).isTrue();
         assertThat(iconResolver.modelIconRequests).isEmpty();

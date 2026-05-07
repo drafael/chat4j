@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,9 +43,9 @@ public class WebSearchAvailabilityResolver {
         }
 
         String defaultOptionId = options.stream()
-                .filter(option -> StringUtils.equals(option.id(), NATIVE_OPTION_ID))
+                .filter(option -> Strings.CS.equals(option.id(), NATIVE_OPTION_ID))
                 .findFirst()
-                .or(() -> options.stream().filter(option -> StringUtils.equals(option.id(), PERPLEXITY_OPTION_ID)).findFirst())
+                .or(() -> options.stream().filter(option -> Strings.CS.equals(option.id(), PERPLEXITY_OPTION_ID)).findFirst())
                 .or(() -> options.stream().findFirst())
                 .map(WebSearchOption::id)
                 .orElse(null);
@@ -66,10 +67,10 @@ public class WebSearchAvailabilityResolver {
 
     private boolean perplexityExternalAvailable(List<ProviderRegistry.ProviderDef> availableProviders) {
         return availableProviders != null && availableProviders.stream()
-                .anyMatch(provider -> StringUtils.equals(provider.name(), "Perplexity"));
+                .anyMatch(provider -> Strings.CS.equals(provider.name(), "Perplexity"));
     }
 
     private boolean isSelectedProvider(ProviderRegistry.ProviderDef selectedProvider, String providerName) {
-        return selectedProvider != null && StringUtils.equals(selectedProvider.name(), providerName);
+        return selectedProvider != null && Strings.CS.equals(selectedProvider.name(), providerName);
     }
 }

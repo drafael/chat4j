@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -80,7 +81,7 @@ public class PerplexityWebSearchProvider implements WebSearchProvider {
 
                 try {
                     return future.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
+                } catch (TimeoutException ignored) {
                     // Poll cancellation while the HTTP request is in flight.
                 }
             }
@@ -150,7 +151,7 @@ public class PerplexityWebSearchProvider implements WebSearchProvider {
     }
 
     private boolean containsUrl(List<WebSearchResult> results, String url) {
-        return results.stream().anyMatch(result -> StringUtils.equals(result.url(), url));
+        return results.stream().anyMatch(result -> Strings.CS.equals(result.url(), url));
     }
 
     private String domain(String url) {

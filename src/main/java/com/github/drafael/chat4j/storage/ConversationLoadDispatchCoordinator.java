@@ -4,7 +4,6 @@ import org.apache.commons.lang3.Validate;
 
 import javax.swing.SwingUtilities;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 public class ConversationLoadDispatchCoordinator {
@@ -36,7 +35,7 @@ public class ConversationLoadDispatchCoordinator {
                     long requestId,
                     UUID loadedConversationId,
                     List<ConversationRepo.MessageRecord> records,
-                    Optional<ConversationRepo.ConversationRecord> conversation
+                    ConversationRepo.ConversationRecord conversation
             ) {
                 edtDispatcher.dispatch(() -> onLoaded.handle(requestId, loadedConversationId, records, conversation));
             }
@@ -59,7 +58,7 @@ public class ConversationLoadDispatchCoordinator {
                 long requestId,
                 UUID conversationId,
                 List<ConversationRepo.MessageRecord> records,
-                Optional<ConversationRepo.ConversationRecord> conversation
+                ConversationRepo.ConversationRecord conversation
         );
     }
 

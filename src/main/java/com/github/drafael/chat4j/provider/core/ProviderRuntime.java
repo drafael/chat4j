@@ -30,4 +30,10 @@ public record ProviderRuntime(
                 ? emptyList()
                 : List.copyOf(selectedModelSupportedEndpoints);
     }
+
+    @Override
+    public String toString() {
+        return "ProviderRuntime[descriptor=%s, credentialEnvVar=%s, baseUrl=%s, apiKey=<masked>, selectedModel=%s, selectedModelSupportedEndpoints=%s]"
+                .formatted(descriptor, credentialEnvVar, baseUrl, selectedModel, selectedModelSupportedEndpoints);
+    }
 }

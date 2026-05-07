@@ -19,6 +19,7 @@ import java.awt.RenderingHints;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -138,7 +139,7 @@ public final class AboutDialog {
                 .put(escape, "close");
         dialog.getRootPane().getActionMap().put("close", new AbstractAction() {
             @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
+            public void actionPerformed(ActionEvent e) {
                 dialog.dispose();
             }
         });
@@ -167,7 +168,7 @@ public final class AboutDialog {
         label.setToolTipText(url);
         label.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent e) {
+            public void mouseClicked(MouseEvent event) {
                 try {
                     if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                         Desktop.getDesktop().browse(new URI(url));
@@ -231,12 +232,13 @@ public final class AboutDialog {
         }
         try {
             return DISPLAY_DATE.format(Instant.parse(raw).atZone(ZoneId.systemDefault()).toLocalDate());
+        } catch (DateTimeParseException ignored) {
+        }
+
+        try {
+            return DISPLAY_DATE.format(LocalDate.parse(raw));
         } catch (DateTimeParseException e) {
-            try {
-                return DISPLAY_DATE.format(LocalDate.parse(raw));
-            } catch (DateTimeParseException ignored) {
-                return raw;
-            }
+            return raw;
         }
     }
 

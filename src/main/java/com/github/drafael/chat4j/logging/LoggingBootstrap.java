@@ -74,7 +74,7 @@ public final class LoggingBootstrap {
             Path logDirectory = StoragePaths.defaultPaths().appConfigDirectory().resolve("logs");
             Files.createDirectories(logDirectory);
             System.setProperty(LOG_DIRECTORY_PROPERTY, logDirectory.toString());
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // keep default logback directory fallback behavior
         }
     }

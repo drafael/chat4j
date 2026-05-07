@@ -13,7 +13,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JMenu;
+import javax.swing.JRadioButtonMenuItem;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,9 +68,9 @@ class MainFrameFontMenuCoordinatorTest {
                 eq("Old Code")
         )).thenReturn(new FontMenuStructureRebuildCoordinator.RebuildState(true, null, null, null));
         doAnswer(invocation -> {
-            invocation.getArgument(7, java.util.function.Consumer.class).accept("Inter");
-            invocation.getArgument(8, java.util.function.Consumer.class).accept(14);
-            invocation.getArgument(9, java.util.function.Consumer.class).accept("JetBrains Mono");
+            invocation.getArgument(7, Consumer.class).accept("Inter");
+            invocation.getArgument(8, Consumer.class).accept(14);
+            invocation.getArgument(9, Consumer.class).accept("JetBrains Mono");
             return new FontMenuSelectionSynchronizer.FontMenuSelectionState("Inter", 14, "JetBrains Mono");
         }).when(selectionFlowCoordinator).refreshAndApply(
                 eq(menuItemsState.appFontMenuItemsByFamily()),
@@ -114,7 +116,7 @@ class MainFrameFontMenuCoordinatorTest {
                 mock(AppFontSizeAdjustCoordinator.class)
         );
         var menuItemsState = new MainFrameMenuItemsState();
-        menuItemsState.appFontMenuItemsByFamily().put("Inter", new javax.swing.JRadioButtonMenuItem("Inter"));
+        menuItemsState.appFontMenuItemsByFamily().put("Inter", new JRadioButtonMenuItem("Inter"));
         MainFrameFontMenuCoordinator.FontMenuContext context = fontMenuContext(new MainFrameBoundMenusState(), menuItemsState, new MainFrameFontMenuState(true, null, null, null));
         when(fontSettingsResolver.resolveAppFontSizeSetting()).thenReturn(16);
         doAnswer(invocation -> {

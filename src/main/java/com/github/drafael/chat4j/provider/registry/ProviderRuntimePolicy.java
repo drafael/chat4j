@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import static java.util.Collections.emptyMap;
 
 @Slf4j
 final class ProviderRuntimePolicy {
@@ -29,7 +30,7 @@ final class ProviderRuntimePolicy {
     private final ConcurrentHashMap<String, AtomicBoolean> copilotAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CodexAuthStatusSnapshot> codexAuthStatusByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> codexAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
-    private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = Map.of();
+    private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = emptyMap();
 
     ProviderRuntimePolicy() {
         this(new CopilotAuthResolver(), new CodexAuthResolver());
@@ -45,7 +46,7 @@ final class ProviderRuntimePolicy {
     }
 
     void applyRuntimeConfig(Map<String, RuntimeConfig> runtimeConfig) {
-        runtimeConfigByProvider = runtimeConfig == null ? Map.of() : Map.copyOf(runtimeConfig);
+        runtimeConfigByProvider = runtimeConfig == null ? emptyMap() : Map.copyOf(runtimeConfig);
     }
 
     boolean isEnabled(ProviderDefinition providerDefinition) {

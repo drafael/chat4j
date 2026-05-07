@@ -15,7 +15,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+
+import static java.util.Collections.emptyMap;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toUnmodifiableMap;
 
 @Slf4j
 public final class ShellEnvironmentLoader {
@@ -67,7 +70,7 @@ public final class ShellEnvironmentLoader {
                         elapsedMillis(startedAt),
                         String.join(" ", command)
                 );
-                return Map.of();
+                return emptyMap();
             }
 
             String output = readStream(process.getInputStream());
@@ -82,7 +85,7 @@ public final class ShellEnvironmentLoader {
                         elapsedMillis(startedAt),
                         summarizeStderr(stderr)
                 );
-                return Map.of();
+                return emptyMap();
             }
 
             Map<String, String> loadedEnv = parseEnvOutput(output);
@@ -113,7 +116,7 @@ public final class ShellEnvironmentLoader {
                     elapsedMillis(startedAt),
                     ExceptionUtils.getMessage(e)
             );
-            return Map.of();
+            return emptyMap();
         } catch (Exception e) {
             log.warn(
                     "Failed to load shell environment: mode={} shell={} elapsedMs={} reason={}",
@@ -122,7 +125,7 @@ public final class ShellEnvironmentLoader {
                     elapsedMillis(startedAt),
                     ExceptionUtils.getMessage(e)
             );
-            return Map.of();
+            return emptyMap();
         }
     }
 
@@ -130,7 +133,7 @@ public final class ShellEnvironmentLoader {
         return output.lines()
                 .map(line -> line.split("=", 2))
                 .filter(parts -> parts.length == 2 && !parts[0].isBlank())
-                .collect(Collectors.toUnmodifiableMap(
+                .collect(toUnmodifiableMap(
                     parts -> parts[0],
                     parts -> parts[1],
                     (first, second) -> second
@@ -148,7 +151,7 @@ public final class ShellEnvironmentLoader {
     private static String readStream(InputStream stream) throws IOException {
         try (InputStreamReader streamReader = new InputStreamReader(stream, StandardCharsets.UTF_8);
              BufferedReader reader = new BufferedReader(streamReader)) {
-            return reader.lines().collect(Collectors.joining("\n"));
+            return reader.lines().collect(joining("\n"));
         }
     }
 

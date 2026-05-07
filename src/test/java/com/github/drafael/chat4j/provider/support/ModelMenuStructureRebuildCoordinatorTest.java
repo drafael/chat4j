@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyList;
 
 class ModelMenuStructureRebuildCoordinatorTest {
 
@@ -33,7 +34,7 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 null,
                 new LinkedHashMap<>(),
                 new LinkedHashMap<>(),
-                List.of(),
+                emptyList(),
                 selected -> {
                 },
                 true,
@@ -68,7 +69,7 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 new JMenu("Model"),
                 modelMenuItemsByKey,
                 providerHeaderItemsByName,
-                List.of(),
+                emptyList(),
                 selected -> {
                 },
                 true,
@@ -97,7 +98,7 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 new JMenu("Model"),
                 null,
                 new LinkedHashMap<>(),
-                List.of(),
+                emptyList(),
                 selected -> {
                 },
                 true,

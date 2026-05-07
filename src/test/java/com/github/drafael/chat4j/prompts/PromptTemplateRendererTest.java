@@ -8,6 +8,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class PromptTemplateRendererTest {
 
@@ -40,7 +41,7 @@ class PromptTemplateRendererTest {
                 List.of(PromptVariable.input("text"))
         );
 
-        assertThatThrownBy(() -> subject.render(prompt, Map.of()))
+        assertThatThrownBy(() -> subject.render(prompt, emptyMap()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Cannot resolve variable");
     }

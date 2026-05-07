@@ -1,7 +1,10 @@
 package com.github.drafael.chat4j.provider.api.content;
 
+import org.apache.commons.lang3.ObjectUtils;
 import java.util.List;
 import java.util.Objects;
+
+import static java.util.stream.Collectors.joining;
 
 public final class ContentParts {
 
@@ -14,7 +17,7 @@ public final class ContentParts {
     }
 
     public static String toText(List<ContentPart> parts) {
-        if (parts == null || parts.isEmpty()) {
+        if (ObjectUtils.isEmpty(parts)) {
             return "";
         }
 
@@ -22,6 +25,6 @@ public final class ContentParts {
                 .filter(Objects::nonNull)
                 .map(ContentPart::asTextProjection)
                 .filter(value -> !value.isBlank())
-                .collect(java.util.stream.Collectors.joining("\n"));
+                .collect(joining("\n"));
     }
 }

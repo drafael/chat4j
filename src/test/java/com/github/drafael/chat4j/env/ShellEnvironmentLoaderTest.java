@@ -3,6 +3,8 @@ package com.github.drafael.chat4j.env;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ShellEnvironmentLoaderTest {
@@ -63,7 +65,7 @@ class ShellEnvironmentLoaderTest {
     @Test
     @DisplayName("Provider credential summary lists present key names without exposing values")
     void summarizeProviderCredentialNames_whenKnownKeysPresent_returnsSortedKeyNames() {
-        var env = java.util.Map.of(
+        var env = Map.of(
                 "OPENAI_API_KEY", "sk-openai",
                 "ANTHROPIC_API_KEY", "sk-anthropic",
                 "UNRELATED", "value"
@@ -77,7 +79,7 @@ class ShellEnvironmentLoaderTest {
     @Test
     @DisplayName("Provider credential summary returns none when no known keys are present")
     void summarizeProviderCredentialNames_whenNoKnownKeysPresent_returnsNone() {
-        var summary = ShellEnvironmentLoader.summarizeProviderCredentialNames(java.util.Map.of("UNRELATED", "value"));
+        var summary = ShellEnvironmentLoader.summarizeProviderCredentialNames(Map.of("UNRELATED", "value"));
 
         assertThat(summary).isEqualTo("none");
     }

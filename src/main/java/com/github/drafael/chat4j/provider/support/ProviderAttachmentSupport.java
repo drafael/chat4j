@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,7 +16,7 @@ public final class ProviderAttachmentSupport {
 
     public static Optional<EncodedImage> loadEncodedImage(ImagePart imagePart) {
         String storagePath = imagePart.attachmentRef().storagePath();
-        if (storagePath == null || storagePath.isBlank()) {
+        if (StringUtils.isBlank(storagePath)) {
             return Optional.empty();
         }
 
@@ -26,10 +27,10 @@ public final class ProviderAttachmentSupport {
 
         try {
             String mediaType = imagePart.attachmentRef().mimeType();
-            if (mediaType == null || mediaType.isBlank()) {
+            if (StringUtils.isBlank(mediaType)) {
                 mediaType = Files.probeContentType(filePath);
             }
-            if (mediaType == null || mediaType.isBlank()) {
+            if (StringUtils.isBlank(mediaType)) {
                 mediaType = "image/png";
             }
 
@@ -41,5 +42,10 @@ public final class ProviderAttachmentSupport {
     }
 
     public record EncodedImage(String mediaType, String base64Data) {
+
+        @Override
+        public String toString() {
+            return "EncodedImage[mediaType=%s, base64Data=<masked>]".formatted(mediaType);
+        }
     }
 }

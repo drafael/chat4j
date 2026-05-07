@@ -2,9 +2,12 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.net.URL;
@@ -168,9 +171,9 @@ final class ModelRowComponent {
         row.setCursor(selectable
                 ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 : Cursor.getDefaultCursor());
-        row.addComponentListener(new java.awt.event.ComponentAdapter() {
+        row.addComponentListener(new ComponentAdapter() {
             @Override
-            public void componentResized(java.awt.event.ComponentEvent e) {
+            public void componentResized(ComponentEvent e) {
                 updateModelLabelText();
             }
         });
@@ -325,7 +328,7 @@ final class ModelRowComponent {
     }
 
     private static String clipTextToWidth(String text, FontMetrics metrics, int maxWidth) {
-        if (text == null || text.isEmpty()) {
+        if (StringUtils.isEmpty(text)) {
             return "";
         }
 

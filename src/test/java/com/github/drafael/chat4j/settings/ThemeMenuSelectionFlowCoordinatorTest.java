@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class ThemeMenuSelectionFlowCoordinatorTest {
 
@@ -72,12 +73,12 @@ class ThemeMenuSelectionFlowCoordinatorTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("themeMenuItemsByName must not be null");
 
-        assertThatThrownBy(() -> subject.refreshAndApply(Map.of(), "GitHub", true, " ", value -> {
+        assertThatThrownBy(() -> subject.refreshAndApply(emptyMap(), "GitHub", true, " ", value -> {
         }))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("defaultTheme must not be blank");
 
-        assertThatThrownBy(() -> subject.refreshAndApply(Map.of(), "GitHub", true, "GitHub", null))
+        assertThatThrownBy(() -> subject.refreshAndApply(emptyMap(), "GitHub", true, "GitHub", null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("setLastMenuSelectedTheme must not be null");
 

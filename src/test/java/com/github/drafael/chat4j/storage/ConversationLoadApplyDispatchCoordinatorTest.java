@@ -7,12 +7,12 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyList;
 
 class ConversationLoadApplyDispatchCoordinatorTest {
 
@@ -24,7 +24,7 @@ class ConversationLoadApplyDispatchCoordinatorTest {
         List<ConversationRepo.MessageRecord> records = List.of(
                 new ConversationRepo.MessageRecord(UUID.randomUUID(), Message.user("hello"), LocalDateTime.now())
         );
-        Optional<ConversationRepo.ConversationRecord> conversation = Optional.empty();
+        ConversationRepo.ConversationRecord conversation = null;
 
         var plannerInputs = new AtomicReference<String>();
         var appliedPlan = new AtomicReference<ConversationLoadResultPlanner.LoadedConversationPlan>();
@@ -85,8 +85,8 @@ class ConversationLoadApplyDispatchCoordinatorTest {
                 1L,
                 UUID.randomUUID(),
                 null,
-                List.of(),
-                Optional.empty(),
+                emptyList(),
+                null,
                 history -> {
                 },
                 (id, count) -> {

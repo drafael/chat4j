@@ -9,6 +9,7 @@ import com.formdev.flatlaf.intellijthemes.materialthemeuilite.*;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.formdev.flatlaf.themes.FlatMacLightLaf;
 import com.formdev.flatlaf.util.ColorFunctions;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -18,6 +19,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -139,8 +141,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
     public static void restoreAccentColor(SettingsRepo settings) {
         try {
             String hex = settings.get(KEY_ACCENT_COLOR, null);
-            accentColor = (hex != null && !hex.isEmpty()) ? Color.decode(hex) : null;
-        } catch (Exception ignored) {
+            accentColor = StringUtils.isNotEmpty(hex) ? Color.decode(hex) : null;
+        } catch (Exception e) {
             accentColor = null;
         }
     }
@@ -154,7 +156,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
             applyAppFont(savedAppFont, savedAppFontSize);
             applyCodeFont(savedCodeFont);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             applyAppFont(DEFAULT_APP_FONT, defaultAppFontSize());
             applyCodeFont(DEFAULT_CODE_FONT);
         }
@@ -172,7 +174,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
         Arrays.stream(UI_COMPATIBLE_FONT_CANDIDATES)
                 .map(candidate -> findFontFamilyIgnoreCase(availableFonts, candidate))
-                .filter(candidate -> candidate != null && !candidate.isBlank())
+                .filter(StringUtils::isNotBlank)
                 .forEach(ordered::add);
 
         Arrays.stream(availableFonts)
@@ -221,7 +223,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
         int style = defaultFont != null ? defaultFont.getStyle() : Font.PLAIN;
         String resolvedFamily;
-        if (fontFamily == null || fontFamily.isBlank() || DEFAULT_APP_FONT.equals(fontFamily)) {
+        if (StringUtils.isBlank(fontFamily) || DEFAULT_APP_FONT.equals(fontFamily)) {
             resolvedFamily = defaultFont != null ? defaultFont.getFamily() : Font.SANS_SERIF;
         } else {
             resolvedFamily = fontFamily;
@@ -237,7 +239,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         int size = appFont != null ? appFont.getSize() : (base != null ? base.getSize() : FALLBACK_FONT_SIZE);
 
         String family = fontFamily;
-        if (family == null || family.isBlank() || DEFAULT_CODE_FONT.equals(fontFamily)) {
+        if (StringUtils.isBlank(family) || DEFAULT_CODE_FONT.equals(fontFamily)) {
             family = base != null ? base.getFamily() : Font.MONOSPACED;
         }
 
@@ -291,7 +293,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 KEY_APP_FONT,
                 DEFAULT_APP_FONT,
                 Validators.oneOf(
-                        new LinkedHashSet<>(Arrays.asList(availableAppFontOptions)),
+                        new LinkedHashSet<>(List.of(availableAppFontOptions)),
                         "Invalid app font option"
                 ),
                 value -> {
@@ -313,7 +315,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 KEY_APP_FONT_SIZE,
                 String.valueOf(normalizeAppFontSize(defaultAppFontSize())),
                 Validators.oneOf(
-                        new LinkedHashSet<>(Arrays.asList(availableAppFontSizeOptions)),
+                        new LinkedHashSet<>(List.of(availableAppFontSizeOptions)),
                         "Invalid app font size"
                 ),
                 value -> {
@@ -332,7 +334,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 KEY_CODE_FONT,
                 DEFAULT_CODE_FONT,
                 Validators.oneOf(
-                        new LinkedHashSet<>(Arrays.asList(availableCodeFontOptions)),
+                        new LinkedHashSet<>(List.of(availableCodeFontOptions)),
                         "Invalid code font option"
                 ),
                 value -> {
@@ -441,7 +443,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static String[] withPreferredFont(String preferred, String[] availableFonts) {
         Set<String> ordered = new LinkedHashSet<>();
         ordered.add(preferred);
-        ordered.addAll(Arrays.asList(availableFonts));
+        ordered.addAll(List.of(availableFonts));
         return ordered.toArray(String[]::new);
     }
 
@@ -505,7 +507,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static int parseAppFontSize(String value) {
         try {
             return normalizeAppFontSize(Integer.parseInt(value));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return normalizeAppFontSize(defaultAppFontSize());
         }
     }
@@ -537,14 +539,18 @@ public class AppearancePanel extends AbstractSettingsPanel {
             refreshAllWindows();
             writeSetting(KEY_THEME, name);
             setStatusInfo(STATUS_SAVED);
-        } catch (Exception ex) {
-            try {
-                FlatMTGitHubIJTheme.setup();
-                refreshAllWindows();
-                setStatusError("Failed to apply theme, reverted to GitHub");
-            } catch (Exception ignored) {
-                setStatusError("Failed to apply theme");
-            }
+        } catch (Exception e) {
+            applyFallbackTheme();
+        }
+    }
+
+    private void applyFallbackTheme() {
+        try {
+            FlatMTGitHubIJTheme.setup();
+            refreshAllWindows();
+            setStatusError("Failed to apply theme, reverted to GitHub");
+        } catch (Exception e) {
+            setStatusError("Failed to apply theme");
         }
     }
 

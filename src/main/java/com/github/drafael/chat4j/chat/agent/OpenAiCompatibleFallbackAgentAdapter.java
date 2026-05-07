@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 @Slf4j
 final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter {
@@ -78,7 +79,7 @@ final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter
         callbacks.onToken().accept(FALLBACK_NOTICE_TEMPLATE.formatted(providerName));
     }
 
-    private void flushBufferedChunks(List<String> chunks, java.util.function.Consumer<String> emitter) {
+    private void flushBufferedChunks(List<String> chunks, Consumer<String> emitter) {
         chunks.stream()
                 .filter(StringUtils::isNotEmpty)
                 .forEach(emitter);

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.awt.Desktop;
@@ -356,22 +357,22 @@ public class CopilotAuthResolver {
             }
 
             String error = StringUtils.trimToNull(root.path("error").asText(""));
-            if (StringUtils.equals(error, "authorization_pending")) {
+            if (Strings.CS.equals(error, "authorization_pending")) {
                 Thread.sleep(Duration.ofSeconds(intervalSeconds));
                 continue;
             }
-            if (StringUtils.equals(error, "slow_down")) {
+            if (Strings.CS.equals(error, "slow_down")) {
                 intervalSeconds = intervalSeconds + 2;
                 Thread.sleep(Duration.ofSeconds(intervalSeconds));
                 continue;
             }
-            if (StringUtils.equals(error, "access_denied")) {
+            if (Strings.CS.equals(error, "access_denied")) {
                 throw new IllegalStateException(
                         "GitHub login was canceled. Retry at %s with code %s."
                                 .formatted(deviceCode.verificationUri(), deviceCode.userCode())
                 );
             }
-            if (StringUtils.equals(error, "expired_token")) {
+            if (Strings.CS.equals(error, "expired_token")) {
                 break;
             }
 
@@ -463,7 +464,7 @@ public class CopilotAuthResolver {
         } finally {
             try {
                 Files.deleteIfExists(tempFile);
-            } catch (Exception e) {
+            } catch (Exception ignored) {
                 // Best-effort cleanup for temp file.
             }
         }
@@ -481,7 +482,7 @@ public class CopilotAuthResolver {
         try {
             Set<PosixFilePermission> ownerOnlyPermissions = PosixFilePermissions.fromString("rw-------");
             Files.setPosixFilePermissions(tokenFile, ownerOnlyPermissions);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Non-POSIX filesystems (e.g., Windows) do not support this API.
         }
     }
@@ -489,13 +490,13 @@ public class CopilotAuthResolver {
     private void triggerLoginPromptActions(DeviceCodeResponse deviceCode) {
         try {
             userPromptActions.copyCodeToClipboard(deviceCode.userCode());
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Keep login flow running even if clipboard interaction fails.
         }
 
         try {
             userPromptActions.openBrowser(deviceCode.verificationUri());
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Keep login flow running even if browser interaction fails.
         }
     }
@@ -529,7 +530,7 @@ public class CopilotAuthResolver {
             throw new IllegalStateException("Invalid GitHub Enterprise domain: %s".formatted(configured));
         }
 
-        if (StringUtils.equalsIgnoreCase(normalized, DEFAULT_GITHUB_DOMAIN)) {
+        if (Strings.CI.equals(normalized, DEFAULT_GITHUB_DOMAIN)) {
             return null;
         }
 
@@ -599,7 +600,7 @@ public class CopilotAuthResolver {
     private boolean isUsableClientId(String clientId) {
         return StringUtils.isNotBlank(clientId)
                 && !clientId.startsWith("${")
-                && !StringUtils.containsIgnoreCase(clientId, "replace");
+                && !Strings.CI.contains(clientId, "replace");
     }
 
     private String deviceCodeEndpoint(String enterpriseDomain) {
@@ -670,13 +671,13 @@ public class CopilotAuthResolver {
     }
 
     private boolean isCopilotSessionToken(String token) {
-        return StringUtils.contains(token, "tid=");
+        return Strings.CS.contains(token, "tid=");
     }
 
     private boolean isGitHubOAuthToken(String token) {
-        return StringUtils.startsWith(token, "gho_")
-                || StringUtils.startsWith(token, "ghu_")
-                || StringUtils.startsWith(token, "github_pat_");
+        return Strings.CS.startsWith(token, "gho_")
+                || Strings.CS.startsWith(token, "ghu_")
+                || Strings.CS.startsWith(token, "github_pat_");
     }
 
     private boolean isExpired(long expiresAtEpochMs) {
@@ -734,9 +735,20 @@ public class CopilotAuthResolver {
             int expiresInSeconds,
             String oauthScopes
     ) {
+
+        @Override
+        public String toString() {
+            return "DeviceCodeResponse[deviceCode=<masked>, userCode=<masked>, verificationUri=%s, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s]"
+                    .formatted(verificationUri, intervalSeconds, expiresInSeconds, oauthScopes);
+        }
     }
 
     private record CopilotSessionToken(String sessionToken, long expiresAtEpochMs) {
+
+        @Override
+        public String toString() {
+            return "CopilotSessionToken[sessionToken=<masked>, expiresAtEpochMs=%d]".formatted(expiresAtEpochMs);
+        }
     }
 
     public record CopilotLoginChallenge(
@@ -748,6 +760,12 @@ public class CopilotAuthResolver {
             String oauthScopes,
             String enterpriseDomain
     ) {
+
+        @Override
+        public String toString() {
+            return "CopilotLoginChallenge[deviceCode=<masked>, userCode=<masked>, verificationUri=%s, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s, enterpriseDomain=%s]"
+                    .formatted(verificationUri, intervalSeconds, expiresInSeconds, oauthScopes, enterpriseDomain);
+        }
     }
 
     public record CopilotAuthActionResult(boolean success, String message) {

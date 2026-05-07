@@ -12,6 +12,7 @@ import java.util.Map;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class ProviderSettingsApplyCoordinatorTest {
 
@@ -49,7 +50,7 @@ class ProviderSettingsApplyCoordinatorTest {
     @DisplayName("Apply validates required arguments")
     void apply_whenRequiredArgumentMissing_throwsException() {
         var subject = new ProviderSettingsApplyCoordinator(
-                providers -> Map.of(),
+                providers -> emptyMap(),
                 runtimeConfigByProvider -> {
                 }
         );
@@ -60,12 +61,12 @@ class ProviderSettingsApplyCoordinatorTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("providers is marked non-null");
 
-        assertThatThrownBy(() -> subject.apply(List.of(), null, () -> {
+        assertThatThrownBy(() -> subject.apply(emptyList(), null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("refreshProviders is marked non-null");
 
-        assertThatThrownBy(() -> subject.apply(List.of(), () -> {
+        assertThatThrownBy(() -> subject.apply(emptyList(), () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("markModelsMenuDirty is marked non-null");

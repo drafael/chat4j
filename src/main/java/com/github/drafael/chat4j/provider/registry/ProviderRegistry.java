@@ -7,6 +7,8 @@ import com.github.drafael.chat4j.provider.api.ProviderFactory;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import static java.util.Collections.emptyMap;
+import static java.util.stream.Collectors.toMap;
 
 public class ProviderRegistry {
 
@@ -40,9 +42,9 @@ public class ProviderRegistry {
 
     public static void applyRuntimeConfig(Map<String, ProviderRuntimeConfig> runtimeConfig) {
         Map<String, ProviderRuntimePolicy.RuntimeConfig> mapped = runtimeConfig == null
-                ? Map.of()
+                ? emptyMap()
                 : runtimeConfig.entrySet().stream()
-                .collect(Collectors.toMap(
+                .collect(toMap(
                         Map.Entry::getKey,
                         entry -> new ProviderRuntimePolicy.RuntimeConfig(
                                 entry.getValue().enabled(),

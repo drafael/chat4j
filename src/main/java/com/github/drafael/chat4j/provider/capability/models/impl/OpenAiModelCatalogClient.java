@@ -409,6 +409,11 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private record CopilotExchangedTokenSnapshot(String exchangedToken, long expiresAtEpochMs) {
+
+        @Override
+        public String toString() {
+            return "CopilotExchangedTokenSnapshot[exchangedToken=<masked>, expiresAtEpochMs=%d]".formatted(expiresAtEpochMs);
+        }
     }
 
     private record CatalogFetchResult(

@@ -39,6 +39,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
@@ -533,7 +534,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 CopilotAuthResolver.CopilotAuthStatus initialStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
                 CopilotAuthResolver.CopilotAuthActionResult actionResult;
 
-                if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
+                if (initialStatus.authorized() && Strings.CS.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
                     actionResult = COPILOT_AUTH_RESOLVER.logout();
                 } else {
                     CompletableFuture<JDialog> loginDialogFuture = new CompletableFuture<>();
@@ -583,7 +584,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
                 CodexAuthResolver.CodexAuthActionResult actionResult;
 
-                if (initialStatus.authorized() && StringUtils.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
+                if (initialStatus.authorized() && Strings.CS.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)) {
                     actionResult = CODEX_AUTH_RESOLVER.logout();
                 } else {
                     actionResult = runCodexLoginDialogFlow();
@@ -862,7 +863,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         cacheCopilotAuthAvailability(providerName, status.authorized());
         applyCopilotAuthStatus(statusLabel, status);
 
-        boolean chat4jSession = status.authorized() && StringUtils.equals(status.source(), CHAT4J_OAUTH_SOURCE);
+        boolean chat4jSession = status.authorized() && Strings.CS.equals(status.source(), CHAT4J_OAUTH_SOURCE);
         boolean oauthClientConfigured = COPILOT_AUTH_RESOLVER.isOAuthClientConfigured();
 
         authButton.setOpaque(true);
@@ -909,7 +910,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         cacheCodexAuthAvailability(providerName, status.authorized());
         applyCodexAuthStatus(statusLabel, status);
 
-        boolean chat4jSession = status.authorized() && StringUtils.equals(status.source(), CHAT4J_OAUTH_SOURCE);
+        boolean chat4jSession = status.authorized() && Strings.CS.equals(status.source(), CHAT4J_OAUTH_SOURCE);
         boolean oauthClientConfigured = CODEX_AUTH_RESOLVER.isOAuthClientConfigured();
 
         authButton.setOpaque(true);

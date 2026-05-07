@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat.agent;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import org.junit.jupiter.api.DisplayName;
@@ -92,7 +93,7 @@ class ProviderServiceAgentAdapterTest {
         assertThat(observedDirectory.get()).isEqualTo(tempDir.toAbsolutePath().normalize());
         assertThat(observedPromptAppend.get()).isEqualTo("Use concise summaries");
         assertThat(observedHistory.get()).isNotNull();
-        assertThat(observedHistory.get().getFirst().role()).isEqualTo(com.github.drafael.chat4j.provider.api.Role.SYSTEM);
+        assertThat(observedHistory.get().getFirst().role()).isEqualTo(Role.SYSTEM);
         assertThat(observedHistory.get().getFirst().content()).contains("Selected agent root: " + tempDir.toAbsolutePath().normalize());
         assertThat(observedHistory.get().getFirst().content()).contains("Top-level entries");
         assertThat(toolActivities).hasSize(1);

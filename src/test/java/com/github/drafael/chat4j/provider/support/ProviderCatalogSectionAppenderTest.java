@@ -11,6 +11,7 @@ import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSeparator;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,7 +72,7 @@ class ProviderCatalogSectionAppenderTest {
         modelMenuItemsByKey.get("OpenAI > gpt-4.1-mini").doClick();
         assertThat(selectedModelKey.get()).isEqualTo("OpenAI > gpt-4.1-mini");
 
-        long separatorCount = java.util.Arrays.stream(modelsMenu.getMenuComponents())
+        long separatorCount = Arrays.stream(modelsMenu.getMenuComponents())
                 .filter(component -> component instanceof JSeparator)
                 .count();
         assertThat(separatorCount).isEqualTo(1);

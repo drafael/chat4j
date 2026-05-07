@@ -7,8 +7,9 @@ import org.apache.commons.lang3.Validate;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
+
+import static java.util.Collections.emptyList;
 
 public class ConversationLoadResultPlanner {
 
@@ -34,11 +35,10 @@ public class ConversationLoadResultPlanner {
             UUID activeConversationId,
             UUID loadedConversationId,
             List<ConversationRepo.MessageRecord> records,
-            Optional<ConversationRepo.ConversationRecord> conversation
+            ConversationRepo.ConversationRecord conversation
     ) {
         Validate.notNull(loadedConversationId, "loadedConversationId must not be null");
         Validate.notNull(records, "records must not be null");
-        Validate.notNull(conversation, "conversation must not be null");
 
         if (!shouldApply(requestId, activeConversationId, loadedConversationId)) {
             return LoadedConversationPlan.ignorePlan();
@@ -48,9 +48,9 @@ public class ConversationLoadResultPlanner {
                 .map(ConversationRepo.MessageRecord::message)
                 .toList();
 
-        String selectedModelKey = conversation
-                .map(record -> ModelSelectionCodec.format(record.provider(), record.model()))
-                .orElse(null);
+        String selectedModelKey = conversation == null
+                ? null
+                : ModelSelectionCodec.format(conversation.provider(), conversation.model());
 
         AssistantRenderMode modeToApply = conversationModeResolver.resolve(loadedConversationId);
         return LoadedConversationPlan.applyPlan(
@@ -82,7 +82,7 @@ public class ConversationLoadResultPlanner {
     ) {
 
         static LoadedConversationPlan ignorePlan() {
-            return new LoadedConversationPlan(true, null, List.of(), 0, null, null);
+            return new LoadedConversationPlan(true, null, emptyList(), 0, null, null);
         }
 
         static LoadedConversationPlan applyPlan(

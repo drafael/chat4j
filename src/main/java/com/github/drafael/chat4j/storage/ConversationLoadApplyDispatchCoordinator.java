@@ -4,7 +4,6 @@ import com.github.drafael.chat4j.provider.api.Message;
 import org.apache.commons.lang3.Validate;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -33,7 +32,7 @@ public class ConversationLoadApplyDispatchCoordinator {
             UUID currentConversationId,
             UUID conversationId,
             List<ConversationRepo.MessageRecord> records,
-            Optional<ConversationRepo.ConversationRecord> conversation,
+            ConversationRepo.ConversationRecord conversation,
             Consumer<List<Message>> historyLoader,
             ConversationLoadApplyCoordinator.PersistedCountMarker persistedCountMarker,
             ConversationLoadApplyCoordinator.RenderModeApplier renderModeApplier,
@@ -42,7 +41,6 @@ public class ConversationLoadApplyDispatchCoordinator {
     ) {
         Validate.notNull(conversationId, "conversationId must not be null");
         Validate.notNull(records, "records must not be null");
-        Validate.notNull(conversation, "conversation must not be null");
         Validate.notNull(historyLoader, "historyLoader must not be null");
         Validate.notNull(persistedCountMarker, "persistedCountMarker must not be null");
         Validate.notNull(renderModeApplier, "renderModeApplier must not be null");
@@ -69,7 +67,7 @@ public class ConversationLoadApplyDispatchCoordinator {
                 UUID activeConversationId,
                 UUID loadedConversationId,
                 List<ConversationRepo.MessageRecord> records,
-                Optional<ConversationRepo.ConversationRecord> conversation
+                ConversationRepo.ConversationRecord conversation
         );
     }
 

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.web;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -100,7 +101,7 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
                 .filter(candidate -> !isBlockedAddress(candidate))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("URL host resolves to a blocked network address"));
-        return new FetchTarget(uri, address, uri.getHost(), resolvePort(uri), StringUtils.equals(scheme, "https"));
+        return new FetchTarget(uri, address, uri.getHost(), resolvePort(uri), Strings.CS.equals(scheme, "https"));
     }
 
     private FetchResponse fetch(FetchTarget target, BooleanSupplier isCancelled) throws Exception {
@@ -172,7 +173,7 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
     }
 
     private String readBody(BufferedInputStream input, Map<String, String> headers) throws IOException {
-        byte[] body = StringUtils.containsIgnoreCase(headers.get("transfer-encoding"), "chunked")
+        byte[] body = Strings.CI.contains(headers.get("transfer-encoding"), "chunked")
                 ? readChunkedBody(input)
                 : readFixedOrUntilClose(input, headers);
         return new String(body, charset(headers));
@@ -296,7 +297,7 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
         if (uri.getPort() > 0) {
             return uri.getPort();
         }
-        return StringUtils.equalsIgnoreCase(uri.getScheme(), "https") ? HTTPS_PORT : HTTP_PORT;
+        return Strings.CI.equals(uri.getScheme(), "https") ? HTTPS_PORT : HTTP_PORT;
     }
 
     private boolean isBlockedAddress(InetAddress address) {
@@ -330,7 +331,7 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
     }
 
     private boolean isIpLiteral(String host) {
-        return StringUtils.contains(host, ":") || host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+");
+        return Strings.CS.contains(host, ":") || host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+");
     }
 
     private boolean shouldStop(BooleanSupplier isCancelled) {

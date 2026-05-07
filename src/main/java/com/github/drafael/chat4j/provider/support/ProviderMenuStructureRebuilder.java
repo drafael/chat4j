@@ -7,6 +7,7 @@ import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JSeparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -71,7 +72,7 @@ public class ProviderMenuStructureRebuilder {
 
         if (favoritesAppended && !catalogAppended && modelsMenu.getMenuComponentCount() > 0) {
             int lastIndex = modelsMenu.getMenuComponentCount() - 1;
-            if (modelsMenu.getMenuComponent(lastIndex) instanceof javax.swing.JSeparator) {
+            if (modelsMenu.getMenuComponent(lastIndex) instanceof JSeparator) {
                 modelsMenu.remove(lastIndex);
             }
         }

@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static java.util.stream.Collectors.toMap;
+
 @Slf4j
 public class ProviderAvailabilityResolver {
 
@@ -57,7 +59,7 @@ public class ProviderAvailabilityResolver {
         Validate.notNull(providers, "providers must not be null");
 
         Map<String, String> defaultBaseUrlByProvider = providers.stream()
-                .collect(java.util.stream.Collectors.toMap(
+                .collect(toMap(
                         ProviderRegistry.ProviderDef::name,
                         ProviderRegistry.ProviderDef::baseUrl,
                         (existing, replacement) -> replacement,

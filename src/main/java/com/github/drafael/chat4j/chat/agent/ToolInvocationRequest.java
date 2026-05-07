@@ -9,6 +9,6 @@ public record ToolInvocationRequest(String id, String name, String argumentsJson
     public ToolInvocationRequest {
         id = StringUtils.defaultIfBlank(id, UUID.randomUUID().toString());
         name = StringUtils.defaultString(name).trim();
-        argumentsJson = StringUtils.defaultString(argumentsJson, "{}");
+        argumentsJson = StringUtils.defaultIfBlank(argumentsJson, "{}");
     }
 }

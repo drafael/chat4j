@@ -116,14 +116,14 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
                 if (event.asContentBlockDelta().delta().isText()) {
                     String delta = event.asContentBlockDelta().delta().asText().text();
-                    if (delta != null && !delta.isEmpty()) {
+                    if (StringUtils.isNotEmpty(delta)) {
                         onToken.accept(delta);
                     }
                 }
 
                 if (reasoningLevel.enabled() && event.asContentBlockDelta().delta().isThinking()) {
                     String delta = event.asContentBlockDelta().delta().asThinking().thinking();
-                    if (delta != null && !delta.isEmpty()) {
+                    if (StringUtils.isNotEmpty(delta)) {
                         onThinkingToken.accept(delta);
                     }
                 }

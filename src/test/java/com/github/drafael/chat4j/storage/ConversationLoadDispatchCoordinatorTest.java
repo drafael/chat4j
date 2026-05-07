@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -56,7 +55,7 @@ class ConversationLoadDispatchCoordinatorTest {
                 1L,
                 conversationId,
                 List.of(new ConversationRepo.MessageRecord(UUID.randomUUID(), Message.user("hello"), LocalDateTime.now())),
-                Optional.empty()
+                null
         );
         capturedListener.get().onFailure(2L, conversationId, new RuntimeException("boom"));
 

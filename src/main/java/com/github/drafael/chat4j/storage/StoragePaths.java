@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.nio.file.Path;
 
@@ -26,7 +27,7 @@ public final class StoragePaths {
     }
 
     static StoragePaths defaultPaths(String osName, String userHome, String xdgConfigHome, String windowsAppData) {
-        if (StringUtils.containsIgnoreCase(osName, "win")) {
+        if (Strings.CI.contains(osName, "win")) {
             Path windowsConfigHome = StringUtils.isNotBlank(windowsAppData)
                     ? Path.of(windowsAppData)
                     : Path.of(userHome, "AppData", "Roaming");

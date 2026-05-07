@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.storage.StoragePaths;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import java.util.stream.StreamSupport;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toMap;
+import static java.util.Collections.emptyMap;
 
 public class CopilotModelMetadataStore {
 
@@ -113,7 +115,7 @@ public class CopilotModelMetadataStore {
                         supportedEndpointsByBaseUrl.put(normalizedBaseUrl, readCatalog(entry.getValue()));
                     });
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 supportedEndpointsByBaseUrl.clear();
             } finally {
                 loaded.set(true);
@@ -176,7 +178,7 @@ public class CopilotModelMetadataStore {
     }
 
     private List<String> sanitizeEndpoints(List<String> supportedEndpoints) {
-        if (supportedEndpoints == null || supportedEndpoints.isEmpty()) {
+        if (ObjectUtils.isEmpty(supportedEndpoints)) {
             return emptyList();
         }
 
@@ -188,7 +190,7 @@ public class CopilotModelMetadataStore {
     }
 
     private Map<String, List<String>> emptyMapCopy() {
-        return Map.of();
+        return emptyMap();
     }
 
     public record ModelMetadata(String modelId, List<String> supportedEndpoints) {

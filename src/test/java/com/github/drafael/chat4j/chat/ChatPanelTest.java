@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
 import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
@@ -19,6 +20,7 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -327,7 +329,7 @@ class ChatPanelTest {
 
         subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
             @Override
-            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+            public AgentProviderAdapter create(
                     String providerName,
                     String modelId,
                     String baseUrl,
@@ -399,7 +401,7 @@ class ChatPanelTest {
 
         subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
             @Override
-            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+            public AgentProviderAdapter create(
                     String providerName,
                     String modelId,
                     String baseUrl,
@@ -514,7 +516,7 @@ class ChatPanelTest {
 
         subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
             @Override
-            public com.github.drafael.chat4j.chat.agent.AgentProviderAdapter create(
+            public AgentProviderAdapter create(
                     String providerName,
                     String modelId,
                     String baseUrl,
@@ -1812,7 +1814,7 @@ class ChatPanelTest {
         return findComponents(bubble, JButton.class).stream()
                 .filter(Component::isVisible)
                 .map(AbstractButton::getText)
-                .anyMatch(text -> StringUtils.equalsAny(text, "▸", "▾"));
+                .anyMatch(text -> Strings.CS.equalsAny(text, "▸", "▾"));
     }
 
     private static MessageBubble assistantBubble(JPanel messagesPanel) {

@@ -7,11 +7,14 @@ import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.AWTEventListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -135,9 +138,9 @@ public class PromptCommandCenter extends JDialog {
                 selectCurrentPrompt();
             }
         });
-        promptList.addMouseListener(new java.awt.event.MouseAdapter() {
+        promptList.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
+            public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) {
                     selectCurrentPrompt();
                 }
@@ -385,21 +388,21 @@ public class PromptCommandCenter extends JDialog {
     }
 
     @FunctionalInterface
-    private interface SimpleDocumentListener extends javax.swing.event.DocumentListener {
+    private interface SimpleDocumentListener extends DocumentListener {
         void update();
 
         @Override
-        default void insertUpdate(javax.swing.event.DocumentEvent e) {
+        default void insertUpdate(DocumentEvent e) {
             update();
         }
 
         @Override
-        default void removeUpdate(javax.swing.event.DocumentEvent e) {
+        default void removeUpdate(DocumentEvent e) {
             update();
         }
 
         @Override
-        default void changedUpdate(javax.swing.event.DocumentEvent e) {
+        default void changedUpdate(DocumentEvent e) {
             update();
         }
     }

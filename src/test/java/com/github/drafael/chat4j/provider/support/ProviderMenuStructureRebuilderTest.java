@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -212,7 +213,7 @@ class ProviderMenuStructureRebuilderTest {
                 Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
                 List<ModelSelectionCodec.ModelSelection> favorites,
                 Map<String, Boolean> providerSelectable,
-                java.util.function.Consumer<String> onModelSelected
+                Consumer<String> onModelSelected
         ) {
             calls.incrementAndGet();
             lastFavorites = favorites;
@@ -249,7 +250,7 @@ class ProviderMenuStructureRebuilderTest {
                 List<ProviderRegistry.ProviderDef> providers,
                 Map<String, List<String>> modelsByProvider,
                 Map<String, Boolean> providerSelectable,
-                java.util.function.Consumer<String> onModelSelected
+                Consumer<String> onModelSelected
         ) {
             calls.incrementAndGet();
             lastProviders = providers;

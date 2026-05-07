@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat.agent;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.Validate;
 
 public class AgentProviderAdapterFactory {
@@ -68,7 +69,7 @@ public class AgentProviderAdapterFactory {
             return false;
         }
 
-        return !StringUtils.equalsIgnoreCase(providerName, "Anthropic");
+        return !Strings.CI.equals(providerName, "Anthropic");
     }
 
     private boolean supportsCopilotAnthropicToolAdapter(
@@ -77,31 +78,31 @@ public class AgentProviderAdapterFactory {
             String baseUrl,
             String apiKey
     ) {
-        return StringUtils.equalsIgnoreCase(providerName, "GitHub Copilot")
+        return Strings.CI.equals(providerName, "GitHub Copilot")
                 && StringUtils.isNotBlank(modelId)
                 && StringUtils.isNotBlank(baseUrl)
                 && StringUtils.isNotBlank(apiKey)
-                && StringUtils.startsWithIgnoreCase(modelId.trim(), "claude-");
+                && Strings.CI.startsWith(modelId.trim(), "claude-");
     }
 
     private boolean shouldUseCodexCliOnly(String providerName) {
-        return StringUtils.equalsIgnoreCase(providerName, "OpenAI Codex");
+        return Strings.CI.equals(providerName, "OpenAI Codex");
     }
 
     private boolean shouldUseProviderFallbackWrapper(String providerName) {
-        return StringUtils.equalsIgnoreCase(providerName, "Google AI")
-                || StringUtils.equalsIgnoreCase(providerName, "GitHub Copilot")
-                || StringUtils.equalsIgnoreCase(providerName, "LM Studio")
-                || StringUtils.equalsIgnoreCase(providerName, "Ollama");
+        return Strings.CI.equals(providerName, "Google AI")
+                || Strings.CI.equals(providerName, "GitHub Copilot")
+                || Strings.CI.equals(providerName, "LM Studio")
+                || Strings.CI.equals(providerName, "Ollama");
     }
 
     private boolean requiresOAuthBearerToken(String providerName) {
-        return StringUtils.equalsIgnoreCase(providerName, "OpenAI Codex")
-                || StringUtils.equalsIgnoreCase(providerName, "GitHub Copilot");
+        return Strings.CI.equals(providerName, "OpenAI Codex")
+                || Strings.CI.equals(providerName, "GitHub Copilot");
     }
 
     private boolean supportsAnthropicToolAdapter(String providerName, String modelId, String baseUrl) {
-        return StringUtils.equalsIgnoreCase(providerName, "Anthropic")
+        return Strings.CI.equals(providerName, "Anthropic")
                 && StringUtils.isNotBlank(modelId)
                 && StringUtils.isNotBlank(baseUrl);
     }

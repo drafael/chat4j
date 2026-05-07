@@ -19,6 +19,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.AWTEventListener;
+import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
@@ -35,6 +36,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
@@ -403,7 +405,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void registerKeyboardNavigation() {
-        searchField.addKeyListener(new java.awt.event.KeyAdapter() {
+        searchField.addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
                 switch (e.getKeyCode()) {
@@ -765,7 +767,7 @@ public class ModelSelectorPopup extends JDialog {
 
     private void fetchModelsAsync() {
         entries.values().forEach(entry -> {
-            if (StringUtils.equals(entry.name(), "Perplexity")) {
+            if (Strings.CS.equals(entry.name(), "Perplexity")) {
                 return;
             }
 
@@ -1017,7 +1019,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels) {
-        if (StringUtils.equals(providerName, "Perplexity")) {
+        if (Strings.CS.equals(providerName, "Perplexity")) {
             return PerplexityModelIds.SONAR_MODELS;
         }
 

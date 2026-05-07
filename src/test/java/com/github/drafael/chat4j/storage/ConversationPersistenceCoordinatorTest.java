@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.stream.IntStream;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -96,7 +97,7 @@ class ConversationPersistenceCoordinatorTest {
         @Override
         public List<MessageRecord> getMessages(UUID conversationId) {
             getMessagesCalls.incrementAndGet();
-            return java.util.stream.IntStream.range(0, existingMessageCount)
+            return IntStream.range(0, existingMessageCount)
                     .mapToObj(index -> new MessageRecord(
                             UUID.randomUUID(),
                             Message.user("existing-%d".formatted(index)),

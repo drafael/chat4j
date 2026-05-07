@@ -35,7 +35,6 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,7 +82,7 @@ class MainFrameDependenciesFactoryTest {
                         Message.user("hello"),
                         LocalDateTime.now()
                 )),
-                Optional.of(new ConversationRepo.ConversationRecord(
+                new ConversationRepo.ConversationRecord(
                         conversationId,
                         "demo",
                         "OpenAI",
@@ -94,7 +93,7 @@ class MainFrameDependenciesFactoryTest {
                         null,
                         LocalDateTime.now(),
                         LocalDateTime.now()
-                ))
+                )
         );
 
         assertThat(plan.ignore()).isFalse();

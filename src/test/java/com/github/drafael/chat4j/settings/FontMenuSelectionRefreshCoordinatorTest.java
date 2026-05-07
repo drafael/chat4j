@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static java.util.Collections.emptyMap;
 
 class FontMenuSelectionRefreshCoordinatorTest {
 
@@ -104,8 +105,8 @@ class FontMenuSelectionRefreshCoordinatorTest {
 
         assertThatThrownBy(() -> subject.refresh(
                 null,
-                Map.of(),
-                Map.of(),
+                emptyMap(),
+                emptyMap(),
                 new FontMenuSelectionSynchronizer.FontMenuSelectionState(null, null, null),
                 true
         ))

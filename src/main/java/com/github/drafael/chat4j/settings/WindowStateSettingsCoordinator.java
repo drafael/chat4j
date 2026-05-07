@@ -43,7 +43,7 @@ public class WindowStateSettingsCoordinator {
             int height = Integer.parseInt(settingsRepo.get(WINDOW_HEIGHT_KEY, "700"));
             Rectangle bounds = new Rectangle(x, y, width, height);
             return visibleScreenBounds.intersects(bounds) ? Optional.of(bounds) : Optional.empty();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             return Optional.empty();
         }
     }

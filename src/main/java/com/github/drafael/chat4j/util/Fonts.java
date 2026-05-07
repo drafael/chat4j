@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.util;
 
+import org.apache.commons.lang3.StringUtils;
+
 import javax.swing.*;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
@@ -79,7 +81,7 @@ public final class Fonts {
     private static Font resolveDisplaySafeFont(JComponent component, int style, int designSize) {
         Font preferredFont = of(style, designSize);
         String text = extractText(component);
-        if (text == null || text.isBlank() || preferredFont.canDisplayUpTo(text) < 0) {
+        if (StringUtils.isBlank(text) || preferredFont.canDisplayUpTo(text) < 0) {
             return preferredFont;
         }
 

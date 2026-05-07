@@ -3,12 +3,14 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.Validate;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toMap;
 
 public class ProviderModelsResolver {
 
@@ -22,10 +24,10 @@ public class ProviderModelsResolver {
         Validate.notNull(providers, "providers must not be null");
 
         return providers.stream()
-                .collect(Collectors.toMap(
+                .collect(toMap(
                         ProviderRegistry.ProviderDef::name,
                         provider -> {
-                            if (StringUtils.equals(provider.name(), "Perplexity")) {
+                            if (Strings.CS.equals(provider.name(), "Perplexity")) {
                                 return provider.seedModels();
                             }
 

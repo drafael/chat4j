@@ -2,13 +2,13 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import java.awt.*;
 import java.net.URL;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.commons.lang3.StringUtils;
 
 public class ModelSelectorButton extends JButton {
 
@@ -162,7 +162,7 @@ public class ModelSelectorButton extends JButton {
     }
 
     private static String clipText(String text, FontMetrics metrics, int maxWidth) {
-        if (text == null || text.isEmpty() || metrics.stringWidth(text) <= maxWidth) {
+        if (StringUtils.isEmpty(text) || metrics.stringWidth(text) <= maxWidth) {
             return text;
         }
 

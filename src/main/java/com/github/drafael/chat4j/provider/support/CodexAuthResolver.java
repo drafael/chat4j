@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpServer;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.JOptionPane;
@@ -168,7 +169,7 @@ public class CodexAuthResolver {
             String inputText = null;
             try {
                 inputText = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
+            } catch (TimeoutException ignored) {
                 // Fall through to manual prompt.
             }
 
@@ -299,7 +300,7 @@ public class CodexAuthResolver {
                 String state = StringUtils.trimToNull(params.get("state"));
                 String code = StringUtils.trimToNull(params.get("code"));
 
-                if (StringUtils.isNotBlank(state) && !StringUtils.equals(state, challenge.state())) {
+                if (StringUtils.isNotBlank(state) && !Strings.CS.equals(state, challenge.state())) {
                     byte[] responseBody = oauthHtml("State mismatch.", false);
                     exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
                     exchange.sendResponseHeaders(400, responseBody.length);
@@ -358,7 +359,7 @@ public class CodexAuthResolver {
             );
         }
 
-        if (StringUtils.isNotBlank(input.state()) && !StringUtils.equals(input.state(), challenge.state())) {
+        if (StringUtils.isNotBlank(input.state()) && !Strings.CS.equals(input.state(), challenge.state())) {
             return CodexAuthActionResult.failure("OpenAI login failed: state mismatch");
         }
 
@@ -618,7 +619,7 @@ public class CodexAuthResolver {
         } finally {
             try {
                 Files.deleteIfExists(tempFile);
-            } catch (Exception e) {
+            } catch (Exception ignored) {
                 // Best-effort cleanup for temp file.
             }
         }
@@ -636,7 +637,7 @@ public class CodexAuthResolver {
         try {
             Set<PosixFilePermission> ownerOnlyPermissions = PosixFilePermissions.fromString("rw-------");
             Files.setPosixFilePermissions(tokenFile, ownerOnlyPermissions);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Non-POSIX filesystems (e.g., Windows) do not support this API.
         }
     }
@@ -644,13 +645,13 @@ public class CodexAuthResolver {
     private void triggerLoginPromptActions(String authorizationUri) {
         try {
             userPromptActions.copyCodeToClipboard(authorizationUri);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Keep login flow running even if clipboard interaction fails.
         }
 
         try {
             userPromptActions.openBrowser(authorizationUri);
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Keep login flow running even if browser interaction fails.
         }
     }
@@ -741,7 +742,7 @@ public class CodexAuthResolver {
             if (redirectHost != null) {
                 return redirectHost;
             }
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Fall through to default host.
         }
 
@@ -809,7 +810,7 @@ public class CodexAuthResolver {
     private boolean isUsableClientId(String clientId) {
         return StringUtils.isNotBlank(clientId)
                 && !clientId.startsWith("${")
-                && !StringUtils.containsIgnoreCase(clientId, "replace");
+                && !Strings.CI.contains(clientId, "replace");
     }
 
     private String issuer() {
@@ -890,7 +891,7 @@ public class CodexAuthResolver {
         }
 
         String exchangedToken = exchangeSubjectTokenForApiKey(clientId, token);
-        if (StringUtils.isBlank(exchangedToken) || StringUtils.equals(exchangedToken, token)) {
+        if (StringUtils.isBlank(exchangedToken) || Strings.CS.equals(exchangedToken, token)) {
             return token;
         }
 
@@ -908,7 +909,7 @@ public class CodexAuthResolver {
                     refreshToken,
                     expiresAtEpochMs
             );
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Keep using upgraded token in-memory even if persistence fails.
         }
 
@@ -974,7 +975,7 @@ public class CodexAuthResolver {
             if (StringUtils.isNotBlank(code)) {
                 return new AuthorizationCodeInput(code, state);
             }
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Not a full URI; continue with fallback parsing.
         }
 
@@ -1114,12 +1115,28 @@ public class CodexAuthResolver {
     }
 
     private record PkcePair(String verifier, String challenge) {
+
+        @Override
+        public String toString() {
+            return "PkcePair[verifier=<masked>, challenge=<masked>]";
+        }
     }
 
     private record AuthorizationCodeInput(String code, String state) {
+
+        @Override
+        public String toString() {
+            return "AuthorizationCodeInput[code=<masked>, state=<masked>]";
+        }
     }
 
     private record OauthTokenResponse(String idToken, String accessToken, String refreshToken, int expiresInSeconds) {
+
+        @Override
+        public String toString() {
+            return "OauthTokenResponse[idToken=<masked>, accessToken=<masked>, refreshToken=<masked>, expiresInSeconds=%d]"
+                    .formatted(expiresInSeconds);
+        }
     }
 
     public record CodexLoginChallenge(
@@ -1131,6 +1148,12 @@ public class CodexAuthResolver {
             int timeoutSeconds,
             String oauthScopes
     ) {
+
+        @Override
+        public String toString() {
+            return "CodexLoginChallenge[codeVerifier=<masked>, state=<masked>, authorizationUri=%s, redirectUri=%s, callbackHost=%s, timeoutSeconds=%d, oauthScopes=%s]"
+                    .formatted(authorizationUri, redirectUri, callbackHost, timeoutSeconds, oauthScopes);
+        }
     }
 
     public record CodexCallbackWait(
@@ -1148,7 +1171,7 @@ public class CodexAuthResolver {
         public void close() {
             try {
                 closeAction.run();
-            } catch (Exception e) {
+            } catch (Exception ignored) {
                 // Best-effort cleanup.
             }
         }

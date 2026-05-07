@@ -1,9 +1,8 @@
 package com.github.drafael.chat4j.chat;
 
-import static java.util.stream.Collectors.joining;
-
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
 import javax.swing.event.HyperlinkEvent;
@@ -13,7 +12,8 @@ import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
 import java.net.URI;
 import java.util.Set;
-import org.apache.commons.lang3.StringUtils;
+
+import static java.util.stream.Collectors.joining;
 
 public class MessageBubble extends JPanel {
 
@@ -101,7 +101,7 @@ public class MessageBubble extends JPanel {
 
         try {
             Desktop.getDesktop().browse(URI.create(link));
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // Ignore link open failures to keep chat interaction uninterrupted.
         }
     }

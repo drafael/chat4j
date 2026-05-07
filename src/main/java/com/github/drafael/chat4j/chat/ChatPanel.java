@@ -39,7 +39,9 @@ import com.github.drafael.chat4j.web.WebSearchCoordinator;
 import com.github.drafael.chat4j.web.WebSearchResponse;
 import com.github.drafael.chat4j.web.WebSearchResult;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.*;
@@ -86,6 +88,8 @@ import java.util.regex.Pattern;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.synchronizedList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.joining;
 
 @Slf4j
 public class ChatPanel extends JPanel {
@@ -402,7 +406,7 @@ public class ChatPanel extends JPanel {
 
     private void applyProviderModels(List<ProviderRegistry.ProviderDef> providers) {
         providerMap = providers.stream()
-                .collect(Collectors.toMap(
+                .collect(toMap(
                     ProviderRegistry.ProviderDef::name,
                     Function.identity(),
                     (existing, replacement) -> existing,
@@ -880,7 +884,7 @@ public class ChatPanel extends JPanel {
             return requestHistory;
         }
 
-        if (!StringUtils.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
+        if (!Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
             if (nativeWebSearchEnabled(sendJob, requestHistory)) {
                 recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
             }
@@ -916,10 +920,10 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean nativeWebSearchEnabled(SendJob sendJob, List<Message> requestHistory) {
-        if (!sendJob.webSearchEnabled || !StringUtils.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)) {
+        if (!sendJob.webSearchEnabled || !Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)) {
             return false;
         }
-        if (!StringUtils.equals(sendJob.providerName, "OpenAI")) {
+        if (!Strings.CS.equals(sendJob.providerName, "OpenAI")) {
             return true;
         }
         return requestHistory.stream()
@@ -1031,7 +1035,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void appendBrowsedPageActivity(StringBuilder activity, List<BrowsedPage> pages) {
-        if (pages == null || pages.isEmpty()) {
+        if (ObjectUtils.isEmpty(pages)) {
             return;
         }
 
@@ -1153,7 +1157,7 @@ public class ChatPanel extends JPanel {
 
     private String compactToolTarget(String argumentsSummary) {
         String summary = sanitizeToolActivityText(argumentsSummary);
-        if (StringUtils.isBlank(summary) || StringUtils.equals(summary, "arguments omitted")) {
+        if (StringUtils.isBlank(summary) || Strings.CS.equals(summary, "arguments omitted")) {
             return "";
         }
 
@@ -1217,7 +1221,7 @@ public class ChatPanel extends JPanel {
             ProviderSelectionSnapshot providerSnapshot,
             BooleanSupplier isCancelled
     ) {
-        if (attachments == null || attachments.isEmpty()) {
+        if (ObjectUtils.isEmpty(attachments)) {
             return emptyList();
         }
 
@@ -1338,7 +1342,7 @@ public class ChatPanel extends JPanel {
                 selectedModelId,
                 new ArrayList<>(providerMap.values())
         );
-        inputBar.setWebSearchLockedEnabled(StringUtils.equals(providerDef.name(), "Perplexity"));
+        inputBar.setWebSearchLockedEnabled(Strings.CS.equals(providerDef.name(), "Perplexity"));
         inputBar.setWebSearchOptions(availability.options(), availability.defaultOptionId());
 
         if (StringUtils.isBlank(providerDef.baseUrl())) {
@@ -1435,8 +1439,8 @@ public class ChatPanel extends JPanel {
 
     private boolean isSelectedModel(long selectionId, String providerName, String modelId) {
         return providerSelectionCounter.get() == selectionId
-                && StringUtils.equals(selectedProviderName, providerName)
-                && StringUtils.equals(selectedModelId, modelId);
+                && Strings.CS.equals(selectedProviderName, providerName)
+                && Strings.CS.equals(selectedModelId, modelId);
     }
 
     private ProviderSelectionSnapshot captureProviderSelection() {
@@ -1463,11 +1467,11 @@ public class ChatPanel extends JPanel {
             return apiKey;
         }
 
-        if (StringUtils.equals(providerDef.name(), "OpenAI Codex")) {
+        if (Strings.CS.equals(providerDef.name(), "OpenAI Codex")) {
             return codexAuthResolver.resolveBearerTokenOrNull();
         }
 
-        if (StringUtils.equals(providerDef.name(), "GitHub Copilot")) {
+        if (Strings.CS.equals(providerDef.name(), "GitHub Copilot")) {
             return copilotAuthResolver.resolveBearerTokenOrNull();
         }
 
@@ -1512,7 +1516,7 @@ public class ChatPanel extends JPanel {
                 .map(TextPart.class::cast)
                 .map(TextPart::text)
                 .filter(StringUtils::isNotBlank)
-                .flatMap(text -> text.lines())
+                .flatMap(String::lines)
                 .map(String::trim)
                 .filter(line -> !line.isBlank())
                 .filter(line -> !suppressSkillDirective || !line.startsWith("Activated skills:"))
@@ -1529,7 +1533,7 @@ public class ChatPanel extends JPanel {
                 .map(String::trim)
                 .filter(line -> !line.isBlank())
                 .filter(line -> !suppressSkillDirective || !line.startsWith("Activated skills:"))
-                .collect(Collectors.joining("\n"))
+                .collect(joining("\n"))
                 .lines()
                 .toList();
     }
@@ -2680,7 +2684,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void appendAssistantResponse(StreamingSession session, String text) {
-        if (session == null || !session.isLive() || text == null || text.isEmpty()) {
+        if (session == null || !session.isLive() || StringUtils.isEmpty(text)) {
             return;
         }
 
@@ -2897,7 +2901,7 @@ public class ChatPanel extends JPanel {
     }
 
     private List<Message> normalizeLoadedHistory(List<Message> messages) {
-        if (messages == null || messages.isEmpty()) {
+        if (ObjectUtils.isEmpty(messages)) {
             return emptyList();
         }
 
@@ -2926,7 +2930,7 @@ public class ChatPanel extends JPanel {
     }
 
     private Message mergeAssistantRun(List<Message> assistantRun) {
-        if (assistantRun == null || assistantRun.isEmpty()) {
+        if (ObjectUtils.isEmpty(assistantRun)) {
             return Message.assistant("");
         }
 
@@ -2944,14 +2948,14 @@ public class ChatPanel extends JPanel {
                         ? ""
                         : StringUtils.defaultString(candidate.meta().assistantThinking())))
                 .filter(this::hasVisibleThinkingContent)
-                .collect(Collectors.joining("\n\n"));
+                .collect(joining("\n\n"));
 
         String mergedWebSearch = normalizeWebSearchActivity(assistantRun.stream()
                 .map(candidate -> candidate.meta() == null
                         ? ""
                         : StringUtils.defaultString(candidate.meta().assistantWebSearch()))
                 .filter(StringUtils::isNotBlank)
-                .collect(Collectors.joining("\n\n")));
+                .collect(joining("\n\n")));
 
         List<AgentToolActivityMeta> mergedAgentToolActivities = assistantRun.stream()
                 .filter(candidate -> candidate.meta() != null)
@@ -3350,6 +3354,12 @@ public class ChatPanel extends JPanel {
             String baseUrl,
             String apiKey
     ) {
+
+        @Override
+        public String toString() {
+            return "ProviderSelectionSnapshot[providerName=%s, modelId=%s, capabilities=%s, baseUrl=%s, apiKey=<masked>]"
+                    .formatted(providerName, modelId, capabilities, baseUrl);
+        }
     }
 
     private static final class SendCancelledException extends RuntimeException {
@@ -3411,7 +3421,7 @@ public class ChatPanel extends JPanel {
 
             while (!pending.isEmpty()) {
                 String tag = inThinking ? CLOSE_TAG : OPEN_TAG;
-                int tagIndex = StringUtils.indexOfIgnoreCase(pending.toString(), tag);
+                int tagIndex = Strings.CI.indexOf(pending.toString(), tag);
                 if (tagIndex >= 0) {
                     appendCurrentModeText(visible, thinking, pending.substring(0, tagIndex));
                     pending.delete(0, tagIndex + tag.length());
@@ -3453,7 +3463,7 @@ public class ChatPanel extends JPanel {
             int maxLength = Math.min(value.length(), tag.length() - 1);
             for (int length = maxLength; length > 0; length--) {
                 String suffix = value.substring(value.length() - length);
-                if (StringUtils.startsWithIgnoreCase(tag, suffix)) {
+                if (Strings.CI.startsWith(tag, suffix)) {
                     return length;
                 }
             }

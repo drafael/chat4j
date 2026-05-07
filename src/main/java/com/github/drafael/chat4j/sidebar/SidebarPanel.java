@@ -6,6 +6,7 @@ import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.BorderFactory;
@@ -433,7 +434,7 @@ public class SidebarPanel extends JPanel {
         runRepositoryAction(DELETE_GROUP_ERROR, CONVERSATIONS_TITLE, () -> {
             Map<String, List<ConversationRepo.ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
             List<ConversationRepo.ConversationRecord> groupRecords = grouped.get(groupName);
-            if (groupRecords != null && !groupRecords.isEmpty()) {
+            if (ObjectUtils.isNotEmpty(groupRecords)) {
                 List<UUID> ids = groupRecords.stream().map(ConversationRepo.ConversationRecord::id).toList();
                 conversationRepo.deleteConversations(ids);
                 refresh();
@@ -888,7 +889,7 @@ public class SidebarPanel extends JPanel {
 
     private static Icon providerIcon(String providerName) {
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);
-        if (iconPath == null || iconPath.isBlank()) {
+        if (StringUtils.isBlank(iconPath)) {
             return null;
         }
 

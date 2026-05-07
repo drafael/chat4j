@@ -413,7 +413,7 @@ public class ChatSearchPopup extends JDialog {
 
             listPanel.revalidate();
             listPanel.repaint();
-        } catch (Exception e) {
+        } catch (Exception ignored) {
             // ignore
         }
     }
@@ -464,7 +464,7 @@ public class ChatSearchPopup extends JDialog {
                     listPanel.revalidate();
                     listPanel.repaint();
                 });
-            } catch (Exception e) {
+            } catch (Exception ignored) {
                 // ignore
             }
         });

@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -33,7 +32,7 @@ class ConversationLoadResultPlannerTest {
                 conversationId,
                 conversationId,
                 List.of(messageRecord(Message.user("hello"))),
-                Optional.empty()
+                null
         );
 
         assertThat(plan.ignore()).isTrue();
@@ -55,19 +54,17 @@ class ConversationLoadResultPlannerTest {
                 messageRecord(Message.user("u1")),
                 messageRecord(Message.assistant("a1"))
         );
-        Optional<ConversationRepo.ConversationRecord> conversation = Optional.of(
-                new ConversationRepo.ConversationRecord(
-                        conversationId,
-                        "Title",
-                        "OpenAI",
-                        "gpt-4.1",
-                        false,
-                        "off",
-                        false,
-                        null,
-                        LocalDateTime.now(),
-                        LocalDateTime.now()
-                )
+        ConversationRepo.ConversationRecord conversation = new ConversationRepo.ConversationRecord(
+                conversationId,
+                "Title",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                "off",
+                false,
+                null,
+                LocalDateTime.now(),
+                LocalDateTime.now()
         );
 
         var plan = subject.planLoaded(7L, conversationId, conversationId, records, conversation);

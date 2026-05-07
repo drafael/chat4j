@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -204,7 +205,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
 
     private String chatCompletionsEndpoint(String baseUrl) {
         String normalizedBaseUrl = StringUtils.defaultIfBlank(baseUrl, "https://api.perplexity.ai").trim();
-        normalizedBaseUrl = StringUtils.removeEnd(normalizedBaseUrl, "/");
+        normalizedBaseUrl = Strings.CS.removeEnd(normalizedBaseUrl, "/");
         return "%s/chat/completions".formatted(normalizedBaseUrl);
     }
 
@@ -222,7 +223,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
 
                 try {
                     return future.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException e) {
+                } catch (TimeoutException ignored) {
                     // Poll cancellation while the HTTP request is in flight.
                 }
             }

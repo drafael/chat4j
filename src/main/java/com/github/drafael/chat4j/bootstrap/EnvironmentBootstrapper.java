@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import static java.util.Collections.emptyMap;
 
 /**
  * Initializes runtime environment variables and computes whether startup should warn the user.
@@ -29,7 +30,7 @@ public final class EnvironmentBootstrapper {
         log.info("Environment bootstrap started: macJpackageLaunch={}", macJpackageLaunch);
 
         Instant startedAt = Instant.now();
-        Map<String, String> shellEnv = macJpackageLaunch ? loadShellEnvironment() : Map.of();
+        Map<String, String> shellEnv = macJpackageLaunch ? loadShellEnvironment() : emptyMap();
 
         CredentialResolver.init(shellEnv);
 
@@ -63,7 +64,7 @@ public final class EnvironmentBootstrapper {
     }
 
     private Map<String, String> loadShellEnvironment() {
-        AtomicReference<Map<String, String>> envResult = new AtomicReference<>(Map.of());
+        AtomicReference<Map<String, String>> envResult = new AtomicReference<>(emptyMap());
 
         try {
             SwingUtilities.invokeAndWait(() -> {

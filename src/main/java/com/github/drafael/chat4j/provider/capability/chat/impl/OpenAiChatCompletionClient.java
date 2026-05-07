@@ -28,11 +28,15 @@ import com.openai.models.chat.completions.ChatCompletionMessageParam;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import com.openai.models.responses.ResponseCreateParams;
+import com.openai.models.responses.ResponseReasoningSummaryTextDeltaEvent;
+import com.openai.models.responses.ResponseReasoningTextDeltaEvent;
 import com.openai.models.responses.ResponseStreamEvent;
 import com.openai.models.responses.ResponseTextDeltaEvent;
 import com.openai.models.responses.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.ArrayList;
@@ -284,7 +288,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
                     if (attemptLevel.enabled()) {
                         String reasoningSummaryDelta = event.reasoningSummaryTextDelta()
-                                .map(summaryDelta -> summaryDelta.delta())
+                                .map(ResponseReasoningSummaryTextDeltaEvent::delta)
                                 .filter(Objects::nonNull)
                                 .orElse(null);
                         if (reasoningSummaryDelta != null) {
@@ -294,7 +298,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
                         if (!emittedReasoningSummary) {
                             event.reasoningTextDelta()
-                                    .map(reasoningDelta -> reasoningDelta.delta())
+                                    .map(ResponseReasoningTextDeltaEvent::delta)
                                     .filter(Objects::nonNull)
                                     .ifPresent(onThinkingToken);
                         }
@@ -408,7 +412,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     }
 
     private boolean shouldEnableOllamaThinking(ProviderRuntime runtime) {
-        if (!StringUtils.equals(runtime.descriptor().name(), "Ollama")) {
+        if (!Strings.CS.equals(runtime.descriptor().name(), "Ollama")) {
             return false;
         }
 
@@ -433,7 +437,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     }
 
     private boolean emitThinkingDeltaFromProperties(Map<String, JsonValue> properties, Consumer<String> onThinkingToken) {
-        if (properties == null || properties.isEmpty()) {
+        if (ObjectUtils.isEmpty(properties)) {
             return false;
         }
 

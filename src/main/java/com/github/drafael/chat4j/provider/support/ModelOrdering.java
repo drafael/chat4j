@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.time.DateTimeException;
@@ -25,7 +26,7 @@ public final class ModelOrdering {
     }
 
     public static List<String> sanitizeAndSortByProvider(String providerName, List<String> modelIds) {
-        if (modelIds == null || modelIds.isEmpty()) {
+        if (ObjectUtils.isEmpty(modelIds)) {
             return emptyList();
         }
 

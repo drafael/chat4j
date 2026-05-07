@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.Icon;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
 import java.util.LinkedHashMap;
@@ -14,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyMap;
 
 class ProviderMenuAvailabilityRefreshCoordinatorTest {
 
@@ -25,12 +27,12 @@ class ProviderMenuAvailabilityRefreshCoordinatorTest {
         var subject = new ProviderMenuAvailabilityRefreshCoordinator(
                 providers -> {
                     resolverCalls.incrementAndGet();
-                    return Map.of();
+                    return emptyMap();
                 },
                 applier
         );
 
-        subject.refresh(Map.of(), Map.of(), List.of(provider("OpenAI")), new NoOpIconResolver());
+        subject.refresh(emptyMap(), emptyMap(), List.of(provider("OpenAI")), new NoOpIconResolver());
 
         assertThat(resolverCalls.get()).isZero();
         assertThat(applier.applyCalls.get()).isZero();
@@ -103,12 +105,12 @@ class ProviderMenuAvailabilityRefreshCoordinatorTest {
 
     private static class NoOpIconResolver implements ProviderMenuAvailabilityApplier.IconResolver {
         @Override
-        public javax.swing.Icon resolveModelIcon(String providerName, JRadioButtonMenuItem item, boolean enabled) {
+        public Icon resolveModelIcon(String providerName, JRadioButtonMenuItem item, boolean enabled) {
             return null;
         }
 
         @Override
-        public javax.swing.Icon resolveHeaderIcon(String providerName, JMenuItem item, boolean enabled) {
+        public Icon resolveHeaderIcon(String providerName, JMenuItem item, boolean enabled) {
             return null;
         }
     }

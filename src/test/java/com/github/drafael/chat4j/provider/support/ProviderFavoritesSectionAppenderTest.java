@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static java.util.Collections.emptyMap;
 
 class ProviderFavoritesSectionAppenderTest {
 
@@ -67,7 +68,7 @@ class ProviderFavoritesSectionAppenderTest {
                 group,
                 menuItemsByKey,
                 emptyList(),
-                Map.of(),
+                emptyMap(),
                 modelKey -> {
                 }
         );

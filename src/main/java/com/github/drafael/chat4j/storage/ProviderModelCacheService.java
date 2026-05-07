@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.storage;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.time.Clock;
@@ -48,7 +49,7 @@ public class ProviderModelCacheService {
     }
 
     public void primeFromDisk(List<String> providerNames) {
-        if (providerNames == null || providerNames.isEmpty()) {
+        if (ObjectUtils.isEmpty(providerNames)) {
             return;
         }
 
@@ -212,7 +213,7 @@ public class ProviderModelCacheService {
             return List.copyOf(CodexLocalModelCache.mergeIfCodexProvider(providerName, models));
         }
 
-        if (models == null || models.isEmpty()) {
+        if (ObjectUtils.isEmpty(models)) {
             return emptyList();
         }
 

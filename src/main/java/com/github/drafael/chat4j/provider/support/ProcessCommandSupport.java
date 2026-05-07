@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.File;
@@ -24,7 +25,7 @@ public final class ProcessCommandSupport {
     }
 
     static List<String> resolveCommand(List<String> command, Map<String, String> environment) {
-        if (command == null || command.isEmpty()) {
+        if (ObjectUtils.isEmpty(command)) {
             return command == null ? emptyList() : command;
         }
 

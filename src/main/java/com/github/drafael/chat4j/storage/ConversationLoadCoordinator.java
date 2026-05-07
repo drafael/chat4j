@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.storage;
 import org.apache.commons.lang3.Validate;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -24,7 +23,7 @@ public class ConversationLoadCoordinator {
         Thread.startVirtualThread(() -> {
             try {
                 List<ConversationRepo.MessageRecord> records = conversationRepo.getMessages(conversationId);
-                Optional<ConversationRepo.ConversationRecord> conversation = conversationRepo.findById(conversationId);
+                ConversationRepo.ConversationRecord conversation = conversationRepo.findById(conversationId).orElse(null);
                 listener.onLoaded(requestId, conversationId, records, conversation);
             } catch (Exception e) {
                 listener.onFailure(requestId, conversationId, e);
@@ -43,7 +42,7 @@ public class ConversationLoadCoordinator {
                 long requestId,
                 UUID conversationId,
                 List<ConversationRepo.MessageRecord> records,
-                Optional<ConversationRepo.ConversationRecord> conversation
+                ConversationRepo.ConversationRecord conversation
         );
 
         void onFailure(long requestId, UUID conversationId, Exception error);

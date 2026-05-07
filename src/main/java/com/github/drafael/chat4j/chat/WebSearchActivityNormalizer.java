@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -42,8 +43,8 @@ final class WebSearchActivityNormalizer {
 
     private static WebActivitySection sectionFromHeading(String line) {
         String heading = line.replaceFirst("^#+\\s*", "").trim();
-        heading = StringUtils.removeEnd(heading, ":").trim();
-        heading = StringUtils.removeEnd(StringUtils.removeStart(heading, "**"), "**").trim();
+        heading = Strings.CS.removeEnd(heading, ":").trim();
+        heading = Strings.CS.removeEnd(Strings.CS.removeStart(heading, "**"), "**").trim();
         return switch (heading.toLowerCase()) {
             case "searched" -> {
                 yield WebActivitySection.SEARCHED;
