@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenu;
 import javax.swing.JRadioButtonMenuItem;
@@ -16,35 +16,26 @@ public class FontMenuStructureRebuildCoordinator {
         this(fontMenuStructureRebuilder::rebuild);
     }
 
-    FontMenuStructureRebuildCoordinator(RebuildAction rebuildAction) {
-        this.rebuildAction = Validate.notNull(rebuildAction, "rebuildAction must not be null");
+    FontMenuStructureRebuildCoordinator(@NonNull RebuildAction rebuildAction) {
+        this.rebuildAction = rebuildAction;
     }
 
     public RebuildState rebuild(
             JMenu fontMenu,
-            Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
-            Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
-            Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
-            Runnable onRestoreAppFont,
-            Runnable onIncreaseAppFontSize,
-            Runnable onDecreaseAppFontSize,
-            Consumer<String> onAppFontFamilySelected,
-            Consumer<String> onCodeFontFamilySelected,
-            IntConsumer onAppFontSizeSelected,
+            @NonNull Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
+            @NonNull Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
+            @NonNull Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
+            @NonNull Runnable onRestoreAppFont,
+            @NonNull Runnable onIncreaseAppFontSize,
+            @NonNull Runnable onDecreaseAppFontSize,
+            @NonNull Consumer<String> onAppFontFamilySelected,
+            @NonNull Consumer<String> onCodeFontFamilySelected,
+            @NonNull IntConsumer onAppFontSizeSelected,
             boolean currentFontMenuBuilt,
             String currentLastMenuSelectedAppFontFamily,
             Integer currentLastMenuSelectedAppFontSize,
             String currentLastMenuSelectedCodeFontFamily
     ) {
-        Validate.notNull(appFontMenuItemsByFamily, "appFontMenuItemsByFamily must not be null");
-        Validate.notNull(appFontSizeMenuItemsBySize, "appFontSizeMenuItemsBySize must not be null");
-        Validate.notNull(codeFontMenuItemsByFamily, "codeFontMenuItemsByFamily must not be null");
-        Validate.notNull(onRestoreAppFont, "onRestoreAppFont must not be null");
-        Validate.notNull(onIncreaseAppFontSize, "onIncreaseAppFontSize must not be null");
-        Validate.notNull(onDecreaseAppFontSize, "onDecreaseAppFontSize must not be null");
-        Validate.notNull(onAppFontFamilySelected, "onAppFontFamilySelected must not be null");
-        Validate.notNull(onCodeFontFamilySelected, "onCodeFontFamilySelected must not be null");
-        Validate.notNull(onAppFontSizeSelected, "onAppFontSizeSelected must not be null");
 
         if (fontMenu == null) {
             return new RebuildState(

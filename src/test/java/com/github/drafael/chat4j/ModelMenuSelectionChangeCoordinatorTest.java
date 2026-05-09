@@ -44,6 +44,6 @@ class ModelMenuSelectionChangeCoordinatorTest {
 
         assertThatThrownBy(() -> subject.onSelectedModelChanged(new JMenu("Model"), false, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncModelsMenuSelection must not be null");
+                .hasMessageContaining("syncModelsMenuSelection");
     }
 }

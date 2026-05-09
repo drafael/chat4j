@@ -1,18 +1,16 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 
 public class MainMenuBarCreatedApplyCoordinator {
 
     public ApplyResult apply(
-            MainMenuBarBuilder.CreatedMenuBar createdMenuBar,
-            Runnable syncTogglePreviewMenuSelection
+            @NonNull MainMenuBarBuilder.CreatedMenuBar createdMenuBar,
+            @NonNull Runnable syncTogglePreviewMenuSelection
     ) {
-        Validate.notNull(createdMenuBar, "createdMenuBar must not be null");
-        Validate.notNull(syncTogglePreviewMenuSelection, "syncTogglePreviewMenuSelection must not be null");
 
         syncTogglePreviewMenuSelection.run();
 

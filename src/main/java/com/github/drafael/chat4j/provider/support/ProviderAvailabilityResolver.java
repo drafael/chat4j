@@ -3,9 +3,9 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.LinkedHashMap;
@@ -37,16 +37,12 @@ public class ProviderAvailabilityResolver {
         });
     }
 
-    ProviderAvailabilityResolver(SettingsRepo settingsRepo, LocalServiceHealthProbe localServiceHealthProbe) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
-        this.localServiceHealthProbe = Validate.notNull(
-                localServiceHealthProbe,
-                "localServiceHealthProbe must not be null"
-        );
+    ProviderAvailabilityResolver(@NonNull SettingsRepo settingsRepo, @NonNull LocalServiceHealthProbe localServiceHealthProbe) {
+        this.settingsRepo = settingsRepo;
+        this.localServiceHealthProbe = localServiceHealthProbe;
     }
 
-    public boolean isModelSelectionEnabled(ProviderRegistry.ProviderDef providerDef) {
-        Validate.notNull(providerDef, "providerDef must not be null");
+    public boolean isModelSelectionEnabled(@NonNull ProviderRegistry.ProviderDef providerDef) {
 
         if (!LOCAL_HEALTH_GATED_PROVIDERS.contains(providerDef.name())) {
             return true;
@@ -55,8 +51,7 @@ public class ProviderAvailabilityResolver {
         return localServiceHealthProbe.isReachableNonBlocking(providerDef.baseUrl());
     }
 
-    public Map<String, Boolean> resolveMenuAvailability(List<ProviderRegistry.ProviderDef> providers) {
-        Validate.notNull(providers, "providers must not be null");
+    public Map<String, Boolean> resolveMenuAvailability(@NonNull List<ProviderRegistry.ProviderDef> providers) {
 
         Map<String, String> defaultBaseUrlByProvider = providers.stream()
                 .collect(toMap(

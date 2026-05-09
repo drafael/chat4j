@@ -40,16 +40,16 @@ class SidebarToggleStateApplyCoordinatorTest {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("toggleState must not be null");
+                .hasMessageContaining("toggleState");
 
         assertThatThrownBy(() -> subject.apply(toggleState, null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setSidebarVisible must not be null");
+                .hasMessageContaining("setSidebarVisible");
 
         assertThatThrownBy(() -> subject.apply(toggleState, value -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastDividerLocation must not be null");
+                .hasMessageContaining("setLastDividerLocation");
     }
 }

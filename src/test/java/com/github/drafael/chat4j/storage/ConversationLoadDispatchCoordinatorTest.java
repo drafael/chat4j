@@ -76,7 +76,7 @@ class ConversationLoadDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("conversationId must not be null");
+                .hasMessageContaining("conversationId");
 
         assertThatThrownBy(() -> subject.dispatch(
                 UUID.randomUUID(),
@@ -87,7 +87,7 @@ class ConversationLoadDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("asyncLoader must not be null");
+                .hasMessageContaining("asyncLoader");
     }
 
     @Test
@@ -95,6 +95,6 @@ class ConversationLoadDispatchCoordinatorTest {
     void constructor_whenDispatcherMissing_throwsException() {
         assertThatThrownBy(() -> new ConversationLoadDispatchCoordinator(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("edtDispatcher must not be null");
+                .hasMessageContaining("edtDispatcher");
     }
 }

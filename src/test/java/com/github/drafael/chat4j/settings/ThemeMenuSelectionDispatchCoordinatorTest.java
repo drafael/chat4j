@@ -56,7 +56,7 @@ class ThemeMenuSelectionDispatchCoordinatorTest {
 
         assertThatThrownBy(() -> subject.refresh(null, "GitHub", true, "GitHub"))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("themeMenuItemsByName must not be null");
+                .hasMessageContaining("themeMenuItemsByName");
 
         assertThatThrownBy(() -> subject.refresh(new LinkedHashMap<>(), "GitHub", true, " "))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -66,6 +66,6 @@ class ThemeMenuSelectionDispatchCoordinatorTest {
                 (ThemeMenuSelectionDispatchCoordinator.RefreshAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshAction must not be null");
+                .hasMessageContaining("refreshAction");
     }
 }

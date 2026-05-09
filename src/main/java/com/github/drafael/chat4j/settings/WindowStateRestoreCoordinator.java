@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
@@ -23,19 +23,14 @@ public class WindowStateRestoreCoordinator {
     }
 
     WindowStateRestoreCoordinator(
-            StoredBoundsLoader storedBoundsLoader,
-            VisibleScreenBoundsResolver visibleScreenBoundsResolver
+            @NonNull StoredBoundsLoader storedBoundsLoader,
+            @NonNull VisibleScreenBoundsResolver visibleScreenBoundsResolver
     ) {
-        this.storedBoundsLoader = Validate.notNull(storedBoundsLoader, "storedBoundsLoader must not be null");
-        this.visibleScreenBoundsResolver = Validate.notNull(
-                visibleScreenBoundsResolver,
-                "visibleScreenBoundsResolver must not be null"
-        );
+        this.storedBoundsLoader = storedBoundsLoader;
+        this.visibleScreenBoundsResolver = visibleScreenBoundsResolver;
     }
 
-    public boolean restore(Consumer<Rectangle> applyBounds, Runnable applyDefaultWindowState) {
-        Validate.notNull(applyBounds, "applyBounds must not be null");
-        Validate.notNull(applyDefaultWindowState, "applyDefaultWindowState must not be null");
+    public boolean restore(@NonNull Consumer<Rectangle> applyBounds, @NonNull Runnable applyDefaultWindowState) {
 
         Rectangle visibleScreenBounds = visibleScreenBoundsResolver.resolveVisibleBounds();
         Optional<Rectangle> bounds = storedBoundsLoader.loadIfVisible(visibleScreenBounds);

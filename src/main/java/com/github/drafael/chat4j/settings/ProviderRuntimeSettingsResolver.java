@@ -3,9 +3,9 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Validate;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,8 +16,8 @@ public class ProviderRuntimeSettingsResolver {
 
     private final SettingsRepo settingsRepo;
 
-    public ProviderRuntimeSettingsResolver(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public ProviderRuntimeSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
     public Map<String, ProviderRegistry.ProviderRuntimeConfig> resolveAll(List<ProviderRegistry.ProviderDef> providers) {
@@ -30,8 +30,7 @@ public class ProviderRuntimeSettingsResolver {
         return runtimeConfigByProvider;
     }
 
-    public ProviderRegistry.ProviderRuntimeConfig resolve(ProviderRegistry.ProviderDef providerDef) {
-        Validate.notNull(providerDef, "providerDef must not be null");
+    public ProviderRegistry.ProviderRuntimeConfig resolve(@NonNull ProviderRegistry.ProviderDef providerDef) {
 
         boolean enabled = true;
         String baseUrl = providerDef.baseUrl();

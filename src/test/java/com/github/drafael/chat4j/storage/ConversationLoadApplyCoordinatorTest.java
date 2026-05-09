@@ -138,6 +138,6 @@ class ConversationLoadApplyCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("plan must not be null");
+                .hasMessageContaining("plan");
     }
 }

@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.WindowUiRefreshSupport;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.UIManager;
@@ -28,33 +29,30 @@ public class ThemeMenuApplyCoordinator {
     }
 
     ThemeMenuApplyCoordinator(
-            ThemeSettingsResolver themeSettingsResolver,
-            SettingsRepo settingsRepo,
-            LookAndFeelSwitcher lookAndFeelSwitcher,
-            IconCacheInvalidator iconCacheInvalidator,
-            SavedFontsApplier savedFontsApplier,
-            WindowRefresher windowRefresher
+            @NonNull ThemeSettingsResolver themeSettingsResolver,
+            @NonNull SettingsRepo settingsRepo,
+            @NonNull LookAndFeelSwitcher lookAndFeelSwitcher,
+            @NonNull IconCacheInvalidator iconCacheInvalidator,
+            @NonNull SavedFontsApplier savedFontsApplier,
+            @NonNull WindowRefresher windowRefresher
     ) {
-        this.themeSettingsResolver = Validate.notNull(themeSettingsResolver, "themeSettingsResolver must not be null");
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
-        this.lookAndFeelSwitcher = Validate.notNull(lookAndFeelSwitcher, "lookAndFeelSwitcher must not be null");
-        this.iconCacheInvalidator = Validate.notNull(iconCacheInvalidator, "iconCacheInvalidator must not be null");
-        this.savedFontsApplier = Validate.notNull(savedFontsApplier, "savedFontsApplier must not be null");
-        this.windowRefresher = Validate.notNull(windowRefresher, "windowRefresher must not be null");
+        this.themeSettingsResolver = themeSettingsResolver;
+        this.settingsRepo = settingsRepo;
+        this.lookAndFeelSwitcher = lookAndFeelSwitcher;
+        this.iconCacheInvalidator = iconCacheInvalidator;
+        this.savedFontsApplier = savedFontsApplier;
+        this.windowRefresher = windowRefresher;
     }
 
     public ApplyResult apply(
             String themeName,
             String className,
-            Runnable onModelsMenuDirty,
-            Runnable onThemeMenuSelectionSync,
-            Runnable onFontMenuSelectionSync
+            @NonNull Runnable onModelsMenuDirty,
+            @NonNull Runnable onThemeMenuSelectionSync,
+            @NonNull Runnable onFontMenuSelectionSync
     ) {
         Validate.notBlank(themeName, "themeName must not be blank");
         Validate.notBlank(className, "className must not be blank");
-        Validate.notNull(onModelsMenuDirty, "onModelsMenuDirty must not be null");
-        Validate.notNull(onThemeMenuSelectionSync, "onThemeMenuSelectionSync must not be null");
-        Validate.notNull(onFontMenuSelectionSync, "onFontMenuSelectionSync must not be null");
 
         try {
             lookAndFeelSwitcher.setLookAndFeel(className);

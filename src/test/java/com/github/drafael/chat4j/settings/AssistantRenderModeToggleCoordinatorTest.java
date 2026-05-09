@@ -60,6 +60,6 @@ class AssistantRenderModeToggleCoordinatorTest {
 
         assertThatThrownBy(() -> subject.apply(true, false, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("renderModeApplier must not be null");
+                .hasMessageContaining("renderModeApplier");
     }
 }

@@ -68,10 +68,10 @@ class GeneralSettingsApplyCoordinatorTest {
     void constructor_whenDependencyMissing_throwsException() {
         assertThatThrownBy(() -> new GeneralSettingsApplyCoordinator(null, (a, b, c, d) -> d))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("settingsResolver must not be null");
+                .hasMessageContaining("settingsResolver");
 
         assertThatThrownBy(() -> new GeneralSettingsApplyCoordinator(isMacOs -> null, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("modeResolver must not be null");
+                .hasMessageContaining("modeResolver");
     }
 }

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class AppFontSizeAdjustCoordinator {
 
@@ -10,19 +10,16 @@ public class AppFontSizeAdjustCoordinator {
         this(appFontSizeStepResolver::resolveAdjustedSize);
     }
 
-    AppFontSizeAdjustCoordinator(ResolveAction resolveAction) {
-        this.resolveAction = Validate.notNull(resolveAction, "resolveAction must not be null");
+    AppFontSizeAdjustCoordinator(@NonNull ResolveAction resolveAction) {
+        this.resolveAction = resolveAction;
     }
 
     public int adjust(
             boolean increase,
-            SizeOptionsSupplier sizeOptionsSupplier,
-            CurrentSizeSupplier currentSizeSupplier,
-            SizeApplier sizeApplier
+            @NonNull SizeOptionsSupplier sizeOptionsSupplier,
+            @NonNull CurrentSizeSupplier currentSizeSupplier,
+            @NonNull SizeApplier sizeApplier
     ) {
-        Validate.notNull(sizeOptionsSupplier, "sizeOptionsSupplier must not be null");
-        Validate.notNull(currentSizeSupplier, "currentSizeSupplier must not be null");
-        Validate.notNull(sizeApplier, "sizeApplier must not be null");
 
         int adjustedSize = resolveAction.resolve(sizeOptionsSupplier.get(), currentSizeSupplier.get(), increase);
         sizeApplier.apply(adjustedSize);

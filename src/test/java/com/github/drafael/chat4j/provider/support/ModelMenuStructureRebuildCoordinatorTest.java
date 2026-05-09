@@ -111,6 +111,6 @@ class ModelMenuStructureRebuildCoordinatorTest {
                 (ModelMenuStructureRebuildCoordinator.RebuildAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildAction must not be null");
+                .hasMessageContaining("rebuildAction");
     }
 }

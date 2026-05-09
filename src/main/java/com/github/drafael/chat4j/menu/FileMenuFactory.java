@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.KeyStroke;
@@ -12,8 +12,7 @@ public class FileMenuFactory {
     private static final String FILE_MENU_TITLE = "File";
     private static final String NEW_CHAT_ITEM_TITLE = "New Chat";
 
-    public JMenu create(int menuShortcutMask, Runnable onNewChat) {
-        Validate.notNull(onNewChat, "onNewChat must not be null");
+    public JMenu create(int menuShortcutMask, @NonNull Runnable onNewChat) {
 
         JMenu fileMenu = new JMenu(FILE_MENU_TITLE);
         JMenuItem newChatItem = new JMenuItem(NEW_CHAT_ITEM_TITLE);

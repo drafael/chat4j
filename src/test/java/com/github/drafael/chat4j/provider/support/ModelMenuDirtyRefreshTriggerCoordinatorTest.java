@@ -42,17 +42,17 @@ class ModelMenuDirtyRefreshTriggerCoordinatorTest {
         assertThatThrownBy(() -> subject.trigger(new JMenu("Model"), null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("markModelsMenuDirty must not be null");
+                .hasMessageContaining("markModelsMenuDirty");
 
         assertThatThrownBy(() -> subject.trigger(new JMenu("Model"), () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureModelsMenuReady must not be null");
+                .hasMessageContaining("ensureModelsMenuReady");
 
         assertThatThrownBy(() -> new ModelMenuDirtyRefreshTriggerCoordinator(
                 (ModelMenuDirtyRefreshTriggerCoordinator.TriggerAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("triggerAction must not be null");
+                .hasMessageContaining("triggerAction");
     }
 }

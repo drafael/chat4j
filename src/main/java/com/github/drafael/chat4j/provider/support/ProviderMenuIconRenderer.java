@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
@@ -41,8 +42,7 @@ public final class ProviderMenuIconRenderer {
     private ProviderMenuIconRenderer() {
     }
 
-    public static Icon resolve(String providerName, int size, Color tintColor, Class<?> resourceAnchor) {
-        Validate.notNull(resourceAnchor, "resourceAnchor must not be null");
+    public static Icon resolve(String providerName, int size, Color tintColor, @NonNull Class<?> resourceAnchor) {
         Validate.isTrue(size > 0, "size must be positive, got: %d", size);
 
         String iconPath = PROVIDER_ICON_PATHS.get(providerName);

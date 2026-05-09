@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 
@@ -13,8 +13,8 @@ public class AssistantRenderModeSettingsCoordinator {
 
     private final SettingsRepo settingsRepo;
 
-    public AssistantRenderModeSettingsCoordinator(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public AssistantRenderModeSettingsCoordinator(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
     public AssistantRenderMode resolveDefaultMode() {
@@ -29,8 +29,7 @@ public class AssistantRenderModeSettingsCoordinator {
         }
     }
 
-    public AssistantRenderMode resolveConversationMode(UUID conversationId, AssistantRenderMode defaultMode) {
-        Validate.notNull(defaultMode, "defaultMode must not be null");
+    public AssistantRenderMode resolveConversationMode(UUID conversationId, @NonNull AssistantRenderMode defaultMode) {
         return defaultMode;
     }
 

@@ -104,7 +104,7 @@ class GeneralSettingsApplyDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sendOnEnterApplier must not be null");
+                .hasMessageContaining("sendOnEnterApplier");
 
         assertThatThrownBy(() -> new GeneralSettingsApplyDispatchCoordinator(
                 (GeneralSettingsApplyDispatchCoordinator.SettingsApplyAction) null,
@@ -115,6 +115,6 @@ class GeneralSettingsApplyDispatchCoordinatorTest {
                  menuBarSettingApplier) -> applyResult.defaultAssistantRenderMode()
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("settingsApplyAction must not be null");
+                .hasMessageContaining("settingsApplyAction");
     }
 }

@@ -49,7 +49,7 @@ class AppFontSizeAdjustCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sizeOptionsSupplier must not be null");
+                .hasMessageContaining("sizeOptionsSupplier");
 
         assertThatThrownBy(() -> subject.adjust(
                 false,
@@ -58,12 +58,12 @@ class AppFontSizeAdjustCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sizeApplier must not be null");
+                .hasMessageContaining("sizeApplier");
 
         assertThatThrownBy(() -> new AppFontSizeAdjustCoordinator(
                 (AppFontSizeAdjustCoordinator.ResolveAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("resolveAction must not be null");
+                .hasMessageContaining("resolveAction");
     }
 }

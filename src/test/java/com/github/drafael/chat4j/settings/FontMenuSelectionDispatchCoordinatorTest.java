@@ -71,12 +71,12 @@ class FontMenuSelectionDispatchCoordinatorTest {
                 false
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("appFontMenuItemsByFamily must not be null");
+                .hasMessageContaining("appFontMenuItemsByFamily");
 
         assertThatThrownBy(() -> new FontMenuSelectionDispatchCoordinator(
                 (FontMenuSelectionDispatchCoordinator.RefreshAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshAction must not be null");
+                .hasMessageContaining("refreshAction");
     }
 }

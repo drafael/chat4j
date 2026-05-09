@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JCheckBoxMenuItem;
 import java.util.function.Consumer;
@@ -10,14 +10,9 @@ public class AssistantRenderModeToggleSelectionSyncCoordinator {
 
     public boolean sync(
             JCheckBoxMenuItem togglePreviewMenuItem,
-            AssistantRenderMode currentAssistantRenderMode,
-            Consumer<Boolean> setSyncingPreviewMenuSelection
+            @NonNull AssistantRenderMode currentAssistantRenderMode,
+            @NonNull Consumer<Boolean> setSyncingPreviewMenuSelection
     ) {
-        Validate.notNull(currentAssistantRenderMode, "currentAssistantRenderMode must not be null");
-        Validate.notNull(
-                setSyncingPreviewMenuSelection,
-                "setSyncingPreviewMenuSelection must not be null"
-        );
 
         if (togglePreviewMenuItem == null) {
             return false;

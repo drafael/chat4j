@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.storage;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.List;
 import java.util.Objects;
@@ -17,28 +17,20 @@ public class ConversationLoadResultPlanner {
     private final ConversationModeResolver conversationModeResolver;
 
     public ConversationLoadResultPlanner(
-            RequestFreshnessChecker requestFreshnessChecker,
-            ConversationModeResolver conversationModeResolver
+            @NonNull RequestFreshnessChecker requestFreshnessChecker,
+            @NonNull ConversationModeResolver conversationModeResolver
     ) {
-        this.requestFreshnessChecker = Validate.notNull(
-                requestFreshnessChecker,
-                "requestFreshnessChecker must not be null"
-        );
-        this.conversationModeResolver = Validate.notNull(
-                conversationModeResolver,
-                "conversationModeResolver must not be null"
-        );
+        this.requestFreshnessChecker = requestFreshnessChecker;
+        this.conversationModeResolver = conversationModeResolver;
     }
 
     public LoadedConversationPlan planLoaded(
             long requestId,
             UUID activeConversationId,
-            UUID loadedConversationId,
-            List<ConversationRepo.MessageRecord> records,
+            @NonNull UUID loadedConversationId,
+            @NonNull List<ConversationRepo.MessageRecord> records,
             ConversationRepo.ConversationRecord conversation
     ) {
-        Validate.notNull(loadedConversationId, "loadedConversationId must not be null");
-        Validate.notNull(records, "records must not be null");
 
         if (!shouldApply(requestId, activeConversationId, loadedConversationId)) {
             return LoadedConversationPlan.ignorePlan();
@@ -62,8 +54,7 @@ public class ConversationLoadResultPlanner {
         );
     }
 
-    public boolean shouldHandleFailure(long requestId, UUID activeConversationId, UUID failedConversationId) {
-        Validate.notNull(failedConversationId, "failedConversationId must not be null");
+    public boolean shouldHandleFailure(long requestId, UUID activeConversationId, @NonNull UUID failedConversationId) {
         return shouldApply(requestId, activeConversationId, failedConversationId);
     }
 
@@ -92,9 +83,6 @@ public class ConversationLoadResultPlanner {
                 AssistantRenderMode assistantRenderMode,
                 String selectedModelKey
         ) {
-            Validate.notNull(conversationId, "conversationId must not be null");
-            Validate.notNull(messages, "messages must not be null");
-            Validate.notNull(assistantRenderMode, "assistantRenderMode must not be null");
 
             return new LoadedConversationPlan(
                     false,

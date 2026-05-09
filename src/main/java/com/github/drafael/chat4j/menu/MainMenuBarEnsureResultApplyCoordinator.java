@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JCheckBoxMenuItem;
@@ -9,7 +10,7 @@ import javax.swing.JMenuBar;
 public class MainMenuBarEnsureResultApplyCoordinator {
 
     public ApplyState apply(
-            MainMenuBarEnsureDispatchCoordinator.EnsureResult ensureResult,
+            @NonNull MainMenuBarEnsureDispatchCoordinator.EnsureResult ensureResult,
             JMenu currentFileMenu,
             JMenu currentViewMenu,
             JMenu currentModelsMenu,
@@ -20,7 +21,6 @@ public class MainMenuBarEnsureResultApplyCoordinator {
             boolean currentThemesMenuBuilt,
             boolean currentFontMenuBuilt
     ) {
-        Validate.notNull(ensureResult, "ensureResult must not be null");
 
         if (!ensureResult.created()) {
             return new ApplyState(
@@ -57,7 +57,7 @@ public class MainMenuBarEnsureResultApplyCoordinator {
     }
 
     public record ApplyState(
-            JMenuBar modelMenuBar,
+            @NonNull JMenuBar modelMenuBar,
             JMenu fileMenu,
             JMenu viewMenu,
             JMenu modelsMenu,
@@ -70,7 +70,6 @@ public class MainMenuBarEnsureResultApplyCoordinator {
     ) {
 
         public ApplyState {
-            Validate.notNull(modelMenuBar, "modelMenuBar must not be null");
         }
     }
 }

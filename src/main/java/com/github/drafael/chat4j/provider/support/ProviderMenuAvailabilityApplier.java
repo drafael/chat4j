@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.Icon;
 import javax.swing.JMenuItem;
@@ -15,23 +15,16 @@ public class ProviderMenuAvailabilityApplier {
         this(new ProviderAvailabilityLabelFormatter());
     }
 
-    ProviderMenuAvailabilityApplier(ProviderAvailabilityLabelFormatter providerAvailabilityLabelFormatter) {
-        this.providerAvailabilityLabelFormatter = Validate.notNull(
-                providerAvailabilityLabelFormatter,
-                "providerAvailabilityLabelFormatter must not be null"
-        );
+    ProviderMenuAvailabilityApplier(@NonNull ProviderAvailabilityLabelFormatter providerAvailabilityLabelFormatter) {
+        this.providerAvailabilityLabelFormatter = providerAvailabilityLabelFormatter;
     }
 
     public void apply(
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            Map<String, JMenuItem> providerHeaderItemsByName,
-            Map<String, Boolean> providerEnabledByName,
-            IconResolver iconResolver
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
+            @NonNull Map<String, Boolean> providerEnabledByName,
+            @NonNull IconResolver iconResolver
     ) {
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(providerHeaderItemsByName, "providerHeaderItemsByName must not be null");
-        Validate.notNull(providerEnabledByName, "providerEnabledByName must not be null");
-        Validate.notNull(iconResolver, "iconResolver must not be null");
 
         modelMenuItemsByKey.forEach((modelKey, item) -> ModelSelectionCodec.parse(modelKey).ifPresentOrElse(selection -> {
                     Boolean enabled = providerEnabledByName.get(selection.provider());

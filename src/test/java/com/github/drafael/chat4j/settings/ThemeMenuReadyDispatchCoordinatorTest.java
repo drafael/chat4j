@@ -45,17 +45,17 @@ class ThemeMenuReadyDispatchCoordinatorTest {
         assertThatThrownBy(() -> subject.ensureReady(false, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildThemesMenuStructure must not be null");
+                .hasMessageContaining("rebuildThemesMenuStructure");
 
         assertThatThrownBy(() -> subject.ensureReady(false, () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncThemeMenuSelection must not be null");
+                .hasMessageContaining("syncThemeMenuSelection");
 
         assertThatThrownBy(() -> new ThemeMenuReadyDispatchCoordinator(
                 (ThemeMenuReadyDispatchCoordinator.EnsureReadyAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureReadyAction must not be null");
+                .hasMessageContaining("ensureReadyAction");
     }
 }

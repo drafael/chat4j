@@ -166,7 +166,7 @@ class MainMenuBarEnsureApplyFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuBarCreator must not be null");
+                .hasMessageContaining("menuBarCreator");
 
         assertThatThrownBy(() -> new MainMenuBarEnsureApplyFlowCoordinator(
                 (MainMenuBarEnsureApplyFlowCoordinator.ResolveAction) null,
@@ -184,6 +184,6 @@ class MainMenuBarEnsureApplyFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("resolveAction must not be null");
+                .hasMessageContaining("resolveAction");
     }
 }

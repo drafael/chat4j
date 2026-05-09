@@ -102,7 +102,7 @@ class AssistantMessageCompletionFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshSidebar must not be null");
+                .hasMessageContaining("refreshSidebar");
 
         assertThatThrownBy(() -> subject.handle(
                 UUID.randomUUID(),
@@ -113,7 +113,7 @@ class AssistantMessageCompletionFlowCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("selectConversation must not be null");
+                .hasMessageContaining("selectConversation");
     }
 
     @Test
@@ -121,6 +121,6 @@ class AssistantMessageCompletionFlowCoordinatorTest {
     void constructor_whenCoordinatorMissing_throwsException() {
         assertThatThrownBy(() -> new AssistantMessageCompletionFlowCoordinator(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("assistantMessageCompletionCoordinator must not be null");
+                .hasMessageContaining("assistantMessageCompletionCoordinator");
     }
 }

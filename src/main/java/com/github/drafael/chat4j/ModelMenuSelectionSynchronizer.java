@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JRadioButtonMenuItem;
 import java.util.Map;
 import java.util.Objects;
@@ -9,12 +9,11 @@ import java.util.Objects;
 public class ModelMenuSelectionSynchronizer {
 
     public String syncSelection(
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
             String selectedModelKey,
             String lastSelectedModelKey,
             boolean modelsMenuDirty
     ) {
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
 
         if (modelsMenuDirty) {
             return lastSelectedModelKey;

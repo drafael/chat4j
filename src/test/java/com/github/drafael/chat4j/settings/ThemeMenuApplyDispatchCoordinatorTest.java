@@ -81,7 +81,7 @@ class ThemeMenuApplyDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("themeApplyAction must not be null");
+                .hasMessageContaining("themeApplyAction");
 
         assertThatThrownBy(() -> subject.apply(
                 "GitHub",
@@ -97,6 +97,6 @@ class ThemeMenuApplyDispatchCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("errorPresenter must not be null");
+                .hasMessageContaining("errorPresenter");
     }
 }

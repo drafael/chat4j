@@ -54,16 +54,16 @@ class MenuSelectionListenerBinderTest {
         }, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menu must not be null");
+                .hasMessageContaining("menu");
 
         assertThatThrownBy(() -> subject.bind(new JMenu("x"), null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("beforeSelect must not be null");
+                .hasMessageContaining("beforeSelect");
 
         assertThatThrownBy(() -> subject.bind(new JMenu("x"), () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onSelect must not be null");
+                .hasMessageContaining("onSelect");
     }
 }

@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import java.util.Set;
 
 public class FontSelectionNormalizer {
 
-    public AppFontSelection normalizeAppSelection(String requestedFamily, int requestedSize, Set<String> availableFamilies) {
-        Validate.notNull(availableFamilies, "availableFamilies must not be null");
+    public AppFontSelection normalizeAppSelection(String requestedFamily, int requestedSize, @NonNull Set<String> availableFamilies) {
 
         String family = availableFamilies.contains(requestedFamily)
                 ? requestedFamily
@@ -17,8 +16,7 @@ public class FontSelectionNormalizer {
         return new AppFontSelection(family, size);
     }
 
-    public String normalizeCodeFamily(String requestedFamily, Set<String> availableFamilies) {
-        Validate.notNull(availableFamilies, "availableFamilies must not be null");
+    public String normalizeCodeFamily(String requestedFamily, @NonNull Set<String> availableFamilies) {
 
         return availableFamilies.contains(requestedFamily)
                 ? requestedFamily

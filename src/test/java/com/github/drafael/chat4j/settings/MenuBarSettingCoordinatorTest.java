@@ -48,7 +48,7 @@ class MenuBarSettingCoordinatorTest {
 
         assertThatThrownBy(() -> subject.apply(true, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("actions must not be null");
+                .hasMessageContaining("actions");
     }
 
     @Test
@@ -72,7 +72,7 @@ class MenuBarSettingCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("disableMenuBar must not be null");
+                .hasMessageContaining("disableMenuBar");
     }
 
     private MenuBarSettingCoordinator.MenuBarActions actions(List<String> calls) {

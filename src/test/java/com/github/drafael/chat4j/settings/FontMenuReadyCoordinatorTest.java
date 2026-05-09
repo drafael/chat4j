@@ -44,11 +44,11 @@ class FontMenuReadyCoordinatorTest {
         assertThatThrownBy(() -> subject.ensureReady(true, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildFontMenuStructure must not be null");
+                .hasMessageContaining("rebuildFontMenuStructure");
 
         assertThatThrownBy(() -> subject.ensureReady(true, () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncFontMenuSelection must not be null");
+                .hasMessageContaining("syncFontMenuSelection");
     }
 }

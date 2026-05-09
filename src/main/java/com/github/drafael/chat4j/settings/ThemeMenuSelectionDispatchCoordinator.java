@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JRadioButtonMenuItem;
@@ -13,17 +14,16 @@ public class ThemeMenuSelectionDispatchCoordinator {
         this(themeMenuSelectionRefreshCoordinator::refresh);
     }
 
-    ThemeMenuSelectionDispatchCoordinator(RefreshAction refreshAction) {
-        this.refreshAction = Validate.notNull(refreshAction, "refreshAction must not be null");
+    ThemeMenuSelectionDispatchCoordinator(@NonNull RefreshAction refreshAction) {
+        this.refreshAction = refreshAction;
     }
 
     public String refresh(
-            Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
+            @NonNull Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
             String previousSelection,
             boolean themesMenuBuilt,
             String defaultTheme
     ) {
-        Validate.notNull(themeMenuItemsByName, "themeMenuItemsByName must not be null");
         Validate.notBlank(defaultTheme, "defaultTheme must not be blank");
 
         return refreshAction.refresh(themeMenuItemsByName, previousSelection, themesMenuBuilt, defaultTheme);

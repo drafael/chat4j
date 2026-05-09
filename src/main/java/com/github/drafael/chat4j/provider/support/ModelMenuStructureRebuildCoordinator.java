@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import lombok.NonNull;
-import org.apache.commons.lang3.Validate;
 
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -19,8 +18,8 @@ public class ModelMenuStructureRebuildCoordinator {
         this(providerMenuStructureRebuilder::rebuild);
     }
 
-    ModelMenuStructureRebuildCoordinator(RebuildAction rebuildAction) {
-        this.rebuildAction = Validate.notNull(rebuildAction, "rebuildAction must not be null");
+    ModelMenuStructureRebuildCoordinator(@NonNull RebuildAction rebuildAction) {
+        this.rebuildAction = rebuildAction;
     }
 
     public RebuildState rebuild(

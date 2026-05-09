@@ -54,7 +54,7 @@ class FontMenuApplyDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyAction must not be null");
+                .hasMessageContaining("applyAction");
 
         assertThatThrownBy(() -> subject.apply(
                 () -> new FontMenuApplyCoordinator.ApplyResult(true, null),

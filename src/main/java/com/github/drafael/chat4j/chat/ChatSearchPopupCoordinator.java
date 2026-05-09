@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.chat;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.awt.Component;
 
@@ -8,8 +8,7 @@ public class ChatSearchPopupCoordinator {
 
     private PopupHandle popup;
 
-    public void toggle(Component relativeTo, PopupFactory popupFactory) {
-        Validate.notNull(popupFactory, "popupFactory must not be null");
+    public void toggle(Component relativeTo, @NonNull PopupFactory popupFactory) {
 
         if (popup == null || !popup.isDisplayable()) {
             popup = popupFactory.create();
@@ -30,8 +29,7 @@ public class ChatSearchPopupCoordinator {
 
     public interface PopupHandle {
 
-        static PopupHandle forPopup(ChatSearchPopup popup) {
-            Validate.notNull(popup, "popup must not be null");
+        static PopupHandle forPopup(@NonNull ChatSearchPopup popup) {
 
             return new PopupHandle() {
                 @Override

@@ -88,7 +88,7 @@ class ViewMenuFactoryTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("beforeSelect must not be null");
+                .hasMessageContaining("beforeSelect");
     }
 
     @Test
@@ -96,6 +96,6 @@ class ViewMenuFactoryTest {
     void constructor_whenBinderMissing_throwsException() {
         assertThatThrownBy(() -> new ViewMenuFactory(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuSelectionListenerBinder must not be null");
+                .hasMessageContaining("menuSelectionListenerBinder");
     }
 }

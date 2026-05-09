@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j;
 
-import lombok.NonNull;
 
+import lombok.NonNull;
 import java.util.function.Consumer;
 
 public class ModelMenuSelectionApplyCoordinator {

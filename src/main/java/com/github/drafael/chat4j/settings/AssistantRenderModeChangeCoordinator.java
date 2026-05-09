@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 
@@ -21,17 +21,11 @@ public class AssistantRenderModeChangeCoordinator {
     }
 
     AssistantRenderModeChangeCoordinator(
-            AssistantRenderModeChangePlanner assistantRenderModeChangePlanner,
-            ConversationModePersister conversationModePersister
+            @NonNull AssistantRenderModeChangePlanner assistantRenderModeChangePlanner,
+            @NonNull ConversationModePersister conversationModePersister
     ) {
-        this.assistantRenderModeChangePlanner = Validate.notNull(
-                assistantRenderModeChangePlanner,
-                "assistantRenderModeChangePlanner must not be null"
-        );
-        this.conversationModePersister = Validate.notNull(
-                conversationModePersister,
-                "conversationModePersister must not be null"
-        );
+        this.assistantRenderModeChangePlanner = assistantRenderModeChangePlanner;
+        this.conversationModePersister = conversationModePersister;
     }
 
     public ApplyResult apply(

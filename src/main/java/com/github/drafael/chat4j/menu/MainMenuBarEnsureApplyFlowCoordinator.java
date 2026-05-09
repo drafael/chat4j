@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
@@ -20,40 +20,27 @@ public class MainMenuBarEnsureApplyFlowCoordinator {
         this(mainMenuBarEnsureStateResolver::resolve, mainMenuBarApplyStateCoordinator::apply);
     }
 
-    MainMenuBarEnsureApplyFlowCoordinator(ResolveAction resolveAction, ApplyAction applyAction) {
-        this.resolveAction = Validate.notNull(resolveAction, "resolveAction must not be null");
-        this.applyAction = Validate.notNull(applyAction, "applyAction must not be null");
+    MainMenuBarEnsureApplyFlowCoordinator(@NonNull ResolveAction resolveAction, @NonNull ApplyAction applyAction) {
+        this.resolveAction = resolveAction;
+        this.applyAction = applyAction;
     }
 
     public void ensureAndApply(
             JMenuBar modelMenuBar,
-            Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
-            Runnable syncTogglePreviewMenuSelection,
-            MainMenuBarEnsureStateResolver.CurrentState currentState,
-            Consumer<JMenuBar> setModelMenuBar,
-            Consumer<JMenu> setFileMenu,
-            Consumer<JMenu> setViewMenu,
-            Consumer<JMenu> setModelsMenu,
-            Consumer<JMenu> setFontMenu,
-            Consumer<JMenu> setThemesMenu,
-            Consumer<JCheckBoxMenuItem> setTogglePreviewMenuItem,
-            Consumer<Boolean> setModelsMenuDirty,
-            Consumer<Boolean> setThemesMenuBuilt,
-            Consumer<Boolean> setFontMenuBuilt
+            @NonNull Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
+            @NonNull Runnable syncTogglePreviewMenuSelection,
+            @NonNull MainMenuBarEnsureStateResolver.CurrentState currentState,
+            @NonNull Consumer<JMenuBar> setModelMenuBar,
+            @NonNull Consumer<JMenu> setFileMenu,
+            @NonNull Consumer<JMenu> setViewMenu,
+            @NonNull Consumer<JMenu> setModelsMenu,
+            @NonNull Consumer<JMenu> setFontMenu,
+            @NonNull Consumer<JMenu> setThemesMenu,
+            @NonNull Consumer<JCheckBoxMenuItem> setTogglePreviewMenuItem,
+            @NonNull Consumer<Boolean> setModelsMenuDirty,
+            @NonNull Consumer<Boolean> setThemesMenuBuilt,
+            @NonNull Consumer<Boolean> setFontMenuBuilt
     ) {
-        Validate.notNull(menuBarCreator, "menuBarCreator must not be null");
-        Validate.notNull(syncTogglePreviewMenuSelection, "syncTogglePreviewMenuSelection must not be null");
-        Validate.notNull(currentState, "currentState must not be null");
-        Validate.notNull(setModelMenuBar, "setModelMenuBar must not be null");
-        Validate.notNull(setFileMenu, "setFileMenu must not be null");
-        Validate.notNull(setViewMenu, "setViewMenu must not be null");
-        Validate.notNull(setModelsMenu, "setModelsMenu must not be null");
-        Validate.notNull(setFontMenu, "setFontMenu must not be null");
-        Validate.notNull(setThemesMenu, "setThemesMenu must not be null");
-        Validate.notNull(setTogglePreviewMenuItem, "setTogglePreviewMenuItem must not be null");
-        Validate.notNull(setModelsMenuDirty, "setModelsMenuDirty must not be null");
-        Validate.notNull(setThemesMenuBuilt, "setThemesMenuBuilt must not be null");
-        Validate.notNull(setFontMenuBuilt, "setFontMenuBuilt must not be null");
 
         MainMenuBarEnsureResultApplyCoordinator.ApplyState applyState = resolveAction.resolve(
                 modelMenuBar,

@@ -44,11 +44,11 @@ class SettingsOpenDispatchCoordinatorTest {
         assertThatThrownBy(() -> subject.open(true, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("scheduleOpenOnEdt must not be null");
+                .hasMessageContaining("scheduleOpenOnEdt");
 
         assertThatThrownBy(() -> subject.open(true, () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("openOnEdt must not be null");
+                .hasMessageContaining("openOnEdt");
     }
 }

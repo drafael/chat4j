@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -18,24 +18,18 @@ public class AssistantRenderModeChangeDispatchCoordinator {
         this(assistantRenderModeChangeCoordinator::apply, assistantRenderModeChangeUiApplyCoordinator::apply);
     }
 
-    AssistantRenderModeChangeDispatchCoordinator(ChangeApplyAction changeApplyAction, UiApplyAction uiApplyAction) {
-        this.changeApplyAction = Validate.notNull(changeApplyAction, "changeApplyAction must not be null");
-        this.uiApplyAction = Validate.notNull(uiApplyAction, "uiApplyAction must not be null");
+    AssistantRenderModeChangeDispatchCoordinator(@NonNull ChangeApplyAction changeApplyAction, @NonNull UiApplyAction uiApplyAction) {
+        this.changeApplyAction = changeApplyAction;
+        this.uiApplyAction = uiApplyAction;
     }
 
     public boolean apply(
             UUID currentConversationId,
-            AssistantRenderMode mode,
+            @NonNull AssistantRenderMode mode,
             AssistantRenderMode currentPendingUnsavedConversationRenderMode,
-            Runnable syncTogglePreviewMenuSelection,
-            Consumer<AssistantRenderMode> setPendingUnsavedConversationRenderMode
+            @NonNull Runnable syncTogglePreviewMenuSelection,
+            @NonNull Consumer<AssistantRenderMode> setPendingUnsavedConversationRenderMode
     ) {
-        Validate.notNull(mode, "mode must not be null");
-        Validate.notNull(syncTogglePreviewMenuSelection, "syncTogglePreviewMenuSelection must not be null");
-        Validate.notNull(
-                setPendingUnsavedConversationRenderMode,
-                "setPendingUnsavedConversationRenderMode must not be null"
-        );
 
         AssistantRenderModeChangeCoordinator.ApplyResult applyResult = changeApplyAction.apply(
                 currentConversationId,

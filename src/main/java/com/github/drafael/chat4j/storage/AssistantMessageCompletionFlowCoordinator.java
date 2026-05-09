@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -10,22 +10,17 @@ public class AssistantMessageCompletionFlowCoordinator {
 
     private final AssistantMessageCompletionCoordinator assistantMessageCompletionCoordinator;
 
-    public AssistantMessageCompletionFlowCoordinator(AssistantMessageCompletionCoordinator assistantMessageCompletionCoordinator) {
-        this.assistantMessageCompletionCoordinator = Validate.notNull(
-                assistantMessageCompletionCoordinator,
-                "assistantMessageCompletionCoordinator must not be null"
-        );
+    public AssistantMessageCompletionFlowCoordinator(@NonNull AssistantMessageCompletionCoordinator assistantMessageCompletionCoordinator) {
+        this.assistantMessageCompletionCoordinator = assistantMessageCompletionCoordinator;
     }
 
     public boolean handle(
             UUID eventConversationId,
             Message eventMessage,
             UUID currentConversationId,
-            Runnable refreshSidebar,
-            Consumer<UUID> selectConversation
-    ) throws Exception {
-        Validate.notNull(refreshSidebar, "refreshSidebar must not be null");
-        Validate.notNull(selectConversation, "selectConversation must not be null");
+            @NonNull Runnable refreshSidebar,
+            @NonNull Consumer<UUID> selectConversation
+    ) throws Exception  {
 
         AssistantMessageCompletionCoordinator.PersistResult persistResult =
                 assistantMessageCompletionCoordinator.persist(eventConversationId, eventMessage, currentConversationId);

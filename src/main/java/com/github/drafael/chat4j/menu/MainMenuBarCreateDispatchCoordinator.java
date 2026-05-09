@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.awt.Toolkit;
 import java.util.function.Consumer;
@@ -17,9 +17,9 @@ public class MainMenuBarCreateDispatchCoordinator {
         );
     }
 
-    MainMenuBarCreateDispatchCoordinator(ShortcutMaskSupplier shortcutMaskSupplier, CreateAction createAction) {
-        this.shortcutMaskSupplier = Validate.notNull(shortcutMaskSupplier, "shortcutMaskSupplier must not be null");
-        this.createAction = Validate.notNull(createAction, "createAction must not be null");
+    MainMenuBarCreateDispatchCoordinator(@NonNull ShortcutMaskSupplier shortcutMaskSupplier, @NonNull CreateAction createAction) {
+        this.shortcutMaskSupplier = shortcutMaskSupplier;
+        this.createAction = createAction;
     }
 
     public MainMenuBarBuilder.CreatedMenuBar create(

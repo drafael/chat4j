@@ -73,13 +73,13 @@ class AssistantRenderModeChangeDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("mode must not be null");
+                .hasMessageContaining("mode");
 
         assertThatThrownBy(() -> new AssistantRenderModeChangeDispatchCoordinator(
                 (AssistantRenderModeChangeDispatchCoordinator.ChangeApplyAction) null,
                 (applyResult, syncTogglePreviewMenuSelection, setPendingUnsavedConversationRenderMode) -> true
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("changeApplyAction must not be null");
+                .hasMessageContaining("changeApplyAction");
     }
 }

@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -11,13 +11,11 @@ public class ConversationLoadCoordinator {
     private final ConversationRepo conversationRepo;
     private final AtomicLong requestCounter = new AtomicLong();
 
-    public ConversationLoadCoordinator(ConversationRepo conversationRepo) {
-        this.conversationRepo = Validate.notNull(conversationRepo, "conversationRepo must not be null");
+    public ConversationLoadCoordinator(@NonNull ConversationRepo conversationRepo) {
+        this.conversationRepo = conversationRepo;
     }
 
-    public long loadAsync(UUID conversationId, Listener listener) {
-        Validate.notNull(conversationId, "conversationId must not be null");
-        Validate.notNull(listener, "listener must not be null");
+    public long loadAsync(@NonNull UUID conversationId, @NonNull Listener listener) {
 
         long requestId = requestCounter.incrementAndGet();
         Thread.startVirtualThread(() -> {

@@ -124,7 +124,7 @@ class MainMenuBarBuilderTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onNewChat must not be null");
+                .hasMessageContaining("onNewChat");
     }
 
     @Test
@@ -139,7 +139,7 @@ class MainMenuBarBuilderTest {
                 new MenuBarAssemblyFactory(new StaticHelpMenuVisibilityResolver(true), new HelpMenuFactory())
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("fileMenuFactory must not be null");
+                .hasMessageContaining("fileMenuFactory");
     }
 
     private static class StaticHelpMenuVisibilityResolver extends HelpMenuVisibilityResolver {

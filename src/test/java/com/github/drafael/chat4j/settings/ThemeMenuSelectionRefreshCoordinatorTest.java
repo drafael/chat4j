@@ -61,7 +61,7 @@ class ThemeMenuSelectionRefreshCoordinatorTest {
 
         assertThatThrownBy(() -> subject.refresh(null, null, true, "GitHub"))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("themeMenuItemsByName must not be null");
+                .hasMessageContaining("themeMenuItemsByName");
 
         assertThatThrownBy(() -> subject.refresh(emptyMap(), null, true, "  "))
                 .isInstanceOf(IllegalArgumentException.class)

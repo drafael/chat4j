@@ -58,13 +58,13 @@ class SettingsOpenFlowCoordinatorTest {
         assertThatThrownBy(() -> subject.open(true, null, SettingsOpenFlowCoordinatorTest::dialogHandle, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("scheduleOpenOnEdt must not be null");
+                .hasMessageContaining("scheduleOpenOnEdt");
 
         assertThatThrownBy(() -> subject.open(true, () -> {
         }, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("dialogFactory must not be null");
+                .hasMessageContaining("dialogFactory");
 
         assertThatThrownBy(() -> new SettingsOpenFlowCoordinator(
                 (SettingsOpenFlowCoordinator.OpenDispatchAction) null,
@@ -72,7 +72,7 @@ class SettingsOpenFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("openDispatchAction must not be null");
+                .hasMessageContaining("openDispatchAction");
     }
 
     private static SettingsDialogCoordinator.DialogHandle dialogHandle() {

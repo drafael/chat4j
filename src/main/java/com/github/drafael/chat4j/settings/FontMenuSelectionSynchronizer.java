@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JRadioButtonMenuItem;
 import java.util.Map;
 import java.util.Objects;
@@ -9,17 +9,13 @@ import java.util.Objects;
 public class FontMenuSelectionSynchronizer {
 
     public FontMenuSelectionState syncSelection(
-            Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
-            Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
-            Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
-            FontSettingsResolver.FontMenuSelection currentSelection,
+            @NonNull Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
+            @NonNull Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
+            @NonNull Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
+            @NonNull FontSettingsResolver.FontMenuSelection currentSelection,
             FontMenuSelectionState previousSelection,
             boolean fontMenuBuilt
     ) {
-        Validate.notNull(appFontMenuItemsByFamily, "appFontMenuItemsByFamily must not be null");
-        Validate.notNull(appFontSizeMenuItemsBySize, "appFontSizeMenuItemsBySize must not be null");
-        Validate.notNull(codeFontMenuItemsByFamily, "codeFontMenuItemsByFamily must not be null");
-        Validate.notNull(currentSelection, "currentSelection must not be null");
 
         FontMenuSelectionState effectivePreviousSelection = previousSelection == null
                 ? new FontMenuSelectionState(null, null, null)

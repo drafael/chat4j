@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.Validate;
 
 import java.util.List;
 import java.util.Map;
@@ -22,11 +21,11 @@ public class ProviderSettingsApplyCoordinator {
     }
 
     ProviderSettingsApplyCoordinator(
-            RuntimeSettingsResolver runtimeSettingsResolver,
-            RuntimeConfigApplier runtimeConfigApplier
+            @NonNull RuntimeSettingsResolver runtimeSettingsResolver,
+            @NonNull RuntimeConfigApplier runtimeConfigApplier
     ) {
-        this.runtimeSettingsResolver = Validate.notNull(runtimeSettingsResolver, "runtimeSettingsResolver must not be null");
-        this.runtimeConfigApplier = Validate.notNull(runtimeConfigApplier, "runtimeConfigApplier must not be null");
+        this.runtimeSettingsResolver = runtimeSettingsResolver;
+        this.runtimeConfigApplier = runtimeConfigApplier;
     }
 
     public void apply(

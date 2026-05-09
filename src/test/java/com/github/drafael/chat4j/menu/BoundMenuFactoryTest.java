@@ -42,12 +42,12 @@ class BoundMenuFactoryTest {
         assertThatThrownBy(() -> subject.create("Theme", null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("beforeSelect must not be null");
+                .hasMessageContaining("beforeSelect");
 
         assertThatThrownBy(() -> subject.create("Theme", () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onSelect must not be null");
+                .hasMessageContaining("onSelect");
     }
 
     @Test
@@ -55,6 +55,6 @@ class BoundMenuFactoryTest {
     void constructor_whenBinderMissing_throwsException() {
         assertThatThrownBy(() -> new BoundMenuFactory(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuSelectionListenerBinder must not be null");
+                .hasMessageContaining("menuSelectionListenerBinder");
     }
 }

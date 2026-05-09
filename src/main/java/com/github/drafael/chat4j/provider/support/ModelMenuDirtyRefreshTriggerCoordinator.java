@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenu;
 
@@ -12,13 +12,11 @@ public class ModelMenuDirtyRefreshTriggerCoordinator {
         this(modelMenuDirtyRefreshCoordinator::refresh);
     }
 
-    ModelMenuDirtyRefreshTriggerCoordinator(TriggerAction triggerAction) {
-        this.triggerAction = Validate.notNull(triggerAction, "triggerAction must not be null");
+    ModelMenuDirtyRefreshTriggerCoordinator(@NonNull TriggerAction triggerAction) {
+        this.triggerAction = triggerAction;
     }
 
-    public void trigger(JMenu modelsMenu, Runnable markModelsMenuDirty, Runnable ensureModelsMenuReady) {
-        Validate.notNull(markModelsMenuDirty, "markModelsMenuDirty must not be null");
-        Validate.notNull(ensureModelsMenuReady, "ensureModelsMenuReady must not be null");
+    public void trigger(JMenu modelsMenu, @NonNull Runnable markModelsMenuDirty, @NonNull Runnable ensureModelsMenuReady) {
 
         triggerAction.trigger(modelsMenu, markModelsMenuDirty, ensureModelsMenuReady);
     }

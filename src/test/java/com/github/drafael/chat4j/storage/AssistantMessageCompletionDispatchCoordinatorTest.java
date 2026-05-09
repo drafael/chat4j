@@ -79,7 +79,7 @@ class AssistantMessageCompletionDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("completionHandler must not be null");
+                .hasMessageContaining("completionHandler");
 
         assertThatThrownBy(() -> subject.handle(
                 UUID.randomUUID(),
@@ -89,6 +89,6 @@ class AssistantMessageCompletionDispatchCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("failureHandler must not be null");
+                .hasMessageContaining("failureHandler");
     }
 }

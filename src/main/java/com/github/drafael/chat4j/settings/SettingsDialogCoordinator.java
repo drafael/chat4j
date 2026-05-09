@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.awt.Window;
 import java.awt.event.WindowAdapter;
@@ -11,9 +11,7 @@ public class SettingsDialogCoordinator {
 
     private final SingleInstanceWindowTracker<DialogHandle> tracker = new SingleInstanceWindowTracker<>();
 
-    public void open(DialogFactory dialogFactory, Runnable onDialogClosed) {
-        Validate.notNull(dialogFactory, "dialogFactory must not be null");
-        Validate.notNull(onDialogClosed, "onDialogClosed must not be null");
+    public void open(@NonNull DialogFactory dialogFactory, @NonNull Runnable onDialogClosed) {
 
         DialogHandle existingDialog = tracker.get();
         if (existingDialog != null) {
@@ -45,8 +43,7 @@ public class SettingsDialogCoordinator {
 
     public interface DialogHandle {
 
-        static DialogHandle forWindow(Window window) {
-            Validate.notNull(window, "window must not be null");
+        static DialogHandle forWindow(@NonNull Window window) {
 
             return new DialogHandle() {
                 @Override
@@ -75,8 +72,7 @@ public class SettingsDialogCoordinator {
                 }
 
                 @Override
-                public void onClosed(Runnable callback) {
-                    Validate.notNull(callback, "callback must not be null");
+                public void onClosed(@NonNull Runnable callback) {
                     window.addWindowListener(new WindowAdapter() {
                         @Override
                         public void windowClosed(WindowEvent e) {

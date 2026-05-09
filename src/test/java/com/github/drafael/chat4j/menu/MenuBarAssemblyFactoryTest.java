@@ -77,7 +77,7 @@ class MenuBarAssemblyFactoryTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("fileMenu must not be null");
+                .hasMessageContaining("fileMenu");
     }
 
     private static class StaticHelpMenuVisibilityResolver extends HelpMenuVisibilityResolver {

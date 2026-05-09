@@ -56,12 +56,12 @@ class ModelMenuSelectionDispatchCoordinatorTest {
 
         assertThatThrownBy(() -> subject.sync(null, "m", "l", false))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("modelMenuItemsByKey must not be null");
+                .hasMessageContaining("modelMenuItemsByKey");
 
         assertThatThrownBy(() -> new ModelMenuSelectionDispatchCoordinator(
                 (ModelMenuSelectionDispatchCoordinator.SelectionSyncAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("selectionSyncAction must not be null");
+                .hasMessageContaining("selectionSyncAction");
     }
 }

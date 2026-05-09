@@ -54,13 +54,13 @@ class ProviderMenuAvailabilityRefreshDispatchCoordinatorTest {
         assertThatThrownBy(() -> subject.refresh(null, new LinkedHashMap<>(),
                 new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), Object.class)))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("modelMenuItemsByKey must not be null");
+                .hasMessageContaining("modelMenuItemsByKey");
 
         assertThatThrownBy(() -> new ProviderMenuAvailabilityRefreshDispatchCoordinator(
                 (ProviderMenuAvailabilityRefreshDispatchCoordinator.RefreshAction) null,
                 List::of
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshAction must not be null");
+                .hasMessageContaining("refreshAction");
     }
 }

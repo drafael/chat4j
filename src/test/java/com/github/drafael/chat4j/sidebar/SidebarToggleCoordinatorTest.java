@@ -74,11 +74,11 @@ class SidebarToggleCoordinatorTest {
     void toggle_whenDependencyOrArgumentMissing_throwsException() {
         assertThatThrownBy(() -> new SidebarToggleCoordinator(null, new SidebarToggleApplyCoordinator()))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sidebarVisibilityCoordinator must not be null");
+                .hasMessageContaining("sidebarVisibilityCoordinator");
 
         assertThatThrownBy(() -> new SidebarToggleCoordinator(new SidebarVisibilityCoordinator(), null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sidebarToggleApplyCoordinator must not be null");
+                .hasMessageContaining("sidebarToggleApplyCoordinator");
 
         var subject = new SidebarToggleCoordinator();
         assertThatThrownBy(() -> subject.toggle(
@@ -91,6 +91,6 @@ class SidebarToggleCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("splitPane must not be null");
+                .hasMessageContaining("splitPane");
     }
 }

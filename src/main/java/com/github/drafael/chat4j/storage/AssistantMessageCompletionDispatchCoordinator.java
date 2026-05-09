@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 
@@ -11,11 +11,9 @@ public class AssistantMessageCompletionDispatchCoordinator {
             UUID eventConversationId,
             Message eventMessage,
             UUID currentConversationId,
-            CompletionHandler completionHandler,
-            FailureHandler failureHandler
+            @NonNull CompletionHandler completionHandler,
+            @NonNull FailureHandler failureHandler
     ) {
-        Validate.notNull(completionHandler, "completionHandler must not be null");
-        Validate.notNull(failureHandler, "failureHandler must not be null");
 
         try {
             return completionHandler.handle(eventConversationId, eventMessage, currentConversationId);

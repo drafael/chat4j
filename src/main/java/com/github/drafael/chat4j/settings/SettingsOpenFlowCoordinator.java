@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class SettingsOpenFlowCoordinator {
 
@@ -14,20 +14,17 @@ public class SettingsOpenFlowCoordinator {
         this(settingsOpenDispatchCoordinator::open, settingsDialogCoordinator::open);
     }
 
-    SettingsOpenFlowCoordinator(OpenDispatchAction openDispatchAction, DialogOpenAction dialogOpenAction) {
-        this.openDispatchAction = Validate.notNull(openDispatchAction, "openDispatchAction must not be null");
-        this.dialogOpenAction = Validate.notNull(dialogOpenAction, "dialogOpenAction must not be null");
+    SettingsOpenFlowCoordinator(@NonNull OpenDispatchAction openDispatchAction, @NonNull DialogOpenAction dialogOpenAction) {
+        this.openDispatchAction = openDispatchAction;
+        this.dialogOpenAction = dialogOpenAction;
     }
 
     public void open(
             boolean onEdt,
-            Runnable scheduleOpenOnEdt,
-            SettingsDialogCoordinator.DialogFactory dialogFactory,
-            Runnable onDialogClosed
+            @NonNull Runnable scheduleOpenOnEdt,
+            @NonNull SettingsDialogCoordinator.DialogFactory dialogFactory,
+            @NonNull Runnable onDialogClosed
     ) {
-        Validate.notNull(scheduleOpenOnEdt, "scheduleOpenOnEdt must not be null");
-        Validate.notNull(dialogFactory, "dialogFactory must not be null");
-        Validate.notNull(onDialogClosed, "onDialogClosed must not be null");
 
         openDispatchAction.open(
                 onEdt,

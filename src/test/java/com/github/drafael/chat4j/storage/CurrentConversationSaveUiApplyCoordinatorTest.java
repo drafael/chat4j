@@ -150,7 +150,7 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 true
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveResult must not be null");
+                .hasMessageContaining("saveResult");
 
         assertThatThrownBy(() -> subject.apply(
                 saveResult,
@@ -166,6 +166,6 @@ class CurrentConversationSaveUiApplyCoordinatorTest {
                 true
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setCurrentConversationId must not be null");
+                .hasMessageContaining("setCurrentConversationId");
     }
 }

@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.List;
 import java.util.Map;
@@ -14,28 +14,18 @@ public class ProviderMenuDataResolver {
     private final ProviderAvailabilityResolver providerAvailabilityResolver;
 
     public ProviderMenuDataResolver(
-            ProviderModelsResolver providerModelsResolver,
-            ProviderSelectableResolver providerSelectableResolver,
-            ProviderFavoritesResolver providerFavoritesResolver,
-            ProviderAvailabilityResolver providerAvailabilityResolver
+            @NonNull ProviderModelsResolver providerModelsResolver,
+            @NonNull ProviderSelectableResolver providerSelectableResolver,
+            @NonNull ProviderFavoritesResolver providerFavoritesResolver,
+            @NonNull ProviderAvailabilityResolver providerAvailabilityResolver
     ) {
-        this.providerModelsResolver = Validate.notNull(providerModelsResolver, "providerModelsResolver must not be null");
-        this.providerSelectableResolver = Validate.notNull(
-                providerSelectableResolver,
-                "providerSelectableResolver must not be null"
-        );
-        this.providerFavoritesResolver = Validate.notNull(
-                providerFavoritesResolver,
-                "providerFavoritesResolver must not be null"
-        );
-        this.providerAvailabilityResolver = Validate.notNull(
-                providerAvailabilityResolver,
-                "providerAvailabilityResolver must not be null"
-        );
+        this.providerModelsResolver = providerModelsResolver;
+        this.providerSelectableResolver = providerSelectableResolver;
+        this.providerFavoritesResolver = providerFavoritesResolver;
+        this.providerAvailabilityResolver = providerAvailabilityResolver;
     }
 
-    public ProviderMenuData resolve(List<ProviderRegistry.ProviderDef> providers) {
-        Validate.notNull(providers, "providers must not be null");
+    public ProviderMenuData resolve(@NonNull List<ProviderRegistry.ProviderDef> providers) {
 
         Map<String, List<String>> modelsByProvider = providerModelsResolver.resolve(providers);
         Map<String, Boolean> providerSelectable = providerSelectableResolver.resolve(

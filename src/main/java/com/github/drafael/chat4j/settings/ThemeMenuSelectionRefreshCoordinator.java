@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JRadioButtonMenuItem;
@@ -21,20 +22,19 @@ public class ThemeMenuSelectionRefreshCoordinator {
     }
 
     ThemeMenuSelectionRefreshCoordinator(
-            ThemeResolver themeResolver,
-            SelectionSynchronizer selectionSynchronizer
+            @NonNull ThemeResolver themeResolver,
+            @NonNull SelectionSynchronizer selectionSynchronizer
     ) {
-        this.themeResolver = Validate.notNull(themeResolver, "themeResolver must not be null");
-        this.selectionSynchronizer = Validate.notNull(selectionSynchronizer, "selectionSynchronizer must not be null");
+        this.themeResolver = themeResolver;
+        this.selectionSynchronizer = selectionSynchronizer;
     }
 
     public String refresh(
-            Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
+            @NonNull Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
             String previousSelection,
             boolean themesMenuBuilt,
             String defaultTheme
     ) {
-        Validate.notNull(themeMenuItemsByName, "themeMenuItemsByName must not be null");
         Validate.notBlank(defaultTheme, "defaultTheme must not be blank");
 
         String selectedTheme = themeResolver.resolve(defaultTheme);

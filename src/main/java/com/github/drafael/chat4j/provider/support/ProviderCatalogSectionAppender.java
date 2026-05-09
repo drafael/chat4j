@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
@@ -22,52 +22,29 @@ public class ProviderCatalogSectionAppender {
     private final ProviderModelMenuItemFactory providerModelMenuItemFactory;
 
     public ProviderCatalogSectionAppender(
-            ProviderAvailabilityLabelFormatter providerAvailabilityLabelFormatter,
-            ProviderHeaderMenuItemFactory providerHeaderMenuItemFactory,
-            ProviderFavoritesResolver providerFavoritesResolver,
-            ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory,
-            ProviderModelMenuItemFactory providerModelMenuItemFactory
+            @NonNull ProviderAvailabilityLabelFormatter providerAvailabilityLabelFormatter,
+            @NonNull ProviderHeaderMenuItemFactory providerHeaderMenuItemFactory,
+            @NonNull ProviderFavoritesResolver providerFavoritesResolver,
+            @NonNull ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory,
+            @NonNull ProviderModelMenuItemFactory providerModelMenuItemFactory
     ) {
-        this.providerAvailabilityLabelFormatter = Validate.notNull(
-                providerAvailabilityLabelFormatter,
-                "providerAvailabilityLabelFormatter must not be null"
-        );
-        this.providerHeaderMenuItemFactory = Validate.notNull(
-                providerHeaderMenuItemFactory,
-                "providerHeaderMenuItemFactory must not be null"
-        );
-        this.providerFavoritesResolver = Validate.notNull(
-                providerFavoritesResolver,
-                "providerFavoritesResolver must not be null"
-        );
-        this.providerMenuEmptyStateFactory = Validate.notNull(
-                providerMenuEmptyStateFactory,
-                "providerMenuEmptyStateFactory must not be null"
-        );
-        this.providerModelMenuItemFactory = Validate.notNull(
-                providerModelMenuItemFactory,
-                "providerModelMenuItemFactory must not be null"
-        );
+        this.providerAvailabilityLabelFormatter = providerAvailabilityLabelFormatter;
+        this.providerHeaderMenuItemFactory = providerHeaderMenuItemFactory;
+        this.providerFavoritesResolver = providerFavoritesResolver;
+        this.providerMenuEmptyStateFactory = providerMenuEmptyStateFactory;
+        this.providerModelMenuItemFactory = providerModelMenuItemFactory;
     }
 
     public boolean append(
-            JMenu modelsMenu,
-            ButtonGroup group,
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            Map<String, JMenuItem> providerHeaderItemsByName,
-            List<ProviderRegistry.ProviderDef> providers,
-            Map<String, List<String>> modelsByProvider,
-            Map<String, Boolean> providerSelectable,
-            Consumer<String> onModelSelected
+            @NonNull JMenu modelsMenu,
+            @NonNull ButtonGroup group,
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
+            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull Map<String, List<String>> modelsByProvider,
+            @NonNull Map<String, Boolean> providerSelectable,
+            @NonNull Consumer<String> onModelSelected
     ) {
-        Validate.notNull(modelsMenu, "modelsMenu must not be null");
-        Validate.notNull(group, "group must not be null");
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(providerHeaderItemsByName, "providerHeaderItemsByName must not be null");
-        Validate.notNull(providers, "providers must not be null");
-        Validate.notNull(modelsByProvider, "modelsByProvider must not be null");
-        Validate.notNull(providerSelectable, "providerSelectable must not be null");
-        Validate.notNull(onModelSelected, "onModelSelected must not be null");
 
         boolean appended = false;
         for (ProviderRegistry.ProviderDef provider : providers) {

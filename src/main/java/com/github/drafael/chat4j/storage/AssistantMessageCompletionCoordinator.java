@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -14,11 +14,8 @@ public class AssistantMessageCompletionCoordinator {
         this(conversationPersistenceCoordinator::persistAssistantMessage);
     }
 
-    AssistantMessageCompletionCoordinator(AssistantMessagePersister assistantMessagePersister) {
-        this.assistantMessagePersister = Validate.notNull(
-                assistantMessagePersister,
-                "assistantMessagePersister must not be null"
-        );
+    AssistantMessageCompletionCoordinator(@NonNull AssistantMessagePersister assistantMessagePersister) {
+        this.assistantMessagePersister = assistantMessagePersister;
     }
 
     public PersistResult persist(UUID conversationId, Message message, UUID currentConversationId) throws Exception {

@@ -35,12 +35,12 @@ class ModelMenuDirtyRefreshCoordinatorTest {
         assertThatThrownBy(() -> subject.refresh(new JMenu("Model"), null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("markModelsMenuDirty must not be null");
+                .hasMessageContaining("markModelsMenuDirty");
 
         assertThatThrownBy(() -> subject.refresh(new JMenu("Model"), () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureModelsMenuReady must not be null");
+                .hasMessageContaining("ensureModelsMenuReady");
     }
 
     @Test
@@ -48,7 +48,7 @@ class ModelMenuDirtyRefreshCoordinatorTest {
     void constructor_whenRunnerMissing_throwsException() {
         assertThatThrownBy(() -> new ModelMenuDirtyRefreshCoordinator(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuPopupVisibleRunner must not be null");
+                .hasMessageContaining("menuPopupVisibleRunner");
     }
 
     private static class RecordingMenuPopupVisibleRunner extends MenuPopupVisibleRunner {

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JRadioButtonMenuItem;
 import java.util.Map;
@@ -22,26 +22,20 @@ public class FontMenuSelectionRefreshCoordinator {
     }
 
     FontMenuSelectionRefreshCoordinator(
-            SelectionResolver selectionResolver,
-            SelectionSynchronizer selectionSynchronizer
+            @NonNull SelectionResolver selectionResolver,
+            @NonNull SelectionSynchronizer selectionSynchronizer
     ) {
-        this.selectionResolver = Validate.notNull(selectionResolver, "selectionResolver must not be null");
-        this.selectionSynchronizer = Validate.notNull(
-                selectionSynchronizer,
-                "selectionSynchronizer must not be null"
-        );
+        this.selectionResolver = selectionResolver;
+        this.selectionSynchronizer = selectionSynchronizer;
     }
 
     public FontMenuSelectionSynchronizer.FontMenuSelectionState refresh(
-            Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
-            Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
-            Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
+            @NonNull Map<String, JRadioButtonMenuItem> appFontMenuItemsByFamily,
+            @NonNull Map<Integer, JRadioButtonMenuItem> appFontSizeMenuItemsBySize,
+            @NonNull Map<String, JRadioButtonMenuItem> codeFontMenuItemsByFamily,
             FontMenuSelectionSynchronizer.FontMenuSelectionState previousSelection,
             boolean fontMenuBuilt
     ) {
-        Validate.notNull(appFontMenuItemsByFamily, "appFontMenuItemsByFamily must not be null");
-        Validate.notNull(appFontSizeMenuItemsBySize, "appFontSizeMenuItemsBySize must not be null");
-        Validate.notNull(codeFontMenuItemsByFamily, "codeFontMenuItemsByFamily must not be null");
 
         FontSettingsResolver.FontMenuSelection fontMenuSelection = selectionResolver.resolve(
                 appFontMenuItemsByFamily.keySet(),

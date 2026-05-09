@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
@@ -18,24 +18,18 @@ public class ThemeMenuStructureRebuilder {
     }
 
     ThemeMenuStructureRebuilder(
-            MenuSectionHeaderFactory menuSectionHeaderFactory,
-            GroupedThemesProvider groupedThemesProvider
+            @NonNull MenuSectionHeaderFactory menuSectionHeaderFactory,
+            @NonNull GroupedThemesProvider groupedThemesProvider
     ) {
-        this.menuSectionHeaderFactory = Validate.notNull(
-                menuSectionHeaderFactory,
-                "menuSectionHeaderFactory must not be null"
-        );
-        this.groupedThemesProvider = Validate.notNull(groupedThemesProvider, "groupedThemesProvider must not be null");
+        this.menuSectionHeaderFactory = menuSectionHeaderFactory;
+        this.groupedThemesProvider = groupedThemesProvider;
     }
 
     public void rebuild(
-            JMenu themesMenu,
-            Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
-            ThemeSelectionHandler onThemeSelected
+            @NonNull JMenu themesMenu,
+            @NonNull Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
+            @NonNull ThemeSelectionHandler onThemeSelected
     ) {
-        Validate.notNull(themesMenu, "themesMenu must not be null");
-        Validate.notNull(themeMenuItemsByName, "themeMenuItemsByName must not be null");
-        Validate.notNull(onThemeSelected, "onThemeSelected must not be null");
 
         themesMenu.removeAll();
         themeMenuItemsByName.clear();

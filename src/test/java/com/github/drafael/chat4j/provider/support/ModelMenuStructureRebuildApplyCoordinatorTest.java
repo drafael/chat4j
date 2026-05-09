@@ -40,16 +40,16 @@ class ModelMenuStructureRebuildApplyCoordinatorTest {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildState must not be null");
+                .hasMessageContaining("rebuildState");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setModelsMenuDirty must not be null");
+                .hasMessageContaining("setModelsMenuDirty");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, value -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedModelKey must not be null");
+                .hasMessageContaining("setLastMenuSelectedModelKey");
     }
 }

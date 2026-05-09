@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenuBar;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,18 +22,16 @@ public class MainMenuBarEnsureDispatchCoordinator {
         );
     }
 
-    MainMenuBarEnsureDispatchCoordinator(EnsureAction ensureAction, CreatedApplyAction createdApplyAction) {
-        this.ensureAction = Validate.notNull(ensureAction, "ensureAction must not be null");
-        this.createdApplyAction = Validate.notNull(createdApplyAction, "createdApplyAction must not be null");
+    MainMenuBarEnsureDispatchCoordinator(@NonNull EnsureAction ensureAction, @NonNull CreatedApplyAction createdApplyAction) {
+        this.ensureAction = ensureAction;
+        this.createdApplyAction = createdApplyAction;
     }
 
     public EnsureResult ensure(
             JMenuBar existingMenuBar,
-            Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
-            Runnable syncTogglePreviewMenuSelection
+            @NonNull Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
+            @NonNull Runnable syncTogglePreviewMenuSelection
     ) {
-        Validate.notNull(menuBarCreator, "menuBarCreator must not be null");
-        Validate.notNull(syncTogglePreviewMenuSelection, "syncTogglePreviewMenuSelection must not be null");
 
         var createdApplyResultRef = new AtomicReference<MainMenuBarCreatedApplyCoordinator.ApplyResult>();
         JMenuBar menuBar = ensureAction.ensure(
@@ -48,12 +46,11 @@ public class MainMenuBarEnsureDispatchCoordinator {
     }
 
     public record EnsureResult(
-            JMenuBar menuBar,
+            @NonNull JMenuBar menuBar,
             MainMenuBarCreatedApplyCoordinator.ApplyResult createdApplyResult
     ) {
 
         public EnsureResult {
-            Validate.notNull(menuBar, "menuBar must not be null");
         }
 
         public boolean created() {

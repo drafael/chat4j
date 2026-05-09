@@ -87,12 +87,12 @@ class MenuBarSettingDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuBarSetter must not be null");
+                .hasMessageContaining("menuBarSetter");
 
         assertThatThrownBy(() -> new MenuBarSettingDispatchCoordinator(
                 (MenuBarSettingDispatchCoordinator.ApplyAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyAction must not be null");
+                .hasMessageContaining("applyAction");
     }
 }

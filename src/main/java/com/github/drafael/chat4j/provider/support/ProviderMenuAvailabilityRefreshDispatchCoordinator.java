@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
@@ -20,21 +20,18 @@ public class ProviderMenuAvailabilityRefreshDispatchCoordinator {
     }
 
     ProviderMenuAvailabilityRefreshDispatchCoordinator(
-            RefreshAction refreshAction,
-            ProvidersSupplier providersSupplier
+            @NonNull RefreshAction refreshAction,
+            @NonNull ProvidersSupplier providersSupplier
     ) {
-        this.refreshAction = Validate.notNull(refreshAction, "refreshAction must not be null");
-        this.providersSupplier = Validate.notNull(providersSupplier, "providersSupplier must not be null");
+        this.refreshAction = refreshAction;
+        this.providersSupplier = providersSupplier;
     }
 
     public void refresh(
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            Map<String, JMenuItem> providerHeaderItemsByName,
-            ProviderMenuIconResolver providerMenuIconResolver
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull Map<String, JMenuItem> providerHeaderItemsByName,
+            @NonNull ProviderMenuIconResolver providerMenuIconResolver
     ) {
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(providerHeaderItemsByName, "providerHeaderItemsByName must not be null");
-        Validate.notNull(providerMenuIconResolver, "providerMenuIconResolver must not be null");
 
         refreshAction.refresh(
                 modelMenuItemsByKey,

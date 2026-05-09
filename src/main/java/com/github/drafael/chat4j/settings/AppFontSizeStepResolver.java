@@ -1,13 +1,13 @@
 package com.github.drafael.chat4j.settings;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import java.util.stream.IntStream;
 
 public class AppFontSizeStepResolver {
 
-    public int resolveAdjustedSize(int[] sizeOptions, int currentSize, boolean increase) {
-        Validate.notNull(sizeOptions, "sizeOptions must not be null");
+    public int resolveAdjustedSize(@NonNull int[] sizeOptions, int currentSize, boolean increase) {
         Validate.isTrue(sizeOptions.length > 0, "sizeOptions must not be empty");
 
         int normalizedCurrentSize = AppearancePanel.normalizeAppFontSize(currentSize);

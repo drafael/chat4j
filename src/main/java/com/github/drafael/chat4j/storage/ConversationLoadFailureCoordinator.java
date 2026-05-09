@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.UUID;
@@ -13,13 +13,10 @@ public class ConversationLoadFailureCoordinator {
             long requestId,
             UUID currentConversationId,
             UUID failedConversationId,
-            Exception error,
-            FailureGuard failureGuard,
-            ErrorPresenter errorPresenter
+            @NonNull Exception error,
+            @NonNull FailureGuard failureGuard,
+            @NonNull ErrorPresenter errorPresenter
     ) {
-        Validate.notNull(error, "error must not be null");
-        Validate.notNull(failureGuard, "failureGuard must not be null");
-        Validate.notNull(errorPresenter, "errorPresenter must not be null");
 
         if (!failureGuard.shouldHandle(requestId, currentConversationId, failedConversationId)) {
             return false;

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenuBar;
 import java.util.function.Consumer;
@@ -14,32 +14,21 @@ public class MenuBarSettingDispatchCoordinator {
         this(menuBarSettingCoordinator::apply);
     }
 
-    MenuBarSettingDispatchCoordinator(ApplyAction applyAction) {
-        this.applyAction = Validate.notNull(applyAction, "applyAction must not be null");
+    MenuBarSettingDispatchCoordinator(@NonNull ApplyAction applyAction) {
+        this.applyAction = applyAction;
     }
 
     public void apply(
             boolean enabled,
-            Consumer<JMenuBar> menuBarSetter,
-            Runnable ensureMenuBar,
-            Supplier<JMenuBar> modelMenuBarSupplier,
-            Runnable ensureThemesMenuReady,
-            Runnable ensureModelsMenuReady,
-            Runnable ensureFontMenuReady,
-            Runnable syncTogglePreviewMenuSelection,
-            Runnable refreshWindow
+            @NonNull Consumer<JMenuBar> menuBarSetter,
+            @NonNull Runnable ensureMenuBar,
+            @NonNull Supplier<JMenuBar> modelMenuBarSupplier,
+            @NonNull Runnable ensureThemesMenuReady,
+            @NonNull Runnable ensureModelsMenuReady,
+            @NonNull Runnable ensureFontMenuReady,
+            @NonNull Runnable syncTogglePreviewMenuSelection,
+            @NonNull Runnable refreshWindow
     ) {
-        Validate.notNull(menuBarSetter, "menuBarSetter must not be null");
-        Validate.notNull(ensureMenuBar, "ensureMenuBar must not be null");
-        Validate.notNull(modelMenuBarSupplier, "modelMenuBarSupplier must not be null");
-        Validate.notNull(ensureThemesMenuReady, "ensureThemesMenuReady must not be null");
-        Validate.notNull(ensureModelsMenuReady, "ensureModelsMenuReady must not be null");
-        Validate.notNull(ensureFontMenuReady, "ensureFontMenuReady must not be null");
-        Validate.notNull(
-                syncTogglePreviewMenuSelection,
-                "syncTogglePreviewMenuSelection must not be null"
-        );
-        Validate.notNull(refreshWindow, "refreshWindow must not be null");
 
         applyAction.apply(
                 enabled,

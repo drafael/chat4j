@@ -114,7 +114,7 @@ class MainMenuBarEnsureResultApplyCoordinatorTest {
                 false
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureResult must not be null");
+                .hasMessageContaining("ensureResult");
 
         assertThatThrownBy(() -> new MainMenuBarEnsureResultApplyCoordinator.ApplyState(
                 null,
@@ -129,6 +129,6 @@ class MainMenuBarEnsureResultApplyCoordinatorTest {
                 false
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("modelMenuBar must not be null");
+                .hasMessageContaining("modelMenuBar");
     }
 }

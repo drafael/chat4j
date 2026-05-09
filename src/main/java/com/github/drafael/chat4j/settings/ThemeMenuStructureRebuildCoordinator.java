@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenu;
 import javax.swing.JRadioButtonMenuItem;
@@ -14,19 +14,17 @@ public class ThemeMenuStructureRebuildCoordinator {
         this(themeMenuStructureRebuilder::rebuild);
     }
 
-    ThemeMenuStructureRebuildCoordinator(RebuildAction rebuildAction) {
-        this.rebuildAction = Validate.notNull(rebuildAction, "rebuildAction must not be null");
+    ThemeMenuStructureRebuildCoordinator(@NonNull RebuildAction rebuildAction) {
+        this.rebuildAction = rebuildAction;
     }
 
     public RebuildState rebuild(
             JMenu themesMenu,
-            Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
-            ThemeMenuStructureRebuilder.ThemeSelectionHandler onThemeSelected,
+            @NonNull Map<String, JRadioButtonMenuItem> themeMenuItemsByName,
+            @NonNull ThemeMenuStructureRebuilder.ThemeSelectionHandler onThemeSelected,
             boolean currentThemesMenuBuilt,
             String currentLastMenuSelectedTheme
     ) {
-        Validate.notNull(themeMenuItemsByName, "themeMenuItemsByName must not be null");
-        Validate.notNull(onThemeSelected, "onThemeSelected must not be null");
 
         if (themesMenu == null) {
             return new RebuildState(currentThemesMenuBuilt, currentLastMenuSelectedTheme);

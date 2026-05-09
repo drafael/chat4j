@@ -62,7 +62,7 @@ class AssistantRenderModeChangeUiApplyCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyResult must not be null");
+                .hasMessageContaining("applyResult");
 
         assertThatThrownBy(() -> subject.apply(
                 new AssistantRenderModeChangeCoordinator.ApplyResult(true, AssistantRenderMode.PREVIEW),
@@ -71,6 +71,6 @@ class AssistantRenderModeChangeUiApplyCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncTogglePreviewMenuSelection must not be null");
+                .hasMessageContaining("syncTogglePreviewMenuSelection");
     }
 }

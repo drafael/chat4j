@@ -1,17 +1,14 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JMenu;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 
 public class MenuSelectionListenerBinder {
 
-    public void bind(JMenu menu, Runnable beforeSelect, Runnable onSelect) {
-        Validate.notNull(menu, "menu must not be null");
-        Validate.notNull(beforeSelect, "beforeSelect must not be null");
-        Validate.notNull(onSelect, "onSelect must not be null");
+    public void bind(@NonNull JMenu menu, @NonNull Runnable beforeSelect, @NonNull Runnable onSelect) {
 
         menu.addMenuListener(new MenuListener() {
             @Override

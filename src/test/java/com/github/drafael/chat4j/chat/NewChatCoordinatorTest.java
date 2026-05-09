@@ -68,7 +68,7 @@ class NewChatCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveCurrentConversation must not be null");
+                .hasMessageContaining("saveCurrentConversation");
 
         assertThatThrownBy(() -> subject.start(
                 () -> {
@@ -92,6 +92,6 @@ class NewChatCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("defaultAssistantRenderMode must not be null");
+                .hasMessageContaining("defaultAssistantRenderMode");
     }
 }

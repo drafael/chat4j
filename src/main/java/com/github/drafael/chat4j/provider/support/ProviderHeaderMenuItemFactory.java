@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.util.Fonts;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.Icon;
@@ -13,8 +14,8 @@ public class ProviderHeaderMenuItemFactory {
 
     private final HeaderIconResolver headerIconResolver;
 
-    public ProviderHeaderMenuItemFactory(HeaderIconResolver headerIconResolver) {
-        this.headerIconResolver = Validate.notNull(headerIconResolver, "headerIconResolver must not be null");
+    public ProviderHeaderMenuItemFactory(@NonNull HeaderIconResolver headerIconResolver) {
+        this.headerIconResolver = headerIconResolver;
     }
 
     public JMenuItem create(String providerName, String text, boolean enabled) {
@@ -26,8 +27,7 @@ public class ProviderHeaderMenuItemFactory {
         return header;
     }
 
-    public void update(JMenuItem header, String providerName, String text, boolean enabled) {
-        Validate.notNull(header, "header must not be null");
+    public void update(@NonNull JMenuItem header, String providerName, String text, boolean enabled) {
         Validate.notBlank(providerName, "providerName must not be blank");
         Validate.notBlank(text, "text must not be blank");
 

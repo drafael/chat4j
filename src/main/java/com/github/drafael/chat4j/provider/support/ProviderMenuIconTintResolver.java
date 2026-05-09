@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.formdev.flatlaf.util.SystemInfo;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JMenuItem;
 import javax.swing.UIManager;
@@ -21,8 +21,7 @@ public class ProviderMenuIconTintResolver {
         );
     }
 
-    Color resolve(JMenuItem item, boolean enabled, boolean macOs, boolean screenMenuBarEnabled) {
-        Validate.notNull(item, "item must not be null");
+    Color resolve(@NonNull JMenuItem item, boolean enabled, boolean macOs, boolean screenMenuBarEnabled) {
 
         if (macOs && screenMenuBarEnabled) {
             return enabled ? MAC_MENU_ICON_ENABLED : MAC_MENU_ICON_DISABLED;

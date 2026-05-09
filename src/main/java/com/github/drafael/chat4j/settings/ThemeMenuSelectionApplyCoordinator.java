@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import java.util.function.Consumer;
 
 public class ThemeMenuSelectionApplyCoordinator {
 
-    public String apply(String selectedTheme, Consumer<String> setLastMenuSelectedTheme) {
-        Validate.notNull(setLastMenuSelectedTheme, "setLastMenuSelectedTheme must not be null");
+    public String apply(String selectedTheme, @NonNull Consumer<String> setLastMenuSelectedTheme) {
 
         setLastMenuSelectedTheme.accept(selectedTheme);
         return selectedTheme;

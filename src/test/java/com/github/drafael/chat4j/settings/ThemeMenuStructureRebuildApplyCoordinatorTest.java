@@ -40,16 +40,16 @@ class ThemeMenuStructureRebuildApplyCoordinatorTest {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildState must not be null");
+                .hasMessageContaining("rebuildState");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setThemesMenuBuilt must not be null");
+                .hasMessageContaining("setThemesMenuBuilt");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, value -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedTheme must not be null");
+                .hasMessageContaining("setLastMenuSelectedTheme");
     }
 }

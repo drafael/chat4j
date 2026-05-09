@@ -111,6 +111,6 @@ class FontMenuSelectionRefreshCoordinatorTest {
                 true
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("appFontMenuItemsByFamily must not be null");
+                .hasMessageContaining("appFontMenuItemsByFamily");
     }
 }

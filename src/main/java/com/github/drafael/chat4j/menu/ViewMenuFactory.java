@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -20,28 +20,19 @@ public class ViewMenuFactory {
 
     private final MenuSelectionListenerBinder menuSelectionListenerBinder;
 
-    public ViewMenuFactory(MenuSelectionListenerBinder menuSelectionListenerBinder) {
-        this.menuSelectionListenerBinder = Validate.notNull(
-                menuSelectionListenerBinder,
-                "menuSelectionListenerBinder must not be null"
-        );
+    public ViewMenuFactory(@NonNull MenuSelectionListenerBinder menuSelectionListenerBinder) {
+        this.menuSelectionListenerBinder = menuSelectionListenerBinder;
     }
 
     public CreatedViewMenu create(
             int menuShortcutMask,
-            Runnable beforeSelect,
-            Runnable onMenuSelected,
-            Runnable onToggleSidebar,
-            Runnable onToggleModelDropdown,
-            Runnable onChatSearch,
-            Consumer<Boolean> onTogglePreview
+            @NonNull Runnable beforeSelect,
+            @NonNull Runnable onMenuSelected,
+            @NonNull Runnable onToggleSidebar,
+            @NonNull Runnable onToggleModelDropdown,
+            @NonNull Runnable onChatSearch,
+            @NonNull Consumer<Boolean> onTogglePreview
     ) {
-        Validate.notNull(beforeSelect, "beforeSelect must not be null");
-        Validate.notNull(onMenuSelected, "onMenuSelected must not be null");
-        Validate.notNull(onToggleSidebar, "onToggleSidebar must not be null");
-        Validate.notNull(onToggleModelDropdown, "onToggleModelDropdown must not be null");
-        Validate.notNull(onChatSearch, "onChatSearch must not be null");
-        Validate.notNull(onTogglePreview, "onTogglePreview must not be null");
 
         JMenu viewMenu = new JMenu(VIEW_MENU_TITLE);
         menuSelectionListenerBinder.bind(viewMenu, beforeSelect, onMenuSelected);

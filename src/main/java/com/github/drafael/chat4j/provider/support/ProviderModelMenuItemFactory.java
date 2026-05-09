@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JRadioButtonMenuItem;
@@ -11,17 +12,13 @@ public class ProviderModelMenuItemFactory {
 
     private final ProviderMenuIconResolver providerMenuIconResolver;
 
-    public ProviderModelMenuItemFactory(ProviderMenuIconResolver providerMenuIconResolver) {
-        this.providerMenuIconResolver = Validate.notNull(
-                providerMenuIconResolver,
-                "providerMenuIconResolver must not be null"
-        );
+    public ProviderModelMenuItemFactory(@NonNull ProviderMenuIconResolver providerMenuIconResolver) {
+        this.providerMenuIconResolver = providerMenuIconResolver;
     }
 
-    public CreatedModelItem create(String providerName, String modelId, boolean enabled, Consumer<String> onSelected) {
+    public CreatedModelItem create(String providerName, String modelId, boolean enabled, @NonNull Consumer<String> onSelected) {
         Validate.notBlank(providerName, "providerName must not be blank");
         Validate.notBlank(modelId, "modelId must not be blank");
-        Validate.notNull(onSelected, "onSelected must not be null");
 
         String modelKey = ModelSelectionCodec.format(providerName, modelId);
         JRadioButtonMenuItem item = new JRadioButtonMenuItem(modelId);

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.sidebar;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.Icon;
 import javax.swing.JButton;
@@ -16,29 +16,22 @@ public class SidebarToggleCoordinator {
     }
 
     SidebarToggleCoordinator(
-            SidebarVisibilityCoordinator sidebarVisibilityCoordinator,
-            SidebarToggleApplyCoordinator sidebarToggleApplyCoordinator
+            @NonNull SidebarVisibilityCoordinator sidebarVisibilityCoordinator,
+            @NonNull SidebarToggleApplyCoordinator sidebarToggleApplyCoordinator
     ) {
-        this.sidebarVisibilityCoordinator = Validate.notNull(
-                sidebarVisibilityCoordinator,
-                "sidebarVisibilityCoordinator must not be null"
-        );
-        this.sidebarToggleApplyCoordinator = Validate.notNull(
-                sidebarToggleApplyCoordinator,
-                "sidebarToggleApplyCoordinator must not be null"
-        );
+        this.sidebarVisibilityCoordinator = sidebarVisibilityCoordinator;
+        this.sidebarToggleApplyCoordinator = sidebarToggleApplyCoordinator;
     }
 
     public ToggleState toggle(
             boolean sidebarVisible,
             int lastDividerLocation,
             int currentDividerLocation,
-            JSplitPane splitPane,
+            @NonNull JSplitPane splitPane,
             JButton sidebarToggleButton,
             Icon sidebarToggleIconFilled,
             Icon sidebarToggleIconOutline
     ) {
-        Validate.notNull(splitPane, "splitPane must not be null");
 
         SidebarVisibilityCoordinator.ToggleResult toggleResult = sidebarVisibilityCoordinator.toggle(
                 sidebarVisible,

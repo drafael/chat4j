@@ -1,23 +1,18 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class ThemeMenuApplyDispatchCoordinator {
 
     public boolean apply(
             String themeName,
             String className,
-            ThemeApplyAction themeApplyAction,
-            Runnable markModelsMenuDirty,
-            Runnable syncThemeMenuSelection,
-            Runnable syncFontMenuSelection,
-            ErrorPresenter errorPresenter
+            @NonNull ThemeApplyAction themeApplyAction,
+            @NonNull Runnable markModelsMenuDirty,
+            @NonNull Runnable syncThemeMenuSelection,
+            @NonNull Runnable syncFontMenuSelection,
+            @NonNull ErrorPresenter errorPresenter
     ) {
-        Validate.notNull(themeApplyAction, "themeApplyAction must not be null");
-        Validate.notNull(markModelsMenuDirty, "markModelsMenuDirty must not be null");
-        Validate.notNull(syncThemeMenuSelection, "syncThemeMenuSelection must not be null");
-        Validate.notNull(syncFontMenuSelection, "syncFontMenuSelection must not be null");
-        Validate.notNull(errorPresenter, "errorPresenter must not be null");
 
         ThemeMenuApplyCoordinator.ApplyResult applyResult = themeApplyAction.apply(
                 themeName,

@@ -57,7 +57,7 @@ class MainMenuBarCreatedApplyCoordinatorTest {
         assertThatThrownBy(() -> subject.apply(null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("createdMenuBar must not be null");
+                .hasMessageContaining("createdMenuBar");
 
         assertThatThrownBy(() -> subject.apply(
                 new MainMenuBarBuilder.CreatedMenuBar(
@@ -72,6 +72,6 @@ class MainMenuBarCreatedApplyCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncTogglePreviewMenuSelection must not be null");
+                .hasMessageContaining("syncTogglePreviewMenuSelection");
     }
 }

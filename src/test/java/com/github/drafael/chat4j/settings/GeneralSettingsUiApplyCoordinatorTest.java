@@ -66,7 +66,7 @@ class GeneralSettingsUiApplyCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyResult must not be null");
+                .hasMessageContaining("applyResult");
 
         assertThatThrownBy(() -> subject.apply(
                 applyResult,
@@ -79,6 +79,6 @@ class GeneralSettingsUiApplyCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("sendOnEnterApplier must not be null");
+                .hasMessageContaining("sendOnEnterApplier");
     }
 }

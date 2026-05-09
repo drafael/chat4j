@@ -2,9 +2,9 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-import org.apache.commons.lang3.Validate;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,12 +16,11 @@ public class ProviderModelsResolver {
 
     private final ProviderModelCacheService modelCacheService;
 
-    public ProviderModelsResolver(ProviderModelCacheService modelCacheService) {
-        this.modelCacheService = Validate.notNull(modelCacheService, "modelCacheService must not be null");
+    public ProviderModelsResolver(@NonNull ProviderModelCacheService modelCacheService) {
+        this.modelCacheService = modelCacheService;
     }
 
-    public Map<String, List<String>> resolve(List<ProviderRegistry.ProviderDef> providers) {
-        Validate.notNull(providers, "providers must not be null");
+    public Map<String, List<String>> resolve(@NonNull List<ProviderRegistry.ProviderDef> providers) {
 
         return providers.stream()
                 .collect(toMap(

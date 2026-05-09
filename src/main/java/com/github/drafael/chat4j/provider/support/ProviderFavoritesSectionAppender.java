@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec.ModelSelection;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.ButtonGroup;
 import javax.swing.JMenu;
@@ -14,27 +14,18 @@ public class ProviderFavoritesSectionAppender {
 
     private final ProviderModelMenuItemFactory providerModelMenuItemFactory;
 
-    public ProviderFavoritesSectionAppender(ProviderModelMenuItemFactory providerModelMenuItemFactory) {
-        this.providerModelMenuItemFactory = Validate.notNull(
-                providerModelMenuItemFactory,
-                "providerModelMenuItemFactory must not be null"
-        );
+    public ProviderFavoritesSectionAppender(@NonNull ProviderModelMenuItemFactory providerModelMenuItemFactory) {
+        this.providerModelMenuItemFactory = providerModelMenuItemFactory;
     }
 
     public boolean append(
-            JMenu modelsMenu,
-            ButtonGroup group,
-            Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
-            List<ModelSelection> favorites,
-            Map<String, Boolean> providerSelectable,
-            Consumer<String> onModelSelected
+            @NonNull JMenu modelsMenu,
+            @NonNull ButtonGroup group,
+            @NonNull Map<String, JRadioButtonMenuItem> modelMenuItemsByKey,
+            @NonNull List<ModelSelection> favorites,
+            @NonNull Map<String, Boolean> providerSelectable,
+            @NonNull Consumer<String> onModelSelected
     ) {
-        Validate.notNull(modelsMenu, "modelsMenu must not be null");
-        Validate.notNull(group, "group must not be null");
-        Validate.notNull(modelMenuItemsByKey, "modelMenuItemsByKey must not be null");
-        Validate.notNull(favorites, "favorites must not be null");
-        Validate.notNull(providerSelectable, "providerSelectable must not be null");
-        Validate.notNull(onModelSelected, "onModelSelected must not be null");
 
         if (favorites.isEmpty()) {
             return false;

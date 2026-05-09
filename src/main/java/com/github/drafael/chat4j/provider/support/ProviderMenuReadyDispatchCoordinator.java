@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class ProviderMenuReadyDispatchCoordinator {
 
@@ -10,22 +10,16 @@ public class ProviderMenuReadyDispatchCoordinator {
         this(providerMenuReadyCoordinator::ensureReady);
     }
 
-    ProviderMenuReadyDispatchCoordinator(EnsureReadyAction ensureReadyAction) {
-        this.ensureReadyAction = Validate.notNull(ensureReadyAction, "ensureReadyAction must not be null");
+    ProviderMenuReadyDispatchCoordinator(@NonNull EnsureReadyAction ensureReadyAction) {
+        this.ensureReadyAction = ensureReadyAction;
     }
 
     public void ensureReady(
             boolean modelsMenuDirty,
-            Runnable rebuildModelsMenuStructure,
-            Runnable refreshLocalProviderAvailabilityInMenu,
-            Runnable syncModelsMenuSelection
+            @NonNull Runnable rebuildModelsMenuStructure,
+            @NonNull Runnable refreshLocalProviderAvailabilityInMenu,
+            @NonNull Runnable syncModelsMenuSelection
     ) {
-        Validate.notNull(rebuildModelsMenuStructure, "rebuildModelsMenuStructure must not be null");
-        Validate.notNull(
-                refreshLocalProviderAvailabilityInMenu,
-                "refreshLocalProviderAvailabilityInMenu must not be null"
-        );
-        Validate.notNull(syncModelsMenuSelection, "syncModelsMenuSelection must not be null");
 
         ensureReadyAction.ensureReady(
                 modelsMenuDirty,

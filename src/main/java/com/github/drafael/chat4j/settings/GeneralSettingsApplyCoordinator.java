@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 
@@ -17,9 +17,9 @@ public class GeneralSettingsApplyCoordinator {
         this(generalSettingsResolver::resolve, assistantRenderModeSelectionResolver::resolve);
     }
 
-    GeneralSettingsApplyCoordinator(SettingsResolver settingsResolver, ModeResolver modeResolver) {
-        this.settingsResolver = Validate.notNull(settingsResolver, "settingsResolver must not be null");
-        this.modeResolver = Validate.notNull(modeResolver, "modeResolver must not be null");
+    GeneralSettingsApplyCoordinator(@NonNull SettingsResolver settingsResolver, @NonNull ModeResolver modeResolver) {
+        this.settingsResolver = settingsResolver;
+        this.modeResolver = modeResolver;
     }
 
     public ApplyResult apply(

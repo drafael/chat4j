@@ -101,7 +101,7 @@ class AssistantMessageCompletionEventDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("completionHandler must not be null");
+                .hasMessageContaining("completionHandler");
 
         assertThatThrownBy(() -> subject.handle(
                 null,
@@ -110,12 +110,12 @@ class AssistantMessageCompletionEventDispatchCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("failureHandler must not be null");
+                .hasMessageContaining("failureHandler");
 
         assertThatThrownBy(() -> new AssistantMessageCompletionEventDispatchCoordinator(
                 (AssistantMessageCompletionEventDispatchCoordinator.DispatchAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("dispatchAction must not be null");
+                .hasMessageContaining("dispatchAction");
     }
 }

@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
@@ -15,46 +15,32 @@ public class MainMenuBarBuilder {
     private final MenuBarAssemblyFactory menuBarAssemblyFactory;
 
     public MainMenuBarBuilder(
-            FileMenuFactory fileMenuFactory,
-            ViewMenuFactory viewMenuFactory,
-            BoundMenuFactory boundMenuFactory,
-            MenuBarAssemblyFactory menuBarAssemblyFactory
+            @NonNull FileMenuFactory fileMenuFactory,
+            @NonNull ViewMenuFactory viewMenuFactory,
+            @NonNull BoundMenuFactory boundMenuFactory,
+            @NonNull MenuBarAssemblyFactory menuBarAssemblyFactory
     ) {
-        this.fileMenuFactory = Validate.notNull(fileMenuFactory, "fileMenuFactory must not be null");
-        this.viewMenuFactory = Validate.notNull(viewMenuFactory, "viewMenuFactory must not be null");
-        this.boundMenuFactory = Validate.notNull(boundMenuFactory, "boundMenuFactory must not be null");
-        this.menuBarAssemblyFactory = Validate.notNull(
-                menuBarAssemblyFactory,
-                "menuBarAssemblyFactory must not be null"
-        );
+        this.fileMenuFactory = fileMenuFactory;
+        this.viewMenuFactory = viewMenuFactory;
+        this.boundMenuFactory = boundMenuFactory;
+        this.menuBarAssemblyFactory = menuBarAssemblyFactory;
     }
 
     public CreatedMenuBar create(
             int menuShortcutMask,
             String appTitle,
-            Runnable onNewChat,
-            Runnable beforeMenuSelected,
-            Runnable onViewMenuSelected,
-            Runnable onToggleSidebar,
-            Runnable onToggleModelDropdown,
-            Runnable onChatSearch,
-            Consumer<Boolean> onTogglePreview,
-            Runnable onThemesMenuSelected,
-            Runnable onFontMenuSelected,
-            Runnable onModelsMenuSelected,
-            Runnable onAbout
+            @NonNull Runnable onNewChat,
+            @NonNull Runnable beforeMenuSelected,
+            @NonNull Runnable onViewMenuSelected,
+            @NonNull Runnable onToggleSidebar,
+            @NonNull Runnable onToggleModelDropdown,
+            @NonNull Runnable onChatSearch,
+            @NonNull Consumer<Boolean> onTogglePreview,
+            @NonNull Runnable onThemesMenuSelected,
+            @NonNull Runnable onFontMenuSelected,
+            @NonNull Runnable onModelsMenuSelected,
+            @NonNull Runnable onAbout
     ) {
-        Validate.notNull(onNewChat, "onNewChat must not be null");
-        Validate.notNull(beforeMenuSelected, "beforeMenuSelected must not be null");
-        Validate.notNull(onViewMenuSelected, "onViewMenuSelected must not be null");
-        Validate.notNull(onToggleSidebar, "onToggleSidebar must not be null");
-        Validate.notNull(onToggleModelDropdown, "onToggleModelDropdown must not be null");
-        Validate.notNull(onChatSearch, "onChatSearch must not be null");
-        Validate.notNull(onTogglePreview, "onTogglePreview must not be null");
-        Validate.notNull(onThemesMenuSelected, "onThemesMenuSelected must not be null");
-        Validate.notNull(onFontMenuSelected, "onFontMenuSelected must not be null");
-        Validate.notNull(onModelsMenuSelected, "onModelsMenuSelected must not be null");
-        Validate.notNull(onAbout, "onAbout must not be null");
 
         JMenu fileMenu = fileMenuFactory.create(menuShortcutMask, onNewChat);
         ViewMenuFactory.CreatedViewMenu createdViewMenu = viewMenuFactory.create(

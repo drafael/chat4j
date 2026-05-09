@@ -97,7 +97,7 @@ class MainMenuBarApplyStateCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyState must not be null");
+                .hasMessageContaining("applyState");
 
         var applyState = new MainMenuBarEnsureResultApplyCoordinator.ApplyState(
                 new JMenuBar(),
@@ -135,6 +135,6 @@ class MainMenuBarApplyStateCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setModelMenuBar must not be null");
+                .hasMessageContaining("setModelMenuBar");
     }
 }

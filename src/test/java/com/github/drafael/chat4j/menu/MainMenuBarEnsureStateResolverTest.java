@@ -131,7 +131,7 @@ class MainMenuBarEnsureStateResolverTest {
                 new MainMenuBarEnsureStateResolver.CurrentState(null, null, null, null, null, null, false, false, false)
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuBarCreator must not be null");
+                .hasMessageContaining("menuBarCreator");
 
         assertThatThrownBy(() -> new MainMenuBarEnsureStateResolver(
                 (MainMenuBarEnsureStateResolver.EnsureDispatchAction) null,
@@ -147,6 +147,6 @@ class MainMenuBarEnsureStateResolverTest {
                  currentFontMenuBuilt) -> null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureDispatchAction must not be null");
+                .hasMessageContaining("ensureDispatchAction");
     }
 }

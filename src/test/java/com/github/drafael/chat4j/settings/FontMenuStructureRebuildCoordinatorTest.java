@@ -152,12 +152,12 @@ class FontMenuStructureRebuildCoordinatorTest {
                 "JetBrains Mono"
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("appFontMenuItemsByFamily must not be null");
+                .hasMessageContaining("appFontMenuItemsByFamily");
 
         assertThatThrownBy(() -> new FontMenuStructureRebuildCoordinator(
                 (FontMenuStructureRebuildCoordinator.RebuildAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildAction must not be null");
+                .hasMessageContaining("rebuildAction");
     }
 }

@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.Set;
 
@@ -9,8 +9,8 @@ public class FontSettingsResolver {
 
     private final SettingsRepo settingsRepo;
 
-    public FontSettingsResolver(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public FontSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
     public String resolveAppFontFamilySetting() {
@@ -32,13 +32,10 @@ public class FontSettingsResolver {
     }
 
     public FontMenuSelection resolveMenuSelection(
-            Set<String> availableAppFontFamilies,
-            Set<Integer> availableAppFontSizes,
-            Set<String> availableCodeFontFamilies
+            @NonNull Set<String> availableAppFontFamilies,
+            @NonNull Set<Integer> availableAppFontSizes,
+            @NonNull Set<String> availableCodeFontFamilies
     ) {
-        Validate.notNull(availableAppFontFamilies, "availableAppFontFamilies must not be null");
-        Validate.notNull(availableAppFontSizes, "availableAppFontSizes must not be null");
-        Validate.notNull(availableCodeFontFamilies, "availableCodeFontFamilies must not be null");
 
         String appFontFamily = resolveAppFontFamilySetting();
         if (!availableAppFontFamilies.contains(appFontFamily)) {

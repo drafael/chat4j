@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.util;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.Icon;
@@ -34,8 +35,7 @@ public final class TitleBarUiSupport {
         return btn;
     }
 
-    public static Icon loadIcon(Class<?> resourceAnchor, String resourcePath) {
-        Validate.notNull(resourceAnchor, "resourceAnchor must not be null");
+    public static Icon loadIcon(@NonNull Class<?> resourceAnchor, String resourcePath) {
         Validate.notBlank(resourcePath, "resourcePath must not be blank");
 
         URL url = resourceAnchor.getResource(resourcePath);

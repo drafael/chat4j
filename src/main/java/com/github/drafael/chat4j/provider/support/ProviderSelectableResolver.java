@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,11 +13,9 @@ import static java.util.stream.Collectors.toMap;
 public class ProviderSelectableResolver {
 
     public Map<String, Boolean> resolve(
-            List<ProviderRegistry.ProviderDef> providers,
-            Predicate<ProviderRegistry.ProviderDef> selectablePredicate
+            @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull Predicate<ProviderRegistry.ProviderDef> selectablePredicate
     ) {
-        Validate.notNull(providers, "providers must not be null");
-        Validate.notNull(selectablePredicate, "selectablePredicate must not be null");
 
         return providers.stream()
                 .collect(toMap(

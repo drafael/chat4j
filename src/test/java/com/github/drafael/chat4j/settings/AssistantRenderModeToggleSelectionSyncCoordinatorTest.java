@@ -60,11 +60,11 @@ class AssistantRenderModeToggleSelectionSyncCoordinatorTest {
         assertThatThrownBy(() -> subject.sync(new JCheckBoxMenuItem(), null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("currentAssistantRenderMode must not be null");
+                .hasMessageContaining("currentAssistantRenderMode");
 
         assertThatThrownBy(() -> subject.sync(new JCheckBoxMenuItem(), AssistantRenderMode.PREVIEW, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setSyncingPreviewMenuSelection must not be null");
+                .hasMessageContaining("setSyncingPreviewMenuSelection");
     }
 
     private static class ThrowingCheckBoxMenuItem extends JCheckBoxMenuItem {

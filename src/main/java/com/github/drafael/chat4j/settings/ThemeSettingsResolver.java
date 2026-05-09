@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import java.sql.SQLException;
@@ -13,8 +14,8 @@ public class ThemeSettingsResolver {
 
     private final SettingsRepo settingsRepo;
 
-    public ThemeSettingsResolver(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public ThemeSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
     public String resolveSelectedTheme(String defaultTheme) {

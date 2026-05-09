@@ -34,10 +34,10 @@ class GeneralSettingsDefaultModeApplyCoordinatorTest {
         assertThatThrownBy(() -> subject.apply(null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("defaultAssistantRenderMode must not be null");
+                .hasMessageContaining("defaultAssistantRenderMode");
 
         assertThatThrownBy(() -> subject.apply(AssistantRenderMode.PREVIEW, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setAssistantMarkdownDefaultMode must not be null");
+                .hasMessageContaining("setAssistantMarkdownDefaultMode");
     }
 }

@@ -1,12 +1,15 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class AssistantRenderModeToggleCoordinator {
 
-    public boolean apply(boolean previewSelected, boolean syncingPreviewMenuSelection, RenderModeApplier renderModeApplier) {
-        Validate.notNull(renderModeApplier, "renderModeApplier must not be null");
+    public boolean apply(
+        boolean previewSelected,
+        boolean syncingPreviewMenuSelection,
+        @NonNull RenderModeApplier renderModeApplier
+) {
 
         if (syncingPreviewMenuSelection) {
             return false;

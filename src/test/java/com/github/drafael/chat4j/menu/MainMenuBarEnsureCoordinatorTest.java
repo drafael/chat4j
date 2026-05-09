@@ -67,16 +67,16 @@ class MainMenuBarEnsureCoordinatorTest {
         assertThatThrownBy(() -> subject.ensure(new JMenuBar(), null, created -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuBarCreator must not be null");
+                .hasMessageContaining("menuBarCreator");
 
         assertThatThrownBy(() -> subject.ensure(new JMenuBar(), this::createdMenuBar, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onCreated must not be null");
+                .hasMessageContaining("onCreated");
 
         assertThatThrownBy(() -> subject.ensure(null, () -> null, created -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("createdMenuBar must not be null");
+                .hasMessageContaining("createdMenuBar");
     }
 
     private static final ResultHolder resultHolder = new ResultHolder();

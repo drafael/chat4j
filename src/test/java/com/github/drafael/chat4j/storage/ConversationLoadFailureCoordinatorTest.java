@@ -64,7 +64,7 @@ class ConversationLoadFailureCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("error must not be null");
+                .hasMessageContaining("error");
 
         assertThatThrownBy(() -> subject.handle(
                 1L,
@@ -76,6 +76,6 @@ class ConversationLoadFailureCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("failureGuard must not be null");
+                .hasMessageContaining("failureGuard");
     }
 }

@@ -61,12 +61,12 @@ class ProviderMenuReadyDispatchCoordinatorTest {
         }, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildModelsMenuStructure must not be null");
+                .hasMessageContaining("rebuildModelsMenuStructure");
 
         assertThatThrownBy(() -> new ProviderMenuReadyDispatchCoordinator(
                 (ProviderMenuReadyDispatchCoordinator.EnsureReadyAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureReadyAction must not be null");
+                .hasMessageContaining("ensureReadyAction");
     }
 }

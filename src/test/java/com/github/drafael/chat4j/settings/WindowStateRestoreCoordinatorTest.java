@@ -67,12 +67,12 @@ class WindowStateRestoreCoordinatorTest {
         assertThatThrownBy(() -> subject.restore(null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyBounds must not be null");
+                .hasMessageContaining("applyBounds");
 
         assertThatThrownBy(() -> subject.restore(bounds -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applyDefaultWindowState must not be null");
+                .hasMessageContaining("applyDefaultWindowState");
     }
 
     @Test
@@ -83,13 +83,13 @@ class WindowStateRestoreCoordinatorTest {
                 () -> new Rectangle(0, 0, 1920, 1080)
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("storedBoundsLoader must not be null");
+                .hasMessageContaining("storedBoundsLoader");
 
         assertThatThrownBy(() -> new WindowStateRestoreCoordinator(
                 bounds -> Optional.empty(),
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("visibleScreenBoundsResolver must not be null");
+                .hasMessageContaining("visibleScreenBoundsResolver");
     }
 }

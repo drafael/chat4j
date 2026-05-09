@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.Icon;
 import javax.swing.JMenuItem;
 import javax.swing.JRadioButtonMenuItem;
@@ -14,12 +14,9 @@ public class ProviderMenuIconResolver implements ProviderMenuAvailabilityApplier
     private final ProviderMenuIconTintResolver providerMenuIconTintResolver;
     private final Class<?> resourceAnchor;
 
-    public ProviderMenuIconResolver(ProviderMenuIconTintResolver providerMenuIconTintResolver, Class<?> resourceAnchor) {
-        this.providerMenuIconTintResolver = Validate.notNull(
-                providerMenuIconTintResolver,
-                "providerMenuIconTintResolver must not be null"
-        );
-        this.resourceAnchor = Validate.notNull(resourceAnchor, "resourceAnchor must not be null");
+    public ProviderMenuIconResolver(@NonNull ProviderMenuIconTintResolver providerMenuIconTintResolver, @NonNull Class<?> resourceAnchor) {
+        this.providerMenuIconTintResolver = providerMenuIconTintResolver;
+        this.resourceAnchor = resourceAnchor;
     }
 
     @Override

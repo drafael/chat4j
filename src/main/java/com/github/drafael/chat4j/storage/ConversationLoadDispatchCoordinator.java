@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.storage;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.SwingUtilities;
 import java.util.List;
@@ -14,20 +14,16 @@ public class ConversationLoadDispatchCoordinator {
         this(SwingUtilities::invokeLater);
     }
 
-    ConversationLoadDispatchCoordinator(EdtDispatcher edtDispatcher) {
-        this.edtDispatcher = Validate.notNull(edtDispatcher, "edtDispatcher must not be null");
+    ConversationLoadDispatchCoordinator(@NonNull EdtDispatcher edtDispatcher) {
+        this.edtDispatcher = edtDispatcher;
     }
 
     public long dispatch(
-            UUID conversationId,
-            AsyncLoader asyncLoader,
-            LoadedHandler onLoaded,
-            FailureHandler onFailure
+            @NonNull UUID conversationId,
+            @NonNull AsyncLoader asyncLoader,
+            @NonNull LoadedHandler onLoaded,
+            @NonNull FailureHandler onFailure
     ) {
-        Validate.notNull(conversationId, "conversationId must not be null");
-        Validate.notNull(asyncLoader, "asyncLoader must not be null");
-        Validate.notNull(onLoaded, "onLoaded must not be null");
-        Validate.notNull(onFailure, "onFailure must not be null");
 
         return asyncLoader.loadAsync(conversationId, new ConversationLoadCoordinator.Listener() {
             @Override

@@ -37,6 +37,6 @@ class FileMenuFactoryTest {
 
         assertThatThrownBy(() -> subject.create(KeyEvent.CTRL_DOWN_MASK, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onNewChat must not be null");
+                .hasMessageContaining("onNewChat");
     }
 }

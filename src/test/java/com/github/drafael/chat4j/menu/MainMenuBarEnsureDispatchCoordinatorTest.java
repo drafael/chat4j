@@ -115,7 +115,7 @@ class MainMenuBarEnsureDispatchCoordinatorTest {
                 (createdMenuBar, syncTogglePreviewMenuSelection) -> null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureAction must not be null");
+                .hasMessageContaining("ensureAction");
 
         var subject = new MainMenuBarEnsureDispatchCoordinator(
                 (existingMenuBar, menuBarCreator, onCreated) -> new JMenuBar(),
@@ -125,6 +125,6 @@ class MainMenuBarEnsureDispatchCoordinatorTest {
         assertThatThrownBy(() -> subject.ensure(null, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuBarCreator must not be null");
+                .hasMessageContaining("menuBarCreator");
     }
 }

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import java.sql.SQLException;
@@ -9,8 +10,8 @@ public class FontSettingsPersister {
 
     private final SettingsRepo settingsRepo;
 
-    public FontSettingsPersister(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public FontSettingsPersister(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
     public void persistAppFontSelection(String family, int size) throws SQLException {

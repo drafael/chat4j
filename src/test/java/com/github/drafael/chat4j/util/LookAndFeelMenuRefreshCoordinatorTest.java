@@ -56,7 +56,7 @@ class LookAndFeelMenuRefreshCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("clearProviderIconCache must not be null");
+                .hasMessageContaining("clearProviderIconCache");
 
         assertThatThrownBy(() -> subject.refresh(
                 () -> {
@@ -70,7 +70,7 @@ class LookAndFeelMenuRefreshCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("ensureModelsMenuReady must not be null");
+                .hasMessageContaining("ensureModelsMenuReady");
     }
 
     @Test
@@ -78,7 +78,7 @@ class LookAndFeelMenuRefreshCoordinatorTest {
     void constructor_whenRunnerMissing_throwsException() {
         assertThatThrownBy(() -> new LookAndFeelMenuRefreshCoordinator(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("menuPopupVisibleRunner must not be null");
+                .hasMessageContaining("menuPopupVisibleRunner");
     }
 
     private static class RecordingMenuPopupVisibleRunner extends MenuPopupVisibleRunner {

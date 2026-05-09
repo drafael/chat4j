@@ -53,34 +53,34 @@ class FontMenuStructureRebuildApplyCoordinatorTest {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildState must not be null");
+                .hasMessageContaining("rebuildState");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, null, value -> {
         }, value -> {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setFontMenuBuilt must not be null");
+                .hasMessageContaining("setFontMenuBuilt");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, value -> {
         }, null, value -> {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedAppFontFamily must not be null");
+                .hasMessageContaining("setLastMenuSelectedAppFontFamily");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, value -> {
         }, value -> {
         }, null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedAppFontSize must not be null");
+                .hasMessageContaining("setLastMenuSelectedAppFontSize");
 
         assertThatThrownBy(() -> subject.apply(rebuildState, value -> {
         }, value -> {
         }, value -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedCodeFontFamily must not be null");
+                .hasMessageContaining("setLastMenuSelectedCodeFontFamily");
     }
 }

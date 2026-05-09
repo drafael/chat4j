@@ -117,7 +117,7 @@ class FontMenuSelectionFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("appFontMenuItemsByFamily must not be null");
+                .hasMessageContaining("appFontMenuItemsByFamily");
 
         assertThatThrownBy(() -> subject.refreshAndApply(
                 emptyMap(),
@@ -134,7 +134,7 @@ class FontMenuSelectionFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedAppFontFamily must not be null");
+                .hasMessageContaining("setLastMenuSelectedAppFontFamily");
 
         assertThatThrownBy(() -> new FontMenuSelectionFlowCoordinator(
                 (FontMenuSelectionFlowCoordinator.RefreshAction) null,
@@ -144,6 +144,6 @@ class FontMenuSelectionFlowCoordinatorTest {
                  setLastMenuSelectedCodeFontFamily) -> selectionState
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshAction must not be null");
+                .hasMessageContaining("refreshAction");
     }
 }

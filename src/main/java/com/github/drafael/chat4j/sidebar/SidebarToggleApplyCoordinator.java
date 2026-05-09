@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.sidebar;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JSplitPane;
@@ -9,14 +9,12 @@ import javax.swing.JSplitPane;
 public class SidebarToggleApplyCoordinator {
 
     public ApplyResult apply(
-            SidebarVisibilityCoordinator.ToggleResult toggleResult,
-            JSplitPane splitPane,
+            @NonNull SidebarVisibilityCoordinator.ToggleResult toggleResult,
+            @NonNull JSplitPane splitPane,
             JButton sidebarToggleButton,
             Icon sidebarToggleIconFilled,
             Icon sidebarToggleIconOutline
     ) {
-        Validate.notNull(toggleResult, "toggleResult must not be null");
-        Validate.notNull(splitPane, "splitPane must not be null");
 
         splitPane.setDividerSize(toggleResult.dividerSize());
         splitPane.setDividerLocation(toggleResult.dividerLocation());

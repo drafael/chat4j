@@ -2,7 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.awt.Rectangle;
 import java.util.Optional;
@@ -16,12 +16,11 @@ public class WindowStateSettingsCoordinator {
 
     private final SettingsRepo settingsRepo;
 
-    public WindowStateSettingsCoordinator(SettingsRepo settingsRepo) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
+    public WindowStateSettingsCoordinator(@NonNull SettingsRepo settingsRepo) {
+        this.settingsRepo = settingsRepo;
     }
 
-    public void save(Rectangle bounds) {
-        Validate.notNull(bounds, "bounds must not be null");
+    public void save(@NonNull Rectangle bounds) {
 
         try {
             settingsRepo.put(WINDOW_X_KEY, String.valueOf(bounds.x));
@@ -33,8 +32,7 @@ public class WindowStateSettingsCoordinator {
         }
     }
 
-    public Optional<Rectangle> loadIfVisible(Rectangle visibleScreenBounds) {
-        Validate.notNull(visibleScreenBounds, "visibleScreenBounds must not be null");
+    public Optional<Rectangle> loadIfVisible(@NonNull Rectangle visibleScreenBounds) {
 
         try {
             int x = Integer.parseInt(settingsRepo.get(WINDOW_X_KEY, "0"));

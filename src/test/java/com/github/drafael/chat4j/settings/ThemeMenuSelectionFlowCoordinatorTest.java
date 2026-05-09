@@ -71,7 +71,7 @@ class ThemeMenuSelectionFlowCoordinatorTest {
         assertThatThrownBy(() -> subject.refreshAndApply(null, "GitHub", true, "GitHub", value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("themeMenuItemsByName must not be null");
+                .hasMessageContaining("themeMenuItemsByName");
 
         assertThatThrownBy(() -> subject.refreshAndApply(emptyMap(), "GitHub", true, " ", value -> {
         }))
@@ -80,13 +80,13 @@ class ThemeMenuSelectionFlowCoordinatorTest {
 
         assertThatThrownBy(() -> subject.refreshAndApply(emptyMap(), "GitHub", true, "GitHub", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedTheme must not be null");
+                .hasMessageContaining("setLastMenuSelectedTheme");
 
         assertThatThrownBy(() -> new ThemeMenuSelectionFlowCoordinator(
                 (ThemeMenuSelectionFlowCoordinator.RefreshAction) null,
                 (selectedTheme, setLastMenuSelectedTheme) -> selectedTheme
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshAction must not be null");
+                .hasMessageContaining("refreshAction");
     }
 }

@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JMenu;
@@ -15,8 +16,7 @@ public class MenuSectionHeaderFactory {
         return sectionHeader;
     }
 
-    public void addTo(JMenu menu, String text) {
-        Validate.notNull(menu, "menu must not be null");
+    public void addTo(@NonNull JMenu menu, String text) {
         menu.add(create(text));
     }
 }

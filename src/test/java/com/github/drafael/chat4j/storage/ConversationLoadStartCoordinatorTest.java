@@ -77,7 +77,7 @@ class ConversationLoadStartCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("conversationId must not be null");
+                .hasMessageContaining("conversationId");
 
         assertThatThrownBy(() -> subject.start(
                 UUID.randomUUID(),
@@ -95,7 +95,7 @@ class ConversationLoadStartCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveCurrentConversation must not be null");
+                .hasMessageContaining("saveCurrentConversation");
     }
 
     @Test
@@ -103,7 +103,7 @@ class ConversationLoadStartCoordinatorTest {
     void constructor_whenDispatchCoordinatorMissing_throwsException() {
         assertThatThrownBy(() -> new ConversationLoadStartCoordinator(null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("conversationLoadDispatchCoordinator must not be null");
+                .hasMessageContaining("conversationLoadDispatchCoordinator");
     }
 
     private static class RecordingConversationLoadDispatchCoordinator extends ConversationLoadDispatchCoordinator {

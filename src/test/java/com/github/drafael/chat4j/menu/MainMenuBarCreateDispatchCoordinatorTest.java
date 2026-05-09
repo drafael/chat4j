@@ -102,13 +102,13 @@ class MainMenuBarCreateDispatchCoordinatorTest {
                  onAbout) -> null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("shortcutMaskSupplier must not be null");
+                .hasMessageContaining("shortcutMaskSupplier");
 
         assertThatThrownBy(() -> new MainMenuBarCreateDispatchCoordinator(
                 () -> 1,
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("createAction must not be null");
+                .hasMessageContaining("createAction");
     }
 }

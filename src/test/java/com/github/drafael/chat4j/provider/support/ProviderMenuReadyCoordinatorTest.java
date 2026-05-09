@@ -59,18 +59,18 @@ class ProviderMenuReadyCoordinatorTest {
         }, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildModelsMenuStructure must not be null");
+                .hasMessageContaining("rebuildModelsMenuStructure");
 
         assertThatThrownBy(() -> subject.ensureReady(true, () -> {
         }, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("refreshLocalProviderAvailabilityInMenu must not be null");
+                .hasMessageContaining("refreshLocalProviderAvailabilityInMenu");
 
         assertThatThrownBy(() -> subject.ensureReady(true, () -> {
         }, () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("syncModelsMenuSelection must not be null");
+                .hasMessageContaining("syncModelsMenuSelection");
     }
 }

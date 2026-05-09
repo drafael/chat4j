@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JMenu;
@@ -19,20 +19,17 @@ public class MainMenuBarEnsureStateResolver {
         this(mainMenuBarEnsureDispatchCoordinator::ensure, mainMenuBarEnsureResultApplyCoordinator::apply);
     }
 
-    MainMenuBarEnsureStateResolver(EnsureDispatchAction ensureDispatchAction, ResultApplyAction resultApplyAction) {
-        this.ensureDispatchAction = Validate.notNull(ensureDispatchAction, "ensureDispatchAction must not be null");
-        this.resultApplyAction = Validate.notNull(resultApplyAction, "resultApplyAction must not be null");
+    MainMenuBarEnsureStateResolver(@NonNull EnsureDispatchAction ensureDispatchAction, @NonNull ResultApplyAction resultApplyAction) {
+        this.ensureDispatchAction = ensureDispatchAction;
+        this.resultApplyAction = resultApplyAction;
     }
 
     public MainMenuBarEnsureResultApplyCoordinator.ApplyState resolve(
             JMenuBar modelMenuBar,
-            Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
-            Runnable syncTogglePreviewMenuSelection,
-            CurrentState currentState
+            @NonNull Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
+            @NonNull Runnable syncTogglePreviewMenuSelection,
+            @NonNull CurrentState currentState
     ) {
-        Validate.notNull(menuBarCreator, "menuBarCreator must not be null");
-        Validate.notNull(syncTogglePreviewMenuSelection, "syncTogglePreviewMenuSelection must not be null");
-        Validate.notNull(currentState, "currentState must not be null");
 
         MainMenuBarEnsureDispatchCoordinator.EnsureResult ensureResult = ensureDispatchAction.ensure(
                 modelMenuBar,

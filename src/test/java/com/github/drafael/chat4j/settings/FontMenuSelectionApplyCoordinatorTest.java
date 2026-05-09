@@ -44,12 +44,12 @@ class FontMenuSelectionApplyCoordinatorTest {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("selectionState must not be null");
+                .hasMessageContaining("selectionState");
 
         assertThatThrownBy(() -> subject.apply(state, null, value -> {
         }, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedAppFontFamily must not be null");
+                .hasMessageContaining("setLastMenuSelectedAppFontFamily");
     }
 }

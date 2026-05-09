@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.util.WindowUiRefreshSupport;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.Set;
 
@@ -26,31 +26,23 @@ public class FontMenuApplyCoordinator {
     }
 
     FontMenuApplyCoordinator(
-            FontSelectionNormalizer fontSelectionNormalizer,
-            FontPreviewApplier fontPreviewApplier,
-            FontSettingsPersister fontSettingsPersister,
-            WindowRefresher windowRefresher
+            @NonNull FontSelectionNormalizer fontSelectionNormalizer,
+            @NonNull FontPreviewApplier fontPreviewApplier,
+            @NonNull FontSettingsPersister fontSettingsPersister,
+            @NonNull WindowRefresher windowRefresher
     ) {
-        this.fontSelectionNormalizer = Validate.notNull(
-                fontSelectionNormalizer,
-                "fontSelectionNormalizer must not be null"
-        );
-        this.fontPreviewApplier = Validate.notNull(fontPreviewApplier, "fontPreviewApplier must not be null");
-        this.fontSettingsPersister = Validate.notNull(
-                fontSettingsPersister,
-                "fontSettingsPersister must not be null"
-        );
-        this.windowRefresher = Validate.notNull(windowRefresher, "windowRefresher must not be null");
+        this.fontSelectionNormalizer = fontSelectionNormalizer;
+        this.fontPreviewApplier = fontPreviewApplier;
+        this.fontSettingsPersister = fontSettingsPersister;
+        this.windowRefresher = windowRefresher;
     }
 
     public ApplyResult applyAppFontSelection(
             String appFontFamily,
             int appFontSize,
-            Set<String> availableAppFontFamilies,
-            Runnable onSyncFontMenuSelection
+            @NonNull Set<String> availableAppFontFamilies,
+            @NonNull Runnable onSyncFontMenuSelection
     ) {
-        Validate.notNull(availableAppFontFamilies, "availableAppFontFamilies must not be null");
-        Validate.notNull(onSyncFontMenuSelection, "onSyncFontMenuSelection must not be null");
 
         FontSelectionNormalizer.AppFontSelection appFontSelection = fontSelectionNormalizer.normalizeAppSelection(
                 appFontFamily,
@@ -76,11 +68,9 @@ public class FontMenuApplyCoordinator {
 
     public ApplyResult applyCodeFontSelection(
             String requestedCodeFontFamily,
-            Set<String> availableCodeFontFamilies,
-            Runnable onSyncFontMenuSelection
+            @NonNull Set<String> availableCodeFontFamilies,
+            @NonNull Runnable onSyncFontMenuSelection
     ) {
-        Validate.notNull(availableCodeFontFamilies, "availableCodeFontFamilies must not be null");
-        Validate.notNull(onSyncFontMenuSelection, "onSyncFontMenuSelection must not be null");
 
         String normalizedFamily = fontSelectionNormalizer.normalizeCodeFamily(
                 requestedCodeFontFamily,

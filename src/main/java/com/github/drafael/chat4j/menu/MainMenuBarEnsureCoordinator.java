@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.menu;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.JMenuBar;
@@ -10,11 +11,9 @@ public class MainMenuBarEnsureCoordinator {
 
     public JMenuBar ensure(
             JMenuBar existingMenuBar,
-            Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
-            Consumer<MainMenuBarBuilder.CreatedMenuBar> onCreated
+            @NonNull Supplier<MainMenuBarBuilder.CreatedMenuBar> menuBarCreator,
+            @NonNull Consumer<MainMenuBarBuilder.CreatedMenuBar> onCreated
     ) {
-        Validate.notNull(menuBarCreator, "menuBarCreator must not be null");
-        Validate.notNull(onCreated, "onCreated must not be null");
 
         if (existingMenuBar != null) {
             return existingMenuBar;

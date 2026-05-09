@@ -99,7 +99,7 @@ class ConversationLoadApplyDispatchCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("conversationId must not be null");
+                .hasMessageContaining("conversationId");
     }
 
     @Test
@@ -111,7 +111,7 @@ class ConversationLoadApplyDispatchCoordinatorTest {
                         true
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("planner must not be null");
+                .hasMessageContaining("planner");
 
         assertThatThrownBy(() -> new ConversationLoadApplyDispatchCoordinator(
                 (requestId, activeConversationId, loadedConversationId, records, conversation) ->
@@ -119,6 +119,6 @@ class ConversationLoadApplyDispatchCoordinatorTest {
                 (ConversationLoadApplyDispatchCoordinator.Applier) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applier must not be null");
+                .hasMessageContaining("applier");
     }
 }

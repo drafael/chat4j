@@ -2,7 +2,7 @@ package com.github.drafael.chat4j.storage;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -14,14 +14,11 @@ public class ConversationPersistenceCoordinator {
     private final PersistedMessageCounter persistedMessageCounter;
 
     public ConversationPersistenceCoordinator(
-            ConversationRepo conversationRepo,
-            PersistedMessageCounter persistedMessageCounter
+            @NonNull ConversationRepo conversationRepo,
+            @NonNull PersistedMessageCounter persistedMessageCounter
     ) {
-        this.conversationRepo = Validate.notNull(conversationRepo, "conversationRepo must not be null");
-        this.persistedMessageCounter = Validate.notNull(
-                persistedMessageCounter,
-                "persistedMessageCounter must not be null"
-        );
+        this.conversationRepo = conversationRepo;
+        this.persistedMessageCounter = persistedMessageCounter;
     }
 
     public UUID createConversation(String title, String provider, String model) throws Exception {
@@ -30,9 +27,7 @@ public class ConversationPersistenceCoordinator {
         return conversationId;
     }
 
-    public int persistConversationHistory(UUID conversationId, List<Message> history) throws Exception {
-        Validate.notNull(conversationId, "conversationId must not be null");
-        Validate.notNull(history, "history must not be null");
+    public int persistConversationHistory(@NonNull UUID conversationId, @NonNull List<Message> history) throws Exception  {
 
         int persistedCount = resolvePersistedCount(conversationId);
         persistedCount = Math.min(persistedCount, history.size());
@@ -47,22 +42,18 @@ public class ConversationPersistenceCoordinator {
         return persistedCount;
     }
 
-    public void persistAssistantMessage(UUID conversationId, Message message) throws Exception {
-        Validate.notNull(conversationId, "conversationId must not be null");
-        Validate.notNull(message, "message must not be null");
+    public void persistAssistantMessage(@NonNull UUID conversationId, @NonNull Message message) throws Exception  {
 
         conversationRepo.addMessage(conversationId, message);
         persistedMessageCounter.incrementIfPresent(conversationId);
     }
 
-    public void persistConversationAgentSettings(UUID conversationId, boolean agentModeEnabled, Path agentProjectRoot)
-            throws Exception {
-        Validate.notNull(conversationId, "conversationId must not be null");
+    public void persistConversationAgentSettings(@NonNull UUID conversationId, boolean agentModeEnabled, Path agentProjectRoot)
+            throws Exception  {
         conversationRepo.updateAgentSettings(conversationId, agentModeEnabled, agentProjectRoot);
     }
 
-    public void persistConversationReasoningLevel(UUID conversationId, ReasoningLevel reasoningLevel) throws Exception {
-        Validate.notNull(conversationId, "conversationId must not be null");
+    public void persistConversationReasoningLevel(@NonNull UUID conversationId, ReasoningLevel reasoningLevel) throws Exception  {
         conversationRepo.updateReasoningLevel(conversationId, reasoningLevel);
     }
 

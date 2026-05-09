@@ -72,12 +72,12 @@ class ThemeMenuStructureRebuildCoordinatorTest {
                 "GitHub"
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("themeMenuItemsByName must not be null");
+                .hasMessageContaining("themeMenuItemsByName");
 
         assertThatThrownBy(() -> new ThemeMenuStructureRebuildCoordinator(
                 (ThemeMenuStructureRebuildCoordinator.RebuildAction) null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("rebuildAction must not be null");
+                .hasMessageContaining("rebuildAction");
     }
 }

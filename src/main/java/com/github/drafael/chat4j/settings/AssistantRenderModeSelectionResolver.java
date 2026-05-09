@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.util.UUID;
 
@@ -11,9 +11,8 @@ public class AssistantRenderModeSelectionResolver {
             UUID currentConversationId,
             AssistantRenderMode conversationMode,
             AssistantRenderMode pendingUnsavedConversationMode,
-            AssistantRenderMode defaultMode
+            @NonNull AssistantRenderMode defaultMode
     ) {
-        Validate.notNull(defaultMode, "defaultMode must not be null");
 
         if (currentConversationId != null) {
             return conversationMode != null ? conversationMode : defaultMode;

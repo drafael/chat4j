@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class GeneralSettingsResolver {
 
@@ -13,14 +13,11 @@ public class GeneralSettingsResolver {
     private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
 
     public GeneralSettingsResolver(
-            SettingsRepo settingsRepo,
-            AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator
+            @NonNull SettingsRepo settingsRepo,
+            @NonNull AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator
     ) {
-        this.settingsRepo = Validate.notNull(settingsRepo, "settingsRepo must not be null");
-        this.assistantRenderModeSettingsCoordinator = Validate.notNull(
-                assistantRenderModeSettingsCoordinator,
-                "assistantRenderModeSettingsCoordinator must not be null"
-        );
+        this.settingsRepo = settingsRepo;
+        this.assistantRenderModeSettingsCoordinator = assistantRenderModeSettingsCoordinator;
     }
 
     public GeneralSettings resolve(boolean defaultMenuBarEnabled) {

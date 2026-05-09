@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec.ModelSelection;
 import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -37,45 +37,31 @@ public class CurrentConversationSaveCoordinator {
     }
 
     CurrentConversationSaveCoordinator(
-            ConversationTitleDeriver conversationTitleDeriver,
-            ConversationCreator conversationCreator,
-            HistoryPersister historyPersister,
-            ConversationModePersister conversationModePersister,
-            ConversationAgentSettingsPersister conversationAgentSettingsPersister,
-            ConversationReasoningLevelPersister conversationReasoningLevelPersister
+            @NonNull ConversationTitleDeriver conversationTitleDeriver,
+            @NonNull ConversationCreator conversationCreator,
+            @NonNull HistoryPersister historyPersister,
+            @NonNull ConversationModePersister conversationModePersister,
+            @NonNull ConversationAgentSettingsPersister conversationAgentSettingsPersister,
+            @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister
     ) {
-        this.conversationTitleDeriver = Validate.notNull(
-                conversationTitleDeriver,
-                "conversationTitleDeriver must not be null"
-        );
-        this.conversationCreator = Validate.notNull(conversationCreator, "conversationCreator must not be null");
-        this.historyPersister = Validate.notNull(historyPersister, "historyPersister must not be null");
-        this.conversationModePersister = Validate.notNull(
-                conversationModePersister,
-                "conversationModePersister must not be null"
-        );
-        this.conversationAgentSettingsPersister = Validate.notNull(
-                conversationAgentSettingsPersister,
-                "conversationAgentSettingsPersister must not be null"
-        );
-        this.conversationReasoningLevelPersister = Validate.notNull(
-                conversationReasoningLevelPersister,
-                "conversationReasoningLevelPersister must not be null"
-        );
+        this.conversationTitleDeriver = conversationTitleDeriver;
+        this.conversationCreator = conversationCreator;
+        this.historyPersister = historyPersister;
+        this.conversationModePersister = conversationModePersister;
+        this.conversationAgentSettingsPersister = conversationAgentSettingsPersister;
+        this.conversationReasoningLevelPersister = conversationReasoningLevelPersister;
     }
 
     public SaveResult save(
             UUID currentConversationId,
             AssistantRenderMode pendingUnsavedConversationRenderMode,
-            List<Message> history,
+            @NonNull List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode,
+            @NonNull AssistantRenderMode currentAssistantRenderMode,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot
-    ) throws Exception {
-        Validate.notNull(history, "history must not be null");
-        Validate.notNull(currentAssistantRenderMode, "currentAssistantRenderMode must not be null");
+    ) throws Exception  {
 
         if (history.isEmpty()) {
             return SaveResult.skippedResult(currentConversationId, pendingUnsavedConversationRenderMode);
@@ -110,7 +96,7 @@ public class CurrentConversationSaveCoordinator {
 
     public record SaveResult(
             boolean saved,
-            UUID conversationId,
+            @NonNull UUID conversationId,
             AssistantRenderMode pendingUnsavedConversationRenderMode,
             boolean createdConversation
     ) {
@@ -124,7 +110,6 @@ public class CurrentConversationSaveCoordinator {
                 AssistantRenderMode pendingUnsavedConversationRenderMode,
                 boolean createdConversation
         ) {
-            Validate.notNull(conversationId, "conversationId must not be null");
             return new SaveResult(true, conversationId, pendingUnsavedConversationRenderMode, createdConversation);
         }
     }

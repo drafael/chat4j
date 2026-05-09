@@ -72,7 +72,7 @@ class SidebarToggleApplyCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("toggleResult must not be null");
+                .hasMessageContaining("toggleResult");
 
         assertThatThrownBy(() -> subject.apply(
                 new SidebarVisibilityCoordinator.ToggleResult(true, 1, 1, 1),
@@ -82,6 +82,6 @@ class SidebarToggleApplyCoordinatorTest {
                 null
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("splitPane must not be null");
+                .hasMessageContaining("splitPane");
     }
 }

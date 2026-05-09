@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.util;
 
-import org.apache.commons.lang3.Validate;
 
+import lombok.NonNull;
 import javax.swing.JMenu;
 
 public class MenuPopupVisibleRunner {
 
-    public void runIfVisible(JMenu menu, Runnable action) {
-        Validate.notNull(action, "action must not be null");
+    public void runIfVisible(JMenu menu, @NonNull Runnable action) {
 
         if (menu != null && menu.isPopupMenuVisible()) {
             action.run();

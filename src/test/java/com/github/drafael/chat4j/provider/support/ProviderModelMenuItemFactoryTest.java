@@ -52,6 +52,6 @@ class ProviderModelMenuItemFactoryTest {
 
         assertThatThrownBy(() -> subject.create("OpenAI", "gpt", true, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onSelected must not be null");
+                .hasMessageContaining("onSelected");
     }
 }

@@ -41,6 +41,6 @@ class HelpMenuFactoryTest {
     void create_whenCallbackNull_throwsException() {
         assertThatThrownBy(() -> subject.create("Chat4J", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("onAbout must not be null");
+                .hasMessageContaining("onAbout");
     }
 }

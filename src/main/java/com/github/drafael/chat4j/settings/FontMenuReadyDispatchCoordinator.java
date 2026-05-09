@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import org.apache.commons.lang3.Validate;
+import lombok.NonNull;
 
 public class FontMenuReadyDispatchCoordinator {
 
@@ -10,13 +10,15 @@ public class FontMenuReadyDispatchCoordinator {
         this(fontMenuReadyCoordinator::ensureReady);
     }
 
-    FontMenuReadyDispatchCoordinator(EnsureReadyAction ensureReadyAction) {
-        this.ensureReadyAction = Validate.notNull(ensureReadyAction, "ensureReadyAction must not be null");
+    FontMenuReadyDispatchCoordinator(@NonNull EnsureReadyAction ensureReadyAction) {
+        this.ensureReadyAction = ensureReadyAction;
     }
 
-    public void ensureReady(boolean fontMenuBuilt, Runnable rebuildFontMenuStructure, Runnable syncFontMenuSelection) {
-        Validate.notNull(rebuildFontMenuStructure, "rebuildFontMenuStructure must not be null");
-        Validate.notNull(syncFontMenuSelection, "syncFontMenuSelection must not be null");
+    public void ensureReady(
+        boolean fontMenuBuilt,
+        @NonNull Runnable rebuildFontMenuStructure,
+        @NonNull Runnable syncFontMenuSelection
+) {
 
         ensureReadyAction.ensureReady(fontMenuBuilt, rebuildFontMenuStructure, syncFontMenuSelection);
     }

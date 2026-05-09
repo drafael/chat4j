@@ -29,6 +29,6 @@ class ThemeMenuSelectionApplyCoordinatorTest {
 
         assertThatThrownBy(() -> subject.apply("GitHub", null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setLastMenuSelectedTheme must not be null");
+                .hasMessageContaining("setLastMenuSelectedTheme");
     }
 }
