@@ -18,6 +18,8 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.web.WebSearchMode;
+import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -61,6 +63,301 @@ class ChatPanelTest {
         subject.getInputBar().setWebSearchLockedEnabled(false);
         subject.getInputBar().setWebSearchOptions(emptyList(), null);
         subject.getInputBar().setWebSearchEnabled(false);
+    }
+
+    @Test
+    @DisplayName("Activity bubble uses status title color for failed tool cards")
+    void setTitle_whenFailedStatus_usesErrorTitleColor() throws Exception {
+        ActivityBubble bubble = new ActivityBubble();
+        Color errorColor = new Color(210, 70, 70);
+        UIManager.put("Component.error.focusedBorderColor", errorColor);
+
+        SwingUtilities.invokeAndWait(() -> bubble.setTitle("✗ write file — denied"));
+
+        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
+                .filter(label -> "✗ write file — denied".equals(label.getText()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(titleLabel.getForeground()).isEqualTo(errorColor);
+    }
+
+    @Test
+    @DisplayName("Activity bubble uses accent title color while streaming")
+    void setStreaming_whenEnabled_usesAccentTitleColor() throws Exception {
+        ActivityBubble bubble = new ActivityBubble();
+        Color accent = new Color(80, 120, 240);
+        UIManager.put("Component.accentColor", accent);
+
+        SwingUtilities.invokeAndWait(() -> bubble.setStreaming(true));
+
+        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
+                .filter(label -> "Thinking".equals(label.getText()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(titleLabel.getForeground()).isEqualTo(accent);
+    }
+
+    @Test
+    @DisplayName("Long conversation header values are abbreviated with tooltips")
+    void setConversationHeader_whenValuesAreLong_abbreviatesLabelsAndKeepsTooltips() throws Exception {
+        String longTitle = "A".repeat(140);
+        String longSubtitle = "B".repeat(190);
+
+        SwingUtilities.invokeAndWait(() -> subject.setConversationHeader(longTitle, longSubtitle));
+
+        List<JLabel> labels = findComponents(subject, JLabel.class);
+        JLabel titleLabel = labels.stream()
+                .filter(label -> longTitle.equals(label.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+        JLabel subtitleLabel = labels.stream()
+                .filter(label -> longSubtitle.equals(label.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(titleLabel.getText()).endsWith("...").hasSizeLessThan(longTitle.length());
+        assertThat(subtitleLabel.getText()).endsWith("...").hasSizeLessThan(longSubtitle.length());
+    }
+
+    @Test
+    @DisplayName("Visible streaming listener reports active generation lifecycle")
+    void onSend_whenStreamingVisible_notifiesVisibleStreamingChanges() throws Exception {
+        var releaseStream = new CountDownLatch(1);
+        var observedStates = new ArrayList<Boolean>();
+        subject.setOnVisibleStreamingChanged(observedStates::add);
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                try {
+                    releaseStream.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onToken.accept("pong");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("gpt-5-mini");
+            }
+
+            @Override
+            public String name() {
+                return "OpenAI";
+            }
+
+            @Override
+            public String envVarName() {
+                return "OPENAI_API_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> observedStates.contains(true));
+        releaseStream.countDown();
+        awaitCondition(2, TimeUnit.SECONDS, () -> observedStates.contains(false));
+
+        assertThat(observedStates).containsSubsequence(true, false);
+    }
+
+    @Test
+    @DisplayName("Composer is centered and constrained inside workspace")
+    void layout_whenWidePanel_constrainsComposerWidth() throws Exception {
+        subject.setSize(1400, 900);
+        subject.doLayout();
+        flushEdt();
+
+        assertThat(subject.getInputBar().getWidth()).isLessThanOrEqualTo(920);
+    }
+
+    @Test
+    @DisplayName("First sent message updates live conversation title")
+    void onSend_whenFirstMessageSent_updatesConversationTitle() throws Exception {
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", immediateProvider("pong"));
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("Explain LocalToolRuntime security model\nwith examples"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return findComponents(subject, JLabel.class).stream()
+                    .map(JLabel::getText)
+                    .anyMatch("Explain LocalToolRuntime security model"::equals);
+        });
+    }
+
+    @Test
+    @DisplayName("Conversation subtitle can be updated independently")
+    void setConversationSubtitle_whenCalled_updatesHeaderSubtitle() throws Exception {
+        SwingUtilities.invokeAndWait(() -> subject.setConversationSubtitle("Agent mode · /tmp/project"));
+
+        assertThat(findComponents(subject, JLabel.class).stream()
+                .map(JLabel::getText)
+                .toList())
+                .contains("Agent mode · /tmp/project");
+    }
+
+    @Test
+    @DisplayName("Search the web suggestion enables web search toggle")
+    void searchTheWebSuggestion_whenClicked_enablesWebSearch() throws Exception {
+        AtomicReference<Boolean> notified = new AtomicReference<>();
+        subject.getInputBar().addWebSearchEnabledListener(notified::set);
+        subject.getInputBar().setWebSearchOptions(
+                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
+                "native"
+        );
+
+        JButton searchSuggestion = findComponents(subject, JButton.class).stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Search the web"))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(searchSuggestion::doClick);
+
+        assertThat(subject.getInputBar().getRawText()).isEqualTo("Search the web");
+        assertThat(subject.getInputBar().isWebSearchEnabled()).isTrue();
+        assertThat(notified.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Loaded assistant findings render structured finding cards")
+    void loadHistory_whenAssistantContainsFindings_rendersFindingCards() throws Exception {
+        subject.loadHistory(List.of(
+                Message.user("Review codebase"),
+                Message.assistant("""
+                        Findings
+
+                        P1 Agent bash escapes selected root
+                        Agent Mode documents bash as running within selected folder.
+                        LocalToolRuntime.java:218-233
+                        """)
+        ));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<FindingCardPanel> cards = findComponents(messagesPanel, FindingCardPanel.class);
+        List<MessageBubble> assistantBubbles = findComponents(messagesPanel, MessageBubble.class).stream()
+                .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                .toList();
+
+        assertThat(findComponents(messagesPanel, JLabel.class).stream().map(JLabel::getText))
+                .contains("Findings", "1 finding");
+        assertThat(cards).hasSize(1);
+        assertThat(assistantBubbles).isEmpty();
+        assertThat(cards.getFirst().severity()).isEqualTo("P1");
+        assertThat(cards.getFirst().title()).isEqualTo("Agent bash escapes selected root");
+
+        AtomicReference<Path> openedPath = new AtomicReference<>();
+        subject.setFindingFileOpenerForTests(openedPath::set);
+        Path projectRoot = Files.createTempDirectory("chat4j-finding-open");
+        Path targetFile = projectRoot.resolve("LocalToolRuntime.java");
+        Files.writeString(targetFile, "class LocalToolRuntime {}");
+        subject.getInputBar().setAgentProjectRoot(projectRoot);
+
+        JButton openFileButton = findComponents(cards.getFirst(), JButton.class).stream()
+                .filter(button -> "Open file".equals(button.getText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(openFileButton::doClick);
+        assertThat(openedPath.get()).isEqualTo(targetFile);
+
+        JButton applyFixButton = findComponents(cards.getFirst(), JButton.class).stream()
+                .filter(button -> "Apply fix".equals(button.getText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(applyFixButton::doClick);
+
+        assertThat(subject.getInputBar().getRawText())
+                .contains("Fix this finding: Agent bash escapes selected root")
+                .contains("File: LocalToolRuntime.java:218-233")
+                .contains("Context: Agent Mode documents bash as running within selected folder.");
+    }
+
+    @Test
+    @DisplayName("Header project button reflects active project state")
+    void setHeaderProjectActive_whenActive_updatesProjectButton() throws Exception {
+        SwingUtilities.invokeAndWait(() -> subject.setHeaderProjectActive(true, "chat4j-pi", "/Users/me/code/chat4j-pi"));
+
+        JButton projectButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "chat4j-pi".equals(button.getText()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(projectButton.isSelected()).isTrue();
+        assertThat(projectButton.isContentAreaFilled()).isTrue();
+        assertThat(projectButton.getToolTipText()).isEqualTo("/Users/me/code/chat4j-pi");
+    }
+
+    @Test
+    @DisplayName("Header project button dispatches project request")
+    void headerProjectButton_whenClicked_dispatchesProjectRequest() throws Exception {
+        var projectInvoked = new AtomicInteger();
+        subject.setOnHeaderProjectRequested(projectInvoked::incrementAndGet);
+
+        JButton projectButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Select project for Agent Mode".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(projectButton::doClick);
+
+        assertThat(projectInvoked).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Header overflow menu exposes secondary workspace actions")
+    void createHeaderOverflowMenu_whenCreated_containsSecondaryActions() {
+        var searchInvoked = new AtomicInteger();
+        var settingsInvoked = new AtomicInteger();
+        subject.setOnHeaderSearchRequested(searchInvoked::incrementAndGet);
+        subject.setOnHeaderSettingsRequested(settingsInvoked::incrementAndGet);
+
+        JPopupMenu menu = subject.createHeaderOverflowMenu();
+        JMenuItem searchItem = findMenuItem(menu, "Search chats");
+        JMenuItem settingsItem = findMenuItem(menu, "Settings");
+        JMenuItem copyConversationItem = findMenuItem(menu, "Copy conversation");
+        JMenuItem copyItem = findMenuItem(menu, "Copy recent response");
+        JMenuItem clearItem = findMenuItem(menu, "Clear chat");
+
+        assertThat(searchItem).isNotNull();
+        assertThat(settingsItem).isNotNull();
+        assertThat(copyConversationItem).isNotNull();
+        assertThat(copyConversationItem.isEnabled()).isFalse();
+        assertThat(copyItem).isNotNull();
+        assertThat(clearItem).isNotNull();
+
+        searchItem.doClick();
+        settingsItem.doClick();
+
+        assertThat(searchInvoked).hasValue(1);
+        assertThat(settingsInvoked).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Header exposes overflow conversation actions button")
+    void constructor_whenCreated_addsHeaderOverflowButton() {
+        JButton overflowButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "More conversation actions".equals(button.getToolTipText()))
+                .findFirst()
+                .orElse(null);
+
+        assertThat(overflowButton).isNotNull();
     }
 
     @Test

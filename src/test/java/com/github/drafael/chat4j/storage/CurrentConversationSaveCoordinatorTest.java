@@ -62,6 +62,38 @@ class CurrentConversationSaveCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Save skips empty new conversation without requiring conversation id")
+    void save_whenHistoryEmptyAndConversationIsNew_returnsSkippedResultWithNullConversationId() throws Exception {
+        var subject = new CurrentConversationSaveCoordinator(
+                new ConversationTitleDeriver(),
+                (title, provider, model) -> UUID.randomUUID(),
+                (conversationId, history) -> {
+                },
+                (conversationId, mode) -> {
+                },
+                (conversationId, agentModeEnabled, agentProjectRoot) -> {
+                },
+                (conversationId, reasoningLevel) -> {
+                }
+        );
+
+        var result = subject.save(
+                null,
+                null,
+                emptyList(),
+                null,
+                AssistantRenderMode.PREVIEW,
+                ReasoningLevel.OFF,
+                false,
+                null
+        );
+
+        assertThat(result.saved()).isFalse();
+        assertThat(result.conversationId()).isNull();
+        assertThat(result.createdConversation()).isFalse();
+    }
+
+    @Test
     @DisplayName("Save creates conversation and persists pending mode when conversation is new")
     void save_whenConversationIsNew_createsConversationAndPersistsPendingMode() throws Exception {
         var titleDeriver = new ConversationTitleDeriver() {

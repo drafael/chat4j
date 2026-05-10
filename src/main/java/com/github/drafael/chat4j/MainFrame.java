@@ -518,9 +518,13 @@ public class MainFrame extends JFrame {
         sidebarPanel = new SidebarPanel(conversationRepo);
         chatPanel.setOnConversationStreamingChanged(event ->
                 sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
+        chatPanel.setOnVisibleStreamingChanged(streaming -> updateConversationSubtitle());
 
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
+        sidebarPanel.setOnSearch(() -> openChatSearch(null));
+        sidebarPanel.setOnProjects(() -> chatPanel.getInputBar().requestAgentModeEnabled(true));
+        sidebarPanel.setOnSettings(this::openSettings);
 
         splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
         splitPane.setDividerLocation(250);
@@ -562,13 +566,16 @@ public class MainFrame extends JFrame {
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
+        panel.setOnHeaderSearchRequested(() -> openChatSearch(null));
+        panel.setOnHeaderSettingsRequested(this::openSettings);
+        panel.setOnHeaderProjectRequested(() -> panel.getInputBar().requestAgentModeEnabled(true));
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
-        panel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
-        panel.getInputBar().addWebSearchEnabledListener(this::persistWebSearchEnabled);
-        panel.getInputBar().addWebSearchOptionListener(this::persistWebSearchOption);
+        panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
+        panel.getInputBar().addWebSearchEnabledListener(this::onWebSearchEnabledChanged);
+        panel.getInputBar().addWebSearchOptionListener(this::onWebSearchOptionChanged);
         panel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
-        panel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
-        panel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
+        panel.getInputBar().addAgentModeListener(this::onAgentModeChanged);
+        panel.getInputBar().addAgentProjectRootListener(this::onAgentProjectRootChanged);
         panel.setConversationIdSupplier(conversationState::currentConversationId);
         panel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         panel.setActiveConversationId(conversationState.currentConversationId());
@@ -822,11 +829,26 @@ public class MainFrame extends JFrame {
         );
 
         if (applied) {
+            chatPanel.setConversationHeader(conversation.title(), conversationSubtitle(conversation));
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
                     conversation,
                     runtimeSettingsTarget()
             );
+            updateConversationSubtitle();
         }
+    }
+
+    private String conversationSubtitle(ConversationRepo.ConversationRecord conversation) {
+        if (conversation.agentModeEnabled() && StringUtils.isNotBlank(conversation.agentProjectRoot())) {
+            return "Agent mode · %s".formatted(conversation.agentProjectRoot());
+        }
+        if (StringUtils.isNotBlank(conversation.provider()) && StringUtils.isNotBlank(conversation.model())) {
+            return "%s · %s".formatted(conversation.provider(), conversation.model());
+        }
+        if (StringUtils.isNotBlank(conversation.provider())) {
+            return conversation.provider();
+        }
+        return null;
     }
 
     private void resetConversationRuntimeState() {
@@ -1189,8 +1211,9 @@ public class MainFrame extends JFrame {
         applyWebSearchSettings();
     }
 
-    private void persistReasoningLevel(ReasoningLevel reasoningLevel) {
+    private void onReasoningLevelChanged(ReasoningLevel reasoningLevel) {
         persistCurrentConversationReasoningLevel(reasoningLevel);
+        updateConversationSubtitle();
     }
 
     private void applyAgentModeSettings() {
@@ -1208,12 +1231,14 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void persistWebSearchEnabled(boolean enabled) {
+    private void onWebSearchEnabledChanged(boolean enabled) {
         persistCurrentConversationWebSearchSettings();
+        updateConversationSubtitle();
     }
 
-    private void persistWebSearchOption(String optionId) {
+    private void onWebSearchOptionChanged(String optionId) {
         persistCurrentConversationWebSearchSettings();
+        updateConversationSubtitle();
     }
 
     private void persistWebBrowseTopN(int topN) {
@@ -1228,12 +1253,58 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void persistAgentModeEnabled(boolean enabled) {
+    private void onAgentModeChanged(boolean enabled) {
         persistCurrentConversationAgentSettings();
+        updateConversationSubtitle();
     }
 
-    private void persistAgentProjectRoot(Path projectRoot) {
+    private void onAgentProjectRootChanged(Path projectRoot) {
         persistCurrentConversationAgentSettings();
+        updateConversationSubtitle();
+    }
+
+    private void updateConversationSubtitle() {
+        chatPanel.setConversationSubtitle(currentConversationSubtitle());
+        updateHeaderProjectState();
+    }
+
+    private void updateHeaderProjectState() {
+        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
+        boolean active = chatPanel.getInputBar().isAgentModeEnabled() && agentProjectRoot != null;
+        if (!active) {
+            chatPanel.setHeaderProjectActive(false, "Project", "Select project for Agent Mode");
+            return;
+        }
+
+        Path fileName = agentProjectRoot.getFileName();
+        String label = fileName == null ? "Project" : fileName.toString();
+        chatPanel.setHeaderProjectActive(true, label, agentProjectRoot.toAbsolutePath().toString());
+    }
+
+    private String currentConversationSubtitle() {
+        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
+        if (chatPanel.getInputBar().isAgentModeEnabled() && agentProjectRoot != null) {
+            return "Agent mode · %s".formatted(agentProjectRoot);
+        }
+
+        String selectedModel = chatPanel.getSelectedModel();
+        if (StringUtils.isBlank(selectedModel)) {
+            return null;
+        }
+
+        String modelSubtitle = selectedModel.replace(" > ", " · ");
+        ReasoningLevel reasoningLevel = chatPanel.getInputBar().getEffectiveReasoningLevel();
+        String modePrefix = chatPanel.isStreaming()
+                ? "Generating"
+                : "";
+        if (reasoningLevel.enabled()) {
+            String reasoningPrefix = "Reasoning %s".formatted(reasoningLevel.name().toLowerCase().replace('_', ' '));
+            modePrefix = StringUtils.isBlank(modePrefix) ? reasoningPrefix : "%s · %s".formatted(modePrefix, reasoningPrefix);
+        }
+        if (chatPanel.getInputBar().isWebSearchEnabled()) {
+            modePrefix = StringUtils.isBlank(modePrefix) ? "Web search" : "%s · Web search".formatted(modePrefix);
+        }
+        return StringUtils.isBlank(modePrefix) ? modelSubtitle : "%s · %s".formatted(modePrefix, modelSubtitle);
     }
 
     private void persistCurrentConversationAgentSettings() {
@@ -1344,6 +1415,7 @@ public class MainFrame extends JFrame {
 
     private void onSelectedModelChanged(String modelKey) {
         modelMenuCoordinator.onSelectedModelChanged(modelMenuContext());
+        updateConversationSubtitle();
     }
 
     private void onModelFavoritesChanged() {

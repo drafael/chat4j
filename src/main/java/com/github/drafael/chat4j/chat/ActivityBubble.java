@@ -41,6 +41,7 @@ public class ActivityBubble extends JPanel {
     private Timer copyButtonCheckFeedbackTimer;
     private Color copyButtonBaseColor = new Color(120, 120, 120);
     private Color copyButtonHoverColor = new Color(150, 150, 150);
+    private StatusTone statusTone = StatusTone.DEFAULT;
 
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
     private boolean collapsed;
@@ -79,6 +80,7 @@ public class ActivityBubble extends JPanel {
         foldButton.addActionListener(e -> toggleCollapsedDebounced());
 
         String titleText = StringUtils.defaultIfBlank(title, "Thinking");
+        statusTone = resolveStatusTone(titleText);
         titleLabel = new JLabel(titleText);
         Fonts.apply(titleLabel, Font.PLAIN, Fonts.SIZE_BODY);
         titleLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -207,9 +209,11 @@ public class ActivityBubble extends JPanel {
 
     public void setTitle(String title) {
         String titleText = StringUtils.defaultIfBlank(title, "Thinking");
+        statusTone = resolveStatusTone(titleText);
         titleLabel.setText(titleText);
         titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(titleText.toLowerCase()) : null);
         copyButton.setToolTipText("Copy %s".formatted(titleText.toLowerCase()));
+        updateColors();
     }
 
     public void setCollapsible(boolean collapsible) {
@@ -288,6 +292,7 @@ public class ActivityBubble extends JPanel {
         }
 
         this.streaming = streaming;
+        updateColors();
         refreshContent();
     }
 
@@ -412,9 +417,10 @@ public class ActivityBubble extends JPanel {
         if (muted == null) {
             muted = new Color(130, 130, 130);
         }
+        Color titleColor = streaming ? resolveStreamingTitleColor(muted) : resolveTitleColor(muted);
 
-        titleLabel.setForeground(muted);
-        foldButton.setForeground(muted);
+        titleLabel.setForeground(titleColor);
+        foldButton.setForeground(titleColor);
 
         Color iconColor = blend(muted, panelBackground, 0.25f);
         Color accent = UIManager.getColor("Component.accentColor");
@@ -425,7 +431,7 @@ public class ActivityBubble extends JPanel {
             accent = muted;
         }
 
-        copyButtonBaseColor = iconColor;
+        copyButtonBaseColor = streaming ? titleColor : iconColor;
         float hoverBlend = dark ? 0.86f : 0.80f;
         Color hoverCandidate = blend(iconColor, accent, hoverBlend);
         if (colorDistance(hoverCandidate, getBackground()) <= colorDistance(iconColor, getBackground()) + 14f) {
@@ -434,6 +440,52 @@ public class ActivityBubble extends JPanel {
         copyButtonHoverColor = hoverCandidate;
 
         setCopyButtonHighlighted(copyButtonHovered);
+    }
+
+    private Color resolveTitleColor(Color fallback) {
+        return switch (statusTone) {
+            case SUCCESS -> colorOrDefault(UIManager.getColor("Actions.Green"), new Color(60, 150, 95));
+            case FAILURE -> colorOrDefault(UIManager.getColor("Component.error.focusedBorderColor"), new Color(190, 58, 58));
+            case SKIPPED -> colorOrDefault(UIManager.getColor("Label.disabledForeground"), fallback);
+            case RUNNING, DEFAULT -> fallback;
+        };
+    }
+
+    private Color resolveStreamingTitleColor(Color fallback) {
+        Color accent = UIManager.getColor("Component.accentColor");
+        if (accent == null) {
+            accent = UIManager.getColor("ProgressBar.foreground");
+        }
+        return accent != null ? accent : fallback;
+    }
+
+    private Color colorOrDefault(Color color, Color fallback) {
+        return color != null ? color : fallback;
+    }
+
+    private StatusTone resolveStatusTone(String title) {
+        String normalized = StringUtils.trimToEmpty(title);
+        if (normalized.startsWith("✓")) {
+            return StatusTone.SUCCESS;
+        }
+        if (normalized.startsWith("✗")) {
+            return StatusTone.FAILURE;
+        }
+        if (normalized.startsWith("↷")) {
+            return StatusTone.SKIPPED;
+        }
+        if (normalized.startsWith("•")) {
+            return StatusTone.RUNNING;
+        }
+        return StatusTone.DEFAULT;
+    }
+
+    private enum StatusTone {
+        DEFAULT,
+        RUNNING,
+        SUCCESS,
+        FAILURE,
+        SKIPPED
     }
 
     private void installHoverListener() {

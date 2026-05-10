@@ -28,9 +28,9 @@ public class ModelSelectorButton extends JButton {
             Map.entry("Ollama", "/icons/providers/ollama.svg")
     );
     private static final int PROVIDER_ICON_GAP = 5;
-    private static final int MIN_BUTTON_WIDTH = 320;
-    private static final int MAX_BUTTON_WIDTH = 760;
-    private static final int HORIZONTAL_CONTENT_PADDING = 32;
+    private static final int MIN_BUTTON_WIDTH = 180;
+    private static final int MAX_BUTTON_WIDTH = 360;
+    private static final int HORIZONTAL_CONTENT_PADDING = 24;
     private static final Map<String, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
 
     private String modelName = "";
@@ -77,7 +77,7 @@ public class ModelSelectorButton extends JButton {
         int textW = Math.max(fmPrimary.stringWidth(modelName), secondaryWidth) + HORIZONTAL_CONTENT_PADDING;
         int w = Math.max(textW, MIN_BUTTON_WIDTH);
         w = Math.min(w, maxAllowedWidth());
-        int h = fmPrimary.getHeight() + fmSecondary.getHeight() + 8;
+        int h = fmPrimary.getHeight() + fmSecondary.getHeight() + 6;
         return new Dimension(w, h);
     }
 

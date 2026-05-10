@@ -7,6 +7,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -51,14 +52,17 @@ public class MainFrameTitleBarFactory {
 
         titleBar.add(leftButtons, BorderLayout.WEST);
 
-        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 2));
+        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 6));
         centerPanel.setOpaque(false);
-        centerPanel.add(modelSelector);
+        JLabel appTitle = new JLabel("Chat4J");
+        appTitle.putClientProperty("FlatLaf.styleClass", "small");
+        centerPanel.add(appTitle);
         titleBar.add(centerPanel, BorderLayout.CENTER);
 
-        JPanel rightPanel = new JPanel();
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 2));
         rightPanel.setOpaque(false);
-        rightPanel.setPreferredSize(leftButtons.getPreferredSize());
+        rightPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
+        rightPanel.add(modelSelector);
         titleBar.add(rightPanel, BorderLayout.EAST);
 
         return new TitleBar(titleBar, sidebarToggleButton, sidebarToggleFilledIcon, sidebarToggleOutlineIcon);

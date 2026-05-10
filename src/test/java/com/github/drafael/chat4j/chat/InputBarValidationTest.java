@@ -243,6 +243,28 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Agent mode request shows validation when unavailable")
+    void requestAgentModeEnabled_whenUnavailable_showsValidation() throws Exception {
+        InputBar subject = new InputBar();
+
+        SwingUtilities.invokeAndWait(() -> subject.requestAgentModeEnabled(true));
+
+        assertThat(subject.isAgentModeEnabled()).isFalse();
+        assertThat(readValidationLabel(subject).getText()).isEqualTo("Agent Mode is not available for the selected model.");
+    }
+
+    @Test
+    @DisplayName("Web search request shows validation when unavailable")
+    void requestWebSearchEnabled_whenUnavailable_showsValidation() throws Exception {
+        InputBar subject = new InputBar();
+
+        SwingUtilities.invokeAndWait(() -> subject.requestWebSearchEnabled(true));
+
+        assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(readValidationLabel(subject).getText()).isEqualTo("Web Search is not available for the selected model.");
+    }
+
+    @Test
     @DisplayName("Web search button click toggles enabled state and notifies listener")
     void webSearchButtonClick_whenAvailable_togglesEnabledState() throws Exception {
         InputBar subject = new InputBar();
@@ -255,11 +277,15 @@ class InputBarValidationTest {
         SwingUtilities.invokeAndWait(webSearchButton::doClick);
 
         assertThat(subject.isWebSearchEnabled()).isTrue();
+        assertThat(webSearchButton.isSelected()).isTrue();
+        assertThat(webSearchButton.isContentAreaFilled()).isTrue();
         assertThat(notified.get()).isTrue();
 
         SwingUtilities.invokeAndWait(webSearchButton::doClick);
 
         assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(webSearchButton.isSelected()).isFalse();
+        assertThat(webSearchButton.isContentAreaFilled()).isFalse();
         assertThat(notified.get()).isFalse();
     }
 
