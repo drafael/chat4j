@@ -38,6 +38,7 @@ import com.github.drafael.chat4j.web.WebSearchContext;
 import com.github.drafael.chat4j.web.WebSearchCoordinator;
 import com.github.drafael.chat4j.web.WebSearchResponse;
 import com.github.drafael.chat4j.web.WebSearchResult;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -80,7 +81,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -101,6 +101,9 @@ public class ChatPanel extends JPanel {
     private static final int BUBBLE_ACTION_BAR_WIDTH = BUBBLE_ACTION_BUTTON_SIZE * 2 + 2;
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
     private static final int COMPOSER_FADE_HEIGHT = 48;
+    private static final int CHAT_COLUMN_MAX_WIDTH = 920;
+    private static final int CHAT_COLUMN_SIDE_MARGIN = 16;
+    private static final String MESSAGE_ROLE_PROPERTY = "chat4j.messageRole";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
@@ -116,6 +119,7 @@ public class ChatPanel extends JPanel {
     private final JScrollPane scrollPane;
     private final CardLayout messagesCardLayout = new CardLayout();
     private final JPanel messagesContainer;
+    private JPanel emptyStatePanel;
     private final InputBar inputBar;
     private final JLayeredPane bodyLayered;
     private final JPanel bodyContent;
@@ -146,6 +150,7 @@ public class ChatPanel extends JPanel {
     private AssistantMessagePersistenceListener assistantMessageCompletedListener;
     private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
     private Consumer<ConversationStreamingEvent> conversationStreamingListener;
+    private Consumer<Boolean> visibleStreamingChangedListener;
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
 
@@ -170,9 +175,19 @@ public class ChatPanel extends JPanel {
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
     private volatile UUID activeConversationId;
+    private List<PromptQuickAction> promptQuickActions = emptyList();
     private volatile SendPreparer sendPreparer = this::prepareUserMessage;
     private boolean autoScrollQueued = false;
     private int messageRow = 0;
+
+    public record PromptQuickAction(@NonNull String title, @NonNull Runnable action) {
+        public PromptQuickAction {
+            title = StringUtils.trimToEmpty(title);
+            if (title.isBlank()) {
+                throw new IllegalArgumentException("title must not be blank");
+            }
+        }
+    }
 
     public ChatPanel() {
         this(ProviderModelCacheService.createDefault(), ModelFavoritesService.createInMemory());
@@ -196,9 +211,7 @@ public class ChatPanel extends JPanel {
         JPanel chatHeader = new JPanel(new BorderLayout());
         chatHeader.setOpaque(false);
         chatHeader.setBorder(BorderFactory.createEmptyBorder(4, 12, 0, 12));
-
-        JPanel renderTogglePanel = createRenderTogglePanel();
-        chatHeader.add(renderTogglePanel, BorderLayout.EAST);
+        chatHeader.add(createRenderTogglePanel(), BorderLayout.EAST);
         add(chatHeader, BorderLayout.NORTH);
 
         // Messages area — uses ScrollablePanel + GridBagLayout for proper width tracking
@@ -208,6 +221,7 @@ public class ChatPanel extends JPanel {
         messagesPanel.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
+                refreshMessageColumnInsets();
                 refreshUserBubbleMaxWidths();
                 if (autoScrollEnabled) {
                     scheduleAutoScroll();
@@ -220,7 +234,8 @@ public class ChatPanel extends JPanel {
         applyScrollPaneStyles();
 
         messagesContainer = new JPanel(messagesCardLayout);
-        messagesContainer.add(buildEmptyStatePanel(), CARD_EMPTY);
+        emptyStatePanel = buildEmptyStatePanel();
+        messagesContainer.add(emptyStatePanel, CARD_EMPTY);
         messagesContainer.add(scrollPane, CARD_CHAT);
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
 
@@ -234,7 +249,7 @@ public class ChatPanel extends JPanel {
         bodyContent = new JPanel(new BorderLayout());
         bodyContent.setOpaque(false);
         bodyContent.add(messagesContainer, BorderLayout.CENTER);
-        bodyContent.add(inputBar, BorderLayout.SOUTH);
+        bodyContent.add(new CenteredComposerPanel(inputBar), BorderLayout.SOUTH);
 
         jumpToLatestOverlay = new JumpToLatestButton();
         jumpToLatestOverlay.setVisible(false);
@@ -275,20 +290,46 @@ public class ChatPanel extends JPanel {
         refreshJumpOverlay();
     }
 
+    public void setPromptQuickActions(@NonNull List<PromptQuickAction> promptQuickActions) {
+        this.promptQuickActions = List.copyOf(promptQuickActions);
+        refreshEmptyStatePanel();
+    }
+
+    private void refreshEmptyStatePanel() {
+        if (messagesContainer == null || emptyStatePanel == null) {
+            return;
+        }
+
+        messagesContainer.remove(emptyStatePanel);
+        emptyStatePanel = buildEmptyStatePanel();
+        messagesContainer.add(emptyStatePanel, CARD_EMPTY, 0);
+        messagesCardLayout.show(messagesContainer, history.isEmpty() ? CARD_EMPTY : CARD_CHAT);
+        messagesContainer.revalidate();
+        messagesContainer.repaint();
+    }
+
     private void layoutJumpOverlay() {
         if (jumpToLatestOverlay == null || inputBar == null || bodyLayered == null) {
             return;
         }
 
         Dimension size = jumpToLatestOverlay.getPreferredSize();
+        int inputTopY = inputBarTopY();
         int x = (bodyLayered.getWidth() - size.width) / 2;
-        int y = inputBar.getY() - size.height - JUMP_OVERLAY_BOTTOM_GAP;
+        int y = inputTopY - size.height - JUMP_OVERLAY_BOTTOM_GAP;
         jumpToLatestOverlay.setBounds(x, y, size.width, size.height);
 
         if (composerFadeOverlay != null) {
-            int fadeTop = Math.max(0, inputBar.getY() - COMPOSER_FADE_HEIGHT);
-            composerFadeOverlay.setBounds(0, fadeTop, bodyLayered.getWidth(), inputBar.getY() - fadeTop);
+            int fadeTop = Math.max(0, inputTopY - COMPOSER_FADE_HEIGHT);
+            composerFadeOverlay.setBounds(0, fadeTop, bodyLayered.getWidth(), inputTopY - fadeTop);
         }
+    }
+
+    private int inputBarTopY() {
+        if (inputBar.getParent() == null) {
+            return inputBar.getY();
+        }
+        return SwingUtilities.convertPoint(inputBar.getParent(), inputBar.getLocation(), bodyLayered).y;
     }
 
     private void updateAtBottom() {
@@ -354,16 +395,8 @@ public class ChatPanel extends JPanel {
         group.add(previewToggle);
         group.add(markdownToggle);
 
-        configureRenderToggleButton(
-            previewToggle,
-            "first",
-            "Preview rendered markdown"
-        );
-        configureRenderToggleButton(
-            markdownToggle,
-            "last",
-            "Show raw markdown"
-        );
+        configureRenderToggleButton(previewToggle, "first", "Preview rendered markdown");
+        configureRenderToggleButton(markdownToggle, "last", "Show raw markdown");
 
         previewToggle.addActionListener(e -> {
             if (previewToggle.isSelected()) {
@@ -380,24 +413,19 @@ public class ChatPanel extends JPanel {
         panel.setOpaque(false);
         panel.add(previewToggle);
         panel.add(markdownToggle);
-
         updateRenderModeToggleSelection();
         return panel;
     }
 
-    private void configureRenderToggleButton(
-        JToggleButton button,
-        String segmentPosition,
-        String tooltip
-    ) {
+    private void configureRenderToggleButton(JToggleButton button, String segmentPosition, String tooltip) {
         button.putClientProperty("JButton.buttonType", "segmented");
         button.putClientProperty("JButton.segmentPosition", segmentPosition);
         button.setFocusable(false);
         button.setToolTipText(tooltip);
         button.setMargin(new Insets(2, 8, 2, 8));
         Fonts.apply(button, Font.PLAIN, Fonts.SIZE_SMALL);
-        button.setPreferredSize(new Dimension(92, 22));
-        button.setMinimumSize(new Dimension(92, 22));
+        button.setPreferredSize(new Dimension(82, 22));
+        button.setMinimumSize(new Dimension(82, 22));
     }
 
     private void populateModels() {
@@ -662,6 +690,7 @@ public class ChatPanel extends JPanel {
         }
 
         boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
+        boolean startsConversation = visibleConversation && history.isEmpty();
         if (visibleConversation) {
             inputBar.clear();
             history.add(userMessage);
@@ -1563,8 +1592,10 @@ public class ChatPanel extends JPanel {
         if (viewport <= 0) {
             viewport = 800;
         }
+        int columnWidth = chatColumnAvailableWidth();
         int reserved = USER_LEFT_GUTTER + USER_BUBBLE_INSET + USER_ROW_PADDING;
-        return Math.max(160, viewport - reserved);
+        int preferredWidth = Math.round(columnWidth * 0.72f);
+        return Math.max(160, Math.min(columnWidth - reserved, preferredWidth));
     }
 
     private static final int USER_LEFT_GUTTER = 120;
@@ -1623,9 +1654,8 @@ public class ChatPanel extends JPanel {
         int vgap = topContent != null ? 8 : 0;
         JPanel wrapper = new JPanel(new BorderLayout(0, vgap));
         wrapper.setOpaque(false);
-        wrapper.setBorder(role == Role.USER
-                ? BorderFactory.createEmptyBorder(2, USER_LEFT_GUTTER, 2, 0)
-                : BorderFactory.createEmptyBorder(8, 0, 8, 40));
+        wrapper.putClientProperty(MESSAGE_ROLE_PROPERTY, role);
+        applyMessageWrapperBorder(wrapper, role);
         if (topContent != null) {
             wrapper.add(topContent, BorderLayout.NORTH);
         }
@@ -1884,6 +1914,50 @@ public class ChatPanel extends JPanel {
         finishMessageWrapperAdd();
     }
 
+    private void refreshMessageColumnInsets() {
+        if (messagesPanel == null) {
+            return;
+        }
+
+        for (Component component : messagesPanel.getComponents()) {
+            if (component instanceof JPanel wrapper) {
+                Object role = wrapper.getClientProperty(MESSAGE_ROLE_PROPERTY);
+                if (role instanceof Role messageRole) {
+                    applyMessageWrapperBorder(wrapper, messageRole);
+                }
+            }
+        }
+    }
+
+    private void applyMessageWrapperBorder(JPanel wrapper, Role role) {
+        int sideInset = messageColumnSideInset();
+        wrapper.setBorder(role == Role.USER
+                ? BorderFactory.createEmptyBorder(2, sideInset + USER_LEFT_GUTTER, 2, sideInset)
+                : BorderFactory.createEmptyBorder(8, sideInset, 8, sideInset + 40));
+    }
+
+    private int messageColumnSideInset() {
+        int width = scrollPane != null && scrollPane.getViewport() != null ? scrollPane.getViewport().getWidth() : 0;
+        if (width <= 0) {
+            width = messagesPanel != null ? messagesPanel.getWidth() : 0;
+        }
+        if (width <= 0) {
+            return CHAT_COLUMN_SIDE_MARGIN;
+        }
+        return Math.max(CHAT_COLUMN_SIDE_MARGIN, (width - CHAT_COLUMN_MAX_WIDTH) / 2);
+    }
+
+    private int chatColumnAvailableWidth() {
+        int viewport = 0;
+        if (scrollPane != null && scrollPane.getViewport() != null) {
+            viewport = scrollPane.getViewport().getWidth();
+        }
+        if (viewport <= 0) {
+            viewport = 800;
+        }
+        return Math.max(320, Math.min(CHAT_COLUMN_MAX_WIDTH, viewport - messageColumnSideInset() * 2));
+    }
+
     private GridBagConstraints messageRowConstraints(int row) {
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.gridx = 0;
@@ -1904,29 +1978,212 @@ public class ChatPanel extends JPanel {
 
     private void finishMessageWrapperAdd() {
         addBottomFiller();
+        refreshMessageColumnInsets();
         messagesPanel.revalidate();
         messagesCardLayout.show(messagesContainer, CARD_CHAT);
         scrollToBottom();
     }
 
-    private static final int EMPTY_STATE_ICON_SIZE = 128;
+    private static final int EMPTY_STATE_ICON_SIZE = 72;
+    private static final int EMPTY_STATE_CHIP_GAP = 8;
+    private static final int EMPTY_STATE_PROMPT_CHIP_GAP = 6;
 
     private JPanel buildEmptyStatePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setOpaque(false);
+
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setBorder(BorderFactory.createEmptyBorder(0, 24, 0, 24));
+
         BufferedImage source = loadLogoSource();
         if (source != null) {
-            JLabel label = new JLabel() {
+            JLabel logo = new JLabel() {
                 @Override
                 public void updateUI() {
                     super.updateUI();
                     setIcon(new LogoIcon(tintLogo(source), EMPTY_STATE_ICON_SIZE));
                 }
             };
-            label.setIcon(new LogoIcon(tintLogo(source), EMPTY_STATE_ICON_SIZE));
-            panel.add(label);
+            logo.setIcon(new LogoIcon(tintLogo(source), EMPTY_STATE_ICON_SIZE));
+            logo.setAlignmentX(Component.CENTER_ALIGNMENT);
+            content.add(logo);
+            content.add(Box.createVerticalStrut(18));
         }
+
+        JLabel title = new JLabel("How can I help?");
+        Fonts.apply(title, Font.BOLD, Fonts.SIZE_DISPLAY);
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+        content.add(title);
+
+        JLabel subtitle = new JLabel("Chat, search the web, or run an agent task against a project.");
+        Fonts.apply(subtitle, Font.PLAIN, Fonts.SIZE_BODY);
+        subtitle.setForeground(UIManager.getColor("Label.disabledForeground"));
+        subtitle.setAlignmentX(Component.CENTER_ALIGNMENT);
+        content.add(Box.createVerticalStrut(8));
+        content.add(subtitle);
+        content.add(Box.createVerticalStrut(20));
+
+        JPanel suggestions = new JPanel(new WrapLayout(FlowLayout.CENTER, EMPTY_STATE_CHIP_GAP, EMPTY_STATE_CHIP_GAP));
+        suggestions.setOpaque(false);
+        suggestions.add(createSuggestionChip("Review codebase", () -> inputBar.requestAgentModeEnabled(true)));
+        suggestions.add(createSuggestionChip("Explain selected file", () -> inputBar.requestAttachmentPicker()));
+        suggestions.add(createSuggestionChip("Draft commit message", () -> inputBar.requestAgentModeEnabled(true)));
+        suggestions.add(createSuggestionChip("Search the web", () -> inputBar.requestWebSearchEnabled(true)));
+        content.add(suggestions);
+
+        if (!promptQuickActions.isEmpty()) {
+            content.add(Box.createVerticalStrut(14));
+            content.add(createEmptyStateSectionLabel("Prompts"));
+            content.add(Box.createVerticalStrut(6));
+            JPanel promptActions = new JPanel(new WrapLayout(
+                    FlowLayout.CENTER,
+                    EMPTY_STATE_PROMPT_CHIP_GAP,
+                    EMPTY_STATE_PROMPT_CHIP_GAP
+            ));
+            promptActions.setOpaque(false);
+            promptQuickActions.stream()
+                    .map(this::createPromptActionChip)
+                    .forEach(promptActions::add);
+            content.add(promptActions);
+        }
+
+        panel.add(content);
         return panel;
+    }
+
+    private JButton createSuggestionChip(String text, Runnable action) {
+        return createEmptyStateChip(text, true, () -> {
+            inputBar.setText(text);
+            if (action != null) {
+                action.run();
+            }
+            inputBar.requestInputFocus();
+        });
+    }
+
+    private JLabel createEmptyStateSectionLabel(String text) {
+        JLabel label = new JLabel(text);
+        Fonts.apply(label, Font.BOLD, Fonts.SIZE_SMALL);
+        label.setForeground(UIManager.getColor("Label.disabledForeground"));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        return label;
+    }
+
+    private JButton createPromptActionChip(PromptQuickAction promptQuickAction) {
+        return createEmptyStateChip(promptQuickAction.title(), false, () -> {
+            promptQuickAction.action().run();
+            inputBar.requestInputFocus();
+        });
+    }
+
+    private JButton createEmptyStateChip(String text, boolean primary, Runnable action) {
+        JButton chip = new JButton(text);
+        chip.putClientProperty("JButton.buttonType", "roundRect");
+        chip.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
+        chip.setFocusable(false);
+        chip.setMargin(primary ? new Insets(6, 12, 6, 12) : new Insets(4, 10, 4, 10));
+        Fonts.apply(chip, Font.PLAIN, primary ? Fonts.SIZE_BODY : Fonts.SIZE_SMALL);
+        chip.addActionListener(e -> action.run());
+        return chip;
+    }
+
+    private static class CenteredComposerPanel extends JPanel {
+        private static final int HORIZONTAL_MARGIN = 16;
+        private static final int BOTTOM_MARGIN = 12;
+
+        private final JComponent composer;
+
+        CenteredComposerPanel(JComponent composer) {
+            this.composer = composer;
+            setOpaque(false);
+            setLayout(null);
+            add(composer);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension preferred = composer.getPreferredSize();
+            return new Dimension(
+                    preferred.width + HORIZONTAL_MARGIN * 2,
+                    preferred.height + BOTTOM_MARGIN
+            );
+        }
+
+        @Override
+        public void doLayout() {
+            Dimension preferred = composer.getPreferredSize();
+            int width = Math.min(CHAT_COLUMN_MAX_WIDTH, Math.max(0, getWidth() - HORIZONTAL_MARGIN * 2));
+            int x = Math.max(HORIZONTAL_MARGIN, (getWidth() - width) / 2);
+            composer.setBounds(x, 0, width, preferred.height);
+        }
+    }
+
+    private static class WrapLayout extends FlowLayout {
+
+        private WrapLayout(int align, int hgap, int vgap) {
+            super(align, hgap, vgap);
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(Container target) {
+            return layoutSize(target, true);
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(Container target) {
+            Dimension minimum = layoutSize(target, false);
+            minimum.width -= getHgap() + 1;
+            return minimum;
+        }
+
+        private Dimension layoutSize(Container target, boolean preferred) {
+            synchronized (target.getTreeLock()) {
+                int targetWidth = target.getWidth();
+                if (targetWidth <= 0) {
+                    targetWidth = Integer.MAX_VALUE;
+                }
+
+                Insets insets = target.getInsets();
+                int maxWidth = targetWidth - insets.left - insets.right - getHgap() * 2;
+                Dimension dimension = new Dimension();
+                int rowWidth = 0;
+                int rowHeight = 0;
+
+                for (Component component : target.getComponents()) {
+                    if (!component.isVisible()) {
+                        continue;
+                    }
+
+                    Dimension size = preferred ? component.getPreferredSize() : component.getMinimumSize();
+                    if (rowWidth > 0 && rowWidth + getHgap() + size.width > maxWidth) {
+                        addRow(dimension, rowWidth, rowHeight);
+                        rowWidth = 0;
+                        rowHeight = 0;
+                    }
+
+                    if (rowWidth > 0) {
+                        rowWidth += getHgap();
+                    }
+                    rowWidth += size.width;
+                    rowHeight = Math.max(rowHeight, size.height);
+                }
+
+                addRow(dimension, rowWidth, rowHeight);
+                dimension.width += insets.left + insets.right + getHgap() * 2;
+                dimension.height += insets.top + insets.bottom + getVgap() * 2;
+                return dimension;
+            }
+        }
+
+        private void addRow(Dimension dimension, int rowWidth, int rowHeight) {
+            dimension.width = Math.max(dimension.width, rowWidth);
+            if (dimension.height > 0) {
+                dimension.height += getVgap();
+            }
+            dimension.height += rowHeight;
+        }
     }
 
     private static BufferedImage loadLogoSource() {
@@ -2012,13 +2269,15 @@ public class ChatPanel extends JPanel {
     private void addBubble(MessageBubble bubble, String text, Role role) {
         if (role == Role.ASSISTANT) {
             bubble.setAssistantRenderMode(assistantRenderMode);
-            assistantBubbles.add(bubble);
         }
 
         if (text != null) {
             bubble.setText(text);
         }
 
+        if (role == Role.ASSISTANT) {
+            assistantBubbles.add(bubble);
+        }
         installBubbleContextMenu(bubble);
         addMessageComponent(role, bubble, null);
     }
@@ -2368,6 +2627,10 @@ public class ChatPanel extends JPanel {
         return new ArrayList<>(history);
     }
 
+    public boolean isStreaming() {
+        return streaming;
+    }
+
     public void loadHistory(List<Message> messages) {
         clearChat(false);
 
@@ -2482,6 +2745,14 @@ public class ChatPanel extends JPanel {
         this.assistantRenderModeChangedListener = listener;
     }
 
+    private void updateRenderModeToggleSelection() {
+        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
+            markdownToggle.setSelected(true);
+        } else {
+            previewToggle.setSelected(true);
+        }
+    }
+
     public void setOnSelectedModelChanged(Consumer<String> listener) {
         this.selectedModelChangedListener = listener;
     }
@@ -2502,6 +2773,7 @@ public class ChatPanel extends JPanel {
         this.clearChatRequestedListener = listener;
     }
 
+
     public void setOnAssistantMessageCompleted(AssistantMessagePersistenceListener listener) {
         this.assistantMessageCompletedListener = listener;
     }
@@ -2512,6 +2784,10 @@ public class ChatPanel extends JPanel {
 
     public void setOnConversationStreamingChanged(Consumer<ConversationStreamingEvent> listener) {
         this.conversationStreamingListener = listener;
+    }
+
+    public void setOnVisibleStreamingChanged(Consumer<Boolean> listener) {
+        this.visibleStreamingChangedListener = listener;
     }
 
     public void setConversationIdSupplier(Supplier<UUID> supplier) {
@@ -2538,15 +2814,15 @@ public class ChatPanel extends JPanel {
 
         if (visibleSession != null) {
             activeStreamSessionId = visibleSession.sessionId;
-            streaming = true;
+            setVisibleStreaming(true);
             inputBar.setEnabled(false);
         } else if (visiblePreparingJob != null) {
             activeStreamSessionId = -1L;
-            streaming = true;
+            setVisibleStreaming(true);
             inputBar.setEnabled(false);
         } else {
             activeStreamSessionId = -1L;
-            streaming = false;
+            setVisibleStreaming(false);
             inputBar.setEnabled(true);
         }
         updateGenerationIndicator();
@@ -2590,6 +2866,16 @@ public class ChatPanel extends JPanel {
     private void notifyConversationStreamingChanged(UUID conversationId, boolean streaming) {
         if (conversationStreamingListener != null && conversationId != null) {
             conversationStreamingListener.accept(new ConversationStreamingEvent(conversationId, streaming));
+        }
+    }
+
+    private void setVisibleStreaming(boolean streaming) {
+        if (this.streaming == streaming) {
+            return;
+        }
+        this.streaming = streaming;
+        if (visibleStreamingChangedListener != null) {
+            visibleStreamingChangedListener.accept(streaming);
         }
     }
 
@@ -3015,13 +3301,6 @@ public class ChatPanel extends JPanel {
         messagesPanel.repaint();
     }
 
-    private void updateRenderModeToggleSelection() {
-        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
-            markdownToggle.setSelected(true);
-        } else {
-            previewToggle.setSelected(true);
-        }
-    }
 
     public void refreshProviders() {
         long refreshId = providerRefreshCounter.incrementAndGet();
@@ -3106,7 +3385,7 @@ public class ChatPanel extends JPanel {
 
         autoScrollQueued = false;
         activeStreamSessionId = -1L;
-        streaming = false;
+        setVisibleStreaming(false);
         removeCurrentWebSearchBubbleIfBlank();
         removeCurrentActivityBubbleIfBlank();
         removeCurrentAgentToolBubblesIfBlank();
@@ -3128,7 +3407,7 @@ public class ChatPanel extends JPanel {
         notifyConversationStreamingChanged(conversationId, true);
         if (isVisibleConversation(conversationId)) {
             activeStreamSessionId = streamSessionId;
-            streaming = true;
+            setVisibleStreaming(true);
             inputBar.setEnabled(false);
         }
         updateGenerationIndicator();
@@ -3150,7 +3429,7 @@ public class ChatPanel extends JPanel {
             autoScrollQueued = false;
             activeStreamSessionId = -1L;
             if (visiblePreparingJob() == null && visibleStreamingSession() == null) {
-                streaming = false;
+                setVisibleStreaming(false);
                 inputBar.setEnabled(true);
                 inputBar.requestInputFocus();
             }
@@ -3170,7 +3449,7 @@ public class ChatPanel extends JPanel {
                 && visiblePreparingJob() == null
                 && visibleStreamingSession() == null
         ) {
-            streaming = false;
+            setVisibleStreaming(false);
             inputBar.setEnabled(true);
         }
 
@@ -3234,7 +3513,7 @@ public class ChatPanel extends JPanel {
         boolean showingStreaming = !showingPreparing && visibleStreamingSession() != null;
         boolean indicatorVisible = showingPreparing || showingStreaming;
 
-        streaming = indicatorVisible;
+        setVisibleStreaming(indicatorVisible);
         inputBar.setCancelGenerationVisible(indicatorVisible);
         updateClearChatButtonVisibility();
         jumpToLatestOverlay.setStreaming(indicatorVisible);

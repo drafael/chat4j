@@ -96,7 +96,7 @@ public class CurrentConversationSaveCoordinator {
 
     public record SaveResult(
             boolean saved,
-            @NonNull UUID conversationId,
+            UUID conversationId,
             AssistantRenderMode pendingUnsavedConversationRenderMode,
             boolean createdConversation
     ) {

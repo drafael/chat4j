@@ -1,17 +1,28 @@
 package com.github.drafael.chat4j.sidebar;
 
+import com.formdev.flatlaf.ui.FlatLineBorder;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.DefaultListModel;
 import javax.swing.Icon;
+import javax.swing.JButton;
 import javax.swing.JList;
 import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.border.EmptyBorder;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.Insets;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SidebarPanelTest {
@@ -28,6 +40,9 @@ class SidebarPanelTest {
     @Test
     @DisplayName("Sidebar refresh does not block EDT while repository call is in flight")
     void refresh_whenRepositoryIsSlow_doesNotBlockEdt() throws Exception {
+        SwingUtilities.invokeAndWait(JPanel::new);
+        Thread.startVirtualThread(() -> {}).join();
+
         var repo = new DelayedConversationRepo(350, grouped("Today", "Slow conversation"));
         var panelRef = new AtomicReference<SidebarPanel>();
 
@@ -61,6 +76,179 @@ class SidebarPanelTest {
             return titles.contains("Latest conversation") && !titles.contains("Older conversation");
         });
     }
+
+    @Test
+    @DisplayName("Repository date group headers render in repository order")
+    void refresh_whenDateGroupsExist_rendersDateGroupHeaders() throws Exception {
+        UUID todayId = UUID.randomUUID();
+        UUID yesterdayId = UUID.randomUUID();
+        Map<String, List<ConversationRepo.ConversationRecord>> grouped = new LinkedHashMap<>();
+        grouped.put("Today", List.of(conversation(todayId, "Today chat")));
+        grouped.put("Yesterday", List.of(conversation(yesterdayId, "Yesterday chat")));
+        var repo = new DelayedConversationRepo(0, grouped);
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Today chat"));
+
+        DefaultListModel<?> model = readListModel(subject);
+        assertThat(groupHeaderName(model.get(0))).isEqualTo("Today");
+        assertThat(((ConversationItem) model.get(1)).title()).isEqualTo("Today chat");
+        assertThat(groupHeaderName(model.get(2))).isEqualTo("Yesterday");
+        assertThat(((ConversationItem) model.get(3)).title()).isEqualTo("Yesterday chat");
+    }
+
+    @Test
+    @DisplayName("Selected conversation row is inset from sidebar edges")
+    void renderer_whenConversationSelected_usesInsetSelectionPadding() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Selected chat")));
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Selected chat"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            DefaultListModel<?> model = readListModel(subject);
+            JList<?> list = readConversationList(subject);
+            int conversationIndex = IntStream.range(0, model.size())
+                    .filter(index -> model.get(index) instanceof ConversationItem)
+                    .findFirst()
+                    .orElseThrow();
+            list.setSelectedIndex(conversationIndex);
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            JLabel label = (JLabel) ((JList) list).getCellRenderer().getListCellRendererComponent(
+                    (JList) list,
+                    model.get(conversationIndex),
+                    conversationIndex,
+                    true,
+                    false
+            );
+            assertThat(label.getBorder()).isInstanceOf(EmptyBorder.class);
+            assertThat(label.getBorder().getBorderInsets(label)).isEqualTo(new Insets(6, 14, 6, 10));
+            assertThat(list.getClientProperty("FlatLaf.style")).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("Filter field narrows conversation list locally")
+    void filterField_whenTextEntered_filtersConversationRows() throws Exception {
+        var repo = new DelayedConversationRepo(0, grouped(
+                "Today",
+                conversation(UUID.randomUUID(), "Alpha plan"),
+                conversation(UUID.randomUUID(), "Beta notes")
+        ));
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Alpha plan"));
+        JTextField filterField = findTextField(subject);
+        assertThat(filterField).isNotNull();
+        assertThat(filterField.getClientProperty("JTextField.leadingIcon")).isNotNull();
+        assertThat(filterField.getClientProperty("JComponent.roundRect")).isNull();
+        assertThat(filterField.getClientProperty("JTextField.showClearButton")).isNull();
+        assertThat(filterField.getBackground()).isEqualTo(UIManager.getColor("TextField.background"));
+        assertThat(filterField.getForeground()).isEqualTo(UIManager.getColor("TextField.foreground"));
+        assertThat(filterField.getBorder()).isInstanceOf(FlatLineBorder.class);
+        Insets borderInsets = filterField.getBorder().getBorderInsets(filterField);
+        assertThat(borderInsets).isEqualTo(new Insets(4, 6, 4, 6));
+        assertThat(((FlatLineBorder) filterField.getBorder()).getArc()).isEqualTo(10);
+
+        SwingUtilities.invokeAndWait(() -> filterField.setText("beta"));
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).equals(List.of("Beta notes")));
+    }
+
+    @Test
+    @DisplayName("Repository favorites group is not rendered twice")
+    void refresh_whenRepositoryAlreadyGroupsFavorites_rendersSingleFavoritesSection() throws Exception {
+        UUID favoriteId = UUID.randomUUID();
+        UUID regularId = UUID.randomUUID();
+        Map<String, List<ConversationRepo.ConversationRecord>> grouped = new LinkedHashMap<>();
+        grouped.put("Favorites", List.of(conversation(favoriteId, "Favorite chat", true)));
+        grouped.put("Today", List.of(conversation(regularId, "Regular chat")));
+        var repo = new DelayedConversationRepo(0, grouped);
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Favorite chat"));
+
+        DefaultListModel<?> model = readListModel(subject);
+        List<String> headers = Collections.list(model.elements()).stream()
+                .filter(entry -> entry.getClass().getSimpleName().equals("GroupHeader"))
+                .map(entry -> {
+                    try {
+                        return groupHeaderName(entry);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .toList();
+
+        assertThat(headers).containsExactly("Favorites", "Today");
+    }
+
+    @Test
+    @DisplayName("Favorite flags do not create synthetic sidebar groups")
+    void refresh_whenFavoriteFlagExists_rendersRepositoryGroupsOnly() throws Exception {
+        UUID favoriteId = UUID.randomUUID();
+        UUID regularId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped(
+                "Today",
+                conversation(favoriteId, "Favorite chat", true),
+                conversation(regularId, "Regular chat")
+        ));
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Favorite chat"));
+
+        DefaultListModel<?> model = readListModel(subject);
+        assertThat(groupHeaderName(model.get(0))).isEqualTo("Today");
+        assertThat(((ConversationItem) model.get(1)).title()).isEqualTo("Favorite chat");
+        assertThat(((ConversationItem) model.get(2)).title()).isEqualTo("Regular chat");
+        assertThat(Collections.frequency(conversationTitles(subject), "Favorite chat")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Sidebar keeps filter and settings without workspace action buttons")
+    void headerActionButtons_whenClicked_dispatchCallbacks() throws Exception {
+        var repo = new DelayedConversationRepo(0, emptyMap());
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var settingsInvoked = new AtomicInteger();
+
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo);
+            panel.setOnSettings(settingsInvoked::incrementAndGet);
+            panelRef.set(panel);
+        });
+
+        JButton settingsButton = findButtonByTooltip(panelRef.get(), "Settings");
+        assertThat(findButton(panelRef.get(), "Settings")).isNull();
+        assertThat(findButton(panelRef.get(), "New chat")).isNull();
+        assertThat(findButton(panelRef.get(), "Search")).isNull();
+        assertThat(findTextField(panelRef.get())).isNotNull();
+        assertThat(settingsButton).isNotNull();
+        assertThat(settingsButton.getText()).isEmpty();
+        assertThat(settingsButton.getIcon()).isNotNull();
+        assertThat(settingsButton.getPreferredSize()).isEqualTo(new Dimension(24, 24));
+        assertThat(settingsButton.isContentAreaFilled()).isFalse();
+
+        SwingUtilities.invokeAndWait(settingsButton::doClick);
+
+        assertThat(settingsInvoked).hasValue(1);
+    }
+
 
     @Test
     @DisplayName("Streaming state swaps the provider icon for a loading icon and restores it afterwards")
@@ -102,6 +290,51 @@ class SidebarPanelTest {
             titlesRef.set(titles);
         });
         return titlesRef.get();
+    }
+
+    private JTextField findTextField(Container container) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JTextField textField) {
+                return textField;
+            }
+            if (component instanceof Container childContainer) {
+                JTextField textField = findTextField(childContainer);
+                if (textField != null) {
+                    return textField;
+                }
+            }
+        }
+        return null;
+    }
+
+    private JButton findButton(Container container, String text) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JButton button && text.equals(button.getText())) {
+                return button;
+            }
+            if (component instanceof Container childContainer) {
+                JButton button = findButton(childContainer, text);
+                if (button != null) {
+                    return button;
+                }
+            }
+        }
+        return null;
+    }
+
+    private JButton findButtonByTooltip(Container container, String tooltip) {
+        for (Component component : container.getComponents()) {
+            if (component instanceof JButton button && tooltip.equals(button.getToolTipText())) {
+                return button;
+            }
+            if (component instanceof Container childContainer) {
+                JButton button = findButtonByTooltip(childContainer, tooltip);
+                if (button != null) {
+                    return button;
+                }
+            }
+        }
+        return null;
     }
 
     private Icon readConversationIcon(SidebarPanel panel, UUID conversationId) throws Exception {
@@ -160,18 +393,28 @@ class SidebarPanelTest {
     }
 
     private static ConversationRepo.ConversationRecord conversation(UUID id, String title) {
+        return conversation(id, title, false);
+    }
+
+    private static ConversationRepo.ConversationRecord conversation(UUID id, String title, boolean favorite) {
         return new ConversationRepo.ConversationRecord(
                 id,
                 title,
                 "OpenAI",
                 "gpt-4.1",
-                false,
+                favorite,
                 "off",
                 false,
                 null,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
+    }
+
+    private static String groupHeaderName(Object entry) throws Exception {
+        Field field = entry.getClass().getDeclaredField("name");
+        field.setAccessible(true);
+        return (String) field.get(entry);
     }
 
     private static void awaitCondition(long timeout, TimeUnit unit, CheckedBooleanSupplier condition) throws Exception {

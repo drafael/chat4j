@@ -65,7 +65,7 @@ class SidebarToggleCoordinatorTest {
         assertThat(state.sidebarVisible()).isTrue();
         assertThat(state.lastDividerLocation()).isEqualTo(280);
         assertThat(splitPane.getDividerLocation()).isEqualTo(280);
-        assertThat(splitPane.getDividerSize()).isEqualTo(2);
+        assertThat(splitPane.getDividerSize()).isEqualTo(1);
         assertThat(button.getIcon()).isSameAs(filledIcon);
     }
 

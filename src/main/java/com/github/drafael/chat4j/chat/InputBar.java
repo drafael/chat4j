@@ -33,7 +33,6 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.io.File;
 import java.net.URL;
@@ -51,7 +50,7 @@ import static java.util.Collections.emptyList;
 
 public class InputBar extends JPanel {
 
-    private static final int SHELL_ARC = 20;
+    private static final int SHELL_ARC = 28;
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int COMMAND_CENTER_ICON_SIZE = ATTACH_ICON_SIZE;
@@ -61,6 +60,9 @@ public class InputBar extends JPanel {
     private static final int CLEAR_CHAT_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int STOP_ICON_SIZE = 24;
     private static final int STOP_BUTTON_SIZE = 28;
+    private static final int INPUT_ICON_BUTTON_SIZE = 26;
+    private static final int INPUT_ICON_BUTTON_ARC = 9;
+    private static final String INPUT_ICON_BUTTON_ACTIVE = "chat4j.inputIconButton.active";
     private static final int PROJECT_ROOT_BUTTON_HEIGHT = 24;
     private static final int PROJECT_ROOT_BUTTON_MIN_WIDTH = 72;
     private static final int MENU_ICON_SIZE = 14;
@@ -134,13 +136,13 @@ public class InputBar extends JPanel {
     public InputBar() {
         setLayout(new BorderLayout());
 
-        textArea = new JTextArea(2, 40);
+        textArea = new JTextArea(3, 40);
         textArea.setLineWrap(true);
         textArea.setWrapStyleWord(true);
         textArea.setOpaque(false);
         textArea.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_BODY_LARGE);
-        textArea.putClientProperty("JTextField.placeholderText", "Message, / for skills, ⇧↵ for newline");
+        textArea.putClientProperty("JTextField.placeholderText", "Ask, edit, or run an agent task…  / for skills");
         textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
         textArea.putClientProperty("JComponent.outline", null);
         textArea.setTransferHandler(new FileDropTransferHandler());
@@ -192,51 +194,25 @@ public class InputBar extends JPanel {
         chipsPanel.setOpaque(false);
         chipsPanel.setVisible(false);
 
-        attachButton = new JButton();
-        attachButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        attachButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        attachButton = new InputIconButton();
+        configureInputIconButton(attachButton);
         attachButton.setIcon(attachIcon(UIManager.getColor("Label.foreground")));
-        attachButton.setFocusable(false);
-        attachButton.setRolloverEnabled(true);
         attachButton.setToolTipText("Attach files/images");
-        attachButton.setMargin(new Insets(0, 0, 0, 0));
-        attachButton.setPreferredSize(new Dimension(24, 24));
-        attachButton.setMinimumSize(new Dimension(24, 24));
         attachButton.addActionListener(e -> openAttachmentPicker());
 
-        commandCenterButton = new JButton();
-        commandCenterButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        commandCenterButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+        commandCenterButton = new InputIconButton();
+        configureInputIconButton(commandCenterButton);
         commandCenterButton.setIcon(commandCenterIcon(UIManager.getColor("Label.foreground")));
-        commandCenterButton.setFocusable(false);
-        commandCenterButton.setRolloverEnabled(true);
-        commandCenterButton.setMargin(new Insets(0, 0, 0, 0));
-        commandCenterButton.setPreferredSize(new Dimension(24, 24));
-        commandCenterButton.setMinimumSize(new Dimension(24, 24));
-        commandCenterButton.setMaximumSize(new Dimension(24, 24));
         commandCenterButton.setToolTipText("Command center  %sP".formatted(SystemInfo.isMacOS ? "⌘" : "Ctrl+"));
         commandCenterButton.addActionListener(e -> fireCommandCenter());
 
-        thinkingButton = new JButton();
-        thinkingButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        thinkingButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
-        thinkingButton.setFocusable(false);
-        thinkingButton.setRolloverEnabled(true);
-        thinkingButton.setMargin(new Insets(0, 0, 0, 0));
-        thinkingButton.setPreferredSize(new Dimension(24, 24));
-        thinkingButton.setMinimumSize(new Dimension(24, 24));
+        thinkingButton = new InputIconButton();
+        configureInputIconButton(thinkingButton);
         thinkingButton.addActionListener(e -> toggleReasoningSelector());
         initializeReasoningLevelMenu();
 
-        webSearchButton = new JToggleButton();
-        webSearchButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        webSearchButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
-        webSearchButton.setFocusable(false);
-        webSearchButton.setRolloverEnabled(true);
-        webSearchButton.setMargin(new Insets(0, 0, 0, 0));
-        webSearchButton.setPreferredSize(new Dimension(24, 24));
-        webSearchButton.setMinimumSize(new Dimension(24, 24));
-        webSearchButton.setMaximumSize(new Dimension(24, 24));
+        webSearchButton = new InputIconToggleButton();
+        configureInputIconButton(webSearchButton);
         webSearchButton.setToolTipText("Web Search");
         webSearchButton.setVisible(false);
         webSearchButton.addActionListener(e -> onWebSearchButtonClicked());
@@ -253,28 +229,14 @@ public class InputBar extends JPanel {
         });
         rebuildWebSearchMenu();
 
-        agentModeButton = new JToggleButton();
-        agentModeButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        agentModeButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
-        agentModeButton.setFocusable(false);
-        agentModeButton.setRolloverEnabled(true);
-        agentModeButton.setMargin(new Insets(0, 0, 0, 0));
-        agentModeButton.setPreferredSize(new Dimension(24, 24));
-        agentModeButton.setMinimumSize(new Dimension(24, 24));
-        agentModeButton.setMaximumSize(new Dimension(24, 24));
+        agentModeButton = new InputIconToggleButton();
+        configureInputIconButton(agentModeButton);
         agentModeButton.setToolTipText("Agent mode");
         agentModeButton.setVisible(false);
         agentModeButton.addActionListener(e -> onAgentModeButtonClicked());
 
-        clearChatButton = new JButton();
-        clearChatButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        clearChatButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
-        clearChatButton.setFocusable(false);
-        clearChatButton.setRolloverEnabled(true);
-        clearChatButton.setMargin(new Insets(0, 0, 0, 0));
-        clearChatButton.setPreferredSize(new Dimension(24, 24));
-        clearChatButton.setMinimumSize(new Dimension(24, 24));
-        clearChatButton.setMaximumSize(new Dimension(24, 24));
+        clearChatButton = new InputIconButton();
+        configureInputIconButton(clearChatButton);
         clearChatButton.setToolTipText("Clear chat");
         clearChatButton.setVisible(false);
         clearChatButton.addActionListener(e -> fireClearChat());
@@ -296,7 +258,7 @@ public class InputBar extends JPanel {
         cancelGenerationButton.setVisible(false);
         cancelGenerationButton.addActionListener(e -> fireCancelGeneration());
 
-        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(attachButton);
         actionsPanel.add(commandCenterButton);
@@ -355,7 +317,7 @@ public class InputBar extends JPanel {
 
         composerShell = new ComposerShellPanel();
         composerShell.setLayout(new BorderLayout(0, 6));
-        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+        composerShell.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         composerShell.setTransferHandler(new FileDropTransferHandler());
         composerShell.add(chipsPanel, BorderLayout.NORTH);
         composerShell.add(scrollPane, BorderLayout.CENTER);
@@ -373,6 +335,23 @@ public class InputBar extends JPanel {
                 updateProjectRootPresentation();
             }
         });
+    }
+
+    private void configureInputIconButton(AbstractButton button) {
+        button.putClientProperty("JButton.buttonType", "toolBarButton");
+        button.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:8");
+        button.setFocusable(false);
+        button.setRolloverEnabled(true);
+        button.setOpaque(false);
+        button.setBorderPainted(false);
+        button.setContentAreaFilled(false);
+        button.setMargin(new Insets(0, 0, 0, 0));
+        button.setHorizontalAlignment(SwingConstants.CENTER);
+        button.setVerticalAlignment(SwingConstants.CENTER);
+        Dimension size = new Dimension(INPUT_ICON_BUTTON_SIZE, INPUT_ICON_BUTTON_SIZE);
+        button.setPreferredSize(size);
+        button.setMinimumSize(size);
+        button.setMaximumSize(size);
     }
 
     @Override
@@ -551,7 +530,7 @@ public class InputBar extends JPanel {
     }
 
     public void setWebSearchEnabled(boolean enabled) {
-        boolean normalized = webSearchLockedEnabled ? webSearchAvailable : enabled && webSearchAvailable;
+        boolean normalized = enabled && webSearchAvailable;
         if (webSearchEnabled == normalized) {
             updateWebSearchPresentation();
             return;
@@ -559,6 +538,20 @@ public class InputBar extends JPanel {
 
         webSearchEnabled = normalized;
         updateWebSearchPresentation();
+    }
+
+    public void requestWebSearchEnabled(boolean enabled) {
+        if (enabled && !webSearchAvailable) {
+            showValidationMessage("Web Search is not available for the selected model.");
+            updateWebSearchPresentation();
+            return;
+        }
+
+        boolean previous = webSearchEnabled;
+        setWebSearchEnabled(enabled);
+        if (previous != webSearchEnabled) {
+            notifyWebSearchEnabledChanged(webSearchEnabled);
+        }
     }
 
     public void setWebSearchLockedEnabled(boolean lockedEnabled) {
@@ -637,6 +630,23 @@ public class InputBar extends JPanel {
 
     public void toggleAgentMode() {
         onAgentModeButtonClicked();
+    }
+
+    public void requestAgentModeEnabled(boolean enabled) {
+        if (enabled && !agentModeAvailable) {
+            showValidationMessage("Agent Mode is not available for the selected model.");
+            updateAgentModePresentation();
+            return;
+        }
+
+        if (enabled && !agentModeEnabled) {
+            onAgentModeButtonClicked();
+            return;
+        }
+
+        if (!enabled && agentModeEnabled) {
+            setAgentModeEnabled(false);
+        }
     }
 
     public void setAgentModeEnabled(boolean enabled) {
@@ -740,17 +750,8 @@ public class InputBar extends JPanel {
             return;
         }
 
-        boolean previous = webSearchEnabled;
-        setWebSearchEnabled(!webSearchEnabled);
-        if (previous != webSearchEnabled) {
-            notifyWebSearchEnabledChanged(webSearchEnabled);
-        }
-
-        if (webSearchEnabled) {
-            showWebSearchMenu();
-        } else {
-            webSearchMenu.setVisible(false);
-        }
+        requestWebSearchEnabled(!webSearchEnabled);
+        webSearchMenu.setVisible(false);
     }
 
     private void maybeShowWebSearchMenu(MouseEvent e) {
@@ -835,16 +836,18 @@ public class InputBar extends JPanel {
             return;
         }
 
+        boolean selected = isEnabled() && webSearchAvailable && webSearchEnabled;
         webSearchButton.setVisible(webSearchAvailable);
         webSearchButton.setEnabled(isEnabled() && webSearchAvailable);
-        webSearchButton.setSelected(isEnabled() && webSearchAvailable && webSearchEnabled);
+        webSearchButton.setSelected(selected);
+        applyToolbarToggleSelection(webSearchButton, selected);
         webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(isWebSearchEnabled())));
         String optionLabel = webSearchOptions.stream()
                 .filter(option -> Strings.CS.equals(option.id(), webSearchOptionId))
                 .findFirst()
                 .map(WebSearchOption::label)
                 .orElse("Web Search");
-        String toggleHint = webSearchLockedEnabled ? "always on" : "click to toggle, right-click for options";
+        String toggleHint = "click to toggle, right-click for options";
         webSearchButton.setToolTipText(webSearchAvailable
                 ? "Web Search: %s (%s)".formatted(optionLabel, toggleHint)
                 : null);
@@ -944,9 +947,11 @@ public class InputBar extends JPanel {
             return;
         }
 
+        boolean selected = isEnabled() && agentModeAvailable && agentModeEnabled;
         agentModeButton.setVisible(agentModeAvailable);
         agentModeButton.setEnabled(isEnabled() && agentModeAvailable);
-        agentModeButton.setSelected(isEnabled() && agentModeAvailable && agentModeEnabled);
+        agentModeButton.setSelected(selected);
+        applyToolbarToggleSelection(agentModeButton, selected);
         agentModeButton.setIcon(agentModeIcon(resolveInputIconTint(agentModeAvailable && agentModeEnabled)));
         agentModeButton.setToolTipText(agentModeAvailable ? "Agent mode" : null);
         updateProjectRootPresentation();
@@ -1170,6 +1175,10 @@ public class InputBar extends JPanel {
         for (Consumer<Path> listener : agentProjectRootListeners) {
             listener.accept(projectRoot);
         }
+    }
+
+    public void requestAttachmentPicker() {
+        openAttachmentPicker();
     }
 
     private void onInputChanged() {
@@ -2294,6 +2303,93 @@ public class InputBar extends JPanel {
         }
     }
 
+    private class InputIconButton extends JButton {
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            paintInputIconButtonBackground(g, this);
+            super.paintComponent(g);
+        }
+    }
+
+    private class InputIconToggleButton extends JToggleButton {
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            paintInputIconButtonBackground(g, this);
+            super.paintComponent(g);
+        }
+    }
+
+    private void paintInputIconButtonBackground(Graphics g, AbstractButton button) {
+        Color fill = resolveInputIconButtonBackground(button);
+        if (fill == null) {
+            return;
+        }
+
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setColor(fill);
+        g2.fillRoundRect(1, 1, button.getWidth() - 2, button.getHeight() - 2,
+                INPUT_ICON_BUTTON_ARC, INPUT_ICON_BUTTON_ARC);
+        g2.dispose();
+    }
+
+    private Color resolveInputIconButtonBackground(AbstractButton button) {
+        ButtonModel model = button.getModel();
+        if (isInputIconButtonActive(button)) {
+            Color background = button.getBackground();
+            if (background == null) {
+                background = resolveThinkingSelectedBackground();
+            }
+            return background;
+        }
+
+        if (model.isPressed()) {
+            return resolveToolbarButtonPressedBackground();
+        }
+
+        if (model.isRollover()) {
+            return resolveToolbarButtonHoverBackground();
+        }
+
+        return null;
+    }
+
+    private boolean isInputIconButtonActive(AbstractButton button) {
+        Object active = button.getClientProperty(INPUT_ICON_BUTTON_ACTIVE);
+        return Boolean.TRUE.equals(active) || button.isSelected();
+    }
+
+    private Color resolveToolbarButtonHoverBackground() {
+        Color background = UIManager.getColor("Button.toolbar.hoverBackground");
+        if (background == null) {
+            background = UIManager.getColor("Button.hoverBackground");
+        }
+        if (background == null) {
+            background = UIManager.getColor("Component.hoverColor");
+        }
+
+        Color base = resolveChipBackground();
+        if (background == null || colorDistance(background, base) < 18) {
+            background = blendColors(base, enabledInputIconTint(), isDark(base) ? 0.20f : 0.08f);
+        }
+        return background;
+    }
+
+    private Color resolveToolbarButtonPressedBackground() {
+        Color background = UIManager.getColor("Button.toolbar.pressedBackground");
+        if (background == null) {
+            background = UIManager.getColor("Button.pressedBackground");
+        }
+
+        Color base = resolveChipBackground();
+        if (background == null || colorDistance(background, base) < 22) {
+            background = blendColors(base, enabledInputIconTint(), isDark(base) ? 0.28f : 0.13f);
+        }
+        return background;
+    }
+
     private class SkillChipPanel extends JPanel {
 
         private static final int ARC = 14;
@@ -2677,6 +2773,7 @@ public class InputBar extends JPanel {
         thinkingButton.setVisible(thinkingAvailable);
         if (!thinkingAvailable) {
             thinkingButton.setSelected(false);
+            applyToolbarToggleSelection(thinkingButton, false);
             thinkingButton.setToolTipText(null);
             reasoningLevelMenu.setVisible(false);
             revalidate();
@@ -2685,12 +2782,21 @@ public class InputBar extends JPanel {
         }
 
         Color tint = resolveInputIconTint(reasoningEnabled);
-        thinkingButton.setSelected(isEnabled() && reasoningEnabled);
+        boolean selected = isEnabled() && reasoningEnabled;
+        thinkingButton.setSelected(selected);
+        applyToolbarToggleSelection(thinkingButton, selected);
         thinkingButton.setIcon(thinkingIcon(tint));
         thinkingButton.setToolTipText("Reasoning");
         reasoningLevelItems.forEach((level, item) -> item.setSelected(level == reasoningLevel));
         revalidate();
         repaint();
+    }
+
+    private void applyToolbarToggleSelection(AbstractButton button, boolean selected) {
+        button.setOpaque(false);
+        button.setContentAreaFilled(false);
+        button.putClientProperty(INPUT_ICON_BUTTON_ACTIVE, selected);
+        button.setBackground(selected ? resolveThinkingSelectedBackground() : null);
     }
 
     private Color resolveThinkingActiveTint(Color inactiveTint) {

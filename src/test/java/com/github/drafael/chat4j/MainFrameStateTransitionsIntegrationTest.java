@@ -131,7 +131,7 @@ class MainFrameStateTransitionsIntegrationTest {
         assertThat(sidebarState.sidebarVisible()).isTrue();
         assertThat(sidebarState.lastDividerLocation()).isEqualTo(250);
         assertThat(splitPane.getDividerLocation()).isEqualTo(250);
-        assertThat(splitPane.getDividerSize()).isEqualTo(2);
+        assertThat(splitPane.getDividerSize()).isEqualTo(1);
         assertThat(toggleButton.getIcon()).isSameAs(filledIcon);
     }
 }

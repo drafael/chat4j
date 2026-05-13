@@ -60,7 +60,6 @@ import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangePlanner;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.AssistantRenderModeToggleCoordinator;
@@ -89,7 +88,6 @@ import com.github.drafael.chat4j.settings.GeneralSettingsResolver;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingDispatchCoordinator;
-import com.github.drafael.chat4j.settings.ProviderRuntimeSettingsResolver;
 import com.github.drafael.chat4j.settings.ProviderSettingsApplyCoordinator;
 import com.github.drafael.chat4j.settings.SettingsDialog;
 import com.github.drafael.chat4j.settings.SettingsDialogCoordinator;
@@ -118,11 +116,9 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionDispatchCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionEventDispatchCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadApplyCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadApplyDispatchCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadDispatchCoordinator;
@@ -164,6 +160,7 @@ import static java.util.stream.Collectors.toMap;
 @Slf4j
 public class MainFrame extends JFrame {
     private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
+    private static final int EMPTY_STATE_PROMPT_ACTION_LIMIT = 4;
 
     private final ChatPanel chatPanel;
     private final SidebarPanel sidebarPanel;
@@ -514,6 +511,10 @@ public class MainFrame extends JFrame {
         sidebarToggleState.setSidebarToggleFilledIcon(titleBar.sidebarToggleFilledIcon());
         sidebarToggleState.setSidebarToggleOutlineIcon(titleBar.sidebarToggleOutlineIcon());
         sidebarToggleState.setSidebarToggleButton(titleBar.sidebarToggleButton());
+        sidebarToggleState.setSearchButton(titleBar.searchButton());
+        sidebarToggleState.setLeftButtons(titleBar.leftButtons());
+        sidebarToggleState.setRightPanel(titleBar.rightPanel());
+        updateTitleBarSearchVisibility(sidebarState.sidebarVisible());
         add(titleBar.panel(), BorderLayout.NORTH);
         sidebarPanel = new SidebarPanel(conversationRepo);
         chatPanel.setOnConversationStreamingChanged(event ->
@@ -521,10 +522,12 @@ public class MainFrame extends JFrame {
 
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
+        sidebarPanel.setOnSettings(this::openSettings);
 
         splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
+        splitPane.setBorder(null);
         splitPane.setDividerLocation(250);
-        splitPane.setDividerSize(2);
+        splitPane.setDividerSize(1);
         splitPane.setContinuousLayout(true);
 
         add(splitPane, BorderLayout.CENTER);
@@ -562,13 +565,14 @@ public class MainFrame extends JFrame {
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
+        panel.setPromptQuickActions(promptQuickActions());
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
-        panel.getInputBar().addReasoningLevelListener(this::persistReasoningLevel);
-        panel.getInputBar().addWebSearchEnabledListener(this::persistWebSearchEnabled);
-        panel.getInputBar().addWebSearchOptionListener(this::persistWebSearchOption);
+        panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
+        panel.getInputBar().addWebSearchEnabledListener(this::onWebSearchEnabledChanged);
+        panel.getInputBar().addWebSearchOptionListener(this::onWebSearchOptionChanged);
         panel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
-        panel.getInputBar().addAgentModeListener(this::persistAgentModeEnabled);
-        panel.getInputBar().addAgentProjectRootListener(this::persistAgentProjectRoot);
+        panel.getInputBar().addAgentModeListener(this::onAgentModeChanged);
+        panel.getInputBar().addAgentProjectRootListener(this::onAgentProjectRootChanged);
         panel.setConversationIdSupplier(conversationState::currentConversationId);
         panel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         panel.setActiveConversationId(conversationState.currentConversationId());
@@ -616,6 +620,32 @@ public class MainFrame extends JFrame {
                 sidebarState::setSidebarVisible,
                 sidebarState::setLastDividerLocation
         );
+        updateTitleBarSearchVisibility(toggleState.sidebarVisible());
+    }
+
+    private void updateTitleBarSearchVisibility(boolean sidebarVisible) {
+        JButton searchButton = sidebarToggleState.searchButton();
+        if (searchButton == null) {
+            return;
+        }
+
+        searchButton.setVisible(!sidebarVisible);
+        rebalanceTitleBarActionPanels();
+    }
+
+    private void rebalanceTitleBarActionPanels() {
+        JPanel leftButtons = sidebarToggleState.leftButtons();
+        JPanel rightPanel = sidebarToggleState.rightPanel();
+        if (leftButtons == null || rightPanel == null) {
+            return;
+        }
+
+        leftButtons.revalidate();
+        Dimension balancedSize = leftButtons.getPreferredSize();
+        rightPanel.setPreferredSize(balancedSize);
+        rightPanel.setMinimumSize(balancedSize);
+        rightPanel.revalidate();
+        rightPanel.repaint();
     }
 
     private void newChat() {
@@ -910,6 +940,16 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private List<ChatPanel.PromptQuickAction> promptQuickActions() {
+        return promptCatalogRepo.load().stream()
+                .limit(EMPTY_STATE_PROMPT_ACTION_LIMIT)
+                .map(promptTemplate -> new ChatPanel.PromptQuickAction(
+                        promptTemplate.title(),
+                        () -> invokePromptTemplate(promptTemplate)
+                ))
+                .toList();
+    }
+
     private void openCommandCenter() {
         if (!chatPanel.getInputBar().isEnabled()) {
             return;
@@ -1007,6 +1047,7 @@ public class MainFrame extends JFrame {
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();
+                    chatPanel.setPromptQuickActions(promptQuickActions());
                 }
         );
     }
@@ -1189,7 +1230,7 @@ public class MainFrame extends JFrame {
         applyWebSearchSettings();
     }
 
-    private void persistReasoningLevel(ReasoningLevel reasoningLevel) {
+    private void onReasoningLevelChanged(ReasoningLevel reasoningLevel) {
         persistCurrentConversationReasoningLevel(reasoningLevel);
     }
 
@@ -1208,11 +1249,11 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void persistWebSearchEnabled(boolean enabled) {
+    private void onWebSearchEnabledChanged(boolean enabled) {
         persistCurrentConversationWebSearchSettings();
     }
 
-    private void persistWebSearchOption(String optionId) {
+    private void onWebSearchOptionChanged(String optionId) {
         persistCurrentConversationWebSearchSettings();
     }
 
@@ -1228,11 +1269,11 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void persistAgentModeEnabled(boolean enabled) {
+    private void onAgentModeChanged(boolean enabled) {
         persistCurrentConversationAgentSettings();
     }
 
-    private void persistAgentProjectRoot(Path projectRoot) {
+    private void onAgentProjectRootChanged(Path projectRoot) {
         persistCurrentConversationAgentSettings();
     }
 

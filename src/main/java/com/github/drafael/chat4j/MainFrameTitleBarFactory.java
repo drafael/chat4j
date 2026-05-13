@@ -61,12 +61,23 @@ public class MainFrameTitleBarFactory {
         rightPanel.setPreferredSize(leftButtons.getPreferredSize());
         titleBar.add(rightPanel, BorderLayout.EAST);
 
-        return new TitleBar(titleBar, sidebarToggleButton, sidebarToggleFilledIcon, sidebarToggleOutlineIcon);
+        return new TitleBar(
+                titleBar,
+                leftButtons,
+                rightPanel,
+                sidebarToggleButton,
+                searchButton,
+                sidebarToggleFilledIcon,
+                sidebarToggleOutlineIcon
+        );
     }
 
     public record TitleBar(
             JPanel panel,
+            JPanel leftButtons,
+            JPanel rightPanel,
             JButton sidebarToggleButton,
+            JButton searchButton,
             Icon sidebarToggleFilledIcon,
             Icon sidebarToggleOutlineIcon
     ) {

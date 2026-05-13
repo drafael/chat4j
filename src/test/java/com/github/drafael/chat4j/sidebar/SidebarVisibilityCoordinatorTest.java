@@ -28,6 +28,6 @@ class SidebarVisibilityCoordinatorTest {
         assertThat(result.sidebarVisible()).isTrue();
         assertThat(result.lastDividerLocation()).isEqualTo(275);
         assertThat(result.dividerLocation()).isEqualTo(275);
-        assertThat(result.dividerSize()).isEqualTo(2);
+        assertThat(result.dividerSize()).isEqualTo(1);
     }
 }

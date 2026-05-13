@@ -27,10 +27,12 @@ public class ModelSelectorButton extends JButton {
             Map.entry("LM Studio", "/icons/providers/lmstudio.svg"),
             Map.entry("Ollama", "/icons/providers/ollama.svg")
     );
-    private static final int PROVIDER_ICON_GAP = 5;
-    private static final int MIN_BUTTON_WIDTH = 320;
-    private static final int MAX_BUTTON_WIDTH = 760;
-    private static final int HORIZONTAL_CONTENT_PADDING = 32;
+    private static final int PROVIDER_ICON_SIZE = 14;
+    private static final int PROVIDER_ICON_GAP = 6;
+    private static final int PROVIDER_ICON_BASELINE_OFFSET = 1;
+    private static final int MIN_BUTTON_WIDTH = 180;
+    private static final int MAX_BUTTON_WIDTH = 360;
+    private static final int HORIZONTAL_CONTENT_PADDING = 24;
     private static final Map<String, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
 
     private String modelName = "";
@@ -77,7 +79,7 @@ public class ModelSelectorButton extends JButton {
         int textW = Math.max(fmPrimary.stringWidth(modelName), secondaryWidth) + HORIZONTAL_CONTENT_PADDING;
         int w = Math.max(textW, MIN_BUTTON_WIDTH);
         w = Math.min(w, maxAllowedWidth());
-        int h = fmPrimary.getHeight() + fmSecondary.getHeight() + 8;
+        int h = fmPrimary.getHeight() + fmSecondary.getHeight() + 6;
         return new Dimension(w, h);
     }
 
@@ -137,7 +139,9 @@ public class ModelSelectorButton extends JButton {
         int secondaryX = (getWidth() - providerContentWidth) / 2;
         int secondaryBaseline = y + fmPrimary.getHeight() + 2 + fmSecondary.getAscent();
         if (providerIcon != null) {
-            int iconY = secondaryBaseline - fmSecondary.getAscent() + (fmSecondary.getHeight() - providerIcon.getIconHeight()) / 2;
+            int iconY = secondaryBaseline - fmSecondary.getAscent()
+                    + (fmSecondary.getHeight() - providerIcon.getIconHeight()) / 2
+                    + PROVIDER_ICON_BASELINE_OFFSET;
             providerIcon.paintIcon(this, g2, secondaryX, iconY);
             secondaryX += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
         }
@@ -202,7 +206,7 @@ public class ModelSelectorButton extends JButton {
     }
 
     private static int providerIconSize(FontMetrics metrics) {
-        return Math.max(10, metrics.getHeight() - 1);
+        return Fonts.scale(PROVIDER_ICON_SIZE);
     }
 
     private Icon providerIcon(int size) {

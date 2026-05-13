@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.swing.Icon;
 import javax.swing.JButton;
+import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.plaf.metal.MetalIconFactory;
 
@@ -17,7 +18,9 @@ class SidebarToggleApplyCoordinatorTest {
     @DisplayName("Apply updates split pane, toggle icon, and returns state when sidebar becomes visible")
     void apply_whenSidebarVisible_updatesUiAndReturnsState() {
         var subject = new SidebarToggleApplyCoordinator();
-        var splitPane = new JSplitPane();
+        var sidebar = new JPanel();
+        var splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebar, new JPanel());
+        sidebar.setVisible(false);
         splitPane.setDividerLocation(10);
         splitPane.setDividerSize(1);
         JButton button = new JButton();
@@ -25,14 +28,15 @@ class SidebarToggleApplyCoordinatorTest {
         Icon outlineIcon = MetalIconFactory.getFileChooserUpFolderIcon();
 
         SidebarToggleApplyCoordinator.ApplyResult result = subject.apply(
-                new SidebarVisibilityCoordinator.ToggleResult(true, 250, 250, 2),
+                new SidebarVisibilityCoordinator.ToggleResult(true, 250, 250, 1),
                 splitPane,
                 button,
                 filledIcon,
                 outlineIcon
         );
 
-        assertThat(splitPane.getDividerSize()).isEqualTo(2);
+        assertThat(sidebar.isVisible()).isTrue();
+        assertThat(splitPane.getDividerSize()).isEqualTo(1);
         assertThat(splitPane.getDividerLocation()).isEqualTo(250);
         assertThat(button.getIcon()).isSameAs(filledIcon);
         assertThat(result.sidebarVisible()).isTrue();
@@ -40,10 +44,11 @@ class SidebarToggleApplyCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Apply supports missing toggle button and still updates split pane")
-    void apply_whenToggleButtonMissing_stillUpdatesSplitPane() {
+    @DisplayName("Apply hides sidebar component when sidebar becomes hidden")
+    void apply_whenSidebarHidden_hidesSidebarComponentAndUpdatesSplitPane() {
         var subject = new SidebarToggleApplyCoordinator();
-        var splitPane = new JSplitPane();
+        var sidebar = new JPanel();
+        var splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebar, new JPanel());
 
         SidebarToggleApplyCoordinator.ApplyResult result = subject.apply(
                 new SidebarVisibilityCoordinator.ToggleResult(false, 300, 0, 0),
@@ -53,6 +58,7 @@ class SidebarToggleApplyCoordinatorTest {
                 null
         );
 
+        assertThat(sidebar.isVisible()).isFalse();
         assertThat(splitPane.getDividerSize()).isZero();
         assertThat(splitPane.getDividerLocation()).isZero();
         assertThat(result.sidebarVisible()).isFalse();

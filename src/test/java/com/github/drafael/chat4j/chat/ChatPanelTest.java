@@ -18,6 +18,8 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.web.WebSearchMode;
+import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -61,6 +63,188 @@ class ChatPanelTest {
         subject.getInputBar().setWebSearchLockedEnabled(false);
         subject.getInputBar().setWebSearchOptions(emptyList(), null);
         subject.getInputBar().setWebSearchEnabled(false);
+    }
+
+    @Test
+    @DisplayName("Activity bubble uses status title color for failed tool cards")
+    void setTitle_whenFailedStatus_usesErrorTitleColor() throws Exception {
+        ActivityBubble bubble = new ActivityBubble();
+        Color errorColor = new Color(210, 70, 70);
+        UIManager.put("Component.error.focusedBorderColor", errorColor);
+
+        SwingUtilities.invokeAndWait(() -> bubble.setTitle("✗ write file — denied"));
+
+        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
+                .filter(label -> "✗ write file — denied".equals(label.getText()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(titleLabel.getForeground()).isEqualTo(errorColor);
+    }
+
+    @Test
+    @DisplayName("Activity bubble uses accent title color while streaming")
+    void setStreaming_whenEnabled_usesAccentTitleColor() throws Exception {
+        ActivityBubble bubble = new ActivityBubble();
+        Color accent = new Color(80, 120, 240);
+        UIManager.put("Component.accentColor", accent);
+
+        SwingUtilities.invokeAndWait(() -> bubble.setStreaming(true));
+
+        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
+                .filter(label -> "Thinking".equals(label.getText()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(titleLabel.getForeground()).isEqualTo(accent);
+    }
+
+    @Test
+    @DisplayName("Visible streaming listener reports active generation lifecycle")
+    void onSend_whenStreamingVisible_notifiesVisibleStreamingChanges() throws Exception {
+        var releaseStream = new CountDownLatch(1);
+        var observedStates = new ArrayList<Boolean>();
+        subject.setOnVisibleStreamingChanged(observedStates::add);
+        setField(subject, "selectedProviderName", "OpenAI");
+        setField(subject, "selectedModelId", "gpt-5-mini");
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                try {
+                    releaseStream.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onToken.accept("pong");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("gpt-5-mini");
+            }
+
+            @Override
+            public String name() {
+                return "OpenAI";
+            }
+
+            @Override
+            public String envVarName() {
+                return "OPENAI_API_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> observedStates.contains(true));
+        releaseStream.countDown();
+        awaitCondition(2, TimeUnit.SECONDS, () -> observedStates.contains(false));
+
+        assertThat(observedStates).containsSubsequence(true, false);
+    }
+
+    @Test
+    @DisplayName("Composer is centered and constrained inside workspace")
+    void layout_whenWidePanel_constrainsComposerWidth() throws Exception {
+        subject.setSize(1400, 900);
+        subject.doLayout();
+        flushEdt();
+
+        assertThat(subject.getInputBar().getWidth()).isLessThanOrEqualTo(920);
+    }
+
+    @Test
+    @DisplayName("Chat panel restores render mode buttons without conversation context controls")
+    void constructor_whenCreated_restoresRenderModeButtonsOnly() {
+        List<JToggleButton> renderModeButtons = findComponents(subject, JToggleButton.class);
+
+        assertThat(renderModeButtons.stream().map(AbstractButton::getText))
+                .contains("Preview", "Markdown")
+                .doesNotContain("Project");
+        assertThat(renderModeButtons.stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Preview"))
+                .findFirst()
+                .orElseThrow()
+                .isSelected()).isTrue();
+        assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
+                .doesNotContain("More conversation actions");
+        assertThat(findComponents(subject, JLabel.class).stream().map(JLabel::getText))
+                .doesNotContain("New chat");
+    }
+
+    @Test
+    @DisplayName("Search the web suggestion enables web search toggle")
+    void searchTheWebSuggestion_whenClicked_enablesWebSearch() throws Exception {
+        AtomicReference<Boolean> notified = new AtomicReference<>();
+        subject.getInputBar().addWebSearchEnabledListener(notified::set);
+        subject.getInputBar().setWebSearchOptions(
+                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
+                "native"
+        );
+
+        JButton searchSuggestion = findComponents(subject, JButton.class).stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Search the web"))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(searchSuggestion::doClick);
+
+        assertThat(subject.getInputBar().getRawText()).isEqualTo("Search the web");
+        assertThat(subject.getInputBar().isWebSearchEnabled()).isTrue();
+        assertThat(notified.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Prompt quick action buttons invoke command center prompt actions")
+    void promptQuickActionButton_whenClicked_invokesActionWithoutReplacingInput() throws Exception {
+        AtomicInteger invoked = new AtomicInteger();
+
+        subject.setPromptQuickActions(List.of(new ChatPanel.PromptQuickAction("Summarize", invoked::incrementAndGet)));
+
+        JButton summarizeButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Summarize"))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(summarizeButton::doClick);
+
+        assertThat(invoked).hasValue(1);
+        assertThat(subject.getInputBar().getRawText()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Loaded assistant findings remain normal chat content")
+    void loadHistory_whenAssistantContainsFindings_rendersAsAssistantMessage() throws Exception {
+        subject.loadHistory(List.of(
+                Message.user("Review codebase"),
+                Message.assistant("""
+                        Findings
+
+                        P1 Agent bash escapes selected root
+                        Agent Mode documents bash as running within selected folder.
+                        LocalToolRuntime.java:218-233
+                        """)
+        ));
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<MessageBubble> assistantBubbles = findComponents(messagesPanel, MessageBubble.class).stream()
+                .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                .toList();
+
+        assertThat(assistantBubbles).hasSize(1);
+        assertThat(findComponents(messagesPanel, JLabel.class).stream().map(JLabel::getText))
+                .doesNotContain("1 finding");
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .contains("Findings\n\nP1 Agent bash escapes selected root\nAgent Mode documents bash as running within selected folder.\nLocalToolRuntime.java:218-233\n");
     }
 
     @Test
