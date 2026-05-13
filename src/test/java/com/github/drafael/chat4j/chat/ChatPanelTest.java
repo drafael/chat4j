@@ -98,28 +98,6 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Long conversation header values are abbreviated with tooltips")
-    void setConversationHeader_whenValuesAreLong_abbreviatesLabelsAndKeepsTooltips() throws Exception {
-        String longTitle = "A".repeat(140);
-        String longSubtitle = "B".repeat(190);
-
-        SwingUtilities.invokeAndWait(() -> subject.setConversationHeader(longTitle, longSubtitle));
-
-        List<JLabel> labels = findComponents(subject, JLabel.class);
-        JLabel titleLabel = labels.stream()
-                .filter(label -> longTitle.equals(label.getToolTipText()))
-                .findFirst()
-                .orElseThrow();
-        JLabel subtitleLabel = labels.stream()
-                .filter(label -> longSubtitle.equals(label.getToolTipText()))
-                .findFirst()
-                .orElseThrow();
-
-        assertThat(titleLabel.getText()).endsWith("...").hasSizeLessThan(longTitle.length());
-        assertThat(subtitleLabel.getText()).endsWith("...").hasSizeLessThan(longSubtitle.length());
-    }
-
-    @Test
     @DisplayName("Visible streaming listener reports active generation lifecycle")
     void onSend_whenStreamingVisible_notifiesVisibleStreamingChanges() throws Exception {
         var releaseStream = new CountDownLatch(1);
@@ -185,33 +163,22 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("First sent message updates live conversation title")
-    void onSend_whenFirstMessageSent_updatesConversationTitle() throws Exception {
-        setField(subject, "selectedProviderName", "OpenAI");
-        setField(subject, "selectedModelId", "gpt-5-mini");
-        setField(subject, "currentProvider", immediateProvider("pong"));
+    @DisplayName("Chat panel restores render mode buttons without conversation context controls")
+    void constructor_whenCreated_restoresRenderModeButtonsOnly() {
+        List<JToggleButton> renderModeButtons = findComponents(subject, JToggleButton.class);
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("Explain LocalToolRuntime security model\nwith examples"));
-        invokeOnSend(subject);
-
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return findComponents(subject, JLabel.class).stream()
-                    .map(JLabel::getText)
-                    .anyMatch("Explain LocalToolRuntime security model"::equals);
-        });
-    }
-
-    @Test
-    @DisplayName("Conversation subtitle can be updated independently")
-    void setConversationSubtitle_whenCalled_updatesHeaderSubtitle() throws Exception {
-        SwingUtilities.invokeAndWait(() -> subject.setConversationSubtitle("Agent mode · /tmp/project"));
-
-        assertThat(findComponents(subject, JLabel.class).stream()
-                .map(JLabel::getText)
-                .toList())
-                .contains("Agent mode · /tmp/project");
+        assertThat(renderModeButtons.stream().map(AbstractButton::getText))
+                .contains("Preview", "Markdown")
+                .doesNotContain("Project");
+        assertThat(renderModeButtons.stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Preview"))
+                .findFirst()
+                .orElseThrow()
+                .isSelected()).isTrue();
+        assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
+                .doesNotContain("More conversation actions");
+        assertThat(findComponents(subject, JLabel.class).stream().map(JLabel::getText))
+                .doesNotContain("New chat");
     }
 
     @Test
@@ -237,8 +204,26 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Loaded assistant findings render structured finding cards")
-    void loadHistory_whenAssistantContainsFindings_rendersFindingCards() throws Exception {
+    @DisplayName("Prompt quick action buttons invoke command center prompt actions")
+    void promptQuickActionButton_whenClicked_invokesActionWithoutReplacingInput() throws Exception {
+        AtomicInteger invoked = new AtomicInteger();
+
+        subject.setPromptQuickActions(List.of(new ChatPanel.PromptQuickAction("Summarize", invoked::incrementAndGet)));
+
+        JButton summarizeButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> Strings.CS.equals(button.getText(), "Summarize"))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(summarizeButton::doClick);
+
+        assertThat(invoked).hasValue(1);
+        assertThat(subject.getInputBar().getRawText()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Loaded assistant findings remain normal chat content")
+    void loadHistory_whenAssistantContainsFindings_rendersAsAssistantMessage() throws Exception {
         subject.loadHistory(List.of(
                 Message.user("Review codebase"),
                 Message.assistant("""
@@ -251,113 +236,15 @@ class ChatPanelTest {
         ));
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<FindingCardPanel> cards = findComponents(messagesPanel, FindingCardPanel.class);
         List<MessageBubble> assistantBubbles = findComponents(messagesPanel, MessageBubble.class).stream()
                 .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
                 .toList();
 
+        assertThat(assistantBubbles).hasSize(1);
         assertThat(findComponents(messagesPanel, JLabel.class).stream().map(JLabel::getText))
-                .contains("Findings", "1 finding");
-        assertThat(cards).hasSize(1);
-        assertThat(assistantBubbles).isEmpty();
-        assertThat(cards.getFirst().severity()).isEqualTo("P1");
-        assertThat(cards.getFirst().title()).isEqualTo("Agent bash escapes selected root");
-
-        AtomicReference<Path> openedPath = new AtomicReference<>();
-        subject.setFindingFileOpenerForTests(openedPath::set);
-        Path projectRoot = Files.createTempDirectory("chat4j-finding-open");
-        Path targetFile = projectRoot.resolve("LocalToolRuntime.java");
-        Files.writeString(targetFile, "class LocalToolRuntime {}");
-        subject.getInputBar().setAgentProjectRoot(projectRoot);
-
-        JButton openFileButton = findComponents(cards.getFirst(), JButton.class).stream()
-                .filter(button -> "Open file".equals(button.getText()))
-                .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(openFileButton::doClick);
-        assertThat(openedPath.get()).isEqualTo(targetFile);
-
-        JButton applyFixButton = findComponents(cards.getFirst(), JButton.class).stream()
-                .filter(button -> "Apply fix".equals(button.getText()))
-                .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(applyFixButton::doClick);
-
-        assertThat(subject.getInputBar().getRawText())
-                .contains("Fix this finding: Agent bash escapes selected root")
-                .contains("File: LocalToolRuntime.java:218-233")
-                .contains("Context: Agent Mode documents bash as running within selected folder.");
-    }
-
-    @Test
-    @DisplayName("Header project button reflects active project state")
-    void setHeaderProjectActive_whenActive_updatesProjectButton() throws Exception {
-        SwingUtilities.invokeAndWait(() -> subject.setHeaderProjectActive(true, "chat4j-pi", "/Users/me/code/chat4j-pi"));
-
-        JButton projectButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> "chat4j-pi".equals(button.getText()))
-                .findFirst()
-                .orElseThrow();
-
-        assertThat(projectButton.isSelected()).isTrue();
-        assertThat(projectButton.isContentAreaFilled()).isTrue();
-        assertThat(projectButton.getToolTipText()).isEqualTo("/Users/me/code/chat4j-pi");
-    }
-
-    @Test
-    @DisplayName("Header project button dispatches project request")
-    void headerProjectButton_whenClicked_dispatchesProjectRequest() throws Exception {
-        var projectInvoked = new AtomicInteger();
-        subject.setOnHeaderProjectRequested(projectInvoked::incrementAndGet);
-
-        JButton projectButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> "Select project for Agent Mode".equals(button.getToolTipText()))
-                .findFirst()
-                .orElseThrow();
-
-        SwingUtilities.invokeAndWait(projectButton::doClick);
-
-        assertThat(projectInvoked).hasValue(1);
-    }
-
-    @Test
-    @DisplayName("Header overflow menu exposes secondary workspace actions")
-    void createHeaderOverflowMenu_whenCreated_containsSecondaryActions() {
-        var searchInvoked = new AtomicInteger();
-        var settingsInvoked = new AtomicInteger();
-        subject.setOnHeaderSearchRequested(searchInvoked::incrementAndGet);
-        subject.setOnHeaderSettingsRequested(settingsInvoked::incrementAndGet);
-
-        JPopupMenu menu = subject.createHeaderOverflowMenu();
-        JMenuItem searchItem = findMenuItem(menu, "Search chats");
-        JMenuItem settingsItem = findMenuItem(menu, "Settings");
-        JMenuItem copyConversationItem = findMenuItem(menu, "Copy conversation");
-        JMenuItem copyItem = findMenuItem(menu, "Copy recent response");
-        JMenuItem clearItem = findMenuItem(menu, "Clear chat");
-
-        assertThat(searchItem).isNotNull();
-        assertThat(settingsItem).isNotNull();
-        assertThat(copyConversationItem).isNotNull();
-        assertThat(copyConversationItem.isEnabled()).isFalse();
-        assertThat(copyItem).isNotNull();
-        assertThat(clearItem).isNotNull();
-
-        searchItem.doClick();
-        settingsItem.doClick();
-
-        assertThat(searchInvoked).hasValue(1);
-        assertThat(settingsInvoked).hasValue(1);
-    }
-
-    @Test
-    @DisplayName("Header exposes overflow conversation actions button")
-    void constructor_whenCreated_addsHeaderOverflowButton() {
-        JButton overflowButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> "More conversation actions".equals(button.getToolTipText()))
-                .findFirst()
-                .orElse(null);
-
-        assertThat(overflowButton).isNotNull();
+                .doesNotContain("1 finding");
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .contains("Findings\n\nP1 Agent bash escapes selected root\nAgent Mode documents bash as running within selected folder.\nLocalToolRuntime.java:218-233\n");
     }
 
     @Test

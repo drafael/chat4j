@@ -60,7 +60,6 @@ import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangePlanner;
 import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.AssistantRenderModeToggleCoordinator;
@@ -89,7 +88,6 @@ import com.github.drafael.chat4j.settings.GeneralSettingsResolver;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingDispatchCoordinator;
-import com.github.drafael.chat4j.settings.ProviderRuntimeSettingsResolver;
 import com.github.drafael.chat4j.settings.ProviderSettingsApplyCoordinator;
 import com.github.drafael.chat4j.settings.SettingsDialog;
 import com.github.drafael.chat4j.settings.SettingsDialogCoordinator;
@@ -118,11 +116,9 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionDispatchCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionEventDispatchCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadApplyCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadApplyDispatchCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadDispatchCoordinator;
@@ -164,6 +160,7 @@ import static java.util.stream.Collectors.toMap;
 @Slf4j
 public class MainFrame extends JFrame {
     private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
+    private static final int EMPTY_STATE_PROMPT_ACTION_LIMIT = 4;
 
     private final ChatPanel chatPanel;
     private final SidebarPanel sidebarPanel;
@@ -514,21 +511,23 @@ public class MainFrame extends JFrame {
         sidebarToggleState.setSidebarToggleFilledIcon(titleBar.sidebarToggleFilledIcon());
         sidebarToggleState.setSidebarToggleOutlineIcon(titleBar.sidebarToggleOutlineIcon());
         sidebarToggleState.setSidebarToggleButton(titleBar.sidebarToggleButton());
+        sidebarToggleState.setSearchButton(titleBar.searchButton());
+        sidebarToggleState.setLeftButtons(titleBar.leftButtons());
+        sidebarToggleState.setRightPanel(titleBar.rightPanel());
+        updateTitleBarSearchVisibility(sidebarState.sidebarVisible());
         add(titleBar.panel(), BorderLayout.NORTH);
         sidebarPanel = new SidebarPanel(conversationRepo);
         chatPanel.setOnConversationStreamingChanged(event ->
                 sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
-        chatPanel.setOnVisibleStreamingChanged(streaming -> updateConversationSubtitle());
 
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
-        sidebarPanel.setOnSearch(() -> openChatSearch(null));
-        sidebarPanel.setOnProjects(() -> chatPanel.getInputBar().requestAgentModeEnabled(true));
         sidebarPanel.setOnSettings(this::openSettings);
 
         splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
+        splitPane.setBorder(null);
         splitPane.setDividerLocation(250);
-        splitPane.setDividerSize(2);
+        splitPane.setDividerSize(1);
         splitPane.setContinuousLayout(true);
 
         add(splitPane, BorderLayout.CENTER);
@@ -566,9 +565,7 @@ public class MainFrame extends JFrame {
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
-        panel.setOnHeaderSearchRequested(() -> openChatSearch(null));
-        panel.setOnHeaderSettingsRequested(this::openSettings);
-        panel.setOnHeaderProjectRequested(() -> panel.getInputBar().requestAgentModeEnabled(true));
+        panel.setPromptQuickActions(promptQuickActions());
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
         panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
         panel.getInputBar().addWebSearchEnabledListener(this::onWebSearchEnabledChanged);
@@ -623,6 +620,32 @@ public class MainFrame extends JFrame {
                 sidebarState::setSidebarVisible,
                 sidebarState::setLastDividerLocation
         );
+        updateTitleBarSearchVisibility(toggleState.sidebarVisible());
+    }
+
+    private void updateTitleBarSearchVisibility(boolean sidebarVisible) {
+        JButton searchButton = sidebarToggleState.searchButton();
+        if (searchButton == null) {
+            return;
+        }
+
+        searchButton.setVisible(!sidebarVisible);
+        rebalanceTitleBarActionPanels();
+    }
+
+    private void rebalanceTitleBarActionPanels() {
+        JPanel leftButtons = sidebarToggleState.leftButtons();
+        JPanel rightPanel = sidebarToggleState.rightPanel();
+        if (leftButtons == null || rightPanel == null) {
+            return;
+        }
+
+        leftButtons.revalidate();
+        Dimension balancedSize = leftButtons.getPreferredSize();
+        rightPanel.setPreferredSize(balancedSize);
+        rightPanel.setMinimumSize(balancedSize);
+        rightPanel.revalidate();
+        rightPanel.repaint();
     }
 
     private void newChat() {
@@ -829,26 +852,11 @@ public class MainFrame extends JFrame {
         );
 
         if (applied) {
-            chatPanel.setConversationHeader(conversation.title(), conversationSubtitle(conversation));
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
                     conversation,
                     runtimeSettingsTarget()
             );
-            updateConversationSubtitle();
         }
-    }
-
-    private String conversationSubtitle(ConversationRepo.ConversationRecord conversation) {
-        if (conversation.agentModeEnabled() && StringUtils.isNotBlank(conversation.agentProjectRoot())) {
-            return "Agent mode · %s".formatted(conversation.agentProjectRoot());
-        }
-        if (StringUtils.isNotBlank(conversation.provider()) && StringUtils.isNotBlank(conversation.model())) {
-            return "%s · %s".formatted(conversation.provider(), conversation.model());
-        }
-        if (StringUtils.isNotBlank(conversation.provider())) {
-            return conversation.provider();
-        }
-        return null;
     }
 
     private void resetConversationRuntimeState() {
@@ -930,6 +938,16 @@ public class MainFrame extends JFrame {
                         new ChatSearchPopup(this, conversationRepo, this::loadConversation)
                 )
         );
+    }
+
+    private List<ChatPanel.PromptQuickAction> promptQuickActions() {
+        return promptCatalogRepo.load().stream()
+                .limit(EMPTY_STATE_PROMPT_ACTION_LIMIT)
+                .map(promptTemplate -> new ChatPanel.PromptQuickAction(
+                        promptTemplate.title(),
+                        () -> invokePromptTemplate(promptTemplate)
+                ))
+                .toList();
     }
 
     private void openCommandCenter() {
@@ -1029,6 +1047,7 @@ public class MainFrame extends JFrame {
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();
+                    chatPanel.setPromptQuickActions(promptQuickActions());
                 }
         );
     }
@@ -1213,7 +1232,6 @@ public class MainFrame extends JFrame {
 
     private void onReasoningLevelChanged(ReasoningLevel reasoningLevel) {
         persistCurrentConversationReasoningLevel(reasoningLevel);
-        updateConversationSubtitle();
     }
 
     private void applyAgentModeSettings() {
@@ -1233,12 +1251,10 @@ public class MainFrame extends JFrame {
 
     private void onWebSearchEnabledChanged(boolean enabled) {
         persistCurrentConversationWebSearchSettings();
-        updateConversationSubtitle();
     }
 
     private void onWebSearchOptionChanged(String optionId) {
         persistCurrentConversationWebSearchSettings();
-        updateConversationSubtitle();
     }
 
     private void persistWebBrowseTopN(int topN) {
@@ -1255,56 +1271,10 @@ public class MainFrame extends JFrame {
 
     private void onAgentModeChanged(boolean enabled) {
         persistCurrentConversationAgentSettings();
-        updateConversationSubtitle();
     }
 
     private void onAgentProjectRootChanged(Path projectRoot) {
         persistCurrentConversationAgentSettings();
-        updateConversationSubtitle();
-    }
-
-    private void updateConversationSubtitle() {
-        chatPanel.setConversationSubtitle(currentConversationSubtitle());
-        updateHeaderProjectState();
-    }
-
-    private void updateHeaderProjectState() {
-        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
-        boolean active = chatPanel.getInputBar().isAgentModeEnabled() && agentProjectRoot != null;
-        if (!active) {
-            chatPanel.setHeaderProjectActive(false, "Project", "Select project for Agent Mode");
-            return;
-        }
-
-        Path fileName = agentProjectRoot.getFileName();
-        String label = fileName == null ? "Project" : fileName.toString();
-        chatPanel.setHeaderProjectActive(true, label, agentProjectRoot.toAbsolutePath().toString());
-    }
-
-    private String currentConversationSubtitle() {
-        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
-        if (chatPanel.getInputBar().isAgentModeEnabled() && agentProjectRoot != null) {
-            return "Agent mode · %s".formatted(agentProjectRoot);
-        }
-
-        String selectedModel = chatPanel.getSelectedModel();
-        if (StringUtils.isBlank(selectedModel)) {
-            return null;
-        }
-
-        String modelSubtitle = selectedModel.replace(" > ", " · ");
-        ReasoningLevel reasoningLevel = chatPanel.getInputBar().getEffectiveReasoningLevel();
-        String modePrefix = chatPanel.isStreaming()
-                ? "Generating"
-                : "";
-        if (reasoningLevel.enabled()) {
-            String reasoningPrefix = "Reasoning %s".formatted(reasoningLevel.name().toLowerCase().replace('_', ' '));
-            modePrefix = StringUtils.isBlank(modePrefix) ? reasoningPrefix : "%s · %s".formatted(modePrefix, reasoningPrefix);
-        }
-        if (chatPanel.getInputBar().isWebSearchEnabled()) {
-            modePrefix = StringUtils.isBlank(modePrefix) ? "Web search" : "%s · Web search".formatted(modePrefix);
-        }
-        return StringUtils.isBlank(modePrefix) ? modelSubtitle : "%s · %s".formatted(modePrefix, modelSubtitle);
     }
 
     private void persistCurrentConversationAgentSettings() {
@@ -1415,7 +1385,6 @@ public class MainFrame extends JFrame {
 
     private void onSelectedModelChanged(String modelKey) {
         modelMenuCoordinator.onSelectedModelChanged(modelMenuContext());
-        updateConversationSubtitle();
     }
 
     private void onModelFavoritesChanged() {

@@ -38,6 +38,7 @@ import com.github.drafael.chat4j.web.WebSearchContext;
 import com.github.drafael.chat4j.web.WebSearchCoordinator;
 import com.github.drafael.chat4j.web.WebSearchResponse;
 import com.github.drafael.chat4j.web.WebSearchResult;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -80,7 +81,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -116,11 +116,10 @@ public class ChatPanel extends JPanel {
     private static final Map<String, Icon> CHAT_MENU_ICON_CACHE = new ConcurrentHashMap<>();
 
     private final JPanel messagesPanel;
-    private final JLabel conversationTitleLabel;
-    private final JLabel conversationSubtitleLabel;
     private final JScrollPane scrollPane;
     private final CardLayout messagesCardLayout = new CardLayout();
     private final JPanel messagesContainer;
+    private JPanel emptyStatePanel;
     private final InputBar inputBar;
     private final JLayeredPane bodyLayered;
     private final JPanel bodyContent;
@@ -141,8 +140,6 @@ public class ChatPanel extends JPanel {
     private final List<ActivityBubble> thinkingBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
-    private final JButton headerOverflowButton = new JButton("⋯");
-    private final JButton headerProjectButton = new JButton("Project");
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
     private Consumer<AssistantRenderMode> assistantRenderModeChangedListener;
     private Consumer<String> selectedModelChangedListener;
@@ -150,9 +147,6 @@ public class ChatPanel extends JPanel {
     private Runnable modelCatalogChangedListener;
     private Runnable messageSubmittedListener;
     private Runnable clearChatRequestedListener;
-    private Runnable headerSearchRequestedListener;
-    private Runnable headerSettingsRequestedListener;
-    private Runnable headerProjectRequestedListener;
     private AssistantMessagePersistenceListener assistantMessageCompletedListener;
     private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
     private Consumer<ConversationStreamingEvent> conversationStreamingListener;
@@ -181,10 +175,19 @@ public class ChatPanel extends JPanel {
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
     private volatile UUID activeConversationId;
+    private List<PromptQuickAction> promptQuickActions = emptyList();
     private volatile SendPreparer sendPreparer = this::prepareUserMessage;
-    private volatile FileOpener findingFileOpener = this::openFileWithDesktop;
     private boolean autoScrollQueued = false;
     private int messageRow = 0;
+
+    public record PromptQuickAction(@NonNull String title, @NonNull Runnable action) {
+        public PromptQuickAction {
+            title = StringUtils.trimToEmpty(title);
+            if (title.isBlank()) {
+                throw new IllegalArgumentException("title must not be blank");
+            }
+        }
+    }
 
     public ChatPanel() {
         this(ProviderModelCacheService.createDefault(), ModelFavoritesService.createInMemory());
@@ -205,25 +208,10 @@ public class ChatPanel extends JPanel {
         modelSelectorBtn = new ModelSelectorButton();
         modelSelectorBtn.addActionListener(e -> toggleModelPopup());
 
-        conversationTitleLabel = new JLabel("New chat");
-        Fonts.apply(conversationTitleLabel, Font.BOLD, Fonts.SIZE_BODY_LARGE);
-        conversationSubtitleLabel = new JLabel("Choose a model and start a conversation");
-        Fonts.apply(conversationSubtitleLabel, Font.PLAIN, Fonts.SIZE_SMALL);
-        conversationSubtitleLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-
-        JPanel conversationHeaderText = new JPanel();
-        conversationHeaderText.setOpaque(false);
-        conversationHeaderText.setLayout(new BoxLayout(conversationHeaderText, BoxLayout.Y_AXIS));
-        conversationHeaderText.add(conversationTitleLabel);
-        conversationHeaderText.add(conversationSubtitleLabel);
-
         JPanel chatHeader = new JPanel(new BorderLayout());
         chatHeader.setOpaque(false);
-        chatHeader.setBorder(BorderFactory.createEmptyBorder(8, 16, 6, 16));
-
-        JPanel headerActionsPanel = createHeaderActionsPanel();
-        chatHeader.add(conversationHeaderText, BorderLayout.WEST);
-        chatHeader.add(headerActionsPanel, BorderLayout.EAST);
+        chatHeader.setBorder(BorderFactory.createEmptyBorder(4, 12, 0, 12));
+        chatHeader.add(createRenderTogglePanel(), BorderLayout.EAST);
         add(chatHeader, BorderLayout.NORTH);
 
         // Messages area — uses ScrollablePanel + GridBagLayout for proper width tracking
@@ -246,7 +234,8 @@ public class ChatPanel extends JPanel {
         applyScrollPaneStyles();
 
         messagesContainer = new JPanel(messagesCardLayout);
-        messagesContainer.add(buildEmptyStatePanel(), CARD_EMPTY);
+        emptyStatePanel = buildEmptyStatePanel();
+        messagesContainer.add(emptyStatePanel, CARD_EMPTY);
         messagesContainer.add(scrollPane, CARD_CHAT);
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
 
@@ -299,6 +288,24 @@ public class ChatPanel extends JPanel {
 
         scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> updateAtBottom());
         refreshJumpOverlay();
+    }
+
+    public void setPromptQuickActions(@NonNull List<PromptQuickAction> promptQuickActions) {
+        this.promptQuickActions = List.copyOf(promptQuickActions);
+        refreshEmptyStatePanel();
+    }
+
+    private void refreshEmptyStatePanel() {
+        if (messagesContainer == null || emptyStatePanel == null) {
+            return;
+        }
+
+        messagesContainer.remove(emptyStatePanel);
+        emptyStatePanel = buildEmptyStatePanel();
+        messagesContainer.add(emptyStatePanel, CARD_EMPTY, 0);
+        messagesCardLayout.show(messagesContainer, history.isEmpty() ? CARD_EMPTY : CARD_CHAT);
+        messagesContainer.revalidate();
+        messagesContainer.repaint();
     }
 
     private void layoutJumpOverlay() {
@@ -383,59 +390,13 @@ public class ChatPanel extends JPanel {
         scrollPane.putClientProperty("JScrollPane.smoothScrolling", false);
     }
 
-    private JPanel createHeaderActionsPanel() {
-        JPanel renderTogglePanel = createRenderTogglePanel();
-        configureHeaderProjectButton();
-        configureHeaderOverflowButton();
-
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        panel.setOpaque(false);
-        panel.add(headerProjectButton);
-        panel.add(renderTogglePanel);
-        panel.add(headerOverflowButton);
-        return panel;
-    }
-
-    private void configureHeaderProjectButton() {
-        headerProjectButton.putClientProperty("JButton.buttonType", "roundRect");
-        headerProjectButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
-        headerProjectButton.setFocusable(false);
-        headerProjectButton.setToolTipText("Select project for Agent Mode");
-        headerProjectButton.setMargin(new Insets(2, 10, 2, 10));
-        Fonts.apply(headerProjectButton, Font.PLAIN, Fonts.SIZE_SMALL);
-        headerProjectButton.addActionListener(event -> {
-            if (headerProjectRequestedListener != null) {
-                headerProjectRequestedListener.run();
-            }
-        });
-    }
-
-    private void configureHeaderOverflowButton() {
-        headerOverflowButton.putClientProperty("JButton.buttonType", "toolBarButton");
-        headerOverflowButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
-        headerOverflowButton.setFocusable(false);
-        headerOverflowButton.setToolTipText("More conversation actions");
-        headerOverflowButton.setMargin(new Insets(0, 0, 0, 0));
-        headerOverflowButton.setPreferredSize(new Dimension(26, 22));
-        headerOverflowButton.setMinimumSize(new Dimension(26, 22));
-        headerOverflowButton.addActionListener(event -> showHeaderOverflowMenu());
-    }
-
     private JPanel createRenderTogglePanel() {
         ButtonGroup group = new ButtonGroup();
         group.add(previewToggle);
         group.add(markdownToggle);
 
-        configureRenderToggleButton(
-            previewToggle,
-            "first",
-            "Preview rendered markdown"
-        );
-        configureRenderToggleButton(
-            markdownToggle,
-            "last",
-            "Show raw markdown"
-        );
+        configureRenderToggleButton(previewToggle, "first", "Preview rendered markdown");
+        configureRenderToggleButton(markdownToggle, "last", "Show raw markdown");
 
         previewToggle.addActionListener(e -> {
             if (previewToggle.isSelected()) {
@@ -452,69 +413,11 @@ public class ChatPanel extends JPanel {
         panel.setOpaque(false);
         panel.add(previewToggle);
         panel.add(markdownToggle);
-
         updateRenderModeToggleSelection();
         return panel;
     }
 
-    private void showHeaderOverflowMenu() {
-        JPopupMenu menu = createHeaderOverflowMenu();
-        menu.show(headerOverflowButton, 0, headerOverflowButton.getHeight() + 2);
-    }
-
-    JPopupMenu createHeaderOverflowMenu() {
-        JPopupMenu menu = new JPopupMenu();
-
-        JCheckBoxMenuItem previewItem = new JCheckBoxMenuItem("Preview", assistantRenderMode == AssistantRenderMode.PREVIEW);
-        previewItem.addActionListener(event -> setAssistantRenderMode(AssistantRenderMode.PREVIEW, true));
-        menu.add(previewItem);
-
-        JCheckBoxMenuItem markdownItem = new JCheckBoxMenuItem("Markdown", assistantRenderMode == AssistantRenderMode.MARKDOWN);
-        markdownItem.addActionListener(event -> setAssistantRenderMode(AssistantRenderMode.MARKDOWN, true));
-        menu.add(markdownItem);
-        menu.addSeparator();
-
-        JMenuItem searchItem = new JMenuItem("Search chats");
-        searchItem.setEnabled(headerSearchRequestedListener != null);
-        searchItem.addActionListener(event -> {
-            if (headerSearchRequestedListener != null) {
-                headerSearchRequestedListener.run();
-            }
-        });
-        menu.add(searchItem);
-
-        JMenuItem settingsItem = new JMenuItem("Settings");
-        settingsItem.setEnabled(headerSettingsRequestedListener != null);
-        settingsItem.addActionListener(event -> {
-            if (headerSettingsRequestedListener != null) {
-                headerSettingsRequestedListener.run();
-            }
-        });
-        menu.add(settingsItem);
-        menu.addSeparator();
-
-        JMenuItem copyConversationItem = new JMenuItem("Copy conversation");
-        copyConversationItem.setEnabled(hasAnyConversationText());
-        copyConversationItem.addActionListener(event -> selectAndCopyConversation());
-        menu.add(copyConversationItem);
-
-        JMenuItem copyRecentResponseItem = new JMenuItem("Copy recent response");
-        copyRecentResponseItem.setEnabled(canCopyRecentResponse());
-        copyRecentResponseItem.addActionListener(event -> copyRecentResponseToClipboard());
-        menu.add(copyRecentResponseItem);
-
-        JMenuItem clearChatItem = new JMenuItem("Clear chat");
-        clearChatItem.setEnabled(canClearChat());
-        clearChatItem.addActionListener(event -> requestClearChat());
-        menu.add(clearChatItem);
-        return menu;
-    }
-
-    private void configureRenderToggleButton(
-        JToggleButton button,
-        String segmentPosition,
-        String tooltip
-    ) {
+    private void configureRenderToggleButton(JToggleButton button, String segmentPosition, String tooltip) {
         button.putClientProperty("JButton.buttonType", "segmented");
         button.putClientProperty("JButton.segmentPosition", segmentPosition);
         button.setFocusable(false);
@@ -604,19 +507,6 @@ public class ChatPanel extends JPanel {
         popup.show(modelSelectorBtn, selectedProviderName, selectedModelId);
     }
 
-    private String modelSubtitle() {
-        if (StringUtils.isBlank(selectedProviderName) && StringUtils.isBlank(selectedModelId)) {
-            return "Choose a model and start a conversation";
-        }
-        if (StringUtils.isBlank(selectedProviderName)) {
-            return selectedModelId;
-        }
-        if (StringUtils.isBlank(selectedModelId)) {
-            return selectedProviderName;
-        }
-        return "%s · %s".formatted(selectedProviderName, selectedModelId);
-    }
-
     private ModelSelectorPopup ensureModelPopup(Window owner) {
         if (modelPopup == null) {
             modelPopup = new ModelSelectorPopup(
@@ -646,7 +536,6 @@ public class ChatPanel extends JPanel {
         selectedProviderName = providerName;
         selectedModelId = modelId;
         modelSelectorBtn.setSelection(providerName, modelId);
-        setConversationHeader(conversationTitleLabel.getText(), modelSubtitle());
 
         currentProvider = null;
         currentProviderApiKey = null;
@@ -806,9 +695,6 @@ public class ChatPanel extends JPanel {
             inputBar.clear();
             history.add(userMessage);
             addUserBubble(userMessage);
-            if (startsConversation) {
-                setConversationTitle(deriveLiveConversationTitle(userMessage));
-            }
             updateClearChatButtonVisibility();
         }
 
@@ -2099,6 +1985,8 @@ public class ChatPanel extends JPanel {
     }
 
     private static final int EMPTY_STATE_ICON_SIZE = 72;
+    private static final int EMPTY_STATE_CHIP_GAP = 8;
+    private static final int EMPTY_STATE_PROMPT_CHIP_GAP = 6;
 
     private JPanel buildEmptyStatePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
@@ -2137,7 +2025,7 @@ public class ChatPanel extends JPanel {
         content.add(subtitle);
         content.add(Box.createVerticalStrut(20));
 
-        JPanel suggestions = new JPanel(new WrapLayout(FlowLayout.CENTER, 8, 8));
+        JPanel suggestions = new JPanel(new WrapLayout(FlowLayout.CENTER, EMPTY_STATE_CHIP_GAP, EMPTY_STATE_CHIP_GAP));
         suggestions.setOpaque(false);
         suggestions.add(createSuggestionChip("Review codebase", () -> inputBar.requestAgentModeEnabled(true)));
         suggestions.add(createSuggestionChip("Explain selected file", () -> inputBar.requestAttachmentPicker()));
@@ -2145,28 +2033,59 @@ public class ChatPanel extends JPanel {
         suggestions.add(createSuggestionChip("Search the web", () -> inputBar.requestWebSearchEnabled(true)));
         content.add(suggestions);
 
+        if (!promptQuickActions.isEmpty()) {
+            content.add(Box.createVerticalStrut(14));
+            content.add(createEmptyStateSectionLabel("Prompts"));
+            content.add(Box.createVerticalStrut(6));
+            JPanel promptActions = new JPanel(new WrapLayout(
+                    FlowLayout.CENTER,
+                    EMPTY_STATE_PROMPT_CHIP_GAP,
+                    EMPTY_STATE_PROMPT_CHIP_GAP
+            ));
+            promptActions.setOpaque(false);
+            promptQuickActions.stream()
+                    .map(this::createPromptActionChip)
+                    .forEach(promptActions::add);
+            content.add(promptActions);
+        }
+
         panel.add(content);
         return panel;
     }
 
-    private JButton createSuggestionChip(String text) {
-        return createSuggestionChip(text, null);
-    }
-
     private JButton createSuggestionChip(String text, Runnable action) {
-        JButton chip = new JButton(text);
-        chip.putClientProperty("JButton.buttonType", "roundRect");
-        chip.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
-        chip.setFocusable(false);
-        chip.setMargin(new Insets(6, 12, 6, 12));
-        Fonts.apply(chip, Font.PLAIN, Fonts.SIZE_BODY);
-        chip.addActionListener(e -> {
+        return createEmptyStateChip(text, true, () -> {
             inputBar.setText(text);
             if (action != null) {
                 action.run();
             }
             inputBar.requestInputFocus();
         });
+    }
+
+    private JLabel createEmptyStateSectionLabel(String text) {
+        JLabel label = new JLabel(text);
+        Fonts.apply(label, Font.BOLD, Fonts.SIZE_SMALL);
+        label.setForeground(UIManager.getColor("Label.disabledForeground"));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        return label;
+    }
+
+    private JButton createPromptActionChip(PromptQuickAction promptQuickAction) {
+        return createEmptyStateChip(promptQuickAction.title(), false, () -> {
+            promptQuickAction.action().run();
+            inputBar.requestInputFocus();
+        });
+    }
+
+    private JButton createEmptyStateChip(String text, boolean primary, Runnable action) {
+        JButton chip = new JButton(text);
+        chip.putClientProperty("JButton.buttonType", "roundRect");
+        chip.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
+        chip.setFocusable(false);
+        chip.setMargin(primary ? new Insets(6, 12, 6, 12) : new Insets(4, 10, 4, 10));
+        Fonts.apply(chip, Font.PLAIN, primary ? Fonts.SIZE_BODY : Fonts.SIZE_SMALL);
+        chip.addActionListener(e -> action.run());
         return chip;
     }
 
@@ -2356,123 +2275,11 @@ public class ChatPanel extends JPanel {
             bubble.setText(text);
         }
 
-        if (role == Role.ASSISTANT && text != null && addFindingCardsIfPresent(text) && isFindingOnlyResponse(text)) {
-            return;
-        }
-
         if (role == Role.ASSISTANT) {
             assistantBubbles.add(bubble);
         }
         installBubbleContextMenu(bubble);
         addMessageComponent(role, bubble, null);
-    }
-
-    private boolean addFindingCardsIfPresent(String text) {
-        List<FindingCardPanel.Finding> findings = FindingCardParser.parse(text);
-        if (findings.isEmpty()) {
-            return false;
-        }
-
-        JPanel cardsPanel = new JPanel();
-        cardsPanel.setOpaque(false);
-        cardsPanel.setLayout(new BoxLayout(cardsPanel, BoxLayout.Y_AXIS));
-        cardsPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
-
-        JPanel findingsHeader = createFindingsHeader(findings.size());
-        findingsHeader.setAlignmentX(Component.LEFT_ALIGNMENT);
-        cardsPanel.add(findingsHeader);
-
-        for (FindingCardPanel.Finding finding : findings) {
-            FindingCardPanel card = new FindingCardPanel(finding);
-            card.setAlignmentX(Component.LEFT_ALIGNMENT);
-            card.setOnOpenFile(() -> openFindingFileReference(finding));
-            card.setOnAskFollowUp(() -> {
-                inputBar.setText(findingPrompt("Tell me more about", finding));
-                inputBar.requestInputFocus();
-            });
-            card.setOnApplyFix(() -> {
-                inputBar.setText(findingPrompt("Fix this finding", finding));
-                inputBar.requestInputFocus();
-            });
-            cardsPanel.add(card);
-            cardsPanel.add(Box.createVerticalStrut(8));
-        }
-
-        addMessageComponent(Role.ASSISTANT, cardsPanel, null);
-        return true;
-    }
-
-    private JPanel createFindingsHeader(int findingCount) {
-        JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        header.setOpaque(false);
-        header.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-
-        JLabel title = new JLabel("Findings");
-        Fonts.apply(title, Font.BOLD, Fonts.SIZE_BODY_LARGE);
-        header.add(title);
-
-        JLabel countBadge = new JLabel("%d %s".formatted(findingCount, findingCount == 1 ? "finding" : "findings"));
-        countBadge.setOpaque(true);
-        countBadge.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
-        countBadge.setBackground(UIManager.getColor("Button.background"));
-        countBadge.setForeground(UIManager.getColor("Label.disabledForeground"));
-        Fonts.apply(countBadge, Font.PLAIN, Fonts.SIZE_SMALL);
-        header.add(countBadge);
-        return header;
-    }
-
-    private boolean isFindingOnlyResponse(String text) {
-        return text.lines()
-                .map(String::trim)
-                .filter(StringUtils::isNotBlank)
-                .findFirst()
-                .map(line -> StringUtils.equalsIgnoreCase(line, "Findings") || StringUtils.equalsIgnoreCase(line, "Findings:"))
-                .orElse(false);
-    }
-
-    private String findingPrompt(String action, FindingCardPanel.Finding finding) {
-        StringBuilder prompt = new StringBuilder("%s: %s".formatted(action, finding.title()));
-        if (StringUtils.isNotBlank(finding.fileReference())) {
-            prompt.append("\nFile: ").append(finding.fileReference());
-        }
-        if (StringUtils.isNotBlank(finding.body())) {
-            prompt.append("\nContext: ").append(finding.body());
-        }
-        return prompt.toString();
-    }
-
-    private void openFindingFileReference(FindingCardPanel.Finding finding) {
-        String fileReference = StringUtils.trimToEmpty(finding.fileReference());
-        if (StringUtils.isBlank(fileReference) || "No file reference".equals(fileReference)) {
-            inputBar.showValidationMessage("Finding has no file reference.");
-            return;
-        }
-
-        String pathText = fileReference.replaceFirst(":\\d+(?:[-–]\\d+)?$", "");
-        Path path = Path.of(pathText);
-        if (!path.isAbsolute() && inputBar.getAgentProjectRoot() != null) {
-            path = inputBar.getAgentProjectRoot().resolve(path).normalize();
-        }
-
-        if (!Files.exists(path)) {
-            inputBar.showValidationMessage("File not found: %s".formatted(pathText));
-            return;
-        }
-
-        try {
-            findingFileOpener.open(path);
-        } catch (UnsupportedOperationException e) {
-            inputBar.showValidationMessage("Opening files is not supported on this system.");
-        } catch (Exception e) {
-            inputBar.showValidationMessage("Failed to open file: %s".formatted(path.getFileName()));
-        }
-    }
-
-    private void openFileWithDesktop(Path path) throws Exception {
-        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-            throw new UnsupportedOperationException("Desktop open is not supported");
-        }
-        Desktop.getDesktop().open(path.toFile());
     }
 
     private void addActivityBubble(ActivityBubble bubble, String text) {
@@ -2796,53 +2603,6 @@ public class ChatPanel extends JPanel {
         clearChat(false);
     }
 
-    public void setConversationHeader(String title, String subtitle) {
-        runOnEdt(() -> applyConversationHeader(title, subtitle));
-    }
-
-    public void setHeaderProjectActive(boolean active, String label, String tooltip) {
-        runOnEdt(() -> {
-            headerProjectButton.setSelected(active);
-            headerProjectButton.setText(StringUtils.defaultIfBlank(label, "Project"));
-            headerProjectButton.setToolTipText(StringUtils.defaultIfBlank(tooltip, "Select project for Agent Mode"));
-            headerProjectButton.setOpaque(active);
-            headerProjectButton.setContentAreaFilled(active);
-            headerProjectButton.setBackground(active ? UIManager.getColor("Button.toolbar.selectedBackground") : null);
-        });
-    }
-
-    public void setConversationSubtitle(String subtitle) {
-        runOnEdt(() -> applyConversationSubtitle(subtitle));
-    }
-
-    public void setConversationTitle(String title) {
-        runOnEdt(() -> applyConversationTitle(title));
-    }
-
-    private String deriveLiveConversationTitle(Message message) {
-        String content = StringUtils.defaultIfBlank(message.content(), "Attached files").strip();
-        String firstLine = content.lines().findFirst().orElse(content).strip();
-        return StringUtils.abbreviate(StringUtils.defaultIfBlank(firstLine, "New chat"), 80);
-    }
-
-    private void applyConversationHeader(String title, String subtitle) {
-        applyConversationTitle(title);
-        applyConversationSubtitle(subtitle);
-    }
-
-    private void applyConversationTitle(String title) {
-        String fullTitle = StringUtils.defaultIfBlank(title, "New chat");
-        conversationTitleLabel.setText(StringUtils.abbreviate(fullTitle, 96));
-        conversationTitleLabel.setToolTipText(fullTitle);
-    }
-
-    private void applyConversationSubtitle(String subtitle) {
-        String fullSubtitle = StringUtils.defaultIfBlank(subtitle, modelSubtitle());
-        conversationSubtitleLabel.setText(StringUtils.abbreviate(fullSubtitle, 140));
-        conversationSubtitleLabel.setToolTipText(fullSubtitle);
-        conversationSubtitleLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-    }
-
     private void clearChat(boolean cancelActiveStream) {
         if (cancelActiveStream) {
             cancelStreaming();
@@ -2860,7 +2620,6 @@ public class ChatPanel extends JPanel {
         messagesPanel.revalidate();
         messagesPanel.repaint();
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
-        applyConversationHeader("New chat", modelSubtitle());
         updateClearChatButtonVisibility();
     }
 
@@ -2986,6 +2745,14 @@ public class ChatPanel extends JPanel {
         this.assistantRenderModeChangedListener = listener;
     }
 
+    private void updateRenderModeToggleSelection() {
+        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
+            markdownToggle.setSelected(true);
+        } else {
+            previewToggle.setSelected(true);
+        }
+    }
+
     public void setOnSelectedModelChanged(Consumer<String> listener) {
         this.selectedModelChangedListener = listener;
     }
@@ -3006,17 +2773,6 @@ public class ChatPanel extends JPanel {
         this.clearChatRequestedListener = listener;
     }
 
-    public void setOnHeaderSearchRequested(Runnable listener) {
-        this.headerSearchRequestedListener = listener;
-    }
-
-    public void setOnHeaderSettingsRequested(Runnable listener) {
-        this.headerSettingsRequestedListener = listener;
-    }
-
-    public void setOnHeaderProjectRequested(Runnable listener) {
-        this.headerProjectRequestedListener = listener;
-    }
 
     public void setOnAssistantMessageCompleted(AssistantMessagePersistenceListener listener) {
         this.assistantMessageCompletedListener = listener;
@@ -3040,10 +2796,6 @@ public class ChatPanel extends JPanel {
 
     void setSendPreparerForTests(SendPreparer sendPreparer) {
         this.sendPreparer = sendPreparer == null ? this::prepareUserMessage : sendPreparer;
-    }
-
-    void setFindingFileOpenerForTests(FileOpener findingFileOpener) {
-        this.findingFileOpener = findingFileOpener == null ? this::openFileWithDesktop : findingFileOpener;
     }
 
     void setAgentOrchestratorForTests(AgentOrchestrator agentOrchestrator) {
@@ -3549,13 +3301,6 @@ public class ChatPanel extends JPanel {
         messagesPanel.repaint();
     }
 
-    private void updateRenderModeToggleSelection() {
-        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
-            markdownToggle.setSelected(true);
-        } else {
-            previewToggle.setSelected(true);
-        }
-    }
 
     public void refreshProviders() {
         long refreshId = providerRefreshCounter.incrementAndGet();
@@ -3805,11 +3550,6 @@ public class ChatPanel extends JPanel {
     @FunctionalInterface
     public interface AssistantMessagePersistenceListener {
         boolean persist(AssistantMessageEvent event);
-    }
-
-    @FunctionalInterface
-    interface FileOpener {
-        void open(Path path) throws Exception;
     }
 
     @FunctionalInterface

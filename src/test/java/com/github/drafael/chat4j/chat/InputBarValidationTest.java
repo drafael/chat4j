@@ -211,7 +211,7 @@ class InputBarValidationTest {
         assertThat(notified).isTrue();
         assertThat(commandCenterButton.getToolTipText()).contains("Command center");
         assertThat(commandCenterButton.getToolTipText()).contains("P");
-        assertThat(commandCenterButton.getPreferredSize()).isEqualTo(new Dimension(24, 24));
+        assertThat(commandCenterButton.getPreferredSize()).isEqualTo(new Dimension(26, 26));
 
         subject.setEnabled(false);
         assertThat(commandCenterButton.isEnabled()).isFalse();
@@ -239,7 +239,7 @@ class InputBarValidationTest {
         subject.setEnabled(true);
         assertThat(subject.isClearChatVisible()).isTrue();
         assertThat(clearChatButton.getToolTipText()).isEqualTo("Clear chat");
-        assertThat(clearChatButton.getPreferredSize()).isEqualTo(new Dimension(24, 24));
+        assertThat(clearChatButton.getPreferredSize()).isEqualTo(new Dimension(26, 26));
     }
 
     @Test
@@ -278,7 +278,8 @@ class InputBarValidationTest {
 
         assertThat(subject.isWebSearchEnabled()).isTrue();
         assertThat(webSearchButton.isSelected()).isTrue();
-        assertThat(webSearchButton.isContentAreaFilled()).isTrue();
+        assertThat(webSearchButton.isContentAreaFilled()).isFalse();
+        assertThat(webSearchButton.isOpaque()).isFalse();
         assertThat(notified.get()).isTrue();
 
         SwingUtilities.invokeAndWait(webSearchButton::doClick);
@@ -290,19 +291,24 @@ class InputBarValidationTest {
     }
 
     @Test
-    @DisplayName("Locked web search remains enabled when button is clicked")
-    void webSearchButtonClick_whenLockedEnabled_remainsEnabled() throws Exception {
+    @DisplayName("Default-enabled web search can be toggled off from the input button")
+    void webSearchButtonClick_whenDefaultEnabled_togglesOff() throws Exception {
         InputBar subject = new InputBar();
         JToggleButton webSearchButton = readWebSearchButton(subject);
+        AtomicReference<Boolean> notified = new AtomicReference<>();
 
+        subject.addWebSearchEnabledListener(notified::set);
         subject.setWebSearchLockedEnabled(true);
         subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
 
+        assertThat(subject.isWebSearchEnabled()).isTrue();
+
         SwingUtilities.invokeAndWait(webSearchButton::doClick);
 
-        assertThat(subject.isWebSearchEnabled()).isTrue();
-        assertThat(webSearchButton.isSelected()).isTrue();
-        assertThat(webSearchButton.getToolTipText()).contains("always on");
+        assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(webSearchButton.isSelected()).isFalse();
+        assertThat(webSearchButton.getToolTipText()).contains("click to toggle");
+        assertThat(notified.get()).isFalse();
     }
 
     @Test

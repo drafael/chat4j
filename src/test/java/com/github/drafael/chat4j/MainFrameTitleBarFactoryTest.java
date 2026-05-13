@@ -17,7 +17,7 @@ class MainFrameTitleBarFactoryTest {
     private final MainFrameTitleBarFactory subject = new MainFrameTitleBarFactory();
 
     @Test
-    @DisplayName("Title bar keeps model selector in actions area and wires button actions")
+    @DisplayName("Title bar centers model selector and wires button actions")
     void create_whenActionsProvided_buildsTitleBarAndDispatchesActions() {
         var toggleInvoked = new AtomicBoolean();
         var searchButton = new AtomicReference<JButton>();
@@ -35,6 +35,9 @@ class MainFrameTitleBarFactoryTest {
         titleBar.sidebarToggleButton().doClick();
         JButton search = findButton(titleBar.panel(), "Search Chats");
         JButton newChat = findButton(titleBar.panel(), "New Chat");
+        assertThat(titleBar.leftButtons()).isNotNull();
+        assertThat(titleBar.rightPanel()).isNotNull();
+        assertThat(titleBar.searchButton()).isSameAs(search);
         assertThat(search).isNotNull();
         assertThat(newChat).isNotNull();
 
@@ -42,7 +45,7 @@ class MainFrameTitleBarFactoryTest {
         newChat.doClick();
 
         assertThat(titleBar.panel().isAncestorOf(modelSelector)).isTrue();
-        assertThat(findLabel(titleBar.panel(), "Chat4J")).isNotNull();
+        assertThat(findLabel(titleBar.panel(), "Chat4J")).isNull();
         assertThat(toggleInvoked).isTrue();
         assertThat(searchButton).hasValue(search);
         assertThat(newChatInvoked).isTrue();

@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.sidebar;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.formdev.flatlaf.icons.FlatFileViewDirectoryIcon;
+import com.formdev.flatlaf.ui.FlatLineBorder;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.formdev.flatlaf.icons.FlatTreeCollapsedIcon;
 import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
@@ -10,8 +10,11 @@ import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
+import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
+import javax.swing.ButtonModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.Icon;
@@ -47,7 +50,6 @@ import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -56,7 +58,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
 import java.net.URL;
-import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,6 +72,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.stream.IntStream;
+
+import static java.util.Collections.emptyMap;
 
 public class SidebarPanel extends JPanel {
 
@@ -90,6 +93,10 @@ public class SidebarPanel extends JPanel {
     private static final int HOVER_BACKGROUND_PADDING = 8;
     private static final int HOVER_BACKGROUND_FADE_WIDTH = 16;
     private static final int PROVIDER_ICON_SIZE = 16;
+    private static final int SETTINGS_ICON_SIZE = 16;
+    private static final int SETTINGS_BUTTON_SIZE = 24;
+    private static final int SETTINGS_BUTTON_ARC = 9;
+    private static final int FILTER_FIELD_ARC = 10;
     private static final int LOADING_ICON_FRAME_DELAY_MILLIS = 100;
 
     private static final Map<String, String> PROVIDER_ICON_PATHS = Map.ofEntries(
@@ -111,6 +118,7 @@ public class SidebarPanel extends JPanel {
     private static Icon cachedTrashIcon;
     private static Icon cachedStarIcon;
     private static Icon cachedStarFilledIcon;
+    private static Icon cachedSettingsIcon;
 
     private final DefaultListModel<Object> listModel = new DefaultListModel<>();
     private final JList<Object> conversationList;
@@ -127,14 +135,12 @@ public class SidebarPanel extends JPanel {
 
     private Consumer<UUID> onConversationSelected;
     private Runnable onNewChat;
-    private Runnable onSearch;
-    private Runnable onProjects;
     private Runnable onSettings;
     private boolean suppressSelection;
     private int hoveredIndex = -1;
     private final AtomicLong refreshRequestCounter = new AtomicLong();
     private UUID pendingSelectionConversationId;
-    private Map<String, List<ConversationRecord>> lastGroupedConversations = Map.of();
+    private Map<String, List<ConversationRecord>> lastGroupedConversations = emptyMap();
 
     public SidebarPanel(ConversationRepo conversationRepo) {
         this.conversationRepo = Objects.requireNonNull(conversationRepo);
@@ -156,6 +162,7 @@ public class SidebarPanel extends JPanel {
     public void updateUI() {
         super.updateUI();
         applyThemeBackgroundTint();
+        applyPanelBorder();
         applyScrollPaneStyles();
     }
 
@@ -232,14 +239,6 @@ public class SidebarPanel extends JPanel {
         onNewChat = handler;
     }
 
-    public void setOnSearch(Runnable handler) {
-        onSearch = handler;
-    }
-
-    public void setOnProjects(Runnable handler) {
-        onProjects = handler;
-    }
-
     public void setOnSettings(Runnable handler) {
         onSettings = handler;
     }
@@ -248,7 +247,7 @@ public class SidebarPanel extends JPanel {
         setLayout(new BorderLayout());
         setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
         applyThemeBackgroundTint();
-        setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+        applyPanelBorder();
     }
 
     private JList<Object> createConversationList() {
@@ -267,7 +266,6 @@ public class SidebarPanel extends JPanel {
 
         ToolTipManager.sharedInstance().registerComponent(list);
         list.setOpaque(false);
-        list.putClientProperty("FlatLaf.style", "selectionArc:12;selectionInsets:2,8,2,8");
         list.setCellRenderer(new ConversationCellRenderer());
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         list.addListSelectionListener(this::handleSelectionChanged);
@@ -307,43 +305,24 @@ public class SidebarPanel extends JPanel {
     }
 
     private JPanel createNavigationHeader() {
-        JPanel header = new JPanel(new BorderLayout(0, 8));
+        JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
-        header.setBorder(BorderFactory.createEmptyBorder(8, 10, 10, 10));
+        header.setBorder(BorderFactory.createEmptyBorder(2, 8, 4, 8));
 
-        JPanel actions = new JPanel(new GridLayout(0, 1, 0, 6));
-        actions.setOpaque(false);
-        actions.add(createHeaderActionButton("New chat", navigationIcon("/icons/titlebar/square-pen.svg"), () -> {
-            if (onNewChat != null) {
-                onNewChat.run();
-            }
-        }));
-        actions.add(createHeaderActionButton("Search", navigationIcon("/icons/titlebar/search.svg"), () -> {
-            if (onSearch != null) {
-                onSearch.run();
-            }
-        }));
-        actions.add(createHeaderActionButton("Projects", new FlatFileViewDirectoryIcon(), () -> {
-            if (onProjects != null) {
-                onProjects.run();
-            }
-        }));
-        header.add(actions, BorderLayout.NORTH);
         header.add(filterField, BorderLayout.CENTER);
-
-        JLabel sectionLabel = new JLabel(CONVERSATIONS_TITLE);
-        Fonts.apply(sectionLabel, Font.BOLD, Fonts.SIZE_SMALL);
-        sectionLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        header.add(sectionLabel, BorderLayout.SOUTH);
         return header;
     }
 
     private JTextField createFilterField() {
-        JTextField field = new JTextField();
+        JTextField field = new JTextField() {
+            @Override
+            public void updateUI() {
+                super.updateUI();
+                applyFilterFieldBorder(this);
+            }
+        };
         field.putClientProperty("JTextField.placeholderText", "Filter conversations");
         field.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
-        field.putClientProperty("FlatLaf.style", "arc:12;showClearButton:true");
-        field.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
         Fonts.apply(field, Font.PLAIN, Fonts.SIZE_BODY);
         field.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -364,46 +343,45 @@ public class SidebarPanel extends JPanel {
         return field;
     }
 
+    private static void applyFilterFieldBorder(JTextField field) {
+        Color borderColor = UIManager.getColor("Component.borderColor");
+        if (borderColor == null) {
+            borderColor = UIManager.getColor("TextField.borderColor");
+        }
+        field.setBorder(new FlatLineBorder(new Insets(4, 6, 4, 6), borderColor, 1, FILTER_FIELD_ARC));
+    }
+
     private JPanel createNavigationFooter() {
         JPanel footer = new JPanel(new BorderLayout());
         footer.setOpaque(false);
-        footer.setBorder(BorderFactory.createEmptyBorder(10, 10, 12, 10));
-        footer.add(createHeaderActionButton("Settings", null, () -> {
-            if (onSettings != null) {
-                onSettings.run();
-            }
-        }), BorderLayout.CENTER);
+        footer.setBorder(BorderFactory.createEmptyBorder(4, 12, 8, 10));
+        footer.add(createSettingsButton(), BorderLayout.WEST);
         return footer;
     }
 
-    private JButton createHeaderActionButton(String text, Icon icon, Runnable action) {
-        JButton button = new JButton(text);
-        button.putClientProperty("JButton.buttonType", "roundRect");
-        button.putClientProperty("FlatLaf.style", "focusWidth:0;innerFocusWidth:0;arc:12");
-        button.setIcon(icon);
-        button.setIconTextGap(8);
-        button.setHorizontalAlignment(SwingConstants.LEFT);
+    private JButton createSettingsButton() {
+        JButton button = new SettingsIconButton(settingsIcon());
+        button.putClientProperty("JButton.buttonType", "toolBarButton");
+        button.putClientProperty("FlatLaf.style", "focusWidth:0;innerFocusWidth:0;arc:10");
+        button.setToolTipText("Settings");
+        button.getAccessibleContext().setAccessibleName("Settings");
         button.setFocusable(false);
-        button.setMargin(new Insets(6, 10, 6, 10));
-        Fonts.apply(button, Font.PLAIN, Fonts.SIZE_BODY);
-        button.addActionListener(event -> action.run());
-        return button;
-    }
-
-    private Icon navigationIcon(String path) {
-        URL url = SidebarPanel.class.getResource(path);
-        if (url == null) {
-            return null;
-        }
-        var icon = new FlatSVGIcon(url).derive(16, 16);
-        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-            Color foreground = component != null ? component.getForeground() : UIManager.getColor("Label.foreground");
-            if (foreground == null) {
-                foreground = new Color(90, 90, 90);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        button.setHorizontalAlignment(SwingConstants.CENTER);
+        button.setVerticalAlignment(SwingConstants.CENTER);
+        button.setMargin(new Insets(0, 0, 0, 0));
+        Dimension size = new Dimension(SETTINGS_BUTTON_SIZE, SETTINGS_BUTTON_SIZE);
+        button.setPreferredSize(size);
+        button.setMinimumSize(size);
+        button.setMaximumSize(size);
+        button.addActionListener(event -> {
+            if (onSettings != null) {
+                onSettings.run();
             }
-            return new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), color.getAlpha());
-        }));
-        return icon.hasFound() ? icon : null;
+        });
+        return button;
     }
 
     private JScrollPane createConversationScrollPane() {
@@ -645,7 +623,7 @@ public class SidebarPanel extends JPanel {
         }
 
         String normalizedQuery = query.toLowerCase();
-        Map<String, List<ConversationRecord>> filtered = new java.util.LinkedHashMap<>();
+        Map<String, List<ConversationRecord>> filtered = new LinkedHashMap<>();
         grouped.forEach((groupName, records) -> {
             List<ConversationRecord> matches = records.stream()
                     .filter(record -> conversationMatches(record, normalizedQuery))
@@ -658,10 +636,9 @@ public class SidebarPanel extends JPanel {
     }
 
     private boolean conversationMatches(ConversationRecord record, String normalizedQuery) {
-        return StringUtils.containsIgnoreCase(record.title(), normalizedQuery)
-                || StringUtils.containsIgnoreCase(record.provider(), normalizedQuery)
-                || StringUtils.containsIgnoreCase(record.model(), normalizedQuery)
-                || StringUtils.containsIgnoreCase(record.agentProjectRoot(), normalizedQuery);
+        return Strings.CI.contains(record.title(), normalizedQuery)
+                || Strings.CI.contains(record.provider(), normalizedQuery)
+                || Strings.CI.contains(record.model(), normalizedQuery);
     }
 
     private void applyRefreshFailure(long refreshRequestId, Exception e) {
@@ -669,7 +646,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        lastGroupedConversations = Map.of();
+        lastGroupedConversations = emptyMap();
         listModel.clear();
         hoveredIndex = -1;
         showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
@@ -828,57 +805,7 @@ public class SidebarPanel extends JPanel {
         int index = 0;
         int restoreIndex = -1;
 
-        List<ConversationRecord> favorites = grouped.values().stream()
-                .flatMap(List::stream)
-                .filter(ConversationRecord::isFavorite)
-                .toList();
-        if (!favorites.isEmpty()) {
-            boolean collapsed = collapsedGroups.contains(FAVORITES_TITLE);
-            listModel.addElement(new GroupHeader(FAVORITES_TITLE, collapsed));
-            index++;
-
-            if (!collapsed) {
-                for (ConversationRecord record : favorites) {
-                    listModel.addElement(toConversationItem(record));
-                    if (record.id().equals(selectedConversationId)) {
-                        restoreIndex = index;
-                    }
-                    index++;
-                }
-            }
-        }
-
-        Map<String, List<ConversationRecord>> projectGroups = projectGroups(grouped);
-        for (var projectEntry : projectGroups.entrySet()) {
-            boolean collapsed = collapsedGroups.contains(projectEntry.getKey());
-            listModel.addElement(new GroupHeader(projectEntry.getKey(), collapsed));
-            index++;
-
-            if (collapsed) {
-                continue;
-            }
-
-            for (ConversationRecord record : projectEntry.getValue()) {
-                listModel.addElement(toConversationItem(record));
-                if (record.id().equals(selectedConversationId)) {
-                    restoreIndex = index;
-                }
-                index++;
-            }
-        }
-
         for (var entry : grouped.entrySet()) {
-            if (FAVORITES_TITLE.equals(entry.getKey())) {
-                continue;
-            }
-
-            List<ConversationRecord> dateGroupRecords = entry.getValue().stream()
-                    .filter(record -> !record.isFavorite() && !isProjectConversation(record))
-                    .toList();
-            if (dateGroupRecords.isEmpty()) {
-                continue;
-            }
-
             boolean collapsed = collapsedGroups.contains(entry.getKey());
             listModel.addElement(new GroupHeader(entry.getKey(), collapsed));
             index++;
@@ -887,7 +814,7 @@ public class SidebarPanel extends JPanel {
                 continue;
             }
 
-            for (ConversationRecord record : dateGroupRecords) {
+            for (ConversationRecord record : entry.getValue()) {
                 var conversation = toConversationItem(record);
                 listModel.addElement(conversation);
                 if (record.id().equals(selectedConversationId)) {
@@ -898,32 +825,6 @@ public class SidebarPanel extends JPanel {
         }
 
         return restoreIndex;
-    }
-
-    private Map<String, List<ConversationRecord>> projectGroups(Map<String, List<ConversationRecord>> grouped) {
-        Map<String, List<ConversationRecord>> projectGroups = new LinkedHashMap<>();
-        grouped.values().stream()
-                .flatMap(List::stream)
-                .filter(record -> !record.isFavorite() && isProjectConversation(record))
-                .forEach(record -> projectGroups.computeIfAbsent(projectGroupName(record.agentProjectRoot()), ignored -> new java.util.ArrayList<>())
-                        .add(record));
-        return projectGroups;
-    }
-
-    private boolean isProjectConversation(ConversationRecord record) {
-        return StringUtils.isNotBlank(record.agentProjectRoot());
-    }
-
-    private String projectGroupName(String projectRoot) {
-        String trimmedRoot = StringUtils.trimToEmpty(projectRoot);
-        String folderName;
-        try {
-            Path fileName = Path.of(trimmedRoot).getFileName();
-            folderName = fileName == null ? trimmedRoot : fileName.toString();
-        } catch (Exception e) {
-            folderName = trimmedRoot;
-        }
-        return "Project · %s".formatted(StringUtils.defaultIfBlank(folderName, "Unknown"));
     }
 
     private ConversationItem toConversationItem(ConversationRecord record) {
@@ -1102,8 +1003,136 @@ public class SidebarPanel extends JPanel {
         setOpaque(true);
     }
 
+    private void applyPanelBorder() {
+        setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 0, 1, resolveSidebarBorderColor()),
+                BorderFactory.createEmptyBorder(6, 0, 0, 0)
+        ));
+    }
+
+    private Color resolveSidebarBorderColor() {
+        Color background = getBackground();
+        if (background == null) {
+            background = resolveSidebarBackground();
+        }
+        return blendColors(background, isDark(background) ? Color.WHITE : Color.BLACK, isDark(background) ? 0.08f : 0.07f);
+    }
+
     private static float clamp(float value) {
         return Math.max(0f, Math.min(1f, value));
+    }
+
+    private static class SettingsIconButton extends JButton {
+
+        private SettingsIconButton(Icon icon) {
+            super(icon);
+            setForeground(resolveSettingsIconForeground());
+        }
+
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            setForeground(resolveSettingsIconForeground());
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            paintSettingsButtonBackground(g, this);
+            super.paintComponent(g);
+        }
+    }
+
+    private static void paintSettingsButtonBackground(Graphics g, AbstractButton button) {
+        Color fill = resolveSettingsButtonBackground(button);
+        if (fill == null) {
+            return;
+        }
+
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setColor(fill);
+        g2.fillRoundRect(1, 1, button.getWidth() - 2, button.getHeight() - 2,
+                SETTINGS_BUTTON_ARC, SETTINGS_BUTTON_ARC);
+        g2.dispose();
+    }
+
+    private static Color resolveSettingsButtonBackground(AbstractButton button) {
+        ButtonModel model = button.getModel();
+        if (model.isPressed()) {
+            return resolveToolbarButtonPressedBackground();
+        }
+        if (model.isRollover()) {
+            return resolveToolbarButtonHoverBackground();
+        }
+        return null;
+    }
+
+    private static Color resolveToolbarButtonHoverBackground() {
+        Color background = UIManager.getColor("Button.toolbar.hoverBackground");
+        if (background == null) {
+            background = UIManager.getColor("Button.hoverBackground");
+        }
+        if (background == null) {
+            background = UIManager.getColor("Component.hoverColor");
+        }
+
+        Color base = resolveSidebarBackground();
+        if (background == null || colorDistance(background, base) < 18) {
+            background = blendColors(base, resolveSettingsIconForeground(), isDark(base) ? 0.20f : 0.08f);
+        }
+        return background;
+    }
+
+    private static Color resolveToolbarButtonPressedBackground() {
+        Color background = UIManager.getColor("Button.toolbar.pressedBackground");
+        if (background == null) {
+            background = UIManager.getColor("Button.pressedBackground");
+        }
+
+        Color base = resolveSidebarBackground();
+        if (background == null || colorDistance(background, base) < 22) {
+            background = blendColors(base, resolveSettingsIconForeground(), isDark(base) ? 0.28f : 0.13f);
+        }
+        return background;
+    }
+
+    private static Color resolveSettingsIconForeground() {
+        Color base = resolveSidebarBackground();
+        return isDark(base) ? new Color(164, 178, 184) : new Color(88, 97, 108);
+    }
+
+    private static Color resolveSidebarBackground() {
+        Color background = UIManager.getColor("Panel.background");
+        return background == null ? new Color(242, 244, 247) : background;
+    }
+
+    private static boolean isDark(Color color) {
+        return relativeLuminance(color) < 0.45d;
+    }
+
+    private static Color blendColors(Color base, Color overlay, float ratio) {
+        float clamped = Math.max(0f, Math.min(1f, ratio));
+        int red = Math.round(base.getRed() * (1f - clamped) + overlay.getRed() * clamped);
+        int green = Math.round(base.getGreen() * (1f - clamped) + overlay.getGreen() * clamped);
+        int blue = Math.round(base.getBlue() * (1f - clamped) + overlay.getBlue() * clamped);
+        return new Color(red, green, blue);
+    }
+
+    private static int colorDistance(Color c1, Color c2) {
+        return Math.abs(c1.getRed() - c2.getRed())
+                + Math.abs(c1.getGreen() - c2.getGreen())
+                + Math.abs(c1.getBlue() - c2.getBlue());
+    }
+
+    private static double relativeLuminance(Color color) {
+        double red = linearized(color.getRed() / 255.0d);
+        double green = linearized(color.getGreen() / 255.0d);
+        double blue = linearized(color.getBlue() / 255.0d);
+        return 0.2126d * red + 0.7152d * green + 0.0722d * blue;
+    }
+
+    private static double linearized(double channel) {
+        return channel <= 0.03928d ? channel / 12.92d : Math.pow((channel + 0.055d) / 1.055d, 2.4d);
     }
 
     private static Icon trashIcon() {
@@ -1127,19 +1156,39 @@ public class SidebarPanel extends JPanel {
         return cachedStarFilledIcon;
     }
 
+    private static Icon settingsIcon() {
+        if (cachedSettingsIcon == null) {
+            cachedSettingsIcon = loadIcon("/icons/sidebar/settings.svg", SETTINGS_ICON_SIZE, null);
+        }
+        return cachedSettingsIcon;
+    }
+
     private static Icon loadHoverIcon(String path, Color tint) {
+        return loadIcon(path, HOVER_ICON_SIZE, tint);
+    }
+
+    private static Icon loadIcon(String path, int size, Color tint) {
         URL url = SidebarPanel.class.getResource(path);
         if (url == null) {
             return null;
         }
 
-        var icon = new FlatSVGIcon(url).derive(HOVER_ICON_SIZE, HOVER_ICON_SIZE);
-        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> new Color(
-            tint.getRed(),
-            tint.getGreen(),
-            tint.getBlue(),
-            color.getAlpha()
-        )));
+        var icon = new FlatSVGIcon(url).derive(size, size);
+        icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
+            Color replacement = tint;
+            if (replacement == null && component != null) {
+                replacement = component.getForeground();
+            }
+            if (replacement == null) {
+                replacement = resolveSettingsIconForeground();
+            }
+            return new Color(
+                    replacement.getRed(),
+                    replacement.getGreen(),
+                    replacement.getBlue(),
+                    color.getAlpha()
+            );
+        }));
         return icon.hasFound() ? icon : null;
     }
 
@@ -1329,7 +1378,7 @@ public class SidebarPanel extends JPanel {
                     isSelected,
                     cellHasFocus
                 );
-                label.setBorder(new EmptyBorder(8, 14, 8, 10));
+                label.setBorder(new EmptyBorder(6, 14, 6, 10));
                 Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
                 label.setIcon(streamingConversationIds.contains(conversation.id())
                         ? loadingIcon

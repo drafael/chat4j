@@ -7,7 +7,6 @@ import javax.swing.BorderFactory;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -52,25 +51,33 @@ public class MainFrameTitleBarFactory {
 
         titleBar.add(leftButtons, BorderLayout.WEST);
 
-        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 6));
+        JPanel centerPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 2));
         centerPanel.setOpaque(false);
-        JLabel appTitle = new JLabel("Chat4J");
-        appTitle.putClientProperty("FlatLaf.styleClass", "small");
-        centerPanel.add(appTitle);
+        centerPanel.add(modelSelector);
         titleBar.add(centerPanel, BorderLayout.CENTER);
 
-        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 2));
+        JPanel rightPanel = new JPanel();
         rightPanel.setOpaque(false);
-        rightPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 12));
-        rightPanel.add(modelSelector);
+        rightPanel.setPreferredSize(leftButtons.getPreferredSize());
         titleBar.add(rightPanel, BorderLayout.EAST);
 
-        return new TitleBar(titleBar, sidebarToggleButton, sidebarToggleFilledIcon, sidebarToggleOutlineIcon);
+        return new TitleBar(
+                titleBar,
+                leftButtons,
+                rightPanel,
+                sidebarToggleButton,
+                searchButton,
+                sidebarToggleFilledIcon,
+                sidebarToggleOutlineIcon
+        );
     }
 
     public record TitleBar(
             JPanel panel,
+            JPanel leftButtons,
+            JPanel rightPanel,
             JButton sidebarToggleButton,
+            JButton searchButton,
             Icon sidebarToggleFilledIcon,
             Icon sidebarToggleOutlineIcon
     ) {
