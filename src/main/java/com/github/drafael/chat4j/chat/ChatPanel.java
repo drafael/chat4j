@@ -249,7 +249,7 @@ public class ChatPanel extends JPanel {
         bodyContent = new JPanel(new BorderLayout());
         bodyContent.setOpaque(false);
         bodyContent.add(messagesContainer, BorderLayout.CENTER);
-        bodyContent.add(new CenteredComposerPanel(inputBar), BorderLayout.SOUTH);
+        bodyContent.add(new ComposerPanel(inputBar), BorderLayout.SOUTH);
 
         jumpToLatestOverlay = new JumpToLatestButton();
         jumpToLatestOverlay.setVisible(false);
@@ -2089,13 +2089,13 @@ public class ChatPanel extends JPanel {
         return chip;
     }
 
-    private static class CenteredComposerPanel extends JPanel {
-        private static final int HORIZONTAL_MARGIN = 16;
-        private static final int BOTTOM_MARGIN = 12;
+    private static class ComposerPanel extends JPanel {
+        private static final int HORIZONTAL_MARGIN = 0;
+        private static final int BOTTOM_MARGIN = 0;
 
         private final JComponent composer;
 
-        CenteredComposerPanel(JComponent composer) {
+        ComposerPanel(JComponent composer) {
             this.composer = composer;
             setOpaque(false);
             setLayout(null);
@@ -2114,9 +2114,8 @@ public class ChatPanel extends JPanel {
         @Override
         public void doLayout() {
             Dimension preferred = composer.getPreferredSize();
-            int width = Math.min(CHAT_COLUMN_MAX_WIDTH, Math.max(0, getWidth() - HORIZONTAL_MARGIN * 2));
-            int x = Math.max(HORIZONTAL_MARGIN, (getWidth() - width) / 2);
-            composer.setBounds(x, 0, width, preferred.height);
+            int width = Math.max(0, getWidth() - HORIZONTAL_MARGIN * 2);
+            composer.setBounds(HORIZONTAL_MARGIN, 0, width, preferred.height);
         }
     }
 

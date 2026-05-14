@@ -316,8 +316,8 @@ public class InputBar extends JPanel {
         composerBottomPanel.add(validationLabel);
 
         composerShell = new ComposerShellPanel();
-        composerShell.setLayout(new BorderLayout(0, 6));
-        composerShell.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        composerShell.setLayout(new BorderLayout(0, 4));
+        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
         composerShell.setTransferHandler(new FileDropTransferHandler());
         composerShell.add(chipsPanel, BorderLayout.NORTH);
         composerShell.add(scrollPane, BorderLayout.CENTER);
