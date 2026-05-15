@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.31</version>
+    <version>26.5.32</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -24,10 +24,17 @@
         <jackson.version>2.18.3</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.21.2</jsoup.version>
+        <h2.version>2.3.232</h2.version>
         <jimfs.version>1.3.1</jimfs.version>
         <flyway.version>11.8.2</flyway.version>
+        <cyclonedx.maven.plugin.version>2.9.1</cyclonedx.maven.plugin.version>
+        <dependency-check.maven.version>12.1.0</dependency-check.maven.version>
+        <versions.maven.plugin.version>2.18.0</versions.maven.plugin.version>
+        <jacoco.maven.plugin.version>0.8.12</jacoco.maven.plugin.version>
+        <jacoco.argLine></jacoco.argLine>
         <junit.version>5.12.2</junit.version>
         <assertj.version>3.27.6</assertj.version>
+        <mockito.version>5.20.0</mockito.version>
         <slf4j.version>2.0.17</slf4j.version>
         <logback.version>1.5.20</logback.version>
 
@@ -86,7 +93,7 @@
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <version>2.4.240</version>
+            <version>${h2.version}</version>
         </dependency>
 
         <!-- OpenAI SDK -->
@@ -172,7 +179,7 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>5.20.0</version>
+            <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -252,6 +259,12 @@
                         </goals>
                         <configuration>
                             <rules>
+                                <requireMavenVersion>
+                                    <version>[3.9.0,)</version>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>[21,)</version>
+                                </requireJavaVersion>
                                 <requireProperty>
                                     <property>project.version</property>
                                     <regex>^[0-9]{2}[.][1-9][0-9]?[.][0-9]+$</regex>
@@ -278,7 +291,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
-                    <argLine>--enable-preview</argLine>
+                    <argLine>@{jacoco.argLine} -Xshare:off -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar --enable-preview</argLine>
                     <systemPropertyVariables>
                         <user.home>${project.build.directory}/test-home</user.home>
                     </systemPropertyVariables>
@@ -300,6 +313,11 @@
                 </configuration>
             </plugin>
             <!-- Fat JAR for easy running -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>versions-maven-plugin</artifactId>
+                <version>${versions.maven.plugin.version}</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -334,6 +352,146 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>coverage</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>${jacoco.maven.plugin.version}</version>
+                        <configuration>
+                            <excludes>
+                                <exclude>com/github/drafael/chat4j/App*</exclude>
+                                <exclude>com/github/drafael/chat4j/AboutDialog*</exclude>
+                                <exclude>com/github/drafael/chat4j/MainFrame*</exclude>
+                                <exclude>com/github/drafael/chat4j/*TitleBar*</exclude>
+                                <exclude>com/github/drafael/chat4j/menu/**</exclude>
+                                <exclude>com/github/drafael/chat4j/settings/**</exclude>
+                                <exclude>com/github/drafael/chat4j/sidebar/**</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Bubble*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Button*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Panel*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Popup*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Renderer*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/*Icon*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/InputBar*</exclude>
+                                <exclude>com/github/drafael/chat4j/chat/ModelRowComponent*</exclude>
+                                <exclude>com/github/drafael/chat4j/prompts/*Panel*</exclude>
+                                <exclude>com/github/drafael/chat4j/prompts/*Dialog*</exclude>
+                                <exclude>com/github/drafael/chat4j/prompts/*CommandCenter*</exclude>
+                            </excludes>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>prepare-jacoco-agent</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                                <configuration>
+                                    <propertyName>jacoco.argLine</propertyName>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>jacoco-report</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                            </execution>
+                            <execution>
+                                <id>jacoco-check</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                                <configuration>
+                                    <rules>
+                                        <rule>
+                                            <element>BUNDLE</element>
+                                            <limits>
+                                                <limit>
+                                                    <counter>LINE</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.60</minimum>
+                                                </limit>
+                                                <limit>
+                                                    <counter>BRANCH</counter>
+                                                    <value>COVEREDRATIO</value>
+                                                    <minimum>0.40</minimum>
+                                                </limit>
+                                            </limits>
+                                        </rule>
+                                    </rules>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>sbom</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>${cyclonedx.maven.plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>generate-cyclonedx-sbom</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>makeAggregateBom</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <outputFormat>all</outputFormat>
+                            <outputName>bom</outputName>
+                            <includeBomSerialNumber>true</includeBomSerialNumber>
+                            <includeCompileScope>true</includeCompileScope>
+                            <includeProvidedScope>true</includeProvidedScope>
+                            <includeRuntimeScope>true</includeRuntimeScope>
+                            <includeSystemScope>true</includeSystemScope>
+                            <includeTestScope>false</includeTestScope>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>dependency-audit</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>${dependency-check.maven.version}</version>
+                        <executions>
+                            <execution>
+                                <id>dependency-check</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <formats>
+                                <format>HTML</format>
+                                <format>JSON</format>
+                            </formats>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
         <!--
             jpackage profiles — run on the target OS:
               macOS:   mvn -Pjpackage-mac verify

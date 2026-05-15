@@ -40,6 +40,3 @@ Use this page as the canonical entry point for implementation and operational de
 
 - [icon-creation-guide.md](icon-creation-guide.md)
   - Instructions for creating app icons and source assets.
-
-- [code-review-remediation-plan.md](code-review-remediation-plan.md)
-  - Current remediation status and open hardening backlog for code quality work.

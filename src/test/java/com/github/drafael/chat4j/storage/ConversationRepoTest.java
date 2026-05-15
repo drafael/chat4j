@@ -11,12 +11,14 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -156,6 +158,67 @@ class ConversationRepoTest {
     }
 
     @Test
+    @DisplayName("Deleting messages removes unreferenced attachment files")
+    void deleteMessages_whenMessagesHaveAttachments_deletesAttachmentFiles(@TempDir Path tempDir) throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-delete-message-attachments");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+        Path attachmentFile = createAttachmentFile(tempDir, "message.txt");
+
+        ConversationRepo subject = new ConversationRepo(dataSource, tempDir);
+        subject.addMessage(conversationId, Message.user(List.of(
+                new TextPart("attached"),
+                new FilePart(attachmentRef(attachmentFile))
+        )));
+
+        subject.deleteMessages(conversationId);
+
+        assertThat(countRows(dataSource, "messages")).isZero();
+        assertThat(countRows(dataSource, "attachments")).isZero();
+        assertThat(countRows(dataSource, "message_attachments")).isZero();
+        assertThat(attachmentFile).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("Deleting conversations removes unreferenced attachment files")
+    void deleteConversation_whenConversationHasAttachments_deletesAttachmentFiles(@TempDir Path tempDir) throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-delete-conversation-attachments");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+        Path attachmentFile = createAttachmentFile(tempDir, "conversation.txt");
+
+        ConversationRepo subject = new ConversationRepo(dataSource, tempDir);
+        subject.addMessage(conversationId, Message.user(List.of(new FilePart(attachmentRef(attachmentFile)))));
+
+        subject.deleteConversation(conversationId);
+
+        assertThat(countRows(dataSource, "conversations")).isZero();
+        assertThat(countRows(dataSource, "attachments")).isZero();
+        assertThat(countRows(dataSource, "message_attachments")).isZero();
+        assertThat(attachmentFile).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("Deleting messages keeps attachment files still referenced by remaining messages")
+    void deleteMessages_whenAttachmentIsStillReferenced_keepsFile(@TempDir Path tempDir) throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-delete-keeps-referenced-attachments");
+        createSchema(dataSource);
+        UUID firstConversationId = insertConversation(dataSource);
+        UUID secondConversationId = insertConversation(dataSource);
+        Path sharedAttachment = createAttachmentFile(tempDir, "shared.txt");
+        AttachmentRef attachmentRef = attachmentRef(sharedAttachment);
+
+        ConversationRepo subject = new ConversationRepo(dataSource, tempDir);
+        subject.addMessage(firstConversationId, Message.user(List.of(new FilePart(attachmentRef))));
+        subject.addMessage(secondConversationId, Message.user(List.of(new FilePart(attachmentRef))));
+
+        subject.deleteMessages(firstConversationId);
+
+        assertThat(countRows(dataSource, "attachments")).isEqualTo(1);
+        assertThat(sharedAttachment).exists();
+    }
+
+    @Test
     @DisplayName("Updating reasoning level persists per-conversation reasoning mode")
     void updateReasoningLevel_whenConversationExists_persistsValue() throws Exception {
         DataSource dataSource = createDataSource("conversation-repo-reasoning-level");
@@ -191,6 +254,24 @@ class ConversationRepoTest {
         ConversationRepo.ConversationRecord updated = subject.findById(conversationId).orElseThrow();
         assertThat(updated.agentModeEnabled()).isFalse();
         assertThat(updated.agentProjectRoot()).isNull();
+    }
+
+    private static Path createAttachmentFile(Path attachmentRoot, String fileName) throws Exception {
+        Path attachmentFile = attachmentRoot.resolve("20260515").resolve(fileName);
+        Files.createDirectories(attachmentFile.getParent());
+        Files.writeString(attachmentFile, "attachment");
+        return attachmentFile;
+    }
+
+    private static AttachmentRef attachmentRef(Path attachmentFile) throws Exception {
+        return new AttachmentRef(
+                UUID.randomUUID(),
+                attachmentFile.toRealPath().toString(),
+                attachmentFile.getFileName().toString(),
+                "text/plain",
+                Files.size(attachmentFile),
+                "sha"
+        );
     }
 
     private static DataSource createDataSource(String dbName) {

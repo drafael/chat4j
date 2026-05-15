@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Keep test output quiet; tests that assert logging attach their own ListAppender. -->
+    <logger name="com.github.drafael.chat4j.chat.agent.LocalToolRuntime" level="INFO" additivity="false"/>
+    <root level="OFF"/>
+</configuration>

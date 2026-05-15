@@ -57,6 +57,10 @@ public final class StoragePaths {
         return databaseDirectory().resolve("%s.mv.db".formatted(DB_NAME));
     }
 
+    public Path attachmentsDirectory() {
+        return appConfigDirectory().resolve("attachments");
+    }
+
     public Path settingsFile() {
         return appConfigDirectory().resolve("chat4j.properties");
     }

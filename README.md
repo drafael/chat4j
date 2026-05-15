@@ -22,6 +22,24 @@ Run packaged jar:
 java --enable-preview -jar target/chat4j-<version>.jar
 ```
 
+## Dependency and security audits
+
+```bash
+# Generate JaCoCo coverage report and enforce core non-UI coverage gates
+mvn -Pcoverage verify
+
+# Generate CycloneDX SBOM files in target/bom.xml and target/bom.json
+mvn -Psbom verify
+
+# Run OWASP Dependency-Check; fails on CVSS 7+
+mvn -Pdependency-audit verify
+
+# Check available dependency/plugin updates
+mvn versions:display-dependency-updates versions:display-plugin-updates
+```
+
+Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Actions updates.
+
 ## What it does
 
 - Desktop chat UI (Swing + FlatLaf)

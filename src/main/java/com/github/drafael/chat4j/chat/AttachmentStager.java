@@ -54,9 +54,7 @@ public class AttachmentStager {
 
     private Path attachmentsDirectory() {
         String dayFolder = LocalDate.now().format(DAY_DIR_FORMAT);
-        return storagePaths.appConfigDirectory()
-                .resolve("attachments")
-                .resolve(dayFolder);
+        return storagePaths.attachmentsDirectory().resolve(dayFolder);
     }
 
     private String sanitizeFileName(String fileName) {

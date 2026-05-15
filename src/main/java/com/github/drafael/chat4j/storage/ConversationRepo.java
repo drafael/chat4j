@@ -15,13 +15,18 @@ import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import lombok.extern.slf4j.Slf4j;
 
 import javax.sql.DataSource;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -41,14 +46,21 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class ConversationRepo {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final DataSource dataSource;
+    private final Path attachmentRoot;
 
     public ConversationRepo(DataSource dataSource) {
+        this(dataSource, null);
+    }
+
+    public ConversationRepo(DataSource dataSource, Path attachmentRoot) {
         this.dataSource = dataSource;
+        this.attachmentRoot = normalizeAttachmentRoot(attachmentRoot);
     }
 
     public UUID createConversation(String title, String provider, String model) throws SQLException {
@@ -137,25 +149,23 @@ public class ConversationRepo {
     }
 
     public void deleteConversation(UUID id) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "DELETE FROM conversations WHERE id = ?"
-             )
-        ) {
-            ps.setObject(1, id);
-            ps.executeUpdate();
-        }
+        List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM conversations WHERE id = ?")) {
+                ps.setObject(1, id);
+                ps.executeUpdate();
+            }
+        });
+        deleteAttachmentFiles(orphanAttachmentFiles);
     }
 
     public void deleteMessages(UUID conversationId) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "DELETE FROM messages WHERE conversation_id = ?"
-             )
-        ) {
-            ps.setObject(1, conversationId);
-            ps.executeUpdate();
-        }
+        List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM messages WHERE conversation_id = ?")) {
+                ps.setObject(1, conversationId);
+                ps.executeUpdate();
+            }
+        });
+        deleteAttachmentFiles(orphanAttachmentFiles);
     }
 
     public void deleteConversations(List<UUID> ids) throws SQLException {
@@ -164,24 +174,26 @@ public class ConversationRepo {
         }
 
         String placeholders = String.join(",", ids.stream().map(id -> "?").toList());
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "DELETE FROM conversations WHERE id IN (%s)".formatted(placeholders)
-             )
-        ) {
-            for (int i = 0; i < ids.size(); i++) {
-                ps.setObject(i + 1, ids.get(i));
+        List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "DELETE FROM conversations WHERE id IN (%s)".formatted(placeholders)
+            )) {
+                for (int i = 0; i < ids.size(); i++) {
+                    ps.setObject(i + 1, ids.get(i));
+                }
+                ps.executeUpdate();
             }
-            ps.executeUpdate();
-        }
+        });
+        deleteAttachmentFiles(orphanAttachmentFiles);
     }
 
     public void deleteAllConversations() throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement("DELETE FROM conversations")
-        ) {
-            ps.executeUpdate();
-        }
+        List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
+            try (PreparedStatement ps = connection.prepareStatement("DELETE FROM conversations")) {
+                ps.executeUpdate();
+            }
+        });
+        deleteAttachmentFiles(orphanAttachmentFiles);
     }
 
     public void addMessage(UUID conversationId, Message message) throws SQLException {
@@ -379,6 +391,144 @@ public class ConversationRepo {
             connection.rollback();
         } catch (SQLException e) {
             error.addSuppressed(e);
+        }
+    }
+
+    private List<Path> deleteRowsAndCollectOrphanAttachmentFiles(SqlOperation operation) throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                operation.execute(connection);
+                List<Path> orphanAttachmentFiles = deleteOrphanAttachmentRows(connection);
+                connection.commit();
+                return orphanAttachmentFiles;
+            } catch (SQLException | RuntimeException e) {
+                rollbackSafely(connection, e);
+                throw e;
+            }
+        }
+    }
+
+    private List<Path> deleteOrphanAttachmentRows(Connection connection) throws SQLException {
+        List<Path> orphanAttachmentFiles = findOrphanAttachmentFiles(connection);
+        if (orphanAttachmentFiles.isEmpty()) {
+            return emptyList();
+        }
+
+        try (PreparedStatement ps = connection.prepareStatement(
+                """
+                DELETE FROM attachments
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachments.id
+                )
+                """
+        )) {
+            ps.executeUpdate();
+        }
+
+        return orphanAttachmentFiles;
+    }
+
+    private List<Path> findOrphanAttachmentFiles(Connection connection) throws SQLException {
+        List<Path> orphanAttachmentFiles = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                """
+                SELECT storage_path
+                FROM attachments a
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = a.id
+                )
+                """
+        );
+             ResultSet rs = ps.executeQuery()
+        ) {
+            while (rs.next()) {
+                Path path = managedAttachmentPath(rs.getString("storage_path"));
+                if (path != null) {
+                    orphanAttachmentFiles.add(path);
+                }
+            }
+        }
+        return orphanAttachmentFiles.stream()
+                .distinct()
+                .toList();
+    }
+
+    private void deleteAttachmentFiles(List<Path> paths) {
+        paths.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .forEach(this::deleteAttachmentFile);
+    }
+
+    private void deleteAttachmentFile(Path path) {
+        if (!isManagedAttachmentPath(path)) {
+            log.warn("Skipping attachment file outside managed attachment root: {}", path);
+            return;
+        }
+
+        try {
+            Files.deleteIfExists(path);
+            pruneEmptyAttachmentDirectories(path.getParent());
+        } catch (IOException e) {
+            log.warn("Failed to delete attachment file: {}", path, e);
+        }
+    }
+
+    private Path managedAttachmentPath(String storagePath) {
+        if (attachmentRoot == null || StringUtils.isBlank(storagePath)) {
+            return null;
+        }
+
+        try {
+            Path path = normalizeExistingPath(Path.of(storagePath));
+            return path.startsWith(attachmentRoot) ? path : null;
+        } catch (InvalidPathException e) {
+            log.warn("Ignoring invalid attachment storage path: {}", storagePath, e);
+            return null;
+        }
+    }
+
+    private boolean isManagedAttachmentPath(Path path) {
+        return attachmentRoot != null && normalizeExistingPath(path).startsWith(attachmentRoot);
+    }
+
+    private static Path normalizeAttachmentRoot(Path path) {
+        if (path == null) {
+            return null;
+        }
+        return normalizeExistingPath(path);
+    }
+
+    private static Path normalizeExistingPath(Path path) {
+        Path absolutePath = path.toAbsolutePath().normalize();
+        if (!Files.exists(absolutePath, LinkOption.NOFOLLOW_LINKS)) {
+            return absolutePath;
+        }
+
+        try {
+            return absolutePath.toRealPath();
+        } catch (IOException e) {
+            return absolutePath;
+        }
+    }
+
+    private void pruneEmptyAttachmentDirectories(Path startDirectory) {
+        if (startDirectory == null || attachmentRoot == null) {
+            return;
+        }
+
+        Path current = startDirectory.toAbsolutePath().normalize();
+        while (!current.equals(attachmentRoot) && current.startsWith(attachmentRoot)) {
+            try {
+                Files.deleteIfExists(current);
+            } catch (IOException e) {
+                return;
+            }
+            current = current.getParent();
+            if (current == null) {
+                return;
+            }
         }
     }
 
@@ -715,6 +865,11 @@ public class ConversationRepo {
         } catch (IllegalArgumentException e) {
             return Role.USER;
         }
+    }
+
+    @FunctionalInterface
+    private interface SqlOperation {
+        void execute(Connection connection) throws SQLException;
     }
 
     public record SearchResult(

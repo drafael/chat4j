@@ -90,7 +90,7 @@ public final class ApplicationBootstrap {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
         DataSource dataSource = H2DataSourceFactory.create(storagePaths);
         DatabaseBootstrap databaseBootstrap = new DatabaseBootstrap(storagePaths, dataSource);
-        ConversationRepo conversationRepo = new ConversationRepo(dataSource);
+        ConversationRepo conversationRepo = new ConversationRepo(dataSource, storagePaths.attachmentsDirectory());
         SettingsRepo settingsRepo = new SettingsRepo(storagePaths);
         SettingsDbToPropertiesMigrationCoordinator settingsMigrationCoordinator =
                 new SettingsDbToPropertiesMigrationCoordinator(dataSource, settingsRepo);
