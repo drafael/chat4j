@@ -21,8 +21,6 @@ import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Transferable;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -91,7 +89,10 @@ public class InputBar extends JPanel {
     private final JLabel validationLabel;
     private JButton cancelGenerationButton;
     private JLayeredPane slashPopupLayeredPane;
-    private final SlashPopupPanel slashPopupContentPanel = new SlashPopupPanel();
+    private final SlashPopupPanel slashPopupContentPanel = new SlashPopupPanel(
+            this::resolveListBackground,
+            this::resolvePopupBorderColor
+    );
     private JScrollPane slashPopupScrollPane;
     private AWTEventListener slashPopupOutsideClickListener;
     private boolean slashPopupOutsideClickListenerInstalled;
@@ -145,7 +146,7 @@ public class InputBar extends JPanel {
         textArea.putClientProperty("JTextField.placeholderText", "Ask, edit, or run an agent task…  / for skills");
         textArea.putClientProperty(FlatClientProperties.STYLE, "border:0,0,0,0;background:null");
         textArea.putClientProperty("JComponent.outline", null);
-        textArea.setTransferHandler(new FileDropTransferHandler());
+        textArea.setTransferHandler(new FileDropTransferHandler(this::addAttachments));
         textArea.addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -194,24 +195,24 @@ public class InputBar extends JPanel {
         chipsPanel.setOpaque(false);
         chipsPanel.setVisible(false);
 
-        attachButton = new InputIconButton();
+        attachButton = new InputIconButton(this::paintInputIconButtonBackground);
         configureInputIconButton(attachButton);
         attachButton.setIcon(attachIcon(UIManager.getColor("Label.foreground")));
         attachButton.setToolTipText("Attach files/images");
         attachButton.addActionListener(e -> openAttachmentPicker());
 
-        commandCenterButton = new InputIconButton();
+        commandCenterButton = new InputIconButton(this::paintInputIconButtonBackground);
         configureInputIconButton(commandCenterButton);
         commandCenterButton.setIcon(commandCenterIcon(UIManager.getColor("Label.foreground")));
         commandCenterButton.setToolTipText("Command center  %sP".formatted(SystemInfo.isMacOS ? "⌘" : "Ctrl+"));
         commandCenterButton.addActionListener(e -> fireCommandCenter());
 
-        thinkingButton = new InputIconButton();
+        thinkingButton = new InputIconButton(this::paintInputIconButtonBackground);
         configureInputIconButton(thinkingButton);
         thinkingButton.addActionListener(e -> toggleReasoningSelector());
         initializeReasoningLevelMenu();
 
-        webSearchButton = new InputIconToggleButton();
+        webSearchButton = new InputIconToggleButton(this::paintInputIconButtonBackground);
         configureInputIconButton(webSearchButton);
         webSearchButton.setToolTipText("Web Search");
         webSearchButton.setVisible(false);
@@ -229,13 +230,13 @@ public class InputBar extends JPanel {
         });
         rebuildWebSearchMenu();
 
-        agentModeButton = new InputIconToggleButton();
+        agentModeButton = new InputIconToggleButton(this::paintInputIconButtonBackground);
         configureInputIconButton(agentModeButton);
         agentModeButton.setToolTipText("Agent mode");
         agentModeButton.setVisible(false);
         agentModeButton.addActionListener(e -> onAgentModeButtonClicked());
 
-        clearChatButton = new InputIconButton();
+        clearChatButton = new InputIconButton(this::paintInputIconButtonBackground);
         configureInputIconButton(clearChatButton);
         clearChatButton.setToolTipText("Clear chat");
         clearChatButton.setVisible(false);
@@ -315,10 +316,10 @@ public class InputBar extends JPanel {
         composerBottomPanel.add(projectRootRowPanel);
         composerBottomPanel.add(validationLabel);
 
-        composerShell = new ComposerShellPanel();
+        composerShell = new InputComposerShellPanel(SHELL_ARC);
         composerShell.setLayout(new BorderLayout(0, 4));
         composerShell.setBorder(BorderFactory.createEmptyBorder(6, 4, 3, 4));
-        composerShell.setTransferHandler(new FileDropTransferHandler());
+        composerShell.setTransferHandler(new FileDropTransferHandler(this::addAttachments));
         composerShell.add(chipsPanel, BorderLayout.NORTH);
         composerShell.add(scrollPane, BorderLayout.CENTER);
         composerShell.add(composerBottomPanel, BorderLayout.SOUTH);
@@ -1311,7 +1312,13 @@ public class InputBar extends JPanel {
     }
 
     private JComponent createAttachmentChip(String text, Icon leadingIcon, Runnable onRemove) {
-        ChipPanel chip = new ChipPanel();
+        InputChipPanel chip = new InputChipPanel(
+                this::resolveChipBackground,
+                this::resolveChipBorderColor,
+                this::adjustBrightness,
+                CHIP_HOVER_BG_DELTA,
+                CHIP_HOVER_BORDER_DELTA
+        );
         chip.setLayout(new FlowLayout(FlowLayout.LEFT, 4, 0));
         chip.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 3));
 
@@ -1340,7 +1347,13 @@ public class InputBar extends JPanel {
     }
 
     private JComponent createImageAttachmentChip(ComposerAttachment attachment, Runnable onRemove) {
-        ChipPanel chip = new ChipPanel();
+        InputChipPanel chip = new InputChipPanel(
+                this::resolveChipBackground,
+                this::resolveChipBorderColor,
+                this::adjustBrightness,
+                CHIP_HOVER_BG_DELTA,
+                CHIP_HOVER_BORDER_DELTA
+        );
         chip.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 0));
         chip.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
 
@@ -1411,7 +1424,10 @@ public class InputBar extends JPanel {
     }
 
     private JComponent createSkillChip(String text, Runnable onRemove) {
-        SkillChipPanel chip = new SkillChipPanel();
+        SkillChipPanel chip = new SkillChipPanel(
+                this::resolveSkillChipBackground,
+                this::resolveSkillChipBorder
+        );
         chip.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 0));
         chip.setBorder(BorderFactory.createEmptyBorder(3, 10, 3, 8));
 
@@ -1439,7 +1455,7 @@ public class InputBar extends JPanel {
     }
 
     private JButton createChipRemoveButton(Runnable onRemove) {
-        JButton remove = new ChipRemoveButton();
+        JButton remove = new HoverRoundButton(18, 8, this::resolveChipRemoveHoverBackground);
         remove.setIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveForeground()));
         remove.setRolloverIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveHoverForeground()));
         remove.setToolTipText("Remove");
@@ -1448,7 +1464,7 @@ public class InputBar extends JPanel {
     }
 
     private JButton createSkillRemoveButton(Runnable onRemove) {
-        JButton remove = new SkillRemoveButton();
+        JButton remove = new HoverRoundButton(20, 9, this::resolveSkillRemoveHoverBackground);
         Color foreground = resolveSkillChipForeground();
         remove.setIcon(svgIcon("/icons/input/x.svg", 14, foreground));
         remove.setRolloverIcon(svgIcon("/icons/input/x.svg", 14, resolveSkillRemoveHoverForeground()));
@@ -1568,7 +1584,10 @@ public class InputBar extends JPanel {
             JPanel row = new JPanel(new BorderLayout(14, 0));
             row.setBorder(BorderFactory.createEmptyBorder(6, 14, 6, 12));
 
-            SkillBadgeLabel badge = new SkillBadgeLabel();
+            SkillBadgeLabel badge = new SkillBadgeLabel(
+                    this::resolveSkillBadgeBackground,
+                    this::resolveSkillBadgeBorder
+            );
             badge.setColors(
                     resolveSkillBadgeBackground(),
                     resolveSkillBadgeBorder(),
@@ -2145,208 +2164,6 @@ public class InputBar extends JPanel {
         return tint == null ? new Color(120, 120, 120) : tint;
     }
 
-    private static class WrapLayout extends FlowLayout {
-
-        private WrapLayout(int align, int hgap, int vgap) {
-            super(align, hgap, vgap);
-        }
-
-        @Override
-        public Dimension preferredLayoutSize(Container target) {
-            return layoutSize(target, true);
-        }
-
-        @Override
-        public Dimension minimumLayoutSize(Container target) {
-            Dimension minimum = layoutSize(target, false);
-            minimum.width -= getHgap() + 1;
-            return minimum;
-        }
-
-        private Dimension layoutSize(Container target, boolean preferred) {
-            synchronized (target.getTreeLock()) {
-                int targetWidth = target.getWidth();
-                if (targetWidth <= 0) {
-                    targetWidth = Integer.MAX_VALUE;
-                }
-
-                Insets insets = target.getInsets();
-                int horizontalInsetsAndGap = insets.left + insets.right + (getHgap() * 2);
-                int maxWidth = targetWidth - horizontalInsetsAndGap;
-
-                Dimension dim = new Dimension(0, 0);
-                int rowWidth = 0;
-                int rowHeight = 0;
-
-                int componentCount = target.getComponentCount();
-                for (int i = 0; i < componentCount; i++) {
-                    Component component = target.getComponent(i);
-                    if (!component.isVisible()) {
-                        continue;
-                    }
-
-                    Dimension d = preferred ? component.getPreferredSize() : component.getMinimumSize();
-                    if (rowWidth + d.width > maxWidth) {
-                        addRow(dim, rowWidth, rowHeight);
-                        rowWidth = 0;
-                        rowHeight = 0;
-                    }
-
-                    if (rowWidth != 0) {
-                        rowWidth += getHgap();
-                    }
-
-                    rowWidth += d.width;
-                    rowHeight = Math.max(rowHeight, d.height);
-                }
-
-                addRow(dim, rowWidth, rowHeight);
-
-                dim.width += horizontalInsetsAndGap;
-                dim.height += insets.top + insets.bottom + (getVgap() * 2);
-
-                Container scrollPane = SwingUtilities.getAncestorOfClass(JScrollPane.class, target);
-                if (scrollPane != null && target.isValid()) {
-                    dim.width -= getHgap() + 1;
-                }
-
-                return dim;
-            }
-        }
-
-        private void addRow(Dimension dim, int rowWidth, int rowHeight) {
-            dim.width = Math.max(dim.width, rowWidth);
-            if (dim.height > 0) {
-                dim.height += getVgap();
-            }
-            dim.height += rowHeight;
-        }
-    }
-
-    private class SlashPopupPanel extends JPanel {
-
-        private static final int DECORATION_INSET = 1;
-
-        private Color fill;
-        private Color stroke;
-
-        private SlashPopupPanel() {
-            super(new BorderLayout());
-            setOpaque(false);
-            applyThemeBorder();
-        }
-
-        @Override
-        public void updateUI() {
-            super.updateUI();
-            applyThemeBorder();
-        }
-
-        private int decorationInset() {
-            return DECORATION_INSET;
-        }
-
-        private void applyThemeBorder() {
-            fill = resolveListBackground();
-            stroke = resolvePopupBorderColor();
-            setBackground(fill);
-            setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(
-                    DECORATION_INSET,
-                    DECORATION_INSET,
-                    DECORATION_INSET,
-                    DECORATION_INSET
-            ));
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-
-            Color background = fill == null ? resolveListBackground() : fill;
-            Color border = stroke == null ? resolvePopupBorderColor() : stroke;
-            g2.setColor(background);
-            g2.fillRect(0, 0, getWidth(), getHeight());
-            g2.setColor(border);
-            g2.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
-            g2.dispose();
-        }
-    }
-
-    private class ChipPanel extends JPanel {
-
-        private static final int ARC = 10;
-        private boolean hovered;
-
-        private ChipPanel() {
-            setOpaque(false);
-        }
-
-        private void setHovered(boolean hovered) {
-            if (this.hovered == hovered) {
-                return;
-            }
-            this.hovered = hovered;
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color background = resolveChipBackground();
-            if (hovered) {
-                background = adjustBrightness(background, CHIP_HOVER_BG_DELTA);
-            }
-
-            g2.setColor(background);
-            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-            super.paintComponent(g);
-        }
-
-        @Override
-        protected void paintBorder(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color background = resolveChipBackground();
-            if (hovered) {
-                background = adjustBrightness(background, CHIP_HOVER_BG_DELTA);
-            }
-
-            Color border = resolveChipBorderColor(background);
-            if (hovered) {
-                border = adjustBrightness(border, CHIP_HOVER_BORDER_DELTA);
-            }
-
-            g2.setColor(border);
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-        }
-    }
-
-    private class InputIconButton extends JButton {
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            paintInputIconButtonBackground(g, this);
-            super.paintComponent(g);
-        }
-    }
-
-    private class InputIconToggleButton extends JToggleButton {
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            paintInputIconButtonBackground(g, this);
-            super.paintComponent(g);
-        }
-    }
-
     private void paintInputIconButtonBackground(Graphics g, AbstractButton button) {
         Color fill = resolveInputIconButtonBackground(button);
         if (fill == null) {
@@ -2414,150 +2231,6 @@ public class InputBar extends JPanel {
             background = blendColors(base, enabledInputIconTint(), isDark(base) ? 0.28f : 0.13f);
         }
         return background;
-    }
-
-    private class SkillChipPanel extends JPanel {
-
-        private static final int ARC = 14;
-        private boolean hovered;
-
-        private SkillChipPanel() {
-            setOpaque(false);
-        }
-
-        private void setHovered(boolean hovered) {
-            if (this.hovered == hovered) {
-                return;
-            }
-            this.hovered = hovered;
-            repaint();
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color fill = resolveSkillChipBackground(hovered);
-            g2.setColor(fill);
-            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-            super.paintComponent(g);
-        }
-
-        @Override
-        protected void paintBorder(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color border = resolveSkillChipBorder(hovered);
-            g2.setColor(border);
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-        }
-    }
-
-    private class ChipRemoveButton extends JButton {
-
-        private static final int SIZE = 18;
-        private static final int ARC = 8;
-
-        private ChipRemoveButton() {
-            putClientProperty("JButton.buttonType", "toolBarButton");
-            setMargin(new Insets(0, 0, 0, 0));
-            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-            setContentAreaFilled(false);
-            setFocusPainted(false);
-            setFocusable(false);
-            setRolloverEnabled(true);
-            setPreferredSize(new Dimension(SIZE, SIZE));
-            setMinimumSize(new Dimension(SIZE, SIZE));
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            if (getModel().isRollover()) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(resolveChipRemoveHoverBackground());
-                g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, ARC, ARC);
-                g2.dispose();
-            }
-            super.paintComponent(g);
-        }
-    }
-
-    private class SkillRemoveButton extends JButton {
-
-        private static final int SIZE = 20;
-        private static final int ARC = 9;
-
-        private SkillRemoveButton() {
-            putClientProperty("JButton.buttonType", "toolBarButton");
-            setMargin(new Insets(0, 0, 0, 0));
-            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-            setContentAreaFilled(false);
-            setFocusPainted(false);
-            setFocusable(false);
-            setRolloverEnabled(true);
-            setPreferredSize(new Dimension(SIZE, SIZE));
-            setMinimumSize(new Dimension(SIZE, SIZE));
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            if (getModel().isRollover()) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(resolveSkillRemoveHoverBackground());
-                g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, ARC, ARC);
-                g2.dispose();
-            }
-            super.paintComponent(g);
-        }
-    }
-
-    private class SkillBadgeLabel extends JLabel {
-
-        private static final int ARC = 10;
-        private Color fill;
-        private Color border;
-
-        private SkillBadgeLabel() {
-            super("SKILL", SwingConstants.CENTER);
-            Fonts.apply(this, Font.BOLD, Fonts.SIZE_MICRO);
-            setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
-            Dimension size = new Dimension(48, 28);
-            setPreferredSize(size);
-            setMinimumSize(size);
-            setMaximumSize(size);
-            setOpaque(false);
-        }
-
-        private void setColors(Color fill, Color border, Color foreground) {
-            this.fill = fill;
-            this.border = border;
-            setForeground(foreground);
-        }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(fill == null ? resolveSkillBadgeBackground() : fill);
-            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-            super.paintComponent(g);
-        }
-
-        @Override
-        protected void paintBorder(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(border == null ? resolveSkillBadgeBorder() : border);
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, ARC, ARC);
-            g2.dispose();
-        }
     }
 
     private Color resolveChipRemoveForeground() {
@@ -2743,52 +2416,6 @@ public class InputBar extends JPanel {
         return Color.getHSBColor(hsb[0], saturation, brightness);
     }
 
-    private class ComposerShellPanel extends JPanel {
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color background = UIManager.getColor("TextArea.background");
-            if (background == null) {
-                background = UIManager.getColor("Panel.background");
-            }
-            if (background == null) {
-                background = getBackground();
-            }
-
-            g2.setColor(background);
-            g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, SHELL_ARC, SHELL_ARC);
-            g2.dispose();
-
-            super.paintComponent(g);
-        }
-
-        @Override
-        protected void paintBorder(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            Color border = UIManager.getColor("Component.borderColor");
-            if (border == null) {
-                border = UIManager.getColor("Separator.foreground");
-            }
-            if (border == null) {
-                border = new Color(180, 180, 180);
-            }
-
-            g2.setColor(border);
-            g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, SHELL_ARC, SHELL_ARC);
-            g2.dispose();
-        }
-
-        @Override
-        public boolean isOpaque() {
-            return false;
-        }
-    }
-
     private void updateThinkingTogglePresentation() {
         if (thinkingButton == null) {
             return;
@@ -2948,79 +2575,4 @@ public class InputBar extends JPanel {
         });
     }
 
-    private class FileDropTransferHandler extends TransferHandler {
-
-        @Override
-        public int getSourceActions(JComponent c) {
-            return c instanceof JTextComponent ? COPY_OR_MOVE : NONE;
-        }
-
-        @Override
-        protected Transferable createTransferable(JComponent c) {
-            if (c instanceof JTextComponent textComponent) {
-                String selected = textComponent.getSelectedText();
-                if (StringUtils.isNotEmpty(selected)) {
-                    return new StringSelection(selected);
-                }
-            }
-            return null;
-        }
-
-        @Override
-        protected void exportDone(JComponent source, Transferable data, int action) {
-            if (action == MOVE && source instanceof JTextComponent textComponent) {
-                textComponent.replaceSelection("");
-            }
-        }
-
-        @Override
-        public boolean canImport(TransferSupport support) {
-            if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                return true;
-            }
-            return support.getComponent() instanceof JTextComponent
-                    && support.isDataFlavorSupported(DataFlavor.stringFlavor);
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public boolean importData(TransferSupport support) {
-            if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                try {
-                    List<File> files = (List<File>) support.getTransferable()
-                            .getTransferData(DataFlavor.javaFileListFlavor);
-                    List<Path> paths = files.stream().map(File::toPath).toList();
-                    addAttachments(paths);
-                    return true;
-                } catch (Exception e) {
-                    return false;
-                }
-            }
-
-            if (support.getComponent() instanceof JTextComponent textComponent
-                    && support.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                try {
-                    String text = (String) support.getTransferable()
-                            .getTransferData(DataFlavor.stringFlavor);
-                    textComponent.replaceSelection(text);
-                    return true;
-                } catch (Exception e) {
-                    return false;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    @FunctionalInterface
-    interface ProjectRootChooser {
-        Optional<Path> choose(Component parent);
-    }
-
-    private record SkillCommand(String name, String description) {
-    }
-
-    private record SlashToken(int startIndex, String query) {
-    }
 }
