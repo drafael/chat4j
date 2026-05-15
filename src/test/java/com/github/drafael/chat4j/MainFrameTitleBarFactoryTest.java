@@ -23,10 +23,12 @@ class MainFrameTitleBarFactoryTest {
         var searchButton = new AtomicReference<JButton>();
         var newChatInvoked = new AtomicBoolean();
         var modelSelector = new JLabel("model");
+        var renderModeControls = new JLabel("render controls");
 
         MainFrameTitleBarFactory.TitleBar titleBar = subject.create(
                 MainFrame.class,
                 modelSelector,
+                renderModeControls,
                 () -> toggleInvoked.set(true),
                 searchButton::set,
                 () -> newChatInvoked.set(true)
@@ -45,6 +47,7 @@ class MainFrameTitleBarFactoryTest {
         newChat.doClick();
 
         assertThat(titleBar.panel().isAncestorOf(modelSelector)).isTrue();
+        assertThat(titleBar.rightPanel().isAncestorOf(renderModeControls)).isTrue();
         assertThat(findLabel(titleBar.panel(), "Chat4J")).isNull();
         assertThat(toggleInvoked).isTrue();
         assertThat(searchButton).hasValue(search);

@@ -98,12 +98,13 @@ public class ChatPanel extends JPanel {
     private static final int CHAT_MENU_ICON_SIZE = 14;
     private static final int BUBBLE_ACTION_BUTTON_SIZE = 20;
     private static final int BUBBLE_ACTION_BAR_HEIGHT = 22;
-    private static final int BUBBLE_ACTION_BAR_WIDTH = BUBBLE_ACTION_BUTTON_SIZE * 2 + 2;
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
     private static final int COMPOSER_FADE_HEIGHT = 48;
-    private static final int CHAT_COLUMN_MAX_WIDTH = 920;
+    private static final int CHAT_TOP_FADE_HEIGHT = 34;
     private static final int CHAT_COLUMN_SIDE_MARGIN = 16;
+    private static final int ASSISTANT_MESSAGE_SIDE_MARGIN = 0;
     private static final String MESSAGE_ROLE_PROPERTY = "chat4j.messageRole";
+    private static final String MESSAGE_INDEX_PROPERTY = "chat4j.messageIndex";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
@@ -121,10 +122,12 @@ public class ChatPanel extends JPanel {
     private final JPanel messagesContainer;
     private JPanel emptyStatePanel;
     private final InputBar inputBar;
+    private final ComposerPanel composerPanel;
     private final JLayeredPane bodyLayered;
     private final JPanel bodyContent;
     private final JumpToLatestButton jumpToLatestOverlay;
-    private final ComposerFadeOverlay composerFadeOverlay;
+    private final ChatFadeOverlay topFadeOverlay;
+    private final ChatFadeOverlay composerFadeOverlay;
     private boolean atBottom = true;
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
@@ -140,6 +143,7 @@ public class ChatPanel extends JPanel {
     private final List<ActivityBubble> thinkingBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
+    private final JPanel renderTogglePanel;
     private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
     private Consumer<AssistantRenderMode> assistantRenderModeChangedListener;
     private Consumer<String> selectedModelChangedListener;
@@ -153,6 +157,7 @@ public class ChatPanel extends JPanel {
     private Consumer<Boolean> visibleStreamingChangedListener;
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
+    private EditingUserMessage editingUserMessage;
 
     private final List<Message> history = new ArrayList<>();
     private Map<String, ProviderRegistry.ProviderDef> providerMap = emptyMap();
@@ -180,12 +185,24 @@ public class ChatPanel extends JPanel {
     private boolean autoScrollQueued = false;
     private int messageRow = 0;
 
+    private record EditingUserMessage(int messageIndex, ComposerState savedComposerState) {
+        @Override
+        public String toString() {
+            return "EditingUserMessage[messageIndex=%d]".formatted(messageIndex);
+        }
+    }
+
     public record PromptQuickAction(@NonNull String title, @NonNull Runnable action) {
         public PromptQuickAction {
             title = StringUtils.trimToEmpty(title);
             if (title.isBlank()) {
                 throw new IllegalArgumentException("title must not be blank");
             }
+        }
+
+        @Override
+        public String toString() {
+            return "PromptQuickAction[title=%s]".formatted(title);
         }
     }
 
@@ -207,17 +224,12 @@ public class ChatPanel extends JPanel {
 
         modelSelectorBtn = new ModelSelectorButton();
         modelSelectorBtn.addActionListener(e -> toggleModelPopup());
-
-        JPanel chatHeader = new JPanel(new BorderLayout());
-        chatHeader.setOpaque(false);
-        chatHeader.setBorder(BorderFactory.createEmptyBorder(4, 12, 0, 12));
-        chatHeader.add(createRenderTogglePanel(), BorderLayout.EAST);
-        add(chatHeader, BorderLayout.NORTH);
+        renderTogglePanel = createRenderTogglePanel();
 
         // Messages area — uses ScrollablePanel + GridBagLayout for proper width tracking
         messagesPanel = new ScrollablePanel();
         messagesPanel.setLayout(new GridBagLayout());
-        messagesPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        messagesPanel.setBorder(BorderFactory.createEmptyBorder(8, CHAT_COLUMN_SIDE_MARGIN, 12, CHAT_COLUMN_SIDE_MARGIN));
         messagesPanel.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
@@ -246,16 +258,19 @@ public class ChatPanel extends JPanel {
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());
         updateClearChatButtonVisibility();
 
+        composerPanel = new ComposerPanel(inputBar);
+
         bodyContent = new JPanel(new BorderLayout());
         bodyContent.setOpaque(false);
         bodyContent.add(messagesContainer, BorderLayout.CENTER);
-        bodyContent.add(new ComposerPanel(inputBar), BorderLayout.SOUTH);
+        bodyContent.add(composerPanel, BorderLayout.SOUTH);
 
         jumpToLatestOverlay = new JumpToLatestButton();
         jumpToLatestOverlay.setVisible(false);
         jumpToLatestOverlay.addActionListener(e -> onJumpToLatestRequested());
 
-        composerFadeOverlay = new ComposerFadeOverlay();
+        topFadeOverlay = new ChatFadeOverlay(ChatFadeOverlay.Direction.TOP, 0.70f);
+        composerFadeOverlay = new ChatFadeOverlay(ChatFadeOverlay.Direction.BOTTOM, 1.0f);
 
         bodyLayered = new JLayeredPane() {
             @Override
@@ -266,10 +281,12 @@ public class ChatPanel extends JPanel {
             @Override
             public void doLayout() {
                 bodyContent.setBounds(0, 0, getWidth(), getHeight());
+                topFadeOverlay.setBounds(0, 0, getWidth(), Math.min(CHAT_TOP_FADE_HEIGHT, getHeight()));
                 layoutJumpOverlay();
             }
         };
         bodyLayered.add(bodyContent, JLayeredPane.DEFAULT_LAYER);
+        bodyLayered.add(topFadeOverlay, COMPOSER_FADE_LAYER);
         bodyLayered.add(composerFadeOverlay, COMPOSER_FADE_LAYER);
         bodyLayered.add(jumpToLatestOverlay, JLayeredPane.PALETTE_LAYER);
         add(bodyLayered, BorderLayout.CENTER);
@@ -616,6 +633,11 @@ public class ChatPanel extends JPanel {
     }
 
     private void onSend() {
+        if (editingUserMessage != null) {
+            saveEditedUserMessageAndRegenerate();
+            return;
+        }
+
         if (isVisibleConversationBusy()) {
             return;
         }
@@ -694,7 +716,7 @@ public class ChatPanel extends JPanel {
         if (visibleConversation) {
             inputBar.clear();
             history.add(userMessage);
-            addUserBubble(userMessage);
+            addUserBubble(userMessage, history.size() - 1);
             updateClearChatButtonVisibility();
         }
 
@@ -1567,8 +1589,9 @@ public class ChatPanel extends JPanel {
                 .toList();
     }
 
-    private void addUserBubble(Message message) {
+    private void addUserBubble(Message message, int messageIndex) {
         MessageBubble bubble = new MessageBubble(Role.USER);
+        bubble.putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
         bubble.setText(formatUserBubbleText(message));
         bubble.setMaxContentWidth(userBubbleMaxContentWidth());
         installBubbleContextMenu(bubble);
@@ -1687,12 +1710,17 @@ public class ChatPanel extends JPanel {
         JPanel bar = new JPanel(new FlowLayout(alignment, 2, 0));
         bar.setOpaque(false);
         bar.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
-        Dimension size = new Dimension(BUBBLE_ACTION_BAR_WIDTH, BUBBLE_ACTION_BAR_HEIGHT);
+        int buttonCount = role == Role.USER ? 3 : 2;
+        int buttonGapWidth = Math.max(0, buttonCount - 1) * 2;
+        Dimension size = new Dimension(BUBBLE_ACTION_BUTTON_SIZE * buttonCount + buttonGapWidth, BUBBLE_ACTION_BAR_HEIGHT);
         bar.setPreferredSize(size);
         bar.setMinimumSize(size);
         bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, BUBBLE_ACTION_BAR_HEIGHT));
         bar.add(createCopyMessageButton(bubble));
         bar.add(createRegenerateButton(bubble));
+        if (role == Role.USER) {
+            bar.add(createEditMessageButton(bubble));
+        }
         setBubbleActionButtonsVisible(bar, false);
         return bar;
     }
@@ -1703,6 +1731,11 @@ public class ChatPanel extends JPanel {
                 ? "Regenerate response"
                 : "Regenerate this response";
         return createBubbleActionButton(icon, tooltip, () -> regenerateFromBubble(bubble));
+    }
+
+    private JButton createEditMessageButton(MessageBubble bubble) {
+        Icon icon = chatMenuIcon("/icons/chat/pencil.svg");
+        return createBubbleActionButton(icon, "Edit message", () -> startEditingUserMessage(bubble));
     }
 
     private JButton createCopyMessageButton(MessageBubble bubble) {
@@ -1799,6 +1832,153 @@ public class ChatPanel extends JPanel {
         clipboard.setContents(new StringSelection(text), null);
     }
 
+    private void startEditingUserMessage(MessageBubble bubble) {
+        if (isVisibleConversationBusy()) {
+            return;
+        }
+
+        int messageIndex = messageIndex(bubble);
+        if (messageIndex < 0 || messageIndex >= history.size() || history.get(messageIndex).role() != Role.USER) {
+            return;
+        }
+
+        if (editingUserMessage != null) {
+            cancelEditingUserMessage();
+        }
+
+        Message message = history.get(messageIndex);
+        editingUserMessage = new EditingUserMessage(messageIndex, inputBar.getComposerState());
+        inputBar.clear();
+        inputBar.setText(editableUserText(message));
+        composerPanel.setComposer(new EditComposerPanel(
+                inputBar,
+                this::saveEditedUserMessageOnly,
+                this::saveEditedUserMessageAndRegenerate,
+                this::cancelEditingUserMessage
+        ));
+        inputBar.requestInputFocus();
+    }
+
+    private int messageIndex(MessageBubble bubble) {
+        Object value = bubble.getClientProperty(MESSAGE_INDEX_PROPERTY);
+        return value instanceof Integer index ? index : -1;
+    }
+
+    private String editableUserText(Message message) {
+        return String.join("\n", userTextLines(message));
+    }
+
+    private void cancelEditingUserMessage() {
+        EditingUserMessage state = editingUserMessage;
+        if (state == null) {
+            return;
+        }
+
+        editingUserMessage = null;
+        composerPanel.setComposer(inputBar);
+        inputBar.setComposerState(state.savedComposerState());
+        inputBar.requestInputFocus();
+    }
+
+    private void saveEditedUserMessageOnly() {
+        EditingUserMessage state = editingUserMessage;
+        if (state == null) {
+            return;
+        }
+
+        Message replacement = editedReplacementMessage(state.messageIndex());
+        if (replacement == null) {
+            return;
+        }
+
+        history.set(state.messageIndex(), replacement);
+        finishEditingAndRestoreComposer(state);
+        loadHistory(new ArrayList<>(history));
+        notifyMessageSubmitted();
+        inputBar.requestInputFocus();
+    }
+
+    private void saveEditedUserMessageAndRegenerate() {
+        EditingUserMessage state = editingUserMessage;
+        if (state == null) {
+            return;
+        }
+        if (currentProviderResolving) {
+            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
+            return;
+        }
+        if (currentProvider == null) {
+            inputBar.showValidationMessage("Select a model/provider before regenerating.");
+            return;
+        }
+        if (isVisibleConversationBusy()) {
+            return;
+        }
+
+        Message replacement = editedReplacementMessage(state.messageIndex());
+        if (replacement == null) {
+            return;
+        }
+
+        history.set(state.messageIndex(), replacement);
+        int keepCount = state.messageIndex() + 1;
+        if (history.size() > keepCount) {
+            history.subList(keepCount, history.size()).clear();
+        }
+
+        finishEditingAndRestoreComposer(state);
+        loadHistory(new ArrayList<>(history));
+        UUID conversationId = resolveConversationId();
+        if (historyTruncatedListener != null && conversationId != null) {
+            historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
+        }
+        notifyMessageSubmitted();
+
+        if (inputBar.isWebSearchEnabled()) {
+            currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
+            currentAssistantActivityBubble.setStreaming(true);
+            currentAssistantActivityBubble.setVisible(false);
+            addActivityBubble(currentAssistantActivityBubble, null);
+
+            currentAssistantWebSearchBubble = new ActivityBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
+            currentAssistantWebSearchBubble.setVisible(false);
+            addActivityBubble(currentAssistantWebSearchBubble, null);
+        }
+
+        currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
+        addBubble(currentAssistantBubble, null, Role.ASSISTANT);
+        startAssistantStream(conversationId, currentProvider);
+    }
+
+    private Message editedReplacementMessage(int messageIndex) {
+        if (messageIndex < 0 || messageIndex >= history.size()) {
+            return null;
+        }
+
+        Message original = history.get(messageIndex);
+        String editedText = inputBar.getRawText().trim();
+        boolean hasAttachments = original.parts().stream().anyMatch(part -> !(part instanceof TextPart));
+        if (StringUtils.isBlank(editedText) && !hasAttachments) {
+            inputBar.showValidationMessage("Message text cannot be empty.");
+            return null;
+        }
+
+        List<ContentPart> parts = new ArrayList<>();
+        if (StringUtils.isNotBlank(editedText)) {
+            parts.add(new TextPart(editedText));
+        }
+        original.parts().stream()
+                .filter(part -> !(part instanceof TextPart))
+                .forEach(parts::add);
+        return new Message(original.role(), parts, original.timestamp(), original.meta());
+    }
+
+    private void finishEditingAndRestoreComposer(EditingUserMessage state) {
+        editingUserMessage = null;
+        composerPanel.setComposer(inputBar);
+        inputBar.setComposerState(state.savedComposerState());
+    }
+
     private boolean canRegenerateFrom(MessageBubble bubble) {
         if (currentProvider == null || isVisibleConversationBusy()) {
             return false;
@@ -1874,8 +2054,8 @@ public class ChatPanel extends JPanel {
     }
 
     private void truncateHistoryAndBubbles(int keepCount) {
-        while (history.size() > keepCount) {
-            history.remove(history.size() - 1);
+        if (history.size() > keepCount) {
+            history.subList(keepCount, history.size()).clear();
         }
 
         loadHistory(new ArrayList<>(history));
@@ -1933,18 +2113,11 @@ public class ChatPanel extends JPanel {
         int sideInset = messageColumnSideInset();
         wrapper.setBorder(role == Role.USER
                 ? BorderFactory.createEmptyBorder(2, sideInset + USER_LEFT_GUTTER, 2, sideInset)
-                : BorderFactory.createEmptyBorder(8, sideInset, 8, sideInset + 40));
+                : BorderFactory.createEmptyBorder(4, ASSISTANT_MESSAGE_SIDE_MARGIN, 4, ASSISTANT_MESSAGE_SIDE_MARGIN));
     }
 
     private int messageColumnSideInset() {
-        int width = scrollPane != null && scrollPane.getViewport() != null ? scrollPane.getViewport().getWidth() : 0;
-        if (width <= 0) {
-            width = messagesPanel != null ? messagesPanel.getWidth() : 0;
-        }
-        if (width <= 0) {
-            return CHAT_COLUMN_SIDE_MARGIN;
-        }
-        return Math.max(CHAT_COLUMN_SIDE_MARGIN, (width - CHAT_COLUMN_MAX_WIDTH) / 2);
+        return CHAT_COLUMN_SIDE_MARGIN;
     }
 
     private int chatColumnAvailableWidth() {
@@ -1955,7 +2128,7 @@ public class ChatPanel extends JPanel {
         if (viewport <= 0) {
             viewport = 800;
         }
-        return Math.max(320, Math.min(CHAT_COLUMN_MAX_WIDTH, viewport - messageColumnSideInset() * 2));
+        return Math.max(320, viewport - messageColumnSideInset() * 2);
     }
 
     private GridBagConstraints messageRowConstraints(int row) {
@@ -1986,7 +2159,7 @@ public class ChatPanel extends JPanel {
 
     private static final int EMPTY_STATE_ICON_SIZE = 72;
     private static final int EMPTY_STATE_CHIP_GAP = 8;
-    private static final int EMPTY_STATE_PROMPT_CHIP_GAP = 6;
+    private static final int EMPTY_STATE_CHIPS_MAX_WIDTH = 720;
 
     private JPanel buildEmptyStatePanel() {
         JPanel panel = new JPanel(new GridBagLayout());
@@ -2025,7 +2198,7 @@ public class ChatPanel extends JPanel {
         content.add(subtitle);
         content.add(Box.createVerticalStrut(20));
 
-        JPanel suggestions = new JPanel(new WrapLayout(FlowLayout.CENTER, EMPTY_STATE_CHIP_GAP, EMPTY_STATE_CHIP_GAP));
+        JPanel suggestions = new WrappingChipsPanel(EMPTY_STATE_CHIPS_MAX_WIDTH, EMPTY_STATE_CHIP_GAP);
         suggestions.setOpaque(false);
         suggestions.add(createSuggestionChip("Review codebase", () -> inputBar.requestAgentModeEnabled(true)));
         suggestions.add(createSuggestionChip("Explain selected file", () -> inputBar.requestAttachmentPicker()));
@@ -2034,19 +2207,9 @@ public class ChatPanel extends JPanel {
         content.add(suggestions);
 
         if (!promptQuickActions.isEmpty()) {
-            content.add(Box.createVerticalStrut(14));
-            content.add(createEmptyStateSectionLabel("Prompts"));
-            content.add(Box.createVerticalStrut(6));
-            JPanel promptActions = new JPanel(new WrapLayout(
-                    FlowLayout.CENTER,
-                    EMPTY_STATE_PROMPT_CHIP_GAP,
-                    EMPTY_STATE_PROMPT_CHIP_GAP
-            ));
-            promptActions.setOpaque(false);
             promptQuickActions.stream()
                     .map(this::createPromptActionChip)
-                    .forEach(promptActions::add);
-            content.add(promptActions);
+                    .forEach(suggestions::add);
         }
 
         panel.add(content);
@@ -2063,16 +2226,8 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private JLabel createEmptyStateSectionLabel(String text) {
-        JLabel label = new JLabel(text);
-        Fonts.apply(label, Font.BOLD, Fonts.SIZE_SMALL);
-        label.setForeground(UIManager.getColor("Label.disabledForeground"));
-        label.setAlignmentX(Component.CENTER_ALIGNMENT);
-        return label;
-    }
-
     private JButton createPromptActionChip(PromptQuickAction promptQuickAction) {
-        return createEmptyStateChip(promptQuickAction.title(), false, () -> {
+        return createEmptyStateChip(promptQuickAction.title(), true, () -> {
             promptQuickAction.action().run();
             inputBar.requestInputFocus();
         });
@@ -2085,6 +2240,14 @@ public class ChatPanel extends JPanel {
         chip.setFocusable(false);
         chip.setMargin(primary ? new Insets(6, 12, 6, 12) : new Insets(4, 10, 4, 10));
         Fonts.apply(chip, Font.PLAIN, primary ? Fonts.SIZE_BODY : Fonts.SIZE_SMALL);
+        FontMetrics metrics = chip.getFontMetrics(chip.getFont());
+        Insets margin = chip.getMargin();
+        Dimension size = new Dimension(
+                metrics.stringWidth(text) + margin.left + margin.right + 18,
+                metrics.getHeight() + margin.top + margin.bottom + 6
+        );
+        chip.setPreferredSize(size);
+        chip.setMinimumSize(size);
         chip.addActionListener(e -> action.run());
         return chip;
     }
@@ -2093,13 +2256,20 @@ public class ChatPanel extends JPanel {
         private static final int HORIZONTAL_MARGIN = 0;
         private static final int BOTTOM_MARGIN = 0;
 
-        private final JComponent composer;
+        private JComponent composer;
 
         ComposerPanel(JComponent composer) {
-            this.composer = composer;
             setOpaque(false);
             setLayout(null);
+            setComposer(composer);
+        }
+
+        void setComposer(JComponent composer) {
+            removeAll();
+            this.composer = composer;
             add(composer);
+            revalidate();
+            repaint();
         }
 
         @Override
@@ -2119,69 +2289,193 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private static class WrapLayout extends FlowLayout {
+    private static class EditComposerPanel extends JPanel {
+        private final JComponent composer;
 
-        private WrapLayout(int align, int hgap, int vgap) {
-            super(align, hgap, vgap);
-        }
-
-        @Override
-        public Dimension preferredLayoutSize(Container target) {
-            return layoutSize(target, true);
-        }
-
-        @Override
-        public Dimension minimumLayoutSize(Container target) {
-            Dimension minimum = layoutSize(target, false);
-            minimum.width -= getHgap() + 1;
-            return minimum;
-        }
-
-        private Dimension layoutSize(Container target, boolean preferred) {
-            synchronized (target.getTreeLock()) {
-                int targetWidth = target.getWidth();
-                if (targetWidth <= 0) {
-                    targetWidth = Integer.MAX_VALUE;
+        EditComposerPanel(JComponent composer, Runnable saveOnlyAction, Runnable saveAndRegenerateAction, Runnable cancelAction) {
+            this.composer = composer;
+            setOpaque(false);
+            setLayout(new BorderLayout(0, 4));
+            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+            add(createHeader(saveOnlyAction, saveAndRegenerateAction, cancelAction), BorderLayout.NORTH);
+            add(composer, BorderLayout.CENTER);
+            getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                    .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEditing");
+            getActionMap().put("cancelEditing", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    cancelAction.run();
                 }
+            });
+        }
 
-                Insets insets = target.getInsets();
-                int maxWidth = targetWidth - insets.left - insets.right - getHgap() * 2;
-                Dimension dimension = new Dimension();
+        private JComponent createHeader(Runnable saveOnlyAction, Runnable saveAndRegenerateAction, Runnable cancelAction) {
+            JPanel header = new JPanel(new BorderLayout());
+            header.setOpaque(false);
+            header.setBorder(BorderFactory.createEmptyBorder(4, 16, 0, 16));
+
+            JLabel title = new JLabel("✎ Editing message");
+            Fonts.apply(title, Font.PLAIN, Fonts.SIZE_BODY);
+            header.add(title, BorderLayout.WEST);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+            actions.setOpaque(false);
+            JButton saveAndRegenerateButton = new JButton("Save & regenerate");
+            saveAndRegenerateButton.putClientProperty("JButton.buttonType", "roundRect");
+            saveAndRegenerateButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+            saveAndRegenerateButton.setFocusable(false);
+            saveAndRegenerateButton.addActionListener(e -> saveAndRegenerateAction.run());
+            actions.add(saveAndRegenerateButton);
+
+            JButton saveOnlyButton = new JButton("Save only");
+            saveOnlyButton.putClientProperty("JButton.buttonType", "roundRect");
+            saveOnlyButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:10");
+            saveOnlyButton.setFocusable(false);
+            saveOnlyButton.addActionListener(e -> saveOnlyAction.run());
+            actions.add(saveOnlyButton);
+
+            JButton cancelButton = new JButton("×");
+            cancelButton.putClientProperty("JButton.buttonType", "borderless");
+            cancelButton.setFocusable(false);
+            cancelButton.setToolTipText("Cancel editing");
+            cancelButton.addActionListener(e -> cancelAction.run());
+            actions.add(cancelButton);
+            header.add(actions, BorderLayout.EAST);
+            return header;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension preferred = super.getPreferredSize();
+            Dimension composerPreferred = composer.getPreferredSize();
+            return new Dimension(Math.max(preferred.width, composerPreferred.width), preferred.height);
+        }
+    }
+
+    private static class WrappingChipsPanel extends JPanel {
+        private final int maxWrapWidth;
+
+        private WrappingChipsPanel(int maxWrapWidth, int gap) {
+            this.maxWrapWidth = maxWrapWidth;
+            setOpaque(false);
+            setLayout(new WrappingChipsLayout(maxWrapWidth, gap));
+            setAlignmentX(Component.CENTER_ALIGNMENT);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return ((WrappingChipsLayout) getLayout()).preferredLayoutSize(this);
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            Dimension preferred = getPreferredSize();
+            return new Dimension(maxWrapWidth, preferred.height);
+        }
+
+        @Override
+        public void setBounds(int x, int y, int width, int height) {
+            int clampedWidth = Math.min(maxWrapWidth, Math.max(1, width));
+            super.setBounds(x + Math.max(0, (width - clampedWidth) / 2), y, clampedWidth, height);
+        }
+
+        private static final class WrappingChipsLayout implements LayoutManager {
+            private final int maxWrapWidth;
+            private final int gap;
+
+            private WrappingChipsLayout(int maxWrapWidth, int gap) {
+                this.maxWrapWidth = maxWrapWidth;
+                this.gap = gap;
+            }
+
+            @Override
+            public void addLayoutComponent(String name, Component component) {
+            }
+
+            @Override
+            public void removeLayoutComponent(Component component) {
+            }
+
+            @Override
+            public Dimension preferredLayoutSize(Container parent) {
+                synchronized (parent.getTreeLock()) {
+                    return layoutSize(parent, maxWrapWidth, false);
+                }
+            }
+
+            @Override
+            public Dimension minimumLayoutSize(Container parent) {
+                return preferredLayoutSize(parent);
+            }
+
+            @Override
+            public void layoutContainer(Container parent) {
+                synchronized (parent.getTreeLock()) {
+                    int wrapWidth = Math.max(1, Math.min(maxWrapWidth, parent.getWidth()));
+                    layoutSize(parent, wrapWidth, true);
+                }
+            }
+
+            private Dimension layoutSize(Container parent, int wrapWidth, boolean applyBounds) {
+                Insets insets = parent.getInsets();
+                int availableWidth = Math.max(1, wrapWidth - insets.left - insets.right);
+                List<Component> row = new ArrayList<>();
                 int rowWidth = 0;
                 int rowHeight = 0;
+                int y = insets.top + gap;
+                int widestRow = 0;
 
-                for (Component component : target.getComponents()) {
+                for (Component component : parent.getComponents()) {
                     if (!component.isVisible()) {
                         continue;
                     }
 
-                    Dimension size = preferred ? component.getPreferredSize() : component.getMinimumSize();
-                    if (rowWidth > 0 && rowWidth + getHgap() + size.width > maxWidth) {
-                        addRow(dimension, rowWidth, rowHeight);
+                    Dimension size = component.getPreferredSize();
+                    int nextWidth = row.isEmpty() ? size.width : rowWidth + gap + size.width;
+                    if (!row.isEmpty() && nextWidth > availableWidth) {
+                        layoutRow(parent, row, rowWidth, rowHeight, y, applyBounds);
+                        widestRow = Math.max(widestRow, rowWidth);
+                        y += rowHeight + gap;
+                        row.clear();
                         rowWidth = 0;
                         rowHeight = 0;
                     }
 
-                    if (rowWidth > 0) {
-                        rowWidth += getHgap();
+                    if (!row.isEmpty()) {
+                        rowWidth += gap;
                     }
+                    row.add(component);
                     rowWidth += size.width;
                     rowHeight = Math.max(rowHeight, size.height);
                 }
 
-                addRow(dimension, rowWidth, rowHeight);
-                dimension.width += insets.left + insets.right + getHgap() * 2;
-                dimension.height += insets.top + insets.bottom + getVgap() * 2;
-                return dimension;
-            }
-        }
+                if (!row.isEmpty()) {
+                    layoutRow(parent, row, rowWidth, rowHeight, y, applyBounds);
+                    widestRow = Math.max(widestRow, rowWidth);
+                    y += rowHeight + gap;
+                }
 
-        private void addRow(Dimension dimension, int rowWidth, int rowHeight) {
-            dimension.width = Math.max(dimension.width, rowWidth);
-            if (dimension.height > 0) {
-                dimension.height += getVgap();
+                int width = Math.min(maxWrapWidth, Math.max(widestRow + insets.left + insets.right, availableWidth));
+                return new Dimension(width, y + insets.bottom);
             }
-            dimension.height += rowHeight;
+
+            private void layoutRow(Container parent, List<Component> row, int rowWidth, int rowHeight, int y, boolean applyBounds) {
+                if (!applyBounds) {
+                    return;
+                }
+
+                int x = Math.max(0, (parent.getWidth() - rowWidth) / 2);
+                for (Component component : row) {
+                    Dimension size = component.getPreferredSize();
+                    component.setBounds(x, y + (rowHeight - size.height) / 2, size.width, size.height);
+                    x += size.width + gap;
+                }
+            }
         }
     }
 
@@ -2291,7 +2585,7 @@ public class ChatPanel extends JPanel {
 
         JPanel secondaryInfoWrapper = new JPanel(new BorderLayout());
         secondaryInfoWrapper.setOpaque(false);
-        secondaryInfoWrapper.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 16));
+        secondaryInfoWrapper.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         secondaryInfoWrapper.add(bubble, BorderLayout.CENTER);
 
         JComponent beforeComponent = thinkingBubbleInsertTarget(bubble);
@@ -2636,8 +2930,9 @@ public class ChatPanel extends JPanel {
         List<Message> normalizedMessages = normalizeLoadedHistory(messages);
         for (Message msg : normalizedMessages) {
             history.add(msg);
+            int messageIndex = history.size() - 1;
             if (msg.role() == Role.USER) {
-                addUserBubble(msg);
+                addUserBubble(msg, messageIndex);
                 continue;
             }
 
@@ -2692,6 +2987,10 @@ public class ChatPanel extends JPanel {
 
     public ModelSelectorButton getModelSelectorButton() {
         return modelSelectorBtn;
+    }
+
+    public JComponent getRenderTogglePanel() {
+        return renderTogglePanel;
     }
 
     public void hideModelPopup() {
@@ -3786,7 +4085,19 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private static final class ComposerFadeOverlay extends JComponent {
+    private static final class ChatFadeOverlay extends JComponent {
+        private enum Direction {
+            TOP,
+            BOTTOM
+        }
+
+        private final Direction direction;
+        private final float opacity;
+
+        private ChatFadeOverlay(Direction direction, float opacity) {
+            this.direction = direction;
+            this.opacity = Math.max(0f, Math.min(1f, opacity));
+        }
 
         @Override
         protected void paintComponent(Graphics g) {
@@ -3797,15 +4108,19 @@ public class ChatPanel extends JPanel {
             }
 
             Color background = resolveChatBackground();
+            int alpha = Math.round(255 * opacity);
+            Color opaque = new Color(background.getRed(), background.getGreen(), background.getBlue(), alpha);
             Color transparent = new Color(background.getRed(), background.getGreen(), background.getBlue(), 0);
 
+            Color start = direction == Direction.TOP ? opaque : transparent;
+            Color end = direction == Direction.TOP ? transparent : opaque;
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             LinearGradientPaint fade = new LinearGradientPaint(
                     new Point2D.Float(0, 0),
                     new Point2D.Float(0, h),
                     new float[] { 0f, 1f },
-                    new Color[] { transparent, background }
+                    new Color[] { start, end }
             );
             g2.setPaint(fade);
             g2.fillRect(0, 0, w, h);

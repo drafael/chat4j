@@ -19,7 +19,7 @@ public class ActivityBubble extends JPanel {
 
     private static final int ARC = 18;
     private static final int COLLAPSE_DEBOUNCE_MS = 90;
-    private static final Insets BUBBLE_INSETS = new Insets(5, 8, 4, 8);
+    private static final Insets BUBBLE_INSETS = new Insets(4, 6, 4, 6);
     private static final int COPY_BUTTON_SIZE = 20;
     private static final int COPY_ICON_SIZE = 13;
     private static final int TOGGLE_BUTTON_SIZE = 18;
@@ -155,7 +155,7 @@ public class ActivityBubble extends JPanel {
         contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
         contentPanel.setDoubleBuffered(true);
-        contentPanel.setBorder(BorderFactory.createEmptyBorder(0, TOGGLE_BUTTON_SIZE + 6, 0, 2));
+        contentPanel.setBorder(BorderFactory.createEmptyBorder(0, TOGGLE_BUTTON_SIZE + 4, 0, 0));
         contentPanel.add(renderedBubble, BorderLayout.CENTER);
 
         add(header, BorderLayout.NORTH);

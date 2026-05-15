@@ -163,9 +163,9 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Chat panel restores render mode buttons without conversation context controls")
+    @DisplayName("Chat panel exposes render mode buttons for the title bar")
     void constructor_whenCreated_restoresRenderModeButtonsOnly() {
-        List<JToggleButton> renderModeButtons = findComponents(subject, JToggleButton.class);
+        List<JToggleButton> renderModeButtons = findComponents(subject.getRenderTogglePanel(), JToggleButton.class);
 
         assertThat(renderModeButtons.stream().map(AbstractButton::getText))
                 .contains("Preview", "Markdown")
@@ -980,8 +980,64 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> buttons.forEach(button -> button.setVisible(true)));
         Dimension after = hoverGroup.getPreferredSize();
 
-        assertThat(buttons).hasSize(2);
+        assertThat(buttons).hasSize(3);
         assertThat(after.height).isEqualTo(before.height);
+    }
+
+    @Test
+    @DisplayName("Edit user message save only updates history and preserves later assistant response")
+    void editUserMessage_whenSaveOnly_updatesHistoryWithoutTruncating() throws Exception {
+        var submitted = new AtomicInteger();
+        subject.setOnMessageSubmitted(submitted::incrementAndGet);
+        subject.loadHistory(List.of(
+                Message.user("old question"),
+                Message.assistant("old answer")
+        ));
+        flushEdt();
+
+        JButton editButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(editButton::doClick);
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        assertThat(textArea.getText()).isEqualTo("old question");
+
+        SwingUtilities.invokeAndWait(() -> textArea.setText("updated question"));
+        JButton saveOnlyButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(saveOnlyButton::doClick);
+
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .containsExactly("updated question", "old answer");
+        assertThat(submitted).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Cancelling user message edit restores composer draft and leaves history unchanged")
+    void editUserMessage_whenCancelled_restoresDraftAndKeepsHistory() throws Exception {
+        subject.loadHistory(List.of(Message.user("old question")));
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("draft text"));
+        flushEdt();
+
+        JButton editButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(editButton::doClick);
+        SwingUtilities.invokeAndWait(() -> textArea.setText("changed edit"));
+
+        JButton cancelButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Cancel editing".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+        SwingUtilities.invokeAndWait(cancelButton::doClick);
+
+        assertThat(subject.getHistory()).extracting(Message::content).containsExactly("old question");
+        assertThat(textArea.getText()).isEqualTo("draft text");
     }
 
     @Test

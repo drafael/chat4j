@@ -120,6 +120,7 @@ final class ModelRowComponent {
             panel.setBackground(panel.getParent() != null ? panel.getParent().getBackground() : Color.WHITE);
             nameLabel.setForeground(colorOrDefault(UIManager.getColor("Label.foreground"), Color.BLACK));
         }
+        panel.repaint();
     }
 
     void updateFavoriteState(boolean favorite) {

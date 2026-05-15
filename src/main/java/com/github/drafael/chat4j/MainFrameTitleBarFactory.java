@@ -17,6 +17,7 @@ public class MainFrameTitleBarFactory {
     public TitleBar create(
             @NonNull Class<?> resourceAnchor,
             @NonNull JComponent modelSelector,
+            @NonNull JComponent renderModeControls,
             @NonNull Runnable toggleSidebarAction,
             @NonNull Consumer<JButton> searchAction,
             @NonNull Runnable newChatAction
@@ -56,9 +57,9 @@ public class MainFrameTitleBarFactory {
         centerPanel.add(modelSelector);
         titleBar.add(centerPanel, BorderLayout.CENTER);
 
-        JPanel rightPanel = new JPanel();
+        JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 4));
         rightPanel.setOpaque(false);
-        rightPanel.setPreferredSize(leftButtons.getPreferredSize());
+        rightPanel.add(renderModeControls);
         titleBar.add(rightPanel, BorderLayout.EAST);
 
         return new TitleBar(

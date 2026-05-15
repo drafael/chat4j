@@ -34,7 +34,7 @@ public class MessageBubble extends JPanel {
         if (role == Role.USER) {
             setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
         } else {
-            setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
+            setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         }
 
         // JEditorPane that tracks its parent's width for word wrapping

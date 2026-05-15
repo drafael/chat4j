@@ -317,7 +317,7 @@ public class InputBar extends JPanel {
 
         composerShell = new ComposerShellPanel();
         composerShell.setLayout(new BorderLayout(0, 4));
-        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+        composerShell.setBorder(BorderFactory.createEmptyBorder(6, 4, 3, 4));
         composerShell.setTransferHandler(new FileDropTransferHandler());
         composerShell.add(chipsPanel, BorderLayout.NORTH);
         composerShell.add(scrollPane, BorderLayout.CENTER);
@@ -385,6 +385,19 @@ public class InputBar extends JPanel {
         ComposerState state = getComposerState();
         clear();
         return state;
+    }
+
+    public void setComposerState(ComposerState state) {
+        ComposerState safeState = state == null ? ComposerState.empty() : state;
+        textArea.setText(safeState.text());
+        textArea.setCaretPosition(textArea.getDocument().getLength());
+        attachments.clear();
+        attachments.addAll(safeState.attachments());
+        activeSkills.clear();
+        activeSkills.addAll(safeState.activeSkills());
+        refreshChips();
+        hideSlashPopup();
+        clearValidationMessage();
     }
 
     public void clear() {
@@ -1069,7 +1082,20 @@ public class InputBar extends JPanel {
     }
 
     public void requestInputFocus() {
-        textArea.requestFocusInWindow();
+        Runnable request = () -> {
+            if (textArea.isShowing()) {
+                textArea.requestFocusInWindow();
+                return;
+            }
+
+            SwingUtilities.invokeLater(textArea::requestFocusInWindow);
+        };
+
+        if (SwingUtilities.isEventDispatchThread()) {
+            request.run();
+        } else {
+            SwingUtilities.invokeLater(request);
+        }
     }
 
     public void setCancelGenerationVisible(boolean visible) {

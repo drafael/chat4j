@@ -29,9 +29,11 @@ public class ModelSelectorButton extends JButton {
     );
     private static final int PROVIDER_ICON_SIZE = 14;
     private static final int PROVIDER_ICON_GAP = 6;
+    private static final int PROVIDER_MODEL_GAP = 10;
     private static final int PROVIDER_ICON_BASELINE_OFFSET = 1;
     private static final int MIN_BUTTON_WIDTH = 180;
-    private static final int MAX_BUTTON_WIDTH = 360;
+    private static final int FALLBACK_MAX_BUTTON_WIDTH = 720;
+    private static final double MAX_TITLE_BAR_WIDTH_RATIO = 0.60;
     private static final int HORIZONTAL_CONTENT_PADDING = 24;
     private static final Map<String, Icon> PROVIDER_ICON_CACHE = new ConcurrentHashMap<>();
 
@@ -48,7 +50,7 @@ public class ModelSelectorButton extends JButton {
     public void setSelection(String providerName, String modelName) {
         this.providerName = providerName != null ? providerName : "";
         this.modelName = modelName != null ? modelName : "";
-        setToolTipText("%s\n%s".formatted(this.modelName, this.providerName));
+        setToolTipText("%s %s".formatted(this.providerName, this.modelName).trim());
         revalidate();
         repaint();
     }
@@ -68,18 +70,12 @@ public class ModelSelectorButton extends JButton {
         FontMetrics fmPrimary = getFontMetrics(primaryFont);
         FontMetrics fmSecondary = getFontMetrics(secondaryFont);
 
-        int providerIconSize = providerIconSize(fmSecondary);
-        Icon providerIcon = providerIcon(providerIconSize);
-
-        int secondaryWidth = fmSecondary.stringWidth(providerName);
-        if (providerIcon != null) {
-            secondaryWidth += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
-        }
-
-        int textW = Math.max(fmPrimary.stringWidth(modelName), secondaryWidth) + HORIZONTAL_CONTENT_PADDING;
+        int chevronWidth = fmSecondary.stringWidth("\u25BE");
+        int textW = providerContentWidth(fmSecondary) + modelContentWidth(fmPrimary, chevronWidth)
+                + HORIZONTAL_CONTENT_PADDING;
         int w = Math.max(textW, MIN_BUTTON_WIDTH);
         w = Math.min(w, maxAllowedWidth());
-        int h = fmPrimary.getHeight() + fmSecondary.getHeight() + 6;
+        int h = Math.max(fmPrimary.getHeight(), fmSecondary.getHeight()) + 10;
         return new Dimension(w, h);
     }
 
@@ -94,75 +90,96 @@ public class ModelSelectorButton extends JButton {
         FontMetrics fmPrimary = g2.getFontMetrics(primaryFont);
         FontMetrics fmSecondary = g2.getFontMetrics(secondaryFont);
 
-        int totalHeight = fmPrimary.getHeight() + fmSecondary.getHeight() + 2;
-        int y = (getHeight() - totalHeight) / 2;
-
-        int contentWidth = Math.max(1, getWidth() - HORIZONTAL_CONTENT_PADDING);
-
-        // Model name (primary)
-        g2.setFont(primaryFont);
-        g2.setColor(getForeground());
-        int chevronWidth = fmSecondary.stringWidth("\u25BE");
-        String modelText = clipText(modelName, fmPrimary, Math.max(1, contentWidth - chevronWidth - 8));
-        int primaryX = (getWidth() - (fmPrimary.stringWidth(modelText) + chevronWidth + 6)) / 2;
-        g2.drawString(modelText, primaryX, y + fmPrimary.getAscent());
-
-        // Chevron after model name
-        int chevronX = primaryX + fmPrimary.stringWidth(modelText) + 6;
-        int chevronY = y + fmPrimary.getAscent() - 4;
-        g2.setFont(secondaryFont);
-        g2.setColor(UIManager.getColor("Label.disabledForeground"));
-        g2.drawString("\u25BE", chevronX, chevronY);
-
-        // Provider name with icon (secondary)
-        g2.setFont(secondaryFont);
         Color secondaryColor = UIManager.getColor("Label.disabledForeground");
         if (secondaryColor == null) {
             secondaryColor = getForeground();
         }
+
+        int contentWidth = Math.max(1, getWidth() - HORIZONTAL_CONTENT_PADDING);
+        int chevronWidth = fmSecondary.stringWidth("\u25BE");
+        int providerWidth = providerContentWidth(fmSecondary);
+        int modelMaxWidth = Math.max(1, contentWidth - providerWidth - chevronWidth - 6);
+        String modelText = clipText(modelName, fmPrimary, modelMaxWidth);
+        int modelWidth = fmPrimary.stringWidth(modelText);
+        int totalWidth = providerWidth + modelWidth + chevronWidth + 6;
+        int x = Math.max(HORIZONTAL_CONTENT_PADDING / 2, (getWidth() - totalWidth) / 2);
+        int primaryBaseline = (getHeight() - fmPrimary.getHeight()) / 2 + fmPrimary.getAscent();
+        int secondaryBaseline = primaryBaseline - (fmPrimary.getAscent() - fmSecondary.getAscent()) / 2;
+
+        g2.setFont(secondaryFont);
         g2.setColor(secondaryColor);
+        x = paintProvider(g2, fmSecondary, x, secondaryBaseline);
 
-        int providerIconSize = providerIconSize(fmSecondary);
-        Icon providerIcon = providerIcon(providerIconSize);
-        int providerTextMaxWidth = contentWidth;
-        if (providerIcon != null) {
-            providerTextMaxWidth -= providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
-        }
+        g2.setFont(primaryFont);
+        g2.setColor(getForeground());
+        g2.drawString(modelText, x, primaryBaseline);
+        x += modelWidth + 6;
 
-        String providerText = clipText(providerName, fmSecondary, Math.max(1, providerTextMaxWidth));
-        int providerTextWidth = fmSecondary.stringWidth(providerText);
-        int providerContentWidth = providerTextWidth;
-        if (providerIcon != null) {
-            providerContentWidth += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
-        }
-
-        int secondaryX = (getWidth() - providerContentWidth) / 2;
-        int secondaryBaseline = y + fmPrimary.getHeight() + 2 + fmSecondary.getAscent();
-        if (providerIcon != null) {
-            int iconY = secondaryBaseline - fmSecondary.getAscent()
-                    + (fmSecondary.getHeight() - providerIcon.getIconHeight()) / 2
-                    + PROVIDER_ICON_BASELINE_OFFSET;
-            providerIcon.paintIcon(this, g2, secondaryX, iconY);
-            secondaryX += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
-        }
-
-        g2.drawString(providerText, secondaryX, secondaryBaseline);
+        g2.setFont(secondaryFont);
+        g2.setColor(secondaryColor);
+        g2.drawString("\u25BE", x, secondaryBaseline - 1);
 
         g2.dispose();
     }
 
+    private int providerContentWidth(FontMetrics metrics) {
+        if (StringUtils.isBlank(providerName)) {
+            return 0;
+        }
+
+        int width = metrics.stringWidth(providerName) + PROVIDER_MODEL_GAP;
+        Icon providerIcon = providerIcon(providerIconSize(metrics));
+        if (providerIcon != null) {
+            width += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
+        }
+        return width;
+    }
+
+    private int modelContentWidth(FontMetrics metrics, int chevronWidth) {
+        return metrics.stringWidth(modelName) + chevronWidth + 6;
+    }
+
+    private int paintProvider(Graphics2D g2, FontMetrics metrics, int x, int baseline) {
+        if (StringUtils.isBlank(providerName)) {
+            return x;
+        }
+
+        Icon providerIcon = providerIcon(providerIconSize(metrics));
+        if (providerIcon != null) {
+            int iconY = baseline - metrics.getAscent()
+                    + (metrics.getHeight() - providerIcon.getIconHeight()) / 2
+                    + PROVIDER_ICON_BASELINE_OFFSET;
+            providerIcon.paintIcon(this, g2, x, iconY);
+            x += providerIcon.getIconWidth() + PROVIDER_ICON_GAP;
+        }
+
+        g2.drawString(providerName, x, baseline);
+        return x + metrics.stringWidth(providerName) + PROVIDER_MODEL_GAP;
+    }
+
     private int maxAllowedWidth() {
-        int max = MAX_BUTTON_WIDTH;
+        int max = FALLBACK_MAX_BUTTON_WIDTH;
         if (getParent() != null && getParent().getWidth() > 0) {
-            max = Math.min(max, Math.max(MIN_BUTTON_WIDTH, getParent().getWidth() - 12));
-        } else {
-            Window window = SwingUtilities.getWindowAncestor(this);
-            if (window != null && window.getWidth() > 0) {
-                max = Math.min(max, Math.max(MIN_BUTTON_WIDTH, window.getWidth() - 280));
-            }
+            max = Math.max(MIN_BUTTON_WIDTH, getParent().getWidth() - 12);
+        }
+
+        int titleBarWidth = titleBarWidth();
+        if (titleBarWidth > 0) {
+            int titleBarMax = (int) Math.floor(titleBarWidth * MAX_TITLE_BAR_WIDTH_RATIO);
+            max = Math.min(max, Math.max(MIN_BUTTON_WIDTH, titleBarMax));
         }
 
         return Math.max(MIN_BUTTON_WIDTH, max);
+    }
+
+    private int titleBarWidth() {
+        Container parent = getParent();
+        if (parent != null && parent.getParent() != null && parent.getParent().getWidth() > 0) {
+            return parent.getParent().getWidth();
+        }
+
+        Window window = SwingUtilities.getWindowAncestor(this);
+        return window != null ? window.getWidth() : 0;
     }
 
     private static String clipText(String text, FontMetrics metrics, int maxWidth) {

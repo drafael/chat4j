@@ -504,6 +504,7 @@ public class MainFrame extends JFrame {
         MainFrameTitleBarFactory.TitleBar titleBar = titleBarFactory.create(
                 MainFrame.class,
                 chatPanel.getModelSelectorButton(),
+                chatPanel.getRenderTogglePanel(),
                 this::toggleSidebar,
                 this::openChatSearch,
                 this::newChat
@@ -582,6 +583,11 @@ public class MainFrame extends JFrame {
     private void installCloseHandlers() {
         addWindowListener(new WindowAdapter() {
             @Override
+            public void windowOpened(WindowEvent e) {
+                SwingUtilities.invokeLater(() -> chatPanel.getInputBar().requestInputFocus());
+            }
+
+            @Override
             public void windowClosing(WindowEvent e) {
                 requestWindowClose();
             }
@@ -640,12 +646,25 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        leftButtons.revalidate();
-        Dimension balancedSize = leftButtons.getPreferredSize();
+        Dimension leftSize = layoutPreferredSize(leftButtons);
+        Dimension rightSize = layoutPreferredSize(rightPanel);
+        Dimension balancedSize = new Dimension(
+                Math.max(leftSize.width, rightSize.width),
+                Math.max(leftSize.height, rightSize.height)
+        );
+        leftButtons.setPreferredSize(balancedSize);
+        leftButtons.setMinimumSize(balancedSize);
         rightPanel.setPreferredSize(balancedSize);
         rightPanel.setMinimumSize(balancedSize);
+        leftButtons.revalidate();
+        leftButtons.repaint();
         rightPanel.revalidate();
         rightPanel.repaint();
+    }
+
+    private Dimension layoutPreferredSize(JPanel panel) {
+        LayoutManager layout = panel.getLayout();
+        return layout != null ? layout.preferredLayoutSize(panel) : panel.getPreferredSize();
     }
 
     private void newChat() {

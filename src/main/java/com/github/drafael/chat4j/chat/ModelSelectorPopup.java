@@ -94,7 +94,7 @@ public class ModelSelectorPopup extends JDialog {
     private final AWTEventListener outsideClickListener;
     private boolean outsideClickListenerInstalled;
     private int highlightedIndex = -1;
-    private boolean scrolling;
+    private ModelRowComponent highlightedRow;
 
     private enum ViewMode {
         ALL,
@@ -198,7 +198,11 @@ public class ModelSelectorPopup extends JDialog {
     private void openPopup() {
         installOutsideClickListener();
         setVisible(true);
-        searchField.requestFocusInWindow();
+        SwingUtilities.invokeLater(() -> {
+            toFront();
+            requestFocus();
+            searchField.requestFocusInWindow();
+        });
 
         modelCacheService.logMetricsSnapshot("popup-opened");
         fetchModelsAsync();
@@ -380,7 +384,6 @@ public class ModelSelectorPopup extends JDialog {
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
         content.add(scrollPane, BorderLayout.CENTER);
 
         return content;
@@ -455,18 +458,22 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void setHighlightedIndex(int newIndex, List<ModelRowComponent> visible) {
-        if (newIndex == highlightedIndex) {
+        ModelRowComponent nextHighlightedRow = newIndex >= 0 && newIndex < visible.size()
+                ? visible.get(newIndex)
+                : null;
+        if (newIndex == highlightedIndex && highlightedRow == nextHighlightedRow) {
             return;
         }
 
-        if (highlightedIndex >= 0 && highlightedIndex < visible.size()) {
-            visible.get(highlightedIndex).setHighlighted(false);
+        if (highlightedRow != null && highlightedRow != nextHighlightedRow) {
+            highlightedRow.setHighlighted(false);
         }
 
         highlightedIndex = newIndex;
+        highlightedRow = nextHighlightedRow;
 
-        if (highlightedIndex >= 0 && highlightedIndex < visible.size()) {
-            visible.get(highlightedIndex).setHighlighted(true);
+        if (highlightedRow != null) {
+            highlightedRow.setHighlighted(true);
         }
     }
 
@@ -548,30 +555,6 @@ public class ModelSelectorPopup extends JDialog {
         }
 
         listPanel.scrollRectToVisible(scrollTarget);
-    }
-
-    private void ensureHighlightVisible() {
-        if (scrolling || highlightedIndex < 0) {
-            return;
-        }
-
-        List<ModelRowComponent> visible = visibleSelectableRows();
-        if (highlightedIndex >= visible.size()) {
-            return;
-        }
-
-        JPanel rowPanel = visible.get(highlightedIndex).panel();
-        Rectangle viewRect = scrollPane.getViewport().getViewRect();
-        Rectangle rowBounds = SwingUtilities.convertRectangle(rowPanel.getParent(), rowPanel.getBounds(), listPanel);
-
-        if (!viewRect.intersects(rowBounds)) {
-            scrolling = true;
-            try {
-                listPanel.scrollRectToVisible(rowBounds);
-            } finally {
-                scrolling = false;
-            }
-        }
     }
 
     private void registerWindowFocusListener() {
@@ -1070,7 +1053,9 @@ public class ModelSelectorPopup extends JDialog {
             return true;
         }
 
-        return LocalServiceHealth.isReachable(provider.baseUrl());
+        return SwingUtilities.isEventDispatchThread()
+                ? LocalServiceHealth.isReachableNonBlocking(provider.baseUrl())
+                : LocalServiceHealth.isReachable(provider.baseUrl());
     }
 
     private boolean isProviderCurrentlySelectable(String providerName) {
@@ -1083,7 +1068,9 @@ public class ModelSelectorPopup extends JDialog {
             return true;
         }
 
-        return LocalServiceHealth.isReachable(entry.baseUrl);
+        return SwingUtilities.isEventDispatchThread()
+                ? LocalServiceHealth.isReachableNonBlocking(entry.baseUrl)
+                : LocalServiceHealth.isReachable(entry.baseUrl);
     }
 
     private void refreshProviderSelectableState() {

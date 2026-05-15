@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.apache.commons.lang3.StringUtils;
 
@@ -50,7 +51,7 @@ public class ChatSearchPopup extends JDialog {
     private final List<UUID> resultIds = new ArrayList<>();
     private Timer debounceTimer;
     private int highlightedIndex = -1;
-    private boolean scrolling;
+    private final AtomicLong loadCounter = new AtomicLong();
     private Component triggerComponent;
     private final AWTEventListener outsideClickListener;
     private boolean outsideClickListenerInstalled;
@@ -103,7 +104,6 @@ public class ChatSearchPopup extends JDialog {
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        scrollPane.getVerticalScrollBar().addAdjustmentListener(e -> ensureHighlightVisible());
         content.add(scrollPane, BorderLayout.CENTER);
 
         setContentPane(content);
@@ -158,9 +158,7 @@ public class ChatSearchPopup extends JDialog {
     public void show(Component relativeTo) {
         this.triggerComponent = relativeTo;
         searchField.setText("");
-        listPanel.removeAll();
-        resultRows.clear();
-        showRecentChats();
+        showLoadingState("Loading chats...");
 
         setSize(360, 400);
 
@@ -175,7 +173,12 @@ public class ChatSearchPopup extends JDialog {
 
         installOutsideClickListener();
         setVisible(true);
-        searchField.requestFocusInWindow();
+        SwingUtilities.invokeLater(() -> {
+            toFront();
+            requestFocus();
+            searchField.requestFocusInWindow();
+        });
+        loadRecentChatsAsync();
     }
 
     public void hidePopup() {
@@ -361,25 +364,6 @@ public class ChatSearchPopup extends JDialog {
         listPanel.scrollRectToVisible(scrollTarget);
     }
 
-    private void ensureHighlightVisible() {
-        if (scrolling || highlightedIndex < 0 || highlightedIndex >= resultRows.size()) {
-            return;
-        }
-
-        JPanel row = resultRows.get(highlightedIndex);
-        Rectangle viewRect = scrollPane.getViewport().getViewRect();
-        Rectangle rowBounds = SwingUtilities.convertRectangle(row.getParent(), row.getBounds(), listPanel);
-
-        if (!viewRect.intersects(rowBounds)) {
-            scrolling = true;
-            try {
-                listPanel.scrollRectToVisible(rowBounds);
-            } finally {
-                scrolling = false;
-            }
-        }
-    }
-
     private int pageStep() {
         int viewportHeight = scrollPane.getViewport().getExtentSize().height;
         int rowHeight = resultRows.isEmpty() ? 36 : resultRows.getFirst().getHeight();
@@ -396,26 +380,39 @@ public class ChatSearchPopup extends JDialog {
         }
     }
 
-    private void showRecentChats() {
-        try {
-            Map<String, List<ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
-            listPanel.removeAll();
-            resultRows.clear();
-            resultIds.clear();
-            highlightedIndex = -1;
-
-            for (Map.Entry<String, List<ConversationRecord>> entry : grouped.entrySet()) {
-                addHeader(entry.getKey());
-                for (ConversationRecord rec : entry.getValue()) {
-                    addResultRow(rec.id(), rec.provider(), rec.title(), null);
-                }
+    private void loadRecentChatsAsync() {
+        long loadId = loadCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            try {
+                Map<String, List<ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
+                SwingUtilities.invokeLater(() -> applyRecentChats(loadId, grouped));
+            } catch (Exception ignored) {
+                SwingUtilities.invokeLater(() -> applyEmptyState(loadId, "No chats found"));
             }
+        });
+    }
 
-            listPanel.revalidate();
-            listPanel.repaint();
-        } catch (Exception ignored) {
-            // ignore
+    private void applyRecentChats(long loadId, Map<String, List<ConversationRecord>> grouped) {
+        if (loadCounter.get() != loadId || !isVisible()) {
+            return;
         }
+
+        listPanel.removeAll();
+        resultRows.clear();
+        resultIds.clear();
+        highlightedIndex = -1;
+
+        grouped.forEach((groupName, records) -> {
+            addHeader(groupName);
+            records.forEach(record -> addResultRow(record.id(), record.provider(), record.title(), null));
+        });
+
+        if (resultRows.isEmpty()) {
+            addEmptyState("No chats found");
+        }
+
+        listPanel.revalidate();
+        listPanel.repaint();
     }
 
     private void scheduleSearch() {
@@ -430,44 +427,72 @@ public class ChatSearchPopup extends JDialog {
     private void performSearch() {
         String query = searchField.getText().trim();
         if (query.isEmpty()) {
-            showRecentChats();
+            showLoadingState("Loading chats...");
+            loadRecentChatsAsync();
             return;
         }
 
+        long loadId = loadCounter.incrementAndGet();
+        showLoadingState("Searching...");
         Thread.startVirtualThread(() -> {
             try {
                 List<SearchResult> results = conversationRepo.search(query);
-                SwingUtilities.invokeLater(() -> {
-                    listPanel.removeAll();
-                    resultRows.clear();
-                    resultIds.clear();
-                    highlightedIndex = -1;
-
-                    if (results.isEmpty()) {
-                        JLabel noResults = new JLabel("No results found");
-                        Fonts.apply(noResults, Font.PLAIN, Fonts.SIZE_BODY);
-                        noResults.setForeground(UIManager.getColor("Label.disabledForeground"));
-                        noResults.setBorder(BorderFactory.createEmptyBorder(16, 12, 16, 12));
-                        noResults.setAlignmentX(Component.LEFT_ALIGNMENT);
-                        listPanel.add(noResults);
-                    } else {
-                        addHeader("Results");
-                        for (SearchResult result : results) {
-                            addResultRow(
-                                result.id(),
-                                result.provider(),
-                                result.title(),
-                                result.snippet());
-                        }
-                    }
-
-                    listPanel.revalidate();
-                    listPanel.repaint();
-                });
+                SwingUtilities.invokeLater(() -> applySearchResults(loadId, results));
             } catch (Exception ignored) {
-                // ignore
+                SwingUtilities.invokeLater(() -> applyEmptyState(loadId, "No results found"));
             }
         });
+    }
+
+    private void applySearchResults(long loadId, List<SearchResult> results) {
+        if (loadCounter.get() != loadId || !isVisible()) {
+            return;
+        }
+
+        listPanel.removeAll();
+        resultRows.clear();
+        resultIds.clear();
+        highlightedIndex = -1;
+
+        if (results.isEmpty()) {
+            addEmptyState("No results found");
+        } else {
+            addHeader("Results");
+            results.forEach(result -> addResultRow(
+                    result.id(),
+                    result.provider(),
+                    result.title(),
+                    result.snippet()));
+        }
+
+        listPanel.revalidate();
+        listPanel.repaint();
+    }
+
+    private void showLoadingState(String message) {
+        listPanel.removeAll();
+        resultRows.clear();
+        resultIds.clear();
+        highlightedIndex = -1;
+        addEmptyState(message);
+        listPanel.revalidate();
+        listPanel.repaint();
+    }
+
+    private void applyEmptyState(long loadId, String message) {
+        if (loadCounter.get() != loadId || !isVisible()) {
+            return;
+        }
+        showLoadingState(message);
+    }
+
+    private void addEmptyState(String message) {
+        JLabel label = new JLabel(message);
+        Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
+        label.setForeground(UIManager.getColor("Label.disabledForeground"));
+        label.setBorder(BorderFactory.createEmptyBorder(16, 12, 16, 12));
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        listPanel.add(label);
     }
 
     private void addHeader(String text) {

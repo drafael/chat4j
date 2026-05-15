@@ -24,6 +24,8 @@ import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import static java.util.Collections.emptyList;
+
 public class PromptCommandCenter extends JDialog {
 
     private static final int WIDTH = 440;
@@ -84,13 +86,18 @@ public class PromptCommandCenter extends JDialog {
         SwingUtilities.updateComponentTreeUI(this);
         getRootPane().setBorder(BorderFactory.createLineBorder(resolveBorderColor(), 1));
         searchField.setText("");
-        prompts = promptCatalogRepo.load();
+        prompts = emptyList();
         filterPrompts();
         positionNear(relativeTo);
         installOutsideClickListener();
         setVisible(true);
-        searchField.requestFocusInWindow();
-        searchField.selectAll();
+        SwingUtilities.invokeLater(() -> {
+            toFront();
+            requestFocus();
+            searchField.requestFocusInWindow();
+            searchField.selectAll();
+        });
+        loadPromptsAsync();
     }
 
     public void hidePopup() {
@@ -219,6 +226,19 @@ public class PromptCommandCenter extends JDialog {
         int next = Math.max(0, Math.min(model.size() - 1, index));
         promptList.setSelectedIndex(next);
         promptList.ensureIndexIsVisible(next);
+    }
+
+    private void loadPromptsAsync() {
+        Thread.startVirtualThread(() -> {
+            List<PromptTemplate> loadedPrompts = promptCatalogRepo.load();
+            SwingUtilities.invokeLater(() -> {
+                if (!isVisible()) {
+                    return;
+                }
+                prompts = loadedPrompts;
+                filterPrompts();
+            });
+        });
     }
 
     private void filterPrompts() {
@@ -352,6 +372,11 @@ public class PromptCommandCenter extends JDialog {
             if (command.isVisible()) {
                 command.action().run();
             }
+        }
+
+        @Override
+        public String toString() {
+            return "CommandCenterItem[title=%s]".formatted(title());
         }
     }
 
