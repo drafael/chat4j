@@ -11,9 +11,18 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.stream.Collectors.joining;
 
-final class MessageHtmlRenderer {
+/**
+ * Internal Chat4J HTML renderer for chat message content.
+ * <p>
+ * This class is public so development tools and future content-view engines can reuse the same rendering path.
+ * It is not a stable external extension API.
+ */
+public final class MessageHtmlRenderer {
 
-    String render(Role role, RenderMode renderMode, String text, boolean isDark) {
+    public MessageHtmlRenderer() {
+    }
+
+    public String render(Role role, RenderMode renderMode, String text, boolean isDark) {
         return render(role, renderMode, text, isDark, MarkdownPaletteResolver.resolve(isDark));
     }
 
