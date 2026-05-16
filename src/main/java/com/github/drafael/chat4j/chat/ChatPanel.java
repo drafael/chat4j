@@ -2494,7 +2494,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void disposeMessageViews() {
-        collectBubbles().forEach(ChatMessageView::dispose);
+        thinkingBubbles.forEach(ActivityBubble::dispose);
+        collectBubbles().stream()
+                .filter(bubble -> !bubble.isDisposed())
+                .forEach(ChatMessageView::dispose);
     }
 
     public List<Message> getHistory() {
@@ -3172,6 +3175,7 @@ public class ChatPanel extends JPanel {
 
         if (component instanceof ActivityBubble thinkingBubble) {
             thinkingBubbles.remove(thinkingBubble);
+            thinkingBubble.dispose();
         }
 
         if (component instanceof JComponent jComponent) {

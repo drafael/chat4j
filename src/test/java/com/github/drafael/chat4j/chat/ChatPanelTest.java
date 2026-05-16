@@ -99,6 +99,21 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Activity bubble disposes its embedded message renderer")
+    void dispose_whenCalled_disposesRenderedMessageView() throws Exception {
+        ActivityBubble bubble = new ActivityBubble();
+
+        SwingUtilities.invokeAndWait(() -> {
+            bubble.setText("thinking");
+            bubble.dispose();
+        });
+
+        MessageBubble renderedBubble = findComponents(bubble, MessageBubble.class).getFirst();
+        assertThat(bubble.isDisposed()).isTrue();
+        assertThat(renderedBubble.isDisposed()).isTrue();
+    }
+
+    @Test
     @DisplayName("Visible streaming listener reports active generation lifecycle")
     void onSend_whenStreamingVisible_notifiesVisibleStreamingChanges() throws Exception {
         var releaseStream = new CountDownLatch(1);

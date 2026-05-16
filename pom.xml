@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.36</version>
+    <version>26.5.37</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>

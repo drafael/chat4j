@@ -50,6 +50,7 @@ public class ActivityBubble extends JPanel {
     private boolean collapsible = true;
     private boolean streaming;
     private boolean renderValidationScheduled;
+    private boolean disposed;
 
     public ActivityBubble() {
         this("Thinking", false);
@@ -251,6 +252,27 @@ public class ActivityBubble extends JPanel {
         applyCollapsedState(collapsed);
     }
 
+    public void dispose() {
+        if (disposed) {
+            return;
+        }
+
+        disposed = true;
+        pendingCollapsedState = null;
+        renderValidationScheduled = false;
+        if (collapseDebounceTimer.isRunning()) {
+            collapseDebounceTimer.stop();
+        }
+        if (copyButtonCheckFeedbackTimer.isRunning()) {
+            copyButtonCheckFeedbackTimer.stop();
+        }
+        renderedBubble.dispose();
+    }
+
+    public boolean isDisposed() {
+        return disposed;
+    }
+
     private void toggleCollapsedDebounced() {
         if (!collapsible) {
             return;
@@ -333,6 +355,10 @@ public class ActivityBubble extends JPanel {
     }
 
     private void refreshContent() {
+        if (disposed) {
+            return;
+        }
+
         renderedBubble.setAssistantRenderMode(resolveRenderMode());
         renderedBubble.setText(fullText.toString());
 
@@ -352,14 +378,14 @@ public class ActivityBubble extends JPanel {
     }
 
     private void scheduleRenderValidation() {
-        if (renderValidationScheduled || assistantRenderMode != AssistantRenderMode.PREVIEW || streaming) {
+        if (disposed || renderValidationScheduled || assistantRenderMode != AssistantRenderMode.PREVIEW || streaming) {
             return;
         }
 
         renderValidationScheduled = true;
         SwingUtilities.invokeLater(() -> SwingUtilities.invokeLater(() -> {
             renderValidationScheduled = false;
-            if (streaming || assistantRenderMode != AssistantRenderMode.PREVIEW || !hasVisibleThinkingText(fullText.toString())) {
+            if (disposed || streaming || assistantRenderMode != AssistantRenderMode.PREVIEW || !hasVisibleThinkingText(fullText.toString())) {
                 return;
             }
 
