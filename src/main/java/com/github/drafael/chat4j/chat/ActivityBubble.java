@@ -2,12 +2,13 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.github.drafael.chat4j.chat.message.ChatMessageView;
+import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
-import javax.swing.text.BadLocationException;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
@@ -32,7 +33,8 @@ public class ActivityBubble extends JPanel {
     private final JButton copyButton;
     private final JPanel copyButtonSlot;
     private final JPanel contentPanel;
-    private final MessageBubble renderedBubble;
+    private final ChatMessageViewFactory messageViewFactory = new ChatMessageViewFactory();
+    private final ChatMessageView renderedBubble;
     private final Timer collapseDebounceTimer;
 
     private Boolean pendingCollapsedState;
@@ -146,17 +148,17 @@ public class ActivityBubble extends JPanel {
         header.add(headerStart, BorderLayout.WEST);
         header.add(copyButtonSlot, BorderLayout.EAST);
 
-        renderedBubble = new MessageBubble(Role.ASSISTANT);
-        renderedBubble.setBorder(BorderFactory.createEmptyBorder());
-        renderedBubble.setOpaque(false);
-        renderedBubble.setDoubleBuffered(true);
+        renderedBubble = messageViewFactory.create(Role.ASSISTANT);
+        renderedBubble.component().setBorder(BorderFactory.createEmptyBorder());
+        renderedBubble.component().setOpaque(false);
+        renderedBubble.component().setDoubleBuffered(true);
         renderedBubble.setAssistantRenderMode(assistantRenderMode);
 
         contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
         contentPanel.setDoubleBuffered(true);
         contentPanel.setBorder(BorderFactory.createEmptyBorder(0, TOGGLE_BUTTON_SIZE + 4, 0, 0));
-        contentPanel.add(renderedBubble, BorderLayout.CENTER);
+        contentPanel.add(renderedBubble.component(), BorderLayout.CENTER);
 
         add(header, BorderLayout.NORTH);
         add(contentPanel, BorderLayout.CENTER);
@@ -361,21 +363,12 @@ public class ActivityBubble extends JPanel {
                 return;
             }
 
-            String visible = renderedVisibleText();
-            String html = renderedBubble.getEditorPane().getText();
+            String visible = renderedBubble.contentTextSnapshot();
+            String html = renderedBubble.contentHtmlSnapshot();
             if (StringUtils.isBlank(visible) && previewLooksBlank(html)) {
                 renderAsMarkdownFallback();
             }
         }));
-    }
-
-    private String renderedVisibleText() {
-        try {
-            var document = renderedBubble.getEditorPane().getDocument();
-            return document.getText(0, document.getLength());
-        } catch (BadLocationException e) {
-            return "";
-        }
     }
 
     private void renderAsMarkdownFallback() {

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.chat;
 
-record Palette(
+public record Palette(
     String baseFontFamily,
     String baseFontFamilyAttr,
     String monoFontFamily,

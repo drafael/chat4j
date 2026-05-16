@@ -5,12 +5,12 @@ import com.github.drafael.chat4j.util.Fonts;
 import javax.swing.*;
 import java.awt.*;
 
-final class CodeFontResolver {
+public final class CodeFontResolver {
 
     private CodeFontResolver() {
     }
 
-    static int resolveCodeFontSize() {
+    public static int resolveCodeFontSize() {
         Font monoFont = UIManager.getFont("monospaced.font");
         if (monoFont == null) {
             monoFont = UIManager.getFont("TextArea.font");

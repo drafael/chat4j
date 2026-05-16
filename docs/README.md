@@ -10,6 +10,9 @@ Use this page as the canonical entry point for implementation and operational de
 - [provider-capability-architecture.md](provider-capability-architecture.md)
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
+- [configurable-web-view-engine.md](configurable-web-view-engine.md)
+  - Message rendering boundary for future Swing/JCEF web-view engine selection.
+
 - [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
   - Current GitHub Copilot authentication and runtime behavior.
 

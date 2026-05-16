@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.message.MessageBubble;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
@@ -890,7 +891,7 @@ class ChatPanelTest {
         flushEdt();
 
         MessageBubble bubble = findComponents((JPanel) readField(subject, "messagesPanel"), MessageBubble.class).getFirst();
-        JPopupMenu popup = bubble.getEditorPane().getComponentPopupMenu();
+        JPopupMenu popup = contentPopupMenu(bubble);
         JMenuItem clearChatItem = findMenuItem(popup, "Clear Chat");
 
         notifyPopupWillBecomeVisible(popup);
@@ -2085,6 +2086,14 @@ class ChatPanelTest {
 
         GridBagLayout layout = (GridBagLayout) messagesPanel.getLayout();
         return layout.getConstraints(row).gridy;
+    }
+
+    private static JPopupMenu contentPopupMenu(MessageBubble bubble) {
+        return findComponents(bubble, JComponent.class).stream()
+                .map(JComponent::getComponentPopupMenu)
+                .filter(popup -> popup != null)
+                .findFirst()
+                .orElseThrow();
     }
 
     private static <T extends Component> List<T> findComponents(Container root, Class<T> componentType) {

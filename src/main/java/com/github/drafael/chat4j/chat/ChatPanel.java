@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.message.ChatMessageView;
+import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
 import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
@@ -47,7 +49,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
-import javax.swing.text.DefaultEditorKit;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
@@ -99,6 +100,7 @@ public class ChatPanel extends JPanel {
     private static final int ASSISTANT_MESSAGE_SIDE_MARGIN = 0;
     private static final String MESSAGE_ROLE_PROPERTY = "chat4j.messageRole";
     private static final String MESSAGE_INDEX_PROPERTY = "chat4j.messageIndex";
+    private static final String MESSAGE_VIEW_PROPERTY = "chat4j.messageView";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
@@ -129,11 +131,12 @@ public class ChatPanel extends JPanel {
     private final AttachmentStager attachmentStager = new AttachmentStager();
     private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
     private final WebSearchCoordinator webSearchCoordinator = new WebSearchCoordinator(List.of(new PerplexityWebSearchProvider()));
+    private final ChatMessageViewFactory messageViewFactory = new ChatMessageViewFactory();
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
     private volatile String agentSystemPromptAppend = "";
-    private final List<MessageBubble> assistantBubbles = new ArrayList<>();
+    private final List<ChatMessageView> assistantBubbles = new ArrayList<>();
     private final List<ActivityBubble> thinkingBubbles = new ArrayList<>();
     private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
     private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
@@ -163,7 +166,7 @@ public class ChatPanel extends JPanel {
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
-    private MessageBubble currentAssistantBubble;
+    private ChatMessageView currentAssistantBubble;
     private final AtomicLong sendJobCounter = new AtomicLong();
     private final AtomicLong streamSessionCounter = new AtomicLong();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
@@ -740,7 +743,7 @@ public class ChatPanel extends JPanel {
             }
 
             if (!sendJob.agentModeEnabled) {
-                currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
+                currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addBubble(currentAssistantBubble, null, Role.ASSISTANT);
             }
         }
@@ -1584,17 +1587,18 @@ public class ChatPanel extends JPanel {
     }
 
     private void addUserBubble(Message message, int messageIndex) {
-        MessageBubble bubble = new MessageBubble(Role.USER);
-        bubble.putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
+        ChatMessageView bubble = createMessageView(Role.USER);
+        bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
+        bubble.component().putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
         bubble.setText(formatUserBubbleText(message));
         bubble.setMaxContentWidth(userBubbleMaxContentWidth());
         installBubbleContextMenu(bubble);
-        addMessageComponent(Role.USER, bubble, createAttachmentChipsPanel(userAttachmentRefs(message)));
+        addMessageComponent(Role.USER, bubble.component(), createAttachmentChipsPanel(userAttachmentRefs(message)));
     }
 
     private void refreshUserBubbleMaxWidths() {
         int maxWidth = userBubbleMaxContentWidth();
-        for (MessageBubble bubble : collectBubbles()) {
+        for (ChatMessageView bubble : collectBubbles()) {
             if (bubble.getRole() == Role.USER) {
                 bubble.setMaxContentWidth(maxWidth);
             }
@@ -1677,10 +1681,11 @@ public class ChatPanel extends JPanel {
             wrapper.add(topContent, BorderLayout.NORTH);
         }
 
-        if (primaryContent instanceof MessageBubble bubble) {
+        ChatMessageView bubble = chatMessageView(primaryContent);
+        if (bubble != null) {
             JPanel hoverGroup = new JPanel(new BorderLayout());
             hoverGroup.setOpaque(false);
-            hoverGroup.add(bubble, BorderLayout.CENTER);
+            hoverGroup.add(bubble.component(), BorderLayout.CENTER);
             JComponent actionBar = createBubbleActionBar(bubble, role);
             hoverGroup.add(actionBar, BorderLayout.SOUTH);
             installActionBarHoverListener(hoverGroup, actionBar);
@@ -1699,7 +1704,7 @@ public class ChatPanel extends JPanel {
         return wrapper;
     }
 
-    private JComponent createBubbleActionBar(MessageBubble bubble, Role role) {
+    private JComponent createBubbleActionBar(ChatMessageView bubble, Role role) {
         int alignment = role == Role.USER ? FlowLayout.RIGHT : FlowLayout.LEFT;
         JPanel bar = new JPanel(new FlowLayout(alignment, 2, 0));
         bar.setOpaque(false);
@@ -1719,7 +1724,7 @@ public class ChatPanel extends JPanel {
         return bar;
     }
 
-    private JButton createRegenerateButton(MessageBubble bubble) {
+    private JButton createRegenerateButton(ChatMessageView bubble) {
         Icon icon = chatMenuIcon("/icons/chat/refresh-cw.svg");
         String tooltip = bubble.getRole() == Role.USER
                 ? "Regenerate response"
@@ -1727,12 +1732,12 @@ public class ChatPanel extends JPanel {
         return createBubbleActionButton(icon, tooltip, () -> regenerateFromBubble(bubble));
     }
 
-    private JButton createEditMessageButton(MessageBubble bubble) {
+    private JButton createEditMessageButton(ChatMessageView bubble) {
         Icon icon = chatMenuIcon("/icons/chat/pencil.svg");
         return createBubbleActionButton(icon, "Edit message", () -> startEditingUserMessage(bubble));
     }
 
-    private JButton createCopyMessageButton(MessageBubble bubble) {
+    private JButton createCopyMessageButton(ChatMessageView bubble) {
         Icon copyIcon = chatMenuIcon("/icons/input/copy.svg");
         Icon confirmIcon = chatMenuIcon("/icons/chat/check.svg");
         JButton button = createBubbleActionButton(copyIcon, "Copy message", null);
@@ -1802,7 +1807,7 @@ public class ChatPanel extends JPanel {
         return button;
     }
 
-    private void copyBubbleTextToClipboard(MessageBubble bubble) {
+    private void copyBubbleTextToClipboard(ChatMessageView bubble) {
         copyTextToClipboard(bubble.getFullText());
     }
 
@@ -1826,7 +1831,7 @@ public class ChatPanel extends JPanel {
         clipboard.setContents(new StringSelection(text), null);
     }
 
-    private void startEditingUserMessage(MessageBubble bubble) {
+    private void startEditingUserMessage(ChatMessageView bubble) {
         if (isVisibleConversationBusy()) {
             return;
         }
@@ -1853,8 +1858,8 @@ public class ChatPanel extends JPanel {
         inputBar.requestInputFocus();
     }
 
-    private int messageIndex(MessageBubble bubble) {
-        Object value = bubble.getClientProperty(MESSAGE_INDEX_PROPERTY);
+    private int messageIndex(ChatMessageView bubble) {
+        Object value = bubble.component().getClientProperty(MESSAGE_INDEX_PROPERTY);
         return value instanceof Integer index ? index : -1;
     }
 
@@ -1939,7 +1944,7 @@ public class ChatPanel extends JPanel {
             addActivityBubble(currentAssistantWebSearchBubble, null);
         }
 
-        currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
+        currentAssistantBubble = createMessageView(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         startAssistantStream(conversationId, currentProvider);
     }
@@ -1973,11 +1978,11 @@ public class ChatPanel extends JPanel {
         inputBar.setComposerState(state.savedComposerState());
     }
 
-    private boolean canRegenerateFrom(MessageBubble bubble) {
+    private boolean canRegenerateFrom(ChatMessageView bubble) {
         if (currentProvider == null || isVisibleConversationBusy()) {
             return false;
         }
-        List<MessageBubble> bubbles = collectBubbles();
+        List<ChatMessageView> bubbles = collectBubbles();
         int bubbleIndex = bubbles.indexOf(bubble);
         if (bubbleIndex < 0 || bubbleIndex >= history.size()) {
             return false;
@@ -1990,18 +1995,18 @@ public class ChatPanel extends JPanel {
         if (currentProvider == null || isVisibleConversationBusy()) {
             return false;
         }
-        List<MessageBubble> bubbles = collectBubbles();
+        List<ChatMessageView> bubbles = collectBubbles();
         return !bubbles.isEmpty() && canRegenerateFrom(bubbles.getLast());
     }
 
     public void regenerateRecentResponse() {
-        List<MessageBubble> bubbles = collectBubbles();
+        List<ChatMessageView> bubbles = collectBubbles();
         if (!bubbles.isEmpty()) {
             regenerateFromBubble(bubbles.getLast());
         }
     }
 
-    private void regenerateFromBubble(MessageBubble bubble) {
+    private void regenerateFromBubble(ChatMessageView bubble) {
         if (currentProviderResolving) {
             inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
             return;
@@ -2014,7 +2019,7 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        List<MessageBubble> bubbles = collectBubbles();
+        List<ChatMessageView> bubbles = collectBubbles();
         int bubbleIndex = bubbles.indexOf(bubble);
         if (bubbleIndex < 0 || bubbleIndex >= history.size()) {
             return;
@@ -2042,7 +2047,7 @@ public class ChatPanel extends JPanel {
             addActivityBubble(currentAssistantWebSearchBubble, null);
         }
 
-        currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
+        currentAssistantBubble = createMessageView(Role.ASSISTANT);
         addBubble(currentAssistantBubble, null, Role.ASSISTANT);
         startAssistantStream(conversationId, currentProvider);
     }
@@ -2164,7 +2169,11 @@ public class ChatPanel extends JPanel {
         );
     }
 
-    private void addBubble(MessageBubble bubble, String text, Role role) {
+    private ChatMessageView createMessageView(Role role) {
+        return messageViewFactory.create(role);
+    }
+
+    private void addBubble(ChatMessageView bubble, String text, Role role) {
         if (role == Role.ASSISTANT) {
             bubble.setAssistantRenderMode(assistantRenderMode);
         }
@@ -2173,11 +2182,12 @@ public class ChatPanel extends JPanel {
             bubble.setText(text);
         }
 
+        bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
         if (role == Role.ASSISTANT) {
             assistantBubbles.add(bubble);
         }
         installBubbleContextMenu(bubble);
-        addMessageComponent(role, bubble, null);
+        addMessageComponent(role, bubble.component(), null);
     }
 
     private void addActivityBubble(ActivityBubble bubble, String text) {
@@ -2206,7 +2216,7 @@ public class ChatPanel extends JPanel {
             return currentAssistantWebSearchBubble;
         }
         if (bubble == currentAssistantActivityBubble || bubble == currentAssistantWebSearchBubble) {
-            return currentAssistantBubble;
+            return currentAssistantBubble == null ? null : currentAssistantBubble.component();
         }
         return null;
     }
@@ -2233,15 +2243,13 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void installBubbleContextMenu(MessageBubble bubble) {
-        JEditorPane pane = bubble.getEditorPane();
+    private void installBubbleContextMenu(ChatMessageView bubble) {
         JPopupMenu popup = buildBubbleContextMenu(bubble);
-        pane.setComponentPopupMenu(popup);
+        bubble.setContextMenu(popup);
 
         int shortcut = menuShortcutKeyMask();
         KeyStroke shiftCmdA = KeyStroke.getKeyStroke(KeyEvent.VK_A, shortcut | InputEvent.SHIFT_DOWN_MASK);
-        pane.getInputMap(JComponent.WHEN_FOCUSED).put(shiftCmdA, "selectConversation");
-        pane.getActionMap().put("selectConversation", new AbstractAction() {
+        bubble.installKeyBinding(shiftCmdA, "selectConversation", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 selectAndCopyConversation();
@@ -2249,25 +2257,14 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private JPopupMenu buildBubbleContextMenu(MessageBubble bubble) {
-        JEditorPane pane = bubble.getEditorPane();
+    private JPopupMenu buildBubbleContextMenu(ChatMessageView bubble) {
         int shortcut = menuShortcutKeyMask();
 
         JMenuItem copyItem = buildChatMenuItem(
                 "Copy",
                 "/icons/input/copy.svg",
                 KeyStroke.getKeyStroke(KeyEvent.VK_C, shortcut),
-                () -> {
-                    Action action = pane.getActionMap().get(DefaultEditorKit.copyAction);
-                    if (action != null) {
-                        ActionEvent forwarded = new ActionEvent(
-                                pane,
-                                ActionEvent.ACTION_PERFORMED,
-                                DefaultEditorKit.copyAction
-                        );
-                        action.actionPerformed(forwarded);
-                    }
-                }
+                bubble::copySelectedContent
         );
 
         JMenuItem selectMessageItem = buildChatMenuItem(
@@ -2275,8 +2272,8 @@ public class ChatPanel extends JPanel {
                 "/icons/chat/text-select.svg",
                 KeyStroke.getKeyStroke(KeyEvent.VK_A, shortcut),
                 () -> {
-                    pane.requestFocusInWindow();
-                    pane.selectAll();
+                    bubble.requestContentFocus();
+                    bubble.selectAllContent();
                 }
         );
 
@@ -2316,8 +2313,7 @@ public class ChatPanel extends JPanel {
         popup.addPopupMenuListener(new PopupMenuListener() {
             @Override
             public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
-                boolean hasSelection = pane.getSelectionStart() != pane.getSelectionEnd();
-                copyItem.setEnabled(hasSelection);
+                copyItem.setEnabled(bubble.hasContentSelection());
                 selectMessageItem.setEnabled(!bubble.getFullText().isEmpty());
                 selectConversationItem.setEnabled(hasAnyConversationText());
                 regenerateItem.setEnabled(canRegenerateFrom(bubble));
@@ -2363,15 +2359,16 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private List<MessageBubble> collectBubbles() {
-        List<MessageBubble> bubbles = new ArrayList<>();
+    private List<ChatMessageView> collectBubbles() {
+        List<ChatMessageView> bubbles = new ArrayList<>();
         collectBubbles(messagesPanel, bubbles);
         return bubbles;
     }
 
-    private void collectBubbles(Container container, List<MessageBubble> collected) {
+    private void collectBubbles(Container container, List<ChatMessageView> collected) {
         for (Component child : container.getComponents()) {
-            if (child instanceof MessageBubble bubble) {
+            ChatMessageView bubble = child instanceof JComponent component ? chatMessageView(component) : null;
+            if (bubble != null) {
                 collected.add(bubble);
             } else if (child instanceof Container nested) {
                 collectBubbles(nested, collected);
@@ -2379,15 +2376,24 @@ public class ChatPanel extends JPanel {
         }
     }
 
+    private ChatMessageView chatMessageView(JComponent component) {
+        if (component instanceof ChatMessageView view) {
+            return view;
+        }
+
+        Object value = component.getClientProperty(MESSAGE_VIEW_PROPERTY);
+        return value instanceof ChatMessageView view ? view : null;
+    }
+
     private boolean hasAnyConversationText() {
         return collectBubbles().stream().anyMatch(bubble -> !bubble.getFullText().isEmpty());
     }
 
     private void selectAndCopyConversation() {
-        List<MessageBubble> bubbles = collectBubbles();
+        List<ChatMessageView> bubbles = collectBubbles();
         StringBuilder joined = new StringBuilder();
-        for (MessageBubble bubble : bubbles) {
-            bubble.getEditorPane().selectAll();
+        for (ChatMessageView bubble : bubbles) {
+            bubble.selectAllContent();
             String text = bubble.getFullText();
             if (text.isEmpty()) {
                 continue;
@@ -2471,6 +2477,7 @@ public class ChatPanel extends JPanel {
             cancelStreaming();
         }
 
+        disposeMessageViews();
         currentAssistantWebSearchBubble = null;
         currentAssistantActivityBubble = null;
         clearCurrentAgentToolBubbleState();
@@ -2484,6 +2491,10 @@ public class ChatPanel extends JPanel {
         messagesPanel.repaint();
         messagesCardLayout.show(messagesContainer, CARD_EMPTY);
         updateClearChatButtonVisibility();
+    }
+
+    private void disposeMessageViews() {
+        collectBubbles().forEach(ChatMessageView::dispose);
     }
 
     public List<Message> getHistory() {
@@ -2533,7 +2544,7 @@ public class ChatPanel extends JPanel {
                 }
             }
 
-            addBubble(new MessageBubble(msg.role()), msg.content(), msg.role());
+            addBubble(createMessageView(msg.role()), msg.content(), msg.role());
         }
         updateClearChatButtonVisibility();
     }
@@ -2792,7 +2803,7 @@ public class ChatPanel extends JPanel {
                 return;
             }
             if (currentAssistantBubble == null) {
-                currentAssistantBubble = new MessageBubble(Role.ASSISTANT);
+                currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addBubble(currentAssistantBubble, null, Role.ASSISTANT);
             }
             currentAssistantBubble.appendText(token);
@@ -2913,7 +2924,7 @@ public class ChatPanel extends JPanel {
         if (isVisibleConversation(conversationId)) {
             history.add(assistantMessage);
             if (currentAssistantBubble == null) {
-                addBubble(new MessageBubble(Role.ASSISTANT), assistantText, Role.ASSISTANT);
+                addBubble(createMessageView(Role.ASSISTANT), assistantText, Role.ASSISTANT);
             }
             updateClearChatButtonVisibility();
         }
@@ -3161,6 +3172,17 @@ public class ChatPanel extends JPanel {
 
         if (component instanceof ActivityBubble thinkingBubble) {
             thinkingBubbles.remove(thinkingBubble);
+        }
+
+        if (component instanceof JComponent jComponent) {
+            ChatMessageView view = chatMessageView(jComponent);
+            if (view != null) {
+                view.dispose();
+                assistantBubbles.remove(view);
+                if (view == currentAssistantBubble) {
+                    currentAssistantBubble = null;
+                }
+            }
         }
 
         messagesPanel.remove(current);

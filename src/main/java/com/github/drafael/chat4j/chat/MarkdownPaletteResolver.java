@@ -4,7 +4,7 @@ import javax.swing.*;
 import java.awt.*;
 import org.apache.commons.lang3.StringUtils;
 
-final class MarkdownPaletteResolver {
+public final class MarkdownPaletteResolver {
 
     private static final Color DARK_PANEL_FALLBACK = new Color(36, 36, 38);
     private static final Color LIGHT_PANEL_FALLBACK = new Color(250, 250, 252);
@@ -22,7 +22,7 @@ final class MarkdownPaletteResolver {
     private MarkdownPaletteResolver() {
     }
 
-    static Palette resolve(boolean isDark) {
+    public static Palette resolve(boolean isDark) {
         Fonts fonts = resolveFonts();
         Colors colors = resolveColors(isDark);
 
