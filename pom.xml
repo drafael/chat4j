@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.34</version>
+    <version>26.5.35</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -526,6 +526,10 @@
                                               todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
                                               tofile="${chat4j.jpackage.input.dir}/tools/chat4j-doctor.sh"/>
+                                        <mkdir dir="${project.build.directory}/jpackage-resources/macos"/>
+                                        <copy todir="${project.build.directory}/jpackage-resources/macos">
+                                            <fileset dir="${project.basedir}/src/jpackage/macos"/>
+                                        </copy>
                                     </target>
                                 </configuration>
                             </execution>
@@ -587,12 +591,29 @@
                                         <argument>-Dsun.java2d.metal=false</argument>
                                         <argument>--icon</argument>
                                         <argument>${project.basedir}/src/main/resources/icons/icon.icns</argument>
+                                        <argument>--resource-dir</argument>
+                                        <argument>${project.build.directory}/jpackage-resources/macos</argument>
                                         <argument>--mac-package-name</argument>
                                         <argument>Chat4J</argument>
                                         <argument>--app-version</argument>
                                         <argument>${project.version}</argument>
                                         <argument>--dest</argument>
                                         <argument>${project.build.directory}/dist</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>verify-jpackage-mac-dmg</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>exec</goal>
+                                </goals>
+                                <configuration>
+                                    <skip>${chat4j.jpackage.mac.skip}</skip>
+                                    <executable>${project.basedir}/scripts/verify-macos-dmg.sh</executable>
+                                    <arguments>
+                                        <argument>${project.build.directory}/dist/Chat4J-${project.version}.dmg</argument>
+                                        <argument>Chat4J</argument>
                                     </arguments>
                                 </configuration>
                             </execution>
