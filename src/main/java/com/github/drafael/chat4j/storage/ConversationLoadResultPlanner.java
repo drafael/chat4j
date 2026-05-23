@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import lombok.NonNull;
@@ -14,14 +13,9 @@ import static java.util.Collections.emptyList;
 public class ConversationLoadResultPlanner {
 
     private final RequestFreshnessChecker requestFreshnessChecker;
-    private final ConversationModeResolver conversationModeResolver;
 
-    public ConversationLoadResultPlanner(
-            @NonNull RequestFreshnessChecker requestFreshnessChecker,
-            @NonNull ConversationModeResolver conversationModeResolver
-    ) {
+    public ConversationLoadResultPlanner(@NonNull RequestFreshnessChecker requestFreshnessChecker) {
         this.requestFreshnessChecker = requestFreshnessChecker;
-        this.conversationModeResolver = conversationModeResolver;
     }
 
     public LoadedConversationPlan planLoaded(
@@ -44,12 +38,10 @@ public class ConversationLoadResultPlanner {
                 ? null
                 : ModelSelectionCodec.format(conversation.provider(), conversation.model());
 
-        AssistantRenderMode modeToApply = conversationModeResolver.resolve(loadedConversationId);
         return LoadedConversationPlan.applyPlan(
                 loadedConversationId,
                 messages,
                 records.size(),
-                modeToApply,
                 selectedModelKey
         );
     }
@@ -68,19 +60,17 @@ public class ConversationLoadResultPlanner {
             UUID conversationId,
             List<Message> messages,
             int persistedCount,
-            AssistantRenderMode assistantRenderMode,
             String selectedModelKey
     ) {
 
         static LoadedConversationPlan ignorePlan() {
-            return new LoadedConversationPlan(true, null, emptyList(), 0, null, null);
+            return new LoadedConversationPlan(true, null, emptyList(), 0, null);
         }
 
         static LoadedConversationPlan applyPlan(
                 UUID conversationId,
                 List<Message> messages,
                 int persistedCount,
-                AssistantRenderMode assistantRenderMode,
                 String selectedModelKey
         ) {
 
@@ -89,7 +79,6 @@ public class ConversationLoadResultPlanner {
                     conversationId,
                     messages,
                     persistedCount,
-                    assistantRenderMode,
                     selectedModelKey
             );
         }
@@ -98,10 +87,5 @@ public class ConversationLoadResultPlanner {
     @FunctionalInterface
     public interface RequestFreshnessChecker {
         boolean isCurrentRequest(long requestId);
-    }
-
-    @FunctionalInterface
-    public interface ConversationModeResolver {
-        AssistantRenderMode resolve(UUID conversationId);
     }
 }

@@ -1,16 +1,16 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import lombok.NonNull;
 
 import javax.swing.JCheckBoxMenuItem;
 import java.util.function.Consumer;
 
-public class AssistantRenderModeToggleSelectionSyncCoordinator {
+public class RenderModeToggleSelectionSyncCoordinator {
 
     public boolean sync(
             JCheckBoxMenuItem togglePreviewMenuItem,
-            @NonNull AssistantRenderMode currentAssistantRenderMode,
+            @NonNull RenderMode currentRenderMode,
             @NonNull Consumer<Boolean> setSyncingPreviewMenuSelection
     ) {
 
@@ -20,7 +20,7 @@ public class AssistantRenderModeToggleSelectionSyncCoordinator {
 
         setSyncingPreviewMenuSelection.accept(true);
         try {
-            togglePreviewMenuItem.setSelected(currentAssistantRenderMode == AssistantRenderMode.PREVIEW);
+            togglePreviewMenuItem.setSelected(currentRenderMode == RenderMode.PREVIEW);
         } finally {
             setSyncingPreviewMenuSelection.accept(false);
         }

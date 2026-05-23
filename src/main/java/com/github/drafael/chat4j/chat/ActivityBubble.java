@@ -45,7 +45,7 @@ public class ActivityBubble extends JPanel {
     private Color copyButtonHoverColor = new Color(150, 150, 150);
     private StatusTone statusTone = StatusTone.DEFAULT;
 
-    private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
+    private RenderMode renderMode = RenderMode.PREVIEW;
     private boolean collapsed;
     private boolean collapsible = true;
     private boolean streaming;
@@ -153,7 +153,7 @@ public class ActivityBubble extends JPanel {
         renderedBubble.component().setBorder(BorderFactory.createEmptyBorder());
         renderedBubble.component().setOpaque(false);
         renderedBubble.component().setDoubleBuffered(true);
-        renderedBubble.setAssistantRenderMode(assistantRenderMode);
+        renderedBubble.setRenderMode(renderMode);
 
         contentPanel = new JPanel(new BorderLayout());
         contentPanel.setOpaque(false);
@@ -235,12 +235,12 @@ public class ActivityBubble extends JPanel {
         }
     }
 
-    public void setAssistantRenderMode(AssistantRenderMode assistantRenderMode) {
-        if (assistantRenderMode == null || this.assistantRenderMode == assistantRenderMode) {
+    public void setRenderMode(RenderMode renderMode) {
+        if (renderMode == null || this.renderMode == renderMode) {
             return;
         }
 
-        this.assistantRenderMode = assistantRenderMode;
+        this.renderMode = renderMode;
         refreshContent();
     }
 
@@ -359,7 +359,7 @@ public class ActivityBubble extends JPanel {
             return;
         }
 
-        renderedBubble.setAssistantRenderMode(resolveRenderMode());
+        renderedBubble.setRenderMode(resolveRenderMode());
         renderedBubble.setText(fullText.toString());
 
         if (!streaming) {
@@ -370,22 +370,22 @@ public class ActivityBubble extends JPanel {
         repaint();
     }
 
-    private AssistantRenderMode resolveRenderMode() {
+    private RenderMode resolveRenderMode() {
         if (streaming) {
-            return AssistantRenderMode.MARKDOWN;
+            return RenderMode.MARKDOWN;
         }
-        return assistantRenderMode;
+        return renderMode;
     }
 
     private void scheduleRenderValidation() {
-        if (disposed || renderValidationScheduled || assistantRenderMode != AssistantRenderMode.PREVIEW || streaming) {
+        if (disposed || renderValidationScheduled || renderMode != RenderMode.PREVIEW || streaming) {
             return;
         }
 
         renderValidationScheduled = true;
         SwingUtilities.invokeLater(() -> SwingUtilities.invokeLater(() -> {
             renderValidationScheduled = false;
-            if (disposed || streaming || assistantRenderMode != AssistantRenderMode.PREVIEW || !hasVisibleThinkingText(fullText.toString())) {
+            if (disposed || streaming || renderMode != RenderMode.PREVIEW || !hasVisibleThinkingText(fullText.toString())) {
                 return;
             }
 
@@ -398,7 +398,7 @@ public class ActivityBubble extends JPanel {
     }
 
     private void renderAsMarkdownFallback() {
-        renderedBubble.setAssistantRenderMode(AssistantRenderMode.MARKDOWN);
+        renderedBubble.setRenderMode(RenderMode.MARKDOWN);
         renderedBubble.setText(fullText.toString());
     }
 

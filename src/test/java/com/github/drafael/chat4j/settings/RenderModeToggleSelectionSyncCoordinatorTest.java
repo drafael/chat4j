@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -10,16 +10,16 @@ import java.util.ArrayList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class AssistantRenderModeToggleSelectionSyncCoordinatorTest {
+class RenderModeToggleSelectionSyncCoordinatorTest {
 
     @Test
     @DisplayName("Sync updates toggle selection and flips syncing flag around update")
     void sync_whenMenuItemPresent_updatesSelectionAndFlipsSyncFlag() {
-        var subject = new AssistantRenderModeToggleSelectionSyncCoordinator();
+        var subject = new RenderModeToggleSelectionSyncCoordinator();
         JCheckBoxMenuItem toggle = new JCheckBoxMenuItem("Toggle Preview");
         var syncStates = new ArrayList<Boolean>();
 
-        boolean synced = subject.sync(toggle, AssistantRenderMode.PREVIEW, syncStates::add);
+        boolean synced = subject.sync(toggle, RenderMode.PREVIEW, syncStates::add);
 
         assertThat(synced).isTrue();
         assertThat(toggle.isSelected()).isTrue();
@@ -29,10 +29,10 @@ class AssistantRenderModeToggleSelectionSyncCoordinatorTest {
     @Test
     @DisplayName("Sync returns false without changing sync flag when menu item is absent")
     void sync_whenMenuItemMissing_returnsFalseWithoutSyncStateChanges() {
-        var subject = new AssistantRenderModeToggleSelectionSyncCoordinator();
+        var subject = new RenderModeToggleSelectionSyncCoordinator();
         var syncStates = new ArrayList<Boolean>();
 
-        boolean synced = subject.sync(null, AssistantRenderMode.MARKDOWN, syncStates::add);
+        boolean synced = subject.sync(null, RenderMode.MARKDOWN, syncStates::add);
 
         assertThat(synced).isFalse();
         assertThat(syncStates).isEmpty();
@@ -41,12 +41,12 @@ class AssistantRenderModeToggleSelectionSyncCoordinatorTest {
     @Test
     @DisplayName("Sync always resets syncing flag even when menu selection update throws")
     void sync_whenSelectionThrows_resetsSyncFlagInFinally() {
-        var subject = new AssistantRenderModeToggleSelectionSyncCoordinator();
+        var subject = new RenderModeToggleSelectionSyncCoordinator();
         var syncStates = new ArrayList<Boolean>();
         var broken = new ThrowingCheckBoxMenuItem();
         broken.throwOnSet = true;
 
-        assertThatThrownBy(() -> subject.sync(broken, AssistantRenderMode.PREVIEW, syncStates::add))
+        assertThatThrownBy(() -> subject.sync(broken, RenderMode.PREVIEW, syncStates::add))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("boom");
         assertThat(syncStates).containsExactly(true, false);
@@ -55,14 +55,14 @@ class AssistantRenderModeToggleSelectionSyncCoordinatorTest {
     @Test
     @DisplayName("Sync validates required arguments")
     void sync_whenArgumentMissing_throwsException() {
-        var subject = new AssistantRenderModeToggleSelectionSyncCoordinator();
+        var subject = new RenderModeToggleSelectionSyncCoordinator();
 
         assertThatThrownBy(() -> subject.sync(new JCheckBoxMenuItem(), null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("currentAssistantRenderMode");
+                .hasMessageContaining("currentRenderMode");
 
-        assertThatThrownBy(() -> subject.sync(new JCheckBoxMenuItem(), AssistantRenderMode.PREVIEW, null))
+        assertThatThrownBy(() -> subject.sync(new JCheckBoxMenuItem(), RenderMode.PREVIEW, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("setSyncingPreviewMenuSelection");
     }

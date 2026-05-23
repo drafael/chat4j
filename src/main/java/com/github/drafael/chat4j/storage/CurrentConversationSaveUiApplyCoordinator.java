@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import lombok.NonNull;
 
 import java.util.UUID;
@@ -11,7 +10,6 @@ public class CurrentConversationSaveUiApplyCoordinator {
     public boolean apply(
             @NonNull CurrentConversationSaveCoordinator.SaveResult saveResult,
             @NonNull Consumer<UUID> setCurrentConversationId,
-            @NonNull Consumer<AssistantRenderMode> setPendingUnsavedConversationRenderMode,
             @NonNull Consumer<UUID> setActiveConversationId,
             @NonNull Runnable refreshSidebar,
             @NonNull Consumer<UUID> selectConversation,
@@ -24,7 +22,6 @@ public class CurrentConversationSaveUiApplyCoordinator {
 
         UUID conversationId = saveResult.conversationId();
         setCurrentConversationId.accept(conversationId);
-        setPendingUnsavedConversationRenderMode.accept(saveResult.pendingUnsavedConversationRenderMode());
         if (saveResult.createdConversation()) {
             setActiveConversationId.accept(conversationId);
         }

@@ -2,12 +2,12 @@ package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangePlanner;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangePlanner;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionDispatchCoordinator;
@@ -36,8 +36,8 @@ public class MainFrameSettingsWiringFactory {
 
     public SettingsWiring create(
             @NonNull SettingsRepo settingsRepo,
-            @NonNull AssistantRenderModeSelectionResolver assistantRenderModeSelectionResolver,
-            @NonNull AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator,
+            @NonNull RenderModeSelectionResolver renderModeSelectionResolver,
+            @NonNull RenderModeChangeUiApplyCoordinator renderModeChangeUiApplyCoordinator,
             @NonNull GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator,
             @NonNull FontSelectionNormalizer fontSelectionNormalizer,
             @NonNull FontPreviewApplier fontPreviewApplier,
@@ -46,19 +46,16 @@ public class MainFrameSettingsWiringFactory {
             @NonNull ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer,
             @NonNull ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator
     ) {
-        var assistantRenderModeSettingsCoordinator = new AssistantRenderModeSettingsCoordinator(settingsRepo);
-        var assistantRenderModeChangeCoordinator = new AssistantRenderModeChangeCoordinator(
-                new AssistantRenderModeChangePlanner(),
-                assistantRenderModeSettingsCoordinator
+        var renderModeSettingsCoordinator = new RenderModeSettingsCoordinator(settingsRepo);
+        var renderModeChangeCoordinator = new RenderModeChangeCoordinator(renderModeSettingsCoordinator);
+        var renderModeChangeDispatchCoordinator = new RenderModeChangeDispatchCoordinator(
+                renderModeChangeCoordinator,
+                renderModeChangeUiApplyCoordinator
         );
-        var assistantRenderModeChangeDispatchCoordinator = new AssistantRenderModeChangeDispatchCoordinator(
-                assistantRenderModeChangeCoordinator,
-                assistantRenderModeChangeUiApplyCoordinator
-        );
-        var generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, assistantRenderModeSettingsCoordinator);
+        var generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, renderModeSettingsCoordinator);
         var generalSettingsApplyCoordinator = new GeneralSettingsApplyCoordinator(
                 generalSettingsResolver,
-                assistantRenderModeSelectionResolver
+                renderModeSelectionResolver
         );
         var generalSettingsApplyDispatchCoordinator = new GeneralSettingsApplyDispatchCoordinator(
                 generalSettingsApplyCoordinator,
@@ -97,9 +94,9 @@ public class MainFrameSettingsWiringFactory {
         );
 
         return new SettingsWiring(
-                assistantRenderModeSettingsCoordinator,
-                assistantRenderModeChangeCoordinator,
-                assistantRenderModeChangeDispatchCoordinator,
+                renderModeSettingsCoordinator,
+                renderModeChangeCoordinator,
+                renderModeChangeDispatchCoordinator,
                 generalSettingsResolver,
                 generalSettingsApplyCoordinator,
                 generalSettingsApplyDispatchCoordinator,
@@ -120,9 +117,9 @@ public class MainFrameSettingsWiringFactory {
     }
 
     public record SettingsWiring(
-            AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator,
-            AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator,
-            AssistantRenderModeChangeDispatchCoordinator assistantRenderModeChangeDispatchCoordinator,
+            RenderModeSettingsCoordinator renderModeSettingsCoordinator,
+            RenderModeChangeCoordinator renderModeChangeCoordinator,
+            RenderModeChangeDispatchCoordinator renderModeChangeDispatchCoordinator,
             GeneralSettingsResolver generalSettingsResolver,
             GeneralSettingsApplyCoordinator generalSettingsApplyCoordinator,
             GeneralSettingsApplyDispatchCoordinator generalSettingsApplyDispatchCoordinator,

@@ -8,7 +8,14 @@ import javax.swing.event.HyperlinkEvent;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultCaret;
 import javax.swing.text.DefaultEditorKit;
+import javax.swing.text.Element;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.View;
+import javax.swing.text.ViewFactory;
+import javax.swing.text.html.HTML;
 import javax.swing.text.html.HTMLEditorKit;
+import javax.swing.text.html.InlineView;
+import javax.swing.text.html.ParagraphView;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.util.function.IntSupplier;
@@ -23,7 +30,7 @@ final class JEditorPaneMessageContentView implements MessageContentView {
         editorPane.setEditable(false);
         editorPane.setOpaque(false);
         editorPane.setContentType("text/html");
-        editorPane.setEditorKit(new HTMLEditorKit());
+        editorPane.setEditorKit(new WrappingHtmlEditorKit());
         editorPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
         if (editorPane.getCaret() instanceof DefaultCaret caret) {
             caret.setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
@@ -148,7 +155,8 @@ final class JEditorPaneMessageContentView implements MessageContentView {
             int maxContentWidth = maxContentWidthSupplier.getAsInt();
             if (role == Role.USER && maxContentWidth > 0 && maxContentWidth != Integer.MAX_VALUE) {
                 setSize(maxContentWidth, Short.MAX_VALUE);
-                return super.getPreferredSize();
+                Dimension preferredSize = super.getPreferredSize();
+                return new Dimension(Math.min(maxContentWidth, preferredSize.width), preferredSize.height);
             }
 
             Container parent = getParent();
@@ -156,6 +164,89 @@ final class JEditorPaneMessageContentView implements MessageContentView {
                 setSize(parent.getWidth(), Short.MAX_VALUE);
             }
             return super.getPreferredSize();
+        }
+    }
+
+    private static final class WrappingHtmlEditorKit extends HTMLEditorKit {
+
+        private final ViewFactory viewFactory = new HTMLFactory() {
+            @Override
+            public View create(Element element) {
+                View view = super.create(element);
+                if (view instanceof InlineView && isContentElement(element)) {
+                    return new WrappingInlineView(element);
+                }
+                if (view instanceof ParagraphView) {
+                    return new WrappingParagraphView(element);
+                }
+                return view;
+            }
+
+            private boolean isContentElement(Element element) {
+                Object name = element.getAttributes().getAttribute(StyleConstants.NameAttribute);
+                return HTML.Tag.CONTENT.equals(name);
+            }
+        };
+
+        @Override
+        public ViewFactory getViewFactory() {
+            return viewFactory;
+        }
+    }
+
+    private static final class WrappingInlineView extends InlineView {
+
+        private WrappingInlineView(Element element) {
+            super(element);
+        }
+
+        @Override
+        public int getBreakWeight(int axis, float pos, float len) {
+            if (axis == View.X_AXIS) {
+                return GoodBreakWeight;
+            }
+            return super.getBreakWeight(axis, pos, len);
+        }
+
+        @Override
+        public View breakView(int axis, int p0, float pos, float len) {
+            if (axis != View.X_AXIS) {
+                return super.breakView(axis, p0, pos, len);
+            }
+
+            checkPainter();
+            int p1 = getGlyphPainter().getBoundedPosition(this, p0, pos, len);
+            if (p1 <= p0) {
+                p1 = Math.min(p0 + 1, getEndOffset());
+            }
+            if (p0 == getStartOffset() && p1 == getEndOffset()) {
+                return this;
+            }
+            return createFragment(p0, p1);
+        }
+
+        @Override
+        public float getMinimumSpan(int axis) {
+            if (axis == View.X_AXIS) {
+                return 0;
+            }
+            return super.getMinimumSpan(axis);
+        }
+    }
+
+    private static final class WrappingParagraphView extends ParagraphView {
+
+        private WrappingParagraphView(Element element) {
+            super(element);
+        }
+
+        @Override
+        protected SizeRequirements calculateMinorAxisRequirements(int axis, SizeRequirements requirements) {
+            SizeRequirements resolvedRequirements = super.calculateMinorAxisRequirements(axis, requirements);
+            if (axis == View.X_AXIS) {
+                resolvedRequirements.minimum = 0;
+            }
+            return resolvedRequirements;
         }
     }
 }

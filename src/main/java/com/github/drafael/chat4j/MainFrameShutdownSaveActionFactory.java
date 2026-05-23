@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
@@ -20,10 +19,8 @@ public class MainFrameShutdownSaveActionFactory {
             ShutdownSaveSnapshot snapshot = capture(request);
             return () -> request.currentConversationSaveCoordinator().save(
                     snapshot.currentConversationId(),
-                    snapshot.pendingUnsavedConversationRenderMode(),
                     snapshot.history(),
                     snapshot.selectedModelKey(),
-                    snapshot.currentAssistantRenderMode(),
                     snapshot.reasoningLevel(),
                     snapshot.agentModeEnabled(),
                     snapshot.agentProjectRoot()
@@ -38,10 +35,8 @@ public class MainFrameShutdownSaveActionFactory {
     ShutdownSaveSnapshot capture(@NonNull ShutdownSaveRequest request) {
         return new ShutdownSaveSnapshot(
                 request.currentConversationIdSupplier().get(),
-                request.pendingUnsavedConversationRenderModeSupplier().get(),
                 List.copyOf(request.historySupplier().get()),
                 request.selectedModelKeySupplier().get(),
-                request.currentAssistantRenderModeSupplier().get(),
                 request.reasoningLevelSupplier().get(),
                 request.agentModeEnabledSupplier().getAsBoolean(),
                 request.agentProjectRootSupplier().get()
@@ -50,10 +45,8 @@ public class MainFrameShutdownSaveActionFactory {
 
     public record ShutdownSaveRequest(
             @NonNull Supplier<UUID> currentConversationIdSupplier,
-            @NonNull Supplier<AssistantRenderMode> pendingUnsavedConversationRenderModeSupplier,
             @NonNull Supplier<List<Message>> historySupplier,
             @NonNull Supplier<String> selectedModelKeySupplier,
-            @NonNull Supplier<AssistantRenderMode> currentAssistantRenderModeSupplier,
             @NonNull Supplier<ReasoningLevel> reasoningLevelSupplier,
             @NonNull BooleanSupplier agentModeEnabledSupplier,
             @NonNull Supplier<Path> agentProjectRootSupplier,
@@ -64,22 +57,19 @@ public class MainFrameShutdownSaveActionFactory {
 
     record ShutdownSaveSnapshot(
             UUID currentConversationId,
-            AssistantRenderMode pendingUnsavedConversationRenderMode,
             List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot
     ) {
         @Override
         public String toString() {
-            return "ShutdownSaveSnapshot[currentConversationId=%s, historySize=%d, selectedModelKey=%s, currentAssistantRenderMode=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=%s]"
+            return "ShutdownSaveSnapshot[currentConversationId=%s, historySize=%d, selectedModelKey=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=%s]"
                     .formatted(
                             currentConversationId,
                             history.size(),
                             selectedModelKey,
-                            currentAssistantRenderMode,
                             reasoningLevel,
                             agentModeEnabled,
                             agentProjectRoot

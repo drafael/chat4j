@@ -179,15 +179,17 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Chat panel exposes render mode buttons for the title bar")
+    @DisplayName("Chat panel exposes icon render mode buttons for the title bar")
     void constructor_whenCreated_restoresRenderModeButtonsOnly() {
         List<JToggleButton> renderModeButtons = findComponents(subject.getRenderTogglePanel(), JToggleButton.class);
 
         assertThat(renderModeButtons.stream().map(AbstractButton::getText))
-                .contains("Preview", "Markdown")
+                .containsOnly("");
+        assertThat(renderModeButtons.stream().map(AbstractButton::getToolTipText))
+                .contains("Preview rendered markdown", "Show raw markdown")
                 .doesNotContain("Project");
         assertThat(renderModeButtons.stream()
-                .filter(button -> Strings.CS.equals(button.getText(), "Preview"))
+                .filter(button -> Strings.CS.equals(button.getToolTipText(), "Preview rendered markdown"))
                 .findFirst()
                 .orElseThrow()
                 .isSelected()).isTrue();
@@ -869,15 +871,29 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Assistant render mode switch updates state and emits change callback")
-    void setAssistantRenderMode_whenChanged_updatesStateAndNotifiesListener() {
-        var capturedMode = new AtomicReference<AssistantRenderMode>();
-        subject.setOnAssistantRenderModeChanged(capturedMode::set);
+    @DisplayName("Render mode switch updates state and emits change callback")
+    void setRenderMode_whenChanged_updatesStateAndNotifiesListener() {
+        var capturedMode = new AtomicReference<RenderMode>();
+        subject.setOnRenderModeChanged(capturedMode::set);
 
-        subject.setAssistantRenderMode(AssistantRenderMode.MARKDOWN, true);
+        subject.setRenderMode(RenderMode.MARKDOWN, true);
 
-        assertThat(subject.getAssistantRenderMode()).isEqualTo(AssistantRenderMode.MARKDOWN);
-        assertThat(capturedMode.get()).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(subject.getRenderMode()).isEqualTo(RenderMode.MARKDOWN);
+        assertThat(capturedMode.get()).isEqualTo(RenderMode.MARKDOWN);
+    }
+
+    @Test
+    @DisplayName("Render mode buttons use icons instead of visible text")
+    void renderModeToggle_whenCreated_usesIconButtons() throws Exception {
+        JToggleButton previewToggle = (JToggleButton) readField(subject, "previewToggle");
+        JToggleButton markdownToggle = (JToggleButton) readField(subject, "markdownToggle");
+
+        assertThat(previewToggle.getText()).isEmpty();
+        assertThat(markdownToggle.getText()).isEmpty();
+        assertThat(previewToggle.getIcon()).isNotNull();
+        assertThat(markdownToggle.getIcon()).isNotNull();
+        assertThat(previewToggle.getAccessibleContext().getAccessibleName()).isEqualTo(RenderMode.PREVIEW.displayName());
+        assertThat(markdownToggle.getAccessibleContext().getAccessibleName()).isEqualTo(RenderMode.MARKDOWN.displayName());
     }
 
     @Test
@@ -925,19 +941,35 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Switching render mode rerenders loaded assistant bubbles")
-    void setAssistantRenderMode_whenHistoryLoaded_updatesAssistantBubbleModes() throws Exception {
+    @DisplayName("Switching render mode rerenders loaded user and assistant bubbles")
+    void setRenderMode_whenHistoryLoaded_updatesMessageBubbleModes() throws Exception {
         subject.loadHistory(List.of(
-                Message.user("hello"),
-                Message.assistant("**bold**")
+                Message.user("**user**"),
+                Message.assistant("**assistant**")
         ));
 
-        subject.setAssistantRenderMode(AssistantRenderMode.MARKDOWN, true);
+        subject.setRenderMode(RenderMode.MARKDOWN, true);
 
-        @SuppressWarnings("unchecked")
-        List<MessageBubble> assistantBubbles = (List<MessageBubble>) readField(subject, "assistantBubbles");
-        assertThat(assistantBubbles).hasSize(1);
-        assertThat(readBubbleRenderMode(assistantBubbles.getFirst())).isEqualTo(AssistantRenderMode.MARKDOWN);
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        List<MessageBubble> bubbles = findComponents(messagesPanel, MessageBubble.class).stream()
+                .filter(bubble -> !hasAncestor(bubble, ActivityBubble.class))
+                .toList();
+        assertThat(bubbles).hasSize(2);
+        assertThat(bubbles).allSatisfy(bubble -> assertThat(readBubbleRenderMode(bubble)).isEqualTo(RenderMode.MARKDOWN));
+        assertThat(bubbles.stream().map(MessageBubble::contentHtmlSnapshot)).allSatisfy(html -> assertThat(html).contains("**"));
+    }
+
+    @Test
+    @DisplayName("Loading another conversation keeps the selected render-mode toggle")
+    void loadHistory_whenRenderModeSelected_preservesRenderModeToggle() throws Exception {
+        subject.setRenderMode(RenderMode.MARKDOWN, true);
+
+        subject.loadHistory(List.of(Message.user("hello from another chat")));
+        flushEdt();
+
+        assertThat(subject.getRenderMode()).isEqualTo(RenderMode.MARKDOWN);
+        assertThat(((JToggleButton) readField(subject, "markdownToggle")).isSelected()).isTrue();
+        assertThat(((JToggleButton) readField(subject, "previewToggle")).isSelected()).isFalse();
     }
 
     @Test
@@ -1251,7 +1283,7 @@ class ChatPanelTest {
 
         SwingUtilities.invokeAndWait(() -> {
             subject.loadHistory(messages);
-            subject.setAssistantRenderMode(AssistantRenderMode.PREVIEW, true);
+            subject.setRenderMode(RenderMode.PREVIEW, true);
         });
         flushEdt();
 
@@ -1996,10 +2028,10 @@ class ChatPanelTest {
         field.set(chatPanel, value);
     }
 
-    private static AssistantRenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {
-        Field field = MessageBubble.class.getDeclaredField("assistantRenderMode");
+    private static RenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {
+        Field field = MessageBubble.class.getDeclaredField("renderMode");
         field.setAccessible(true);
-        return (AssistantRenderMode) field.get(bubble);
+        return (RenderMode) field.get(bubble);
     }
 
     private static JTextArea readInputTextArea(InputBar inputBar) throws Exception {

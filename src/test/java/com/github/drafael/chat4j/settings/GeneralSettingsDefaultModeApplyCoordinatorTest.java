@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -12,18 +12,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GeneralSettingsDefaultModeApplyCoordinatorTest {
 
     @Test
-    @DisplayName("Apply updates default assistant mode state and returns applied mode")
+    @DisplayName("Apply updates default render mode state and returns applied mode")
     void apply_whenCalled_updatesStateAndReturnsMode() {
         var subject = new GeneralSettingsDefaultModeApplyCoordinator();
-        var assistantMarkdownDefaultMode = new AtomicReference<AssistantRenderMode>();
+        var defaultRenderMode = new AtomicReference<RenderMode>();
 
-        AssistantRenderMode applied = subject.apply(
-                AssistantRenderMode.MARKDOWN,
-                assistantMarkdownDefaultMode::set
+        RenderMode applied = subject.apply(
+                RenderMode.MARKDOWN,
+                defaultRenderMode::set
         );
 
-        assertThat(applied).isEqualTo(AssistantRenderMode.MARKDOWN);
-        assertThat(assistantMarkdownDefaultMode.get()).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(applied).isEqualTo(RenderMode.MARKDOWN);
+        assertThat(defaultRenderMode.get()).isEqualTo(RenderMode.MARKDOWN);
     }
 
     @Test
@@ -34,10 +34,10 @@ class GeneralSettingsDefaultModeApplyCoordinatorTest {
         assertThatThrownBy(() -> subject.apply(null, value -> {
         }))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("defaultAssistantRenderMode");
+                .hasMessageContaining("defaultRenderMode");
 
-        assertThatThrownBy(() -> subject.apply(AssistantRenderMode.PREVIEW, null))
+        assertThatThrownBy(() -> subject.apply(RenderMode.PREVIEW, null))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("setAssistantMarkdownDefaultMode");
+                .hasMessageContaining("setDefaultRenderMode");
     }
 }

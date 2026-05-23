@@ -1,11 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import lombok.NonNull;
 
 public class GeneralSettingsUiApplyCoordinator {
 
-    public AssistantRenderMode apply(
+    public RenderMode apply(
             @NonNull GeneralSettingsApplyCoordinator.ApplyResult applyResult,
             @NonNull SendOnEnterApplier sendOnEnterApplier,
             @NonNull AutoScrollApplier autoScrollApplier,
@@ -17,7 +17,7 @@ public class GeneralSettingsUiApplyCoordinator {
         autoScrollApplier.apply(applyResult.autoScrollEnabled());
         renderModeApplier.apply(applyResult.modeToApply(), true);
         menuBarSettingApplier.apply(applyResult.menuBarEnabled());
-        return applyResult.defaultAssistantRenderMode();
+        return applyResult.defaultRenderMode();
     }
 
     @FunctionalInterface
@@ -32,7 +32,7 @@ public class GeneralSettingsUiApplyCoordinator {
 
     @FunctionalInterface
     public interface RenderModeApplier {
-        void apply(AssistantRenderMode mode, boolean userInitiated);
+        void apply(RenderMode mode, boolean userInitiated);
     }
 
     @FunctionalInterface

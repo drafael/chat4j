@@ -91,6 +91,7 @@ public class ChatPanel extends JPanel {
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
     private static final int CHAT_MENU_ICON_SIZE = 14;
+    private static final int RENDER_MODE_ICON_SIZE = 16;
     private static final int BUBBLE_ACTION_BUTTON_SIZE = 20;
     private static final int BUBBLE_ACTION_BAR_HEIGHT = 22;
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
@@ -138,11 +139,11 @@ public class ChatPanel extends JPanel {
     private volatile String agentSystemPromptAppend = "";
     private final List<ChatMessageView> assistantBubbles = new ArrayList<>();
     private final List<ActivityBubble> thinkingBubbles = new ArrayList<>();
-    private final JToggleButton previewToggle = new JToggleButton(AssistantRenderMode.PREVIEW.displayName());
-    private final JToggleButton markdownToggle = new JToggleButton(AssistantRenderMode.MARKDOWN.displayName());
+    private final JToggleButton previewToggle = new JToggleButton();
+    private final JToggleButton markdownToggle = new JToggleButton();
     private final JPanel renderTogglePanel;
-    private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
-    private Consumer<AssistantRenderMode> assistantRenderModeChangedListener;
+    private RenderMode renderMode = RenderMode.PREVIEW;
+    private Consumer<RenderMode> renderModeChangedListener;
     private Consumer<String> selectedModelChangedListener;
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
@@ -409,17 +410,29 @@ public class ChatPanel extends JPanel {
         group.add(previewToggle);
         group.add(markdownToggle);
 
-        configureRenderToggleButton(previewToggle, "first", "Preview rendered markdown");
-        configureRenderToggleButton(markdownToggle, "last", "Show raw markdown");
+        configureRenderToggleButton(
+                previewToggle,
+                "first",
+                "Preview rendered markdown",
+                "/icons/chat/render-preview.svg",
+                RenderMode.PREVIEW.displayName()
+        );
+        configureRenderToggleButton(
+                markdownToggle,
+                "last",
+                "Show raw markdown",
+                "/icons/chat/markdown-mark.svg",
+                RenderMode.MARKDOWN.displayName()
+        );
 
         previewToggle.addActionListener(e -> {
             if (previewToggle.isSelected()) {
-                setAssistantRenderMode(AssistantRenderMode.PREVIEW, true);
+                setRenderMode(RenderMode.PREVIEW, true);
             }
         });
         markdownToggle.addActionListener(e -> {
             if (markdownToggle.isSelected()) {
-                setAssistantRenderMode(AssistantRenderMode.MARKDOWN, true);
+                setRenderMode(RenderMode.MARKDOWN, true);
             }
         });
 
@@ -431,15 +444,28 @@ public class ChatPanel extends JPanel {
         return panel;
     }
 
-    private void configureRenderToggleButton(JToggleButton button, String segmentPosition, String tooltip) {
+    private void configureRenderToggleButton(
+            JToggleButton button,
+            String segmentPosition,
+            String tooltip,
+            String iconPath,
+            String accessibleName
+    ) {
         button.putClientProperty("JButton.buttonType", "segmented");
         button.putClientProperty("JButton.segmentPosition", segmentPosition);
         button.setFocusable(false);
         button.setToolTipText(tooltip);
+        button.getAccessibleContext().setAccessibleName(accessibleName);
+        button.setIcon(loadRenderModeIcon(iconPath));
         button.setMargin(new Insets(2, 8, 2, 8));
         Fonts.apply(button, Font.PLAIN, Fonts.SIZE_SMALL);
-        button.setPreferredSize(new Dimension(82, 22));
-        button.setMinimumSize(new Dimension(82, 22));
+        button.setPreferredSize(new Dimension(42, 22));
+        button.setMinimumSize(new Dimension(42, 22));
+    }
+
+    private Icon loadRenderModeIcon(String iconPath) {
+        URL url = ChatPanel.class.getResource(iconPath);
+        return url == null ? null : new ThemeAwareSvgIcon(url, RENDER_MODE_ICON_SIZE);
     }
 
     private void populateModels() {
@@ -1590,6 +1616,7 @@ public class ChatPanel extends JPanel {
         ChatMessageView bubble = createMessageView(Role.USER);
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
         bubble.component().putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
+        bubble.setRenderMode(renderMode);
         bubble.setText(formatUserBubbleText(message));
         bubble.setMaxContentWidth(userBubbleMaxContentWidth());
         installBubbleContextMenu(bubble);
@@ -2174,9 +2201,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void addBubble(ChatMessageView bubble, String text, Role role) {
-        if (role == Role.ASSISTANT) {
-            bubble.setAssistantRenderMode(assistantRenderMode);
-        }
+        bubble.setRenderMode(renderMode);
 
         if (text != null) {
             bubble.setText(text);
@@ -2191,7 +2216,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void addActivityBubble(ActivityBubble bubble, String text) {
-        bubble.setAssistantRenderMode(assistantRenderMode);
+        bubble.setRenderMode(renderMode);
         thinkingBubbles.add(bubble);
 
         if (text != null) {
@@ -2598,37 +2623,37 @@ public class ChatPanel extends JPanel {
         popup.showCentered(selectedProviderName, selectedModelId);
     }
 
-    public AssistantRenderMode getAssistantRenderMode() {
-        return assistantRenderMode;
+    public RenderMode getRenderMode() {
+        return renderMode;
     }
 
-    public void setAssistantRenderMode(AssistantRenderMode mode, boolean rerenderAssistantBubbles) {
-        if (mode == null || assistantRenderMode == mode) {
+    public void setRenderMode(RenderMode mode, boolean rerenderMessages) {
+        if (mode == null || renderMode == mode) {
             updateRenderModeToggleSelection();
             return;
         }
 
-        assistantRenderMode = mode;
+        renderMode = mode;
         updateRenderModeToggleSelection();
 
-        if (rerenderAssistantBubbles) {
-            assistantBubbles.forEach(bubble -> bubble.setAssistantRenderMode(mode));
-            thinkingBubbles.forEach(bubble -> bubble.setAssistantRenderMode(mode));
+        if (rerenderMessages) {
+            collectBubbles().forEach(bubble -> bubble.setRenderMode(mode));
+            thinkingBubbles.forEach(bubble -> bubble.setRenderMode(mode));
             messagesPanel.revalidate();
             messagesPanel.repaint();
         }
 
-        if (assistantRenderModeChangedListener != null) {
-            assistantRenderModeChangedListener.accept(mode);
+        if (renderModeChangedListener != null) {
+            renderModeChangedListener.accept(mode);
         }
     }
 
-    public void setOnAssistantRenderModeChanged(Consumer<AssistantRenderMode> listener) {
-        this.assistantRenderModeChangedListener = listener;
+    public void setOnRenderModeChanged(Consumer<RenderMode> listener) {
+        this.renderModeChangedListener = listener;
     }
 
     private void updateRenderModeToggleSelection() {
-        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
+        if (renderMode == RenderMode.MARKDOWN) {
             markdownToggle.setSelected(true);
         } else {
             previewToggle.setSelected(true);

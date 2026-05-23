@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.chat.message;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
 
 import javax.swing.*;
@@ -17,7 +17,7 @@ public interface ChatMessageView {
 
     String getFullText();
 
-    void setAssistantRenderMode(AssistantRenderMode assistantRenderMode);
+    void setRenderMode(RenderMode renderMode);
 
     void setMaxContentWidth(int maxContentWidth);
 

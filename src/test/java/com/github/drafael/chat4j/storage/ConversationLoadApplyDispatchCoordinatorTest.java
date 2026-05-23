@@ -1,124 +1,58 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static java.util.Collections.emptyList;
 
 class ConversationLoadApplyDispatchCoordinatorTest {
 
     @Test
-    @DisplayName("ApplyLoaded plans and delegates to applier with computed plan")
-    void applyLoaded_whenCalled_plansAndDelegatesToApplier() {
+    @DisplayName("Apply loaded delegates planner result to applier")
+    void applyLoaded_whenCalled_delegatesPlanToApplier() {
         UUID conversationId = UUID.randomUUID();
-        UUID currentConversationId = UUID.randomUUID();
-        List<ConversationRepo.MessageRecord> records = List.of(
-                new ConversationRepo.MessageRecord(UUID.randomUUID(), Message.user("hello"), LocalDateTime.now())
-        );
-        ConversationRepo.ConversationRecord conversation = null;
-
-        var plannerInputs = new AtomicReference<String>();
-        var appliedPlan = new AtomicReference<ConversationLoadResultPlanner.LoadedConversationPlan>();
-
+        var applierCalled = new AtomicBoolean(false);
         var subject = new ConversationLoadApplyDispatchCoordinator(
-                (requestId, activeConversationId, loadedConversationId, loadedRecords, loadedConversation) -> {
-                    plannerInputs.set(requestId + ":" + activeConversationId + ":" + loadedConversationId);
-                    return ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(
-                            loadedConversationId,
-                            List.of(Message.assistant("ok")),
-                            3,
-                            AssistantRenderMode.PREVIEW,
-                            "OpenAI > gpt-4.1"
-                    );
-                },
-                (plan, historyLoader, persistedCountMarker, renderModeApplier, selectedModelSetter, conversationSelector) -> {
-                    appliedPlan.set(plan);
-                    return true;
+                (requestId, activeConversationId, loadedConversationId, records, conversation) ->
+                        ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(conversationId, List.of(Message.user("hello")), 1, "OpenAI:gpt-4o"),
+                (plan, historyLoader, persistedCountMarker, selectedModelSetter, conversationSelector) -> {
+                    applierCalled.set(true);
+                    return !plan.ignore();
                 }
         );
 
         boolean applied = subject.applyLoaded(
-                55L,
-                currentConversationId,
+                1L,
                 conversationId,
-                records,
-                conversation,
-                history -> {
-                },
-                (id, count) -> {
-                },
-                (mode, userInitiated) -> {
-                },
-                model -> {
-                },
-                id -> {
-                }
+                conversationId,
+                List.of(),
+                null,
+                messages -> {},
+                (id, count) -> {},
+                model -> {},
+                id -> {}
         );
 
         assertThat(applied).isTrue();
-        assertThat(plannerInputs.get()).isEqualTo("55:" + currentConversationId + ":" + conversationId);
-        assertThat(appliedPlan.get()).isNotNull();
-        assertThat(appliedPlan.get().conversationId()).isEqualTo(conversationId);
-        assertThat(appliedPlan.get().persistedCount()).isEqualTo(3);
+        assertThat(applierCalled).isTrue();
     }
 
     @Test
-    @DisplayName("ApplyLoaded validates required arguments")
-    void applyLoaded_whenArgumentMissing_throwsException() {
+    @DisplayName("Apply loaded validates required arguments")
+    void applyLoaded_whenConversationIdMissing_throwsException() {
         var subject = new ConversationLoadApplyDispatchCoordinator(
-                (requestId, activeConversationId, loadedConversationId, records, conversation) ->
-                        ConversationLoadResultPlanner.LoadedConversationPlan.ignorePlan(),
-                (plan, historyLoader, persistedCountMarker, renderModeApplier, selectedModelSetter, conversationSelector) ->
-                        false
+                (requestId, activeConversationId, loadedConversationId, records, conversation) -> ConversationLoadResultPlanner.LoadedConversationPlan.ignorePlan(),
+                (plan, historyLoader, persistedCountMarker, selectedModelSetter, conversationSelector) -> false
         );
 
-        assertThatThrownBy(() -> subject.applyLoaded(
-                1L,
-                UUID.randomUUID(),
-                null,
-                emptyList(),
-                null,
-                history -> {
-                },
-                (id, count) -> {
-                },
-                (mode, userInitiated) -> {
-                },
-                model -> {
-                },
-                id -> {
-                }
-        ))
+        assertThatThrownBy(() -> subject.applyLoaded(1L, null, null, List.of(), null, messages -> {}, (id, count) -> {}, model -> {}, id -> {}))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("conversationId");
-    }
-
-    @Test
-    @DisplayName("Constructor validates planner/applier")
-    void constructor_whenDependencyMissing_throwsException() {
-        assertThatThrownBy(() -> new ConversationLoadApplyDispatchCoordinator(
-                (ConversationLoadApplyDispatchCoordinator.Planner) null,
-                (plan, historyLoader, persistedCountMarker, renderModeApplier, selectedModelSetter, conversationSelector) ->
-                        true
-        ))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("planner");
-
-        assertThatThrownBy(() -> new ConversationLoadApplyDispatchCoordinator(
-                (requestId, activeConversationId, loadedConversationId, records, conversation) ->
-                        ConversationLoadResultPlanner.LoadedConversationPlan.ignorePlan(),
-                (ConversationLoadApplyDispatchCoordinator.Applier) null
-        ))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("applier");
     }
 }

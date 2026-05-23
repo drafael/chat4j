@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
 import com.github.drafael.chat4j.chat.ChatSearchPopupCoordinator;
@@ -58,13 +58,13 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.AssistantRenderModeToggleCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeToggleSelectionSyncCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeToggleCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeToggleSelectionSyncCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuReadyCoordinator;
@@ -242,18 +242,18 @@ public class MainFrame extends JFrame {
     private final ModelMenuStructureRebuildCoordinator modelMenuStructureRebuildCoordinator;
     private final ModelMenuStructureRebuildApplyCoordinator modelMenuStructureRebuildApplyCoordinator =
             new ModelMenuStructureRebuildApplyCoordinator();
-    private final AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator;
+    private final RenderModeSettingsCoordinator renderModeSettingsCoordinator;
     private final MainFrameConversationRuntimeSettingsCoordinator conversationRuntimeSettingsCoordinator;
-    private final AssistantRenderModeChangeCoordinator assistantRenderModeChangeCoordinator;
-    private final AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator =
-            new AssistantRenderModeChangeUiApplyCoordinator();
-    private final AssistantRenderModeChangeDispatchCoordinator assistantRenderModeChangeDispatchCoordinator;
-    private final AssistantRenderModeToggleCoordinator assistantRenderModeToggleCoordinator =
-            new AssistantRenderModeToggleCoordinator();
-    private final AssistantRenderModeToggleSelectionSyncCoordinator assistantRenderModeToggleSelectionSyncCoordinator =
-            new AssistantRenderModeToggleSelectionSyncCoordinator();
-    private final AssistantRenderModeSelectionResolver assistantRenderModeSelectionResolver =
-            new AssistantRenderModeSelectionResolver();
+    private final RenderModeChangeCoordinator renderModeChangeCoordinator;
+    private final RenderModeChangeUiApplyCoordinator renderModeChangeUiApplyCoordinator =
+            new RenderModeChangeUiApplyCoordinator();
+    private final RenderModeChangeDispatchCoordinator renderModeChangeDispatchCoordinator;
+    private final RenderModeToggleCoordinator renderModeToggleCoordinator =
+            new RenderModeToggleCoordinator();
+    private final RenderModeToggleSelectionSyncCoordinator renderModeToggleSelectionSyncCoordinator =
+            new RenderModeToggleSelectionSyncCoordinator();
+    private final RenderModeSelectionResolver renderModeSelectionResolver =
+            new RenderModeSelectionResolver();
     private final GeneralSettingsResolver generalSettingsResolver;
     private final GeneralSettingsApplyCoordinator generalSettingsApplyCoordinator;
     private final GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator =
@@ -339,7 +339,7 @@ public class MainFrame extends JFrame {
     private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
     private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
     private final ChatSearchPopupCoordinator chatSearchPopupCoordinator = new ChatSearchPopupCoordinator();
-    private final MainFrameAssistantRenderModeState assistantRenderModeState = new MainFrameAssistantRenderModeState();
+    private final MainFrameRenderModeState renderModeState = new MainFrameRenderModeState();
     private final SettingsDialogCoordinator settingsDialogCoordinator = new SettingsDialogCoordinator();
     private final SettingsOpenDispatchCoordinator settingsOpenDispatchCoordinator = new SettingsOpenDispatchCoordinator();
     private final SettingsOpenFlowCoordinator settingsOpenFlowCoordinator =
@@ -401,8 +401,8 @@ public class MainFrame extends JFrame {
                 providerMenuEmptyStateFactory,
                 providerModelMenuItemFactory,
                 providerFavoritesSectionAppender,
-                assistantRenderModeSelectionResolver,
-                assistantRenderModeChangeUiApplyCoordinator,
+                renderModeSelectionResolver,
+                renderModeChangeUiApplyCoordinator,
                 generalSettingsUiApplyCoordinator,
                 fontSelectionNormalizer,
                 fontPreviewApplier,
@@ -411,8 +411,7 @@ public class MainFrame extends JFrame {
                 themeMenuSelectionSynchronizer,
                 themeMenuSelectionApplyCoordinator,
                 menuPopupVisibleRunner,
-                persistedMessageCounter,
-                this::resolveConversationRenderMode
+                persistedMessageCounter
         ));
 
         var providerMenuWiring = dependencies.providerMenuWiring();
@@ -430,10 +429,10 @@ public class MainFrame extends JFrame {
         this.modelMenuStructureRebuildCoordinator = providerMenuWiring.modelMenuStructureRebuildCoordinator();
 
         var settingsWiring = dependencies.settingsWiring();
-        this.assistantRenderModeSettingsCoordinator = settingsWiring.assistantRenderModeSettingsCoordinator();
-        this.assistantRenderModeChangeCoordinator = settingsWiring.assistantRenderModeChangeCoordinator();
-        this.assistantRenderModeChangeDispatchCoordinator =
-                settingsWiring.assistantRenderModeChangeDispatchCoordinator();
+        this.renderModeSettingsCoordinator = settingsWiring.renderModeSettingsCoordinator();
+        this.renderModeChangeCoordinator = settingsWiring.renderModeChangeCoordinator();
+        this.renderModeChangeDispatchCoordinator =
+                settingsWiring.renderModeChangeDispatchCoordinator();
         this.generalSettingsResolver = settingsWiring.generalSettingsResolver();
         this.generalSettingsApplyCoordinator = settingsWiring.generalSettingsApplyCoordinator();
         this.generalSettingsApplyDispatchCoordinator = settingsWiring.generalSettingsApplyDispatchCoordinator();
@@ -560,7 +559,7 @@ public class MainFrame extends JFrame {
 
     private ChatPanel createConfiguredChatPanel() {
         ChatPanel panel = new ChatPanel(modelCacheService, modelFavoritesService);
-        panel.setOnAssistantRenderModeChanged(this::onAssistantRenderModeChanged);
+        panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
@@ -671,15 +670,13 @@ public class MainFrame extends JFrame {
         newChatCoordinator.start(
                 () -> saveCurrentConversation(false),
                 conversationState::clearCurrentConversationId,
-                conversationState::clearPendingUnsavedConversationRenderMode,
                 () -> chatPanel.setActiveConversationId(null),
                 sidebarPanel::clearSelection,
                 chatPanel::clearChatView,
                 this::resetConversationRuntimeState,
-                assistantRenderModeState.defaultAssistantRenderMode(),
-                chatPanel::setAssistantRenderMode,
                 () -> chatPanel.getInputBar().requestInputFocus()
         );
+        applyCurrentRenderMode();
     }
 
     private void loadConversation(UUID id) {
@@ -687,12 +684,12 @@ public class MainFrame extends JFrame {
                 id,
                 () -> saveCurrentConversation(false),
                 conversationState::setCurrentConversationId,
-                conversationState::clearPendingUnsavedConversationRenderMode,
                 chatPanel::setActiveConversationId,
                 conversationLoadCoordinator::loadAsync,
                 this::applyLoadedConversation,
                 this::handleConversationLoadFailure
         );
+        applyCurrentRenderMode();
     }
 
     private void confirmClearCurrentChat() {
@@ -736,20 +733,16 @@ public class MainFrame extends JFrame {
 
         currentConversationSaveDispatchCoordinator.save(
                 currentConversationId,
-                conversationState.pendingUnsavedConversationRenderMode(),
                 history,
                 chatPanel.getSelectedModel(),
-                chatPanel.getAssistantRenderMode(),
                 chatPanel.getInputBar().getReasoningLevel(),
                 chatPanel.getInputBar().isAgentModeRequested(),
                 chatPanel.getInputBar().getAgentProjectRoot(),
-                (conversationId, pendingMode, messages, selectedModel, renderMode, reasoningLevel, agentModeEnabled, agentProjectRoot) ->
+                (conversationId, messages, selectedModel, reasoningLevel, agentModeEnabled, agentProjectRoot) ->
                         saveConversationAndRetitleIfNeeded(
                                 conversationId,
-                                pendingMode,
                                 messages,
                                 selectedModel,
-                                renderMode,
                                 reasoningLevel,
                                 agentModeEnabled,
                                 agentProjectRoot,
@@ -758,7 +751,6 @@ public class MainFrame extends JFrame {
                 saveResult -> currentConversationSaveUiApplyCoordinator.apply(
                         saveResult,
                         conversationState::setCurrentConversationId,
-                        conversationState::setPendingUnsavedConversationRenderMode,
                         chatPanel::setActiveConversationId,
                         sidebarPanel::refresh,
                         sidebarPanel::selectConversation,
@@ -770,10 +762,8 @@ public class MainFrame extends JFrame {
 
     private CurrentConversationSaveCoordinator.SaveResult saveConversationAndRetitleIfNeeded(
             UUID currentConversationId,
-            AssistantRenderMode pendingUnsavedConversationRenderMode,
             List<Message> history,
             String selectedModelKey,
-            AssistantRenderMode currentAssistantRenderMode,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
@@ -781,10 +771,8 @@ public class MainFrame extends JFrame {
     ) throws Exception {
         CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
                 currentConversationId,
-                pendingUnsavedConversationRenderMode,
                 history,
                 selectedModelKey,
-                currentAssistantRenderMode,
                 reasoningLevel,
                 agentModeEnabled,
                 agentProjectRoot
@@ -839,10 +827,8 @@ public class MainFrame extends JFrame {
     private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveAction() {
         return shutdownSaveActionFactory.create(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
                 conversationState::currentConversationId,
-                conversationState::pendingUnsavedConversationRenderMode,
                 chatPanel::getHistory,
                 chatPanel::getSelectedModel,
-                chatPanel::getAssistantRenderMode,
                 chatPanel.getInputBar()::getReasoningLevel,
                 chatPanel.getInputBar()::isAgentModeRequested,
                 chatPanel.getInputBar()::getAgentProjectRoot,
@@ -865,17 +851,22 @@ public class MainFrame extends JFrame {
                 conversation,
                 chatPanel::loadHistory,
                 conversationPersistenceCoordinator::markConversationLoaded,
-                chatPanel::setAssistantRenderMode,
                 chatPanel::setSelectedModel,
                 sidebarPanel::selectConversation
         );
 
         if (applied) {
+            applyCurrentRenderMode();
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
                     conversation,
                     runtimeSettingsTarget()
             );
         }
+    }
+
+    private void applyCurrentRenderMode() {
+        chatPanel.setRenderMode(renderModeState.defaultRenderMode(), true);
+        syncTogglePreviewMenuSelection();
     }
 
     private void resetConversationRuntimeState() {
@@ -1227,22 +1218,17 @@ public class MainFrame extends JFrame {
     }
 
     private void applyGeneralSettings() {
-        AssistantRenderMode defaultAssistantRenderMode = generalSettingsApplyDispatchCoordinator.apply(
+        RenderMode defaultRenderMode = generalSettingsApplyDispatchCoordinator.apply(
                 SystemInfo.isMacOS,
-                conversationState.currentConversationId(),
-                conversationState.currentConversationId() != null
-                        ? resolveConversationRenderMode(conversationState.currentConversationId())
-                        : null,
-                conversationState.pendingUnsavedConversationRenderMode(),
                 sendOnEnter -> chatPanel.getInputBar().setSendOnEnter(sendOnEnter),
                 chatPanel::setAutoScrollEnabled,
-                chatPanel::setAssistantRenderMode,
+                chatPanel::setRenderMode,
                 this::applyMenuBarSetting
         );
 
         generalSettingsDefaultModeApplyCoordinator.apply(
-                defaultAssistantRenderMode,
-                assistantRenderModeState::setDefaultAssistantRenderMode
+                defaultRenderMode,
+                renderModeState::setDefaultRenderMode
         );
 
         applyAgentModeSettings();
@@ -1332,10 +1318,10 @@ public class MainFrame extends JFrame {
                         this::toggleSidebar,
                         () -> chatPanel.showModelPopupCentered(),
                         () -> openChatSearch(null),
-                        selected -> assistantRenderModeToggleCoordinator.apply(
+                        selected -> renderModeToggleCoordinator.apply(
                                 selected,
                                 previewMenuState.syncingPreviewMenuSelection(),
-                                chatPanel::setAssistantRenderMode
+                                chatPanel::setRenderMode
                         ),
                         this::ensureThemesMenuReady,
                         this::ensureFontMenuReady,
@@ -1380,9 +1366,9 @@ public class MainFrame extends JFrame {
     }
 
     private void syncTogglePreviewMenuSelection() {
-        assistantRenderModeToggleSelectionSyncCoordinator.sync(
+        renderModeToggleSelectionSyncCoordinator.sync(
                 previewMenuState.togglePreviewMenuItem(),
-                chatPanel.getAssistantRenderMode(),
+                chatPanel.getRenderMode(),
                 previewMenuState::setSyncingPreviewMenuSelection
         );
     }
@@ -1484,21 +1470,12 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void onAssistantRenderModeChanged(AssistantRenderMode mode) {
-        assistantRenderModeChangeDispatchCoordinator.apply(
-                conversationState.currentConversationId(),
+    private void onRenderModeChanged(RenderMode mode) {
+        renderModeChangeDispatchCoordinator.apply(
                 mode,
-                conversationState.pendingUnsavedConversationRenderMode(),
-                this::syncTogglePreviewMenuSelection,
-                conversationState::setPendingUnsavedConversationRenderMode
+                this::syncTogglePreviewMenuSelection
         );
-    }
-
-    private AssistantRenderMode resolveConversationRenderMode(UUID conversationId) {
-        return assistantRenderModeSettingsCoordinator.resolveConversationMode(
-                conversationId,
-                assistantRenderModeState.defaultAssistantRenderMode()
-        );
+        renderModeState.setDefaultRenderMode(mode);
     }
 
 }

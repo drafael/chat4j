@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.chat.message;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
 
 import javax.swing.*;
@@ -12,7 +12,7 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     private static final int ARC = 16;
 
     private final Role role;
-    private AssistantRenderMode assistantRenderMode = AssistantRenderMode.PREVIEW;
+    private RenderMode renderMode = RenderMode.PREVIEW;
     private final StringBuilder fullText = new StringBuilder();
     private final MessageHtmlRenderer messageHtmlRenderer;
     private final MessageContentView contentView;
@@ -107,13 +107,13 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     }
 
     @Override
-    public void setAssistantRenderMode(AssistantRenderMode assistantRenderMode) {
-        if (assistantRenderMode == null || role != Role.ASSISTANT) {
+    public void setRenderMode(RenderMode renderMode) {
+        if (renderMode == null) {
             return;
         }
 
-        if (this.assistantRenderMode != assistantRenderMode) {
-            this.assistantRenderMode = assistantRenderMode;
+        if (this.renderMode != renderMode) {
+            this.renderMode = renderMode;
             renderContent();
         }
     }
@@ -121,7 +121,7 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     private void renderContent() {
         String text = fullText.toString();
         boolean isDark = detectDarkMode();
-        contentView.setHtml(messageHtmlRenderer.render(role, assistantRenderMode, text, isDark));
+        contentView.setHtml(messageHtmlRenderer.render(role, renderMode, text, isDark));
 
         revalidate();
         contentView.component().repaint();

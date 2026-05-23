@@ -9,11 +9,8 @@ import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppend
 import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
-import com.github.drafael.chat4j.provider.api.Message;
-import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
@@ -21,7 +18,6 @@ import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
-import com.github.drafael.chat4j.storage.ConversationLoadResultPlanner;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.PersistedMessageCounter;
@@ -32,10 +28,6 @@ import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,42 +58,6 @@ class MainFrameDependenciesFactoryTest {
     }
 
     @Test
-    @DisplayName("Conversation wiring planner uses provided conversation mode resolver")
-    void create_whenConversationModeResolverProvided_plannerAppliesProvidedMode() {
-        var subject = new MainFrameDependenciesFactory();
-        var dependencies = subject.create(context(conversationId -> AssistantRenderMode.MARKDOWN));
-        var planner = dependencies.conversationWiring().conversationLoadResultPlanner();
-        var conversationId = UUID.randomUUID();
-
-        var plan = planner.planLoaded(
-                0,
-                conversationId,
-                conversationId,
-                List.of(new ConversationRepo.MessageRecord(
-                        UUID.randomUUID(),
-                        Message.user("hello"),
-                        LocalDateTime.now()
-                )),
-                new ConversationRepo.ConversationRecord(
-                        conversationId,
-                        "demo",
-                        "OpenAI",
-                        "gpt-4.1",
-                        false,
-                        "off",
-                        false,
-                        null,
-                        LocalDateTime.now(),
-                        LocalDateTime.now()
-                )
-        );
-
-        assertThat(plan.ignore()).isFalse();
-        assertThat(plan.assistantRenderMode()).isEqualTo(AssistantRenderMode.MARKDOWN);
-        assertThat(plan.selectedModelKey()).isEqualTo(ModelSelectionCodec.format("OpenAI", "gpt-4.1"));
-    }
-
-    @Test
     @DisplayName("Dependencies context validates required components")
     void dependenciesContext_whenComponentMissing_throwsException() {
         assertThatThrownBy(() -> new MainFrameDependenciesFactory.DependenciesContext(
@@ -122,8 +78,8 @@ class MainFrameDependenciesFactoryTest {
                                 new ProviderMenuIconResolver(new ProviderMenuIconTintResolver(), MainFrame.class)
                         )
                 ),
-                new AssistantRenderModeSelectionResolver(),
-                new AssistantRenderModeChangeUiApplyCoordinator(),
+                new RenderModeSelectionResolver(),
+                new RenderModeChangeUiApplyCoordinator(),
                 new GeneralSettingsUiApplyCoordinator(),
                 new FontSelectionNormalizer(),
                 new FontPreviewApplier(),
@@ -132,20 +88,13 @@ class MainFrameDependenciesFactoryTest {
                 new ThemeMenuSelectionSynchronizer(),
                 new ThemeMenuSelectionApplyCoordinator(),
                 new MenuPopupVisibleRunner(),
-                new PersistedMessageCounter(),
-                conversationId -> null
+                new PersistedMessageCounter()
         ))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("settingsRepo");
     }
 
     private MainFrameDependenciesFactory.DependenciesContext context() {
-        return context(conversationId -> AssistantRenderMode.PREVIEW);
-    }
-
-    private MainFrameDependenciesFactory.DependenciesContext context(
-            ConversationLoadResultPlanner.ConversationModeResolver conversationModeResolver
-    ) {
         var providerMenuIconResolver = new ProviderMenuIconResolver(
                 new ProviderMenuIconTintResolver(),
                 MainFrameDependenciesFactoryTest.class
@@ -164,8 +113,8 @@ class MainFrameDependenciesFactoryTest {
                 new ProviderMenuEmptyStateFactory(),
                 providerModelMenuItemFactory,
                 new ProviderFavoritesSectionAppender(providerModelMenuItemFactory),
-                new AssistantRenderModeSelectionResolver(),
-                new AssistantRenderModeChangeUiApplyCoordinator(),
+                new RenderModeSelectionResolver(),
+                new RenderModeChangeUiApplyCoordinator(),
                 new GeneralSettingsUiApplyCoordinator(),
                 new FontSelectionNormalizer(),
                 new FontPreviewApplier(),
@@ -174,8 +123,7 @@ class MainFrameDependenciesFactoryTest {
                 new ThemeMenuSelectionSynchronizer(),
                 new ThemeMenuSelectionApplyCoordinator(),
                 new MenuPopupVisibleRunner(),
-                new PersistedMessageCounter(),
-                conversationModeResolver
+                new PersistedMessageCounter()
         );
     }
 }

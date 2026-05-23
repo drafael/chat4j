@@ -1,18 +1,18 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import lombok.NonNull;
 
 import java.util.function.Consumer;
 
 public class GeneralSettingsDefaultModeApplyCoordinator {
 
-    public AssistantRenderMode apply(
-            @NonNull AssistantRenderMode defaultAssistantRenderMode,
-            @NonNull Consumer<AssistantRenderMode> setAssistantMarkdownDefaultMode
+    public RenderMode apply(
+            @NonNull RenderMode defaultRenderMode,
+            @NonNull Consumer<RenderMode> setDefaultRenderMode
     ) {
 
-        setAssistantMarkdownDefaultMode.accept(defaultAssistantRenderMode);
-        return defaultAssistantRenderMode;
+        setDefaultRenderMode.accept(defaultRenderMode);
+        return defaultRenderMode;
     }
 }

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.formdev.flatlaf.util.SystemInfo;
@@ -19,7 +19,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
     private static final String KEY_SEND = SettingsKeys.CHAT_SEND_KEY;
     private static final String KEY_AUTO_SCROLL = SettingsKeys.CHAT_AUTO_SCROLL;
-    private static final String KEY_ASSISTANT_MARKDOWN_DEFAULT = SettingsKeys.CHAT_RENDER_MODE;
+    private static final String KEY_RENDER_MODE_DEFAULT = SettingsKeys.CHAT_RENDER_MODE;
     private static final String KEY_MENU_BAR_ENABLED = SettingsKeys.MENU_BAR_ENABLED;
     private static final String KEY_AGENT_SYSTEM_PROMPT_APPEND = SettingsKeys.CHAT_AGENT_SYSTEM_PROMPT_APPEND;
 
@@ -50,11 +50,11 @@ public class GeneralPanel extends AbstractSettingsPanel {
         row = addCheckBoxRow(form, gbc, row, autoScroll, "Scroll chat to bottom");
         bindCheckBox(autoScroll, KEY_AUTO_SCROLL, true, null);
 
-        JComboBox<String> markdownDefault = withPreferredWidth(
-                new JComboBox<>(assistantModeSettingValues()),
+        JComboBox<String> renderModeDefault = withPreferredWidth(
+                new JComboBox<>(renderModeSettingValues()),
                 220
         );
-        markdownDefault.setRenderer(new DefaultListCellRenderer() {
+        renderModeDefault.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(
                     JList<?> list,
@@ -72,17 +72,17 @@ public class GeneralPanel extends AbstractSettingsPanel {
                 );
 
                 if (value instanceof String modeValue) {
-                    label.setText(assistantModeDisplayName(modeValue));
+                    label.setText(renderModeDisplayName(modeValue));
                 }
                 return label;
             }
         });
-        addRow(form, gbc, row++, "Assistant display mode", markdownDefault);
+        addRow(form, gbc, row++, "Message display mode", renderModeDefault);
         bindComboBox(
-                markdownDefault,
-                KEY_ASSISTANT_MARKDOWN_DEFAULT,
-                AssistantRenderMode.PREVIEW.settingValue(),
-                assistantModeValidator(),
+                renderModeDefault,
+                KEY_RENDER_MODE_DEFAULT,
+                RenderMode.PREVIEW.settingValue(),
+                renderModeValidator(),
                 null
         );
         row = addSectionHint(form, gbc, row, "Chat settings are applied immediately.");
@@ -119,35 +119,35 @@ public class GeneralPanel extends AbstractSettingsPanel {
         addVerticalSpacer(form, gbc, row);
     }
 
-    private static String[] assistantModeSettingValues() {
-        return Arrays.stream(AssistantRenderMode.values())
-                .map(AssistantRenderMode::settingValue)
+    private static String[] renderModeSettingValues() {
+        return Arrays.stream(RenderMode.values())
+                .map(RenderMode::settingValue)
                 .toArray(String[]::new);
     }
 
-    private SettingsValidator<String> assistantModeValidator() {
+    private SettingsValidator<String> renderModeValidator() {
         return value -> {
-            AssistantRenderMode mode = assistantModeFromValue(value);
+            RenderMode mode = renderModeFromValue(value);
             if (mode == null) {
-                return ValidationResult.invalid("Invalid markdown render mode", AssistantRenderMode.PREVIEW.settingValue());
+                return ValidationResult.invalid("Invalid markdown render mode", RenderMode.PREVIEW.settingValue());
             }
 
             return ValidationResult.valid(mode.settingValue());
         };
     }
 
-    private static String assistantModeDisplayName(String settingValue) {
-        AssistantRenderMode mode = assistantModeFromValue(settingValue);
-        return mode != null ? mode.displayName() : AssistantRenderMode.PREVIEW.displayName();
+    private static String renderModeDisplayName(String settingValue) {
+        RenderMode mode = renderModeFromValue(settingValue);
+        return mode != null ? mode.displayName() : RenderMode.PREVIEW.displayName();
     }
 
-    private static AssistantRenderMode assistantModeFromValue(String value) {
+    private static RenderMode renderModeFromValue(String value) {
         if (StringUtils.isBlank(value)) {
             return null;
         }
 
         String normalized = value.trim();
-        return Arrays.stream(AssistantRenderMode.values())
+        return Arrays.stream(RenderMode.values())
                 .filter(mode -> mode.settingValue().equalsIgnoreCase(normalized) || mode.name().equalsIgnoreCase(normalized))
                 .findFirst()
                 .orElse(null);

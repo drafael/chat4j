@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
@@ -32,8 +32,8 @@ class MainFrameSettingsWiringFactoryTest {
 
         MainFrameSettingsWiringFactory.SettingsWiring wiring = subject.create(
                 settingsRepo,
-                new AssistantRenderModeSelectionResolver(),
-                new AssistantRenderModeChangeUiApplyCoordinator(),
+                new RenderModeSelectionResolver(),
+                new RenderModeChangeUiApplyCoordinator(),
                 new GeneralSettingsUiApplyCoordinator(),
                 new FontSelectionNormalizer(),
                 new FontPreviewApplier(),
@@ -43,9 +43,9 @@ class MainFrameSettingsWiringFactoryTest {
                 new ThemeMenuSelectionApplyCoordinator()
         );
 
-        assertThat(wiring.assistantRenderModeSettingsCoordinator()).isNotNull();
-        assertThat(wiring.assistantRenderModeChangeCoordinator()).isNotNull();
-        assertThat(wiring.assistantRenderModeChangeDispatchCoordinator()).isNotNull();
+        assertThat(wiring.renderModeSettingsCoordinator()).isNotNull();
+        assertThat(wiring.renderModeChangeCoordinator()).isNotNull();
+        assertThat(wiring.renderModeChangeDispatchCoordinator()).isNotNull();
         assertThat(wiring.generalSettingsResolver()).isNotNull();
         assertThat(wiring.generalSettingsApplyCoordinator()).isNotNull();
         assertThat(wiring.generalSettingsApplyDispatchCoordinator()).isNotNull();
@@ -71,8 +71,8 @@ class MainFrameSettingsWiringFactoryTest {
 
         assertThatThrownBy(() -> subject.create(
                 null,
-                new AssistantRenderModeSelectionResolver(),
-                new AssistantRenderModeChangeUiApplyCoordinator(),
+                new RenderModeSelectionResolver(),
+                new RenderModeChangeUiApplyCoordinator(),
                 new GeneralSettingsUiApplyCoordinator(),
                 new FontSelectionNormalizer(),
                 new FontPreviewApplier(),

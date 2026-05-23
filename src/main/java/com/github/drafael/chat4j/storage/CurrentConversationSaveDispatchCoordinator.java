@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import lombok.NonNull;
@@ -13,10 +12,8 @@ public class CurrentConversationSaveDispatchCoordinator {
 
     public void save(
             UUID currentConversationId,
-            AssistantRenderMode pendingUnsavedConversationRenderMode,
             @NonNull List<Message> history,
             String selectedModelKey,
-            @NonNull AssistantRenderMode currentAssistantRenderMode,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
@@ -27,10 +24,8 @@ public class CurrentConversationSaveDispatchCoordinator {
         try {
             CurrentConversationSaveCoordinator.SaveResult saveResult = saveAction.save(
                     currentConversationId,
-                    pendingUnsavedConversationRenderMode,
                     history,
                     selectedModelKey,
-                    currentAssistantRenderMode,
                     reasoningLevel,
                     agentModeEnabled,
                     agentProjectRoot
@@ -45,10 +40,8 @@ public class CurrentConversationSaveDispatchCoordinator {
     public interface SaveAction {
         CurrentConversationSaveCoordinator.SaveResult save(
                 UUID currentConversationId,
-                AssistantRenderMode pendingUnsavedConversationRenderMode,
                 @NonNull List<Message> history,
                 String selectedModelKey,
-                @NonNull AssistantRenderMode currentAssistantRenderMode,
                 ReasoningLevel reasoningLevel,
                 boolean agentModeEnabled,
                 Path agentProjectRoot

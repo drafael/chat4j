@@ -35,7 +35,6 @@ public class ConversationLoadApplyDispatchCoordinator {
             ConversationRepo.ConversationRecord conversation,
             @NonNull Consumer<List<Message>> historyLoader,
             @NonNull ConversationLoadApplyCoordinator.PersistedCountMarker persistedCountMarker,
-            @NonNull ConversationLoadApplyCoordinator.RenderModeApplier renderModeApplier,
             @NonNull Consumer<String> selectedModelSetter,
             @NonNull Consumer<UUID> conversationSelector
     ) {
@@ -47,7 +46,6 @@ public class ConversationLoadApplyDispatchCoordinator {
                 plan,
                 historyLoader,
                 persistedCountMarker,
-                renderModeApplier,
                 selectedModelSetter,
                 conversationSelector
         );
@@ -70,7 +68,6 @@ public class ConversationLoadApplyDispatchCoordinator {
                 ConversationLoadResultPlanner.LoadedConversationPlan plan,
                 Consumer<List<Message>> historyLoader,
                 ConversationLoadApplyCoordinator.PersistedCountMarker persistedCountMarker,
-                ConversationLoadApplyCoordinator.RenderModeApplier renderModeApplier,
                 Consumer<String> selectedModelSetter,
                 Consumer<UUID> conversationSelector
         );

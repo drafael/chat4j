@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.message;
 
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,19 @@ class MessageBubbleTest {
         assertThat(html).contains("badge fallback");
         assertThat(html).doesNotContain("[SKILL]");
         assertThat(html).doesNotContain("[FALLBACK]");
+    }
+
+    @Test
+    @DisplayName("User bubble rerenders when render mode changes")
+    void setRenderMode_whenUserMessageRendered_updatesContent() {
+        MessageBubble subject = new MessageBubble(Role.USER);
+        subject.setText("**bold**");
+
+        subject.setRenderMode(RenderMode.MARKDOWN);
+        String html = readEditorText(subject);
+
+        assertThat(html).contains("**bold**");
+        assertThat(html).doesNotContain("<b>bold</b>");
     }
 
     private String readEditorText(MessageBubble bubble) {

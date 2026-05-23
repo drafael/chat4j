@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import lombok.NonNull;
 
@@ -14,7 +13,6 @@ public class ConversationLoadApplyCoordinator {
             @NonNull ConversationLoadResultPlanner.LoadedConversationPlan plan,
             @NonNull Consumer<List<Message>> historyLoader,
             @NonNull PersistedCountMarker persistedCountMarker,
-            @NonNull RenderModeApplier renderModeApplier,
             @NonNull Consumer<String> selectedModelSetter,
             @NonNull Consumer<UUID> conversationSelector
     ) {
@@ -25,7 +23,6 @@ public class ConversationLoadApplyCoordinator {
 
         historyLoader.accept(plan.messages());
         persistedCountMarker.mark(plan.conversationId(), plan.persistedCount());
-        renderModeApplier.apply(plan.assistantRenderMode(), true);
         if (plan.selectedModelKey() != null) {
             selectedModelSetter.accept(plan.selectedModelKey());
         }
@@ -36,10 +33,5 @@ public class ConversationLoadApplyCoordinator {
     @FunctionalInterface
     public interface PersistedCountMarker {
         void mark(UUID conversationId, int persistedCount);
-    }
-
-    @FunctionalInterface
-    public interface RenderModeApplier {
-        void apply(AssistantRenderMode mode, boolean userInitiated);
     }
 }

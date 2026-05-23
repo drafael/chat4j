@@ -1,9 +1,9 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import lombok.NonNull;
 
-public class AssistantRenderModeToggleCoordinator {
+public class RenderModeToggleCoordinator {
 
     public boolean apply(
         boolean previewSelected,
@@ -15,15 +15,15 @@ public class AssistantRenderModeToggleCoordinator {
             return false;
         }
 
-        AssistantRenderMode mode = previewSelected
-                ? AssistantRenderMode.PREVIEW
-                : AssistantRenderMode.MARKDOWN;
+        RenderMode mode = previewSelected
+                ? RenderMode.PREVIEW
+                : RenderMode.MARKDOWN;
         renderModeApplier.apply(mode, true);
         return true;
     }
 
     @FunctionalInterface
     public interface RenderModeApplier {
-        void apply(AssistantRenderMode mode, boolean userInitiated);
+        void apply(RenderMode mode, boolean userInitiated);
     }
 }

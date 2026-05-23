@@ -7,8 +7,8 @@ import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppend
 import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.settings.AssistantRenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.AssistantRenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
@@ -68,8 +68,8 @@ public class MainFrameDependenciesFactory {
         );
         var settingsWiring = settingsWiringFactory.create(
                 context.settingsRepo(),
-                context.assistantRenderModeSelectionResolver(),
-                context.assistantRenderModeChangeUiApplyCoordinator(),
+                context.renderModeSelectionResolver(),
+                context.renderModeChangeUiApplyCoordinator(),
                 context.generalSettingsUiApplyCoordinator(),
                 context.fontSelectionNormalizer(),
                 context.fontPreviewApplier(),
@@ -84,9 +84,7 @@ public class MainFrameDependenciesFactory {
         );
         var conversationWiring = conversationWiringFactory.create(
                 context.conversationRepo(),
-                context.persistedMessageCounter(),
-                settingsWiring.assistantRenderModeSettingsCoordinator(),
-                context.conversationModeResolver()
+                context.persistedMessageCounter()
         );
 
         return new MainFrameDependencies(
@@ -109,8 +107,8 @@ public class MainFrameDependenciesFactory {
             @NonNull ProviderMenuEmptyStateFactory providerMenuEmptyStateFactory,
             @NonNull ProviderModelMenuItemFactory providerModelMenuItemFactory,
             @NonNull ProviderFavoritesSectionAppender providerFavoritesSectionAppender,
-            @NonNull AssistantRenderModeSelectionResolver assistantRenderModeSelectionResolver,
-            @NonNull AssistantRenderModeChangeUiApplyCoordinator assistantRenderModeChangeUiApplyCoordinator,
+            @NonNull RenderModeSelectionResolver renderModeSelectionResolver,
+            @NonNull RenderModeChangeUiApplyCoordinator renderModeChangeUiApplyCoordinator,
             @NonNull GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator,
             @NonNull FontSelectionNormalizer fontSelectionNormalizer,
             @NonNull FontPreviewApplier fontPreviewApplier,
@@ -119,8 +117,7 @@ public class MainFrameDependenciesFactory {
             @NonNull ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer,
             @NonNull ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator,
             @NonNull MenuPopupVisibleRunner menuPopupVisibleRunner,
-            @NonNull PersistedMessageCounter persistedMessageCounter,
-            @NonNull ConversationLoadResultPlanner.ConversationModeResolver conversationModeResolver
+            @NonNull PersistedMessageCounter persistedMessageCounter
     ) {
     }
 

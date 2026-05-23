@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
@@ -37,10 +36,8 @@ class MainFrameShutdownSaveActionFactoryTest {
 
         ShutdownSaveDispatchCoordinator.SaveAction saveAction = subject.create(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
                 () -> conversationId,
-                () -> AssistantRenderMode.MARKDOWN,
                 () -> history,
                 () -> "OpenAI:gpt-4o",
-                () -> AssistantRenderMode.PREVIEW,
                 () -> ReasoningLevel.HIGH,
                 () -> true,
                 () -> projectRoot,
@@ -56,10 +53,8 @@ class MainFrameShutdownSaveActionFactoryTest {
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass(List.class);
         verify(saveCoordinator).save(
                 eq(conversationId),
-                eq(AssistantRenderMode.MARKDOWN),
                 historyCaptor.capture(),
                 eq("OpenAI:gpt-4o"),
-                eq(AssistantRenderMode.PREVIEW),
                 eq(ReasoningLevel.HIGH),
                 eq(true),
                 eq(projectRoot)
@@ -79,12 +74,10 @@ class MainFrameShutdownSaveActionFactoryTest {
 
         ShutdownSaveDispatchCoordinator.SaveAction saveAction = subject.create(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
                 () -> UUID.randomUUID(),
-                () -> null,
                 () -> {
                     throw failure;
                 },
                 () -> "OpenAI:gpt-4o",
-                () -> AssistantRenderMode.PREVIEW,
                 () -> ReasoningLevel.OFF,
                 () -> false,
                 () -> null,
@@ -95,16 +88,7 @@ class MainFrameShutdownSaveActionFactoryTest {
         saveAction.save();
 
         assertThat(capturedFailure).hasValue(failure);
-        verify(saveCoordinator, never()).save(
-                any(),
-                any(),
-                any(),
-                any(),
-                any(),
-                any(),
-                anyBoolean(),
-                any()
-        );
+        verify(saveCoordinator, never()).save(any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -112,10 +96,8 @@ class MainFrameShutdownSaveActionFactoryTest {
     void toString_whenSnapshotContainsMessages_masksMessageContent() {
         MainFrameShutdownSaveActionFactory.ShutdownSaveSnapshot snapshot = subject.capture(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
                 () -> UUID.randomUUID(),
-                () -> null,
                 () -> List.of(Message.user("secret chat text")),
                 () -> "OpenAI:gpt-4o",
-                () -> AssistantRenderMode.PREVIEW,
                 () -> ReasoningLevel.OFF,
                 () -> false,
                 () -> null,

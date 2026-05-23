@@ -1,9 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import lombok.NonNull;
-
-import java.util.UUID;
 
 public class GeneralSettingsApplyCoordinator {
 
@@ -12,9 +10,9 @@ public class GeneralSettingsApplyCoordinator {
 
     public GeneralSettingsApplyCoordinator(
             GeneralSettingsResolver generalSettingsResolver,
-            AssistantRenderModeSelectionResolver assistantRenderModeSelectionResolver
+            RenderModeSelectionResolver renderModeSelectionResolver
     ) {
-        this(generalSettingsResolver::resolve, assistantRenderModeSelectionResolver::resolve);
+        this(generalSettingsResolver::resolve, renderModeSelectionResolver::resolve);
     }
 
     GeneralSettingsApplyCoordinator(@NonNull SettingsResolver settingsResolver, @NonNull ModeResolver modeResolver) {
@@ -22,25 +20,14 @@ public class GeneralSettingsApplyCoordinator {
         this.modeResolver = modeResolver;
     }
 
-    public ApplyResult apply(
-            boolean isMacOs,
-            UUID currentConversationId,
-            AssistantRenderMode conversationRenderMode,
-            AssistantRenderMode pendingUnsavedConversationRenderMode
-    ) {
+    public ApplyResult apply(boolean isMacOs) {
         GeneralSettingsResolver.GeneralSettings generalSettings = settingsResolver.resolve(isMacOs);
-
-        AssistantRenderMode modeToApply = modeResolver.resolve(
-                currentConversationId,
-                conversationRenderMode,
-                pendingUnsavedConversationRenderMode,
-                generalSettings.defaultAssistantRenderMode()
-        );
+        RenderMode modeToApply = modeResolver.resolve(generalSettings.defaultRenderMode());
 
         return new ApplyResult(
                 generalSettings.sendOnEnter(),
                 generalSettings.autoScrollEnabled(),
-                generalSettings.defaultAssistantRenderMode(),
+                generalSettings.defaultRenderMode(),
                 modeToApply,
                 generalSettings.menuBarEnabled()
         );
@@ -49,8 +36,8 @@ public class GeneralSettingsApplyCoordinator {
     public record ApplyResult(
             boolean sendOnEnter,
             boolean autoScrollEnabled,
-            AssistantRenderMode defaultAssistantRenderMode,
-            AssistantRenderMode modeToApply,
+            RenderMode defaultRenderMode,
+            RenderMode modeToApply,
             boolean menuBarEnabled
     ) {
     }
@@ -62,11 +49,6 @@ public class GeneralSettingsApplyCoordinator {
 
     @FunctionalInterface
     interface ModeResolver {
-        AssistantRenderMode resolve(
-                UUID currentConversationId,
-                AssistantRenderMode conversationRenderMode,
-                AssistantRenderMode pendingUnsavedConversationRenderMode,
-                AssistantRenderMode defaultMode
-        );
+        RenderMode resolve(RenderMode defaultMode);
     }
 }

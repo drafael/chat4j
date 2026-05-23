@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,19 +13,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GeneralSettingsUiApplyCoordinatorTest {
 
     @Test
-    @DisplayName("Apply updates UI settings in order and returns default assistant render mode")
+    @DisplayName("Apply updates UI settings in order and returns default render mode")
     void apply_whenCalled_updatesUiSettingsAndReturnsDefaultMode() {
         var subject = new GeneralSettingsUiApplyCoordinator();
         var applyResult = new GeneralSettingsApplyCoordinator.ApplyResult(
                 true,
                 false,
-                AssistantRenderMode.MARKDOWN,
-                AssistantRenderMode.PREVIEW,
+                RenderMode.MARKDOWN,
+                RenderMode.PREVIEW,
                 true
         );
         var calls = new ArrayList<String>();
 
-        AssistantRenderMode returnedDefaultMode = subject.apply(
+        RenderMode returnedDefaultMode = subject.apply(
                 applyResult,
                 sendOnEnter -> calls.add("send-on-enter:%s".formatted(sendOnEnter)),
                 autoScrollEnabled -> calls.add("auto-scroll:%s".formatted(autoScrollEnabled)),
@@ -33,7 +33,7 @@ class GeneralSettingsUiApplyCoordinatorTest {
                 enabled -> calls.add("menu-bar:%s".formatted(enabled))
         );
 
-        assertThat(returnedDefaultMode).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(returnedDefaultMode).isEqualTo(RenderMode.MARKDOWN);
         assertThat(calls).containsExactly(
                 "send-on-enter:true",
                 "auto-scroll:false",
@@ -49,8 +49,8 @@ class GeneralSettingsUiApplyCoordinatorTest {
         var applyResult = new GeneralSettingsApplyCoordinator.ApplyResult(
                 true,
                 false,
-                AssistantRenderMode.MARKDOWN,
-                AssistantRenderMode.PREVIEW,
+                RenderMode.MARKDOWN,
+                RenderMode.PREVIEW,
                 true
         );
 

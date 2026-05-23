@@ -1,10 +1,10 @@
 package com.github.drafael.chat4j.chat.message;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
 import com.github.drafael.chat4j.chat.CodeFontResolver;
 import com.github.drafael.chat4j.chat.MarkdownPaletteResolver;
 import com.github.drafael.chat4j.chat.MarkdownRenderer;
 import com.github.drafael.chat4j.chat.Palette;
+import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
@@ -13,15 +13,17 @@ import static java.util.stream.Collectors.joining;
 
 final class MessageHtmlRenderer {
 
-    String render(Role role, AssistantRenderMode assistantRenderMode, String text, boolean isDark) {
+    String render(Role role, RenderMode renderMode, String text, boolean isDark) {
         Palette palette = MarkdownPaletteResolver.resolve(isDark);
         String safeText = StringUtils.defaultString(text);
 
         if (role == Role.USER) {
-            return toUserHtml(safeText, palette, isDark);
+            return renderMode == RenderMode.MARKDOWN
+                    ? toEscapedHtml(safeText, palette, true)
+                    : toUserMarkdownHtml(safeText, palette, isDark);
         }
 
-        if (assistantRenderMode == AssistantRenderMode.MARKDOWN) {
+        if (renderMode == RenderMode.MARKDOWN) {
             return toEscapedHtml(safeText, palette, true);
         }
 
@@ -29,38 +31,64 @@ final class MessageHtmlRenderer {
     }
 
     String toEscapedHtml(String text, Palette palette, boolean monospaced) {
-        String escaped = escapeHtml(text).replace("\n", "<br>");
+        String escaped = escapeHtml(text);
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
         int fontSize = monospaced ? CodeFontResolver.resolveCodeFontSize() : Fonts.scale(Fonts.SIZE_SMALL);
-        return "<html><head><style>body { font-family: %s; font-size: %dpx; line-height: 1.4; color: %s; margin: 0; padding: 0; }</style></head><body>%s</body></html>"
-                .formatted(fontFamily, fontSize, palette.textColor(), escaped);
+        return "<html><head><style>body { color: %s; margin: 0; padding: 0; } pre { font-family: %s; font-size: %dpx; line-height: 1.4; margin: 0; padding: 0; white-space: pre-wrap; word-wrap: break-word; }</style></head><body><pre>%s</pre></body></html>"
+                .formatted(palette.textColor(), fontFamily, fontSize, escaped);
     }
 
-    String toUserHtml(String text, Palette palette, boolean isDark) {
+    String toUserMarkdownHtml(String text, Palette palette, boolean isDark) {
         String badgeBackground = isDark ? "#2d4f8f" : "#dbeafe";
         String badgeText = isDark ? "#dbeafe" : "#1e3a8a";
         String fallbackBackground = isDark ? "#5c3a16" : "#ffedd5";
         String fallbackText = isDark ? "#fed7aa" : "#9a3412";
+        StringBuilder badgeHtml = new StringBuilder();
+        String markdown = text.lines()
+                .filter(line -> appendBadgeLine(line, badgeHtml, badgeBackground, badgeText, fallbackBackground, fallbackText))
+                .collect(joining("\n"));
 
-        String body = text.lines()
-                .map(line -> toUserLineHtml(line, badgeBackground, badgeText, fallbackBackground, fallbackText))
-                .collect(joining());
+        String html = MarkdownRenderer.toHtml(markdown, isDark);
+        if (badgeHtml.isEmpty()) {
+            return html;
+        }
 
-        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
-        int badgeFontSize = Fonts.scale(Fonts.SIZE_BADGE);
-        return "<html><head><style>body { font-family: %s; font-size: %dpx; line-height: 1.45; color: %s; margin: 0; padding: 0; }.line { margin: 0 0 3px 0; }.badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: %dpx; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }.skill { background: %s; color: %s; }.fallback { background: %s; color: %s; }</style></head><body>%s</body></html>"
-                .formatted(
-                        palette.baseFontFamily(),
-                        bodyFontSize,
-                        palette.textColor(),
-                        badgeFontSize,
-                        badgeBackground,
-                        badgeText,
-                        fallbackBackground,
-                        fallbackText,
-                        body
-                );
+        return html
+                .replace("</style>", "%s</style>".formatted(userBadgeCss(badgeFontSize(), badgeBackground, badgeText, fallbackBackground, fallbackText)))
+                .replace("<body>", "<body>%s".formatted(badgeHtml));
+    }
+
+    private boolean appendBadgeLine(String line,
+                                    StringBuilder badgeHtml,
+                                    String skillBadgeBackground,
+                                    String skillBadgeText,
+                                    String fallbackBadgeBackground,
+                                    String fallbackBadgeText
+    ) {
+        if (line.startsWith("[SKILL] ") || line.startsWith("[FALLBACK] ")) {
+            badgeHtml.append(toUserLineHtml(line, skillBadgeBackground, skillBadgeText, fallbackBadgeBackground, fallbackBadgeText));
+            return false;
+        }
+        return true;
+    }
+
+    private String userBadgeCss(int badgeFontSize,
+                                String badgeBackground,
+                                String badgeText,
+                                String fallbackBackground,
+                                String fallbackText
+    ) {
+        return """
+                .line { margin: 0 0 3px 0; }
+                .badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: %dpx; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }
+                .skill { background: %s; color: %s; }
+                .fallback { background: %s; color: %s; }
+                """.formatted(badgeFontSize, badgeBackground, badgeText, fallbackBackground, fallbackText);
+    }
+
+    private int badgeFontSize() {
+        return Fonts.scale(Fonts.SIZE_BADGE);
     }
 
     private String toUserLineHtml(String line,

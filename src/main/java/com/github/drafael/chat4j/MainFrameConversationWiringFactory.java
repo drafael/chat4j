@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.settings.AssistantRenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
 import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
 import com.github.drafael.chat4j.storage.ConversationLoadApplyCoordinator;
@@ -18,15 +17,10 @@ public class MainFrameConversationWiringFactory {
 
     public ConversationWiring create(
             @NonNull ConversationRepo conversationRepo,
-            @NonNull PersistedMessageCounter persistedMessageCounter,
-            @NonNull AssistantRenderModeSettingsCoordinator assistantRenderModeSettingsCoordinator,
-            @NonNull ConversationLoadResultPlanner.ConversationModeResolver conversationModeResolver
+            @NonNull PersistedMessageCounter persistedMessageCounter
     ) {
         var conversationLoadCoordinator = new ConversationLoadCoordinator(conversationRepo);
-        var conversationLoadResultPlanner = new ConversationLoadResultPlanner(
-                conversationLoadCoordinator::isCurrentRequest,
-                conversationModeResolver
-        );
+        var conversationLoadResultPlanner = new ConversationLoadResultPlanner(conversationLoadCoordinator::isCurrentRequest);
         var conversationLoadApplyDispatchCoordinator = new ConversationLoadApplyDispatchCoordinator(
                 conversationLoadResultPlanner,
                 new ConversationLoadApplyCoordinator()
@@ -40,8 +34,7 @@ public class MainFrameConversationWiringFactory {
         );
         var currentConversationSaveCoordinator = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
-                conversationPersistenceCoordinator,
-                assistantRenderModeSettingsCoordinator
+                conversationPersistenceCoordinator
         );
 
         return new ConversationWiring(

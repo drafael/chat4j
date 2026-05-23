@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.AssistantRenderMode;
+import com.github.drafael.chat4j.chat.RenderMode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -10,12 +10,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class AssistantRenderModeToggleCoordinatorTest {
+class RenderModeToggleCoordinatorTest {
 
     @Test
     @DisplayName("Apply returns false and skips render mode apply when preview menu selection is syncing")
     void apply_whenSyncingSelection_returnsFalseAndSkipsApply() {
-        var subject = new AssistantRenderModeToggleCoordinator();
+        var subject = new RenderModeToggleCoordinator();
         var applyCalls = new AtomicInteger();
 
         boolean handled = subject.apply(true, true, (mode, userInitiated) -> applyCalls.incrementAndGet());
@@ -27,8 +27,8 @@ class AssistantRenderModeToggleCoordinatorTest {
     @Test
     @DisplayName("Apply maps selected preview toggle to preview render mode")
     void apply_whenPreviewSelected_appliesPreviewMode() {
-        var subject = new AssistantRenderModeToggleCoordinator();
-        var appliedMode = new AtomicReference<AssistantRenderMode>();
+        var subject = new RenderModeToggleCoordinator();
+        var appliedMode = new AtomicReference<RenderMode>();
         var userInitiated = new AtomicReference<Boolean>();
 
         boolean handled = subject.apply(true, false, (mode, applyUserInitiated) -> {
@@ -37,26 +37,26 @@ class AssistantRenderModeToggleCoordinatorTest {
         });
 
         assertThat(handled).isTrue();
-        assertThat(appliedMode.get()).isEqualTo(AssistantRenderMode.PREVIEW);
+        assertThat(appliedMode.get()).isEqualTo(RenderMode.PREVIEW);
         assertThat(userInitiated.get()).isTrue();
     }
 
     @Test
     @DisplayName("Apply maps unselected preview toggle to markdown render mode")
     void apply_whenPreviewUnselected_appliesMarkdownMode() {
-        var subject = new AssistantRenderModeToggleCoordinator();
-        var appliedMode = new AtomicReference<AssistantRenderMode>();
+        var subject = new RenderModeToggleCoordinator();
+        var appliedMode = new AtomicReference<RenderMode>();
 
         boolean handled = subject.apply(false, false, (mode, userInitiated) -> appliedMode.set(mode));
 
         assertThat(handled).isTrue();
-        assertThat(appliedMode.get()).isEqualTo(AssistantRenderMode.MARKDOWN);
+        assertThat(appliedMode.get()).isEqualTo(RenderMode.MARKDOWN);
     }
 
     @Test
     @DisplayName("Apply validates render mode applier")
     void apply_whenApplierMissing_throwsException() {
-        var subject = new AssistantRenderModeToggleCoordinator();
+        var subject = new RenderModeToggleCoordinator();
 
         assertThatThrownBy(() -> subject.apply(true, false, null))
                 .isInstanceOf(NullPointerException.class)

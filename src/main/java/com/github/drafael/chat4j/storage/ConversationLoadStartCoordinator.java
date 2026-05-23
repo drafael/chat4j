@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.storage;
 
-
 import lombok.NonNull;
+
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -17,7 +17,6 @@ public class ConversationLoadStartCoordinator {
             @NonNull UUID conversationId,
             @NonNull Runnable saveCurrentConversation,
             @NonNull Consumer<UUID> setCurrentConversationId,
-            @NonNull Runnable clearPendingUnsavedConversationRenderMode,
             @NonNull Consumer<UUID> setActiveConversationId,
             @NonNull ConversationLoadDispatchCoordinator.AsyncLoader asyncLoader,
             @NonNull ConversationLoadDispatchCoordinator.LoadedHandler onLoaded,
@@ -26,7 +25,6 @@ public class ConversationLoadStartCoordinator {
 
         saveCurrentConversation.run();
         setCurrentConversationId.accept(conversationId);
-        clearPendingUnsavedConversationRenderMode.run();
         setActiveConversationId.accept(conversationId);
 
         return conversationLoadDispatchCoordinator.dispatch(conversationId, asyncLoader, onLoaded, onFailure);
