@@ -6,7 +6,7 @@ Chat4J prepares chat message rendering for multiple web-view engines through a m
 
 - Keep current chat rendering behavior unchanged.
 - Isolate Swing `JEditorPane` behind a replaceable content-view implementation.
-- Make a future JCEF renderer additive instead of invasive.
+- Make future native renderers such as JCEF or SwingWebView additive instead of invasive.
 - Avoid exposing `JEditorPane`, Swing documents, or Swing copy/select actions to chat orchestration code.
 - Ensure message views have lifecycle hooks so native/browser resources can be released later.
 
@@ -86,7 +86,7 @@ For now, the selected engine is hardcoded to Swing `JEditorPane` in `ChatMessage
 
 ## Lifecycle
 
-`ChatMessageView.dispose()` is called when message views are removed or when chat history is cleared/reloaded. The Swing implementation currently marks itself disposed and detaches its popup menu. This hook is intentionally in place for future JCEF support, where native browser resources will require explicit cleanup.
+`ChatMessageView.dispose()` is called when message views are removed or when chat history is cleared/reloaded. The Swing implementation currently marks itself disposed and detaches its popup menu. This hook is intentionally in place for future native browser support, where JCEF or SwingWebView resources will require explicit cleanup.
 
 ## External Links
 
@@ -98,16 +98,32 @@ External link handling is centralized in `ExternalLinkSupport`. Allowed schemes 
 
 Unsafe schemes such as `javascript:`, `file:`, and `data:` are rejected before opening links with the desktop browser.
 
-## Future JCEF Follow-up
+## Native WebView Spikes
 
-JCEF support should be added as a separate milestone:
+Opt-in native renderer spike notes:
 
-1. Add a `WebViewEngine` enum, initially with `SWING` and `JCEF`.
+- SwingWebView findings: [swingwebview-findings.md](swingwebview-findings.md)
+
+The separate JCEF spike remains on the `jcef-spike` branch.
+
+Run the SwingWebView spike manually with:
+
+```bash
+mvn -Pswingwebview-spike compile exec:java
+```
+
+The spike writes generated pages under `target/swingwebview-spike-pages` and does not affect default builds.
+
+## Future Native WebView Follow-up
+
+Native web-view support should be added as a separate milestone:
+
+1. Add a `WebViewEngine` enum, initially with `SWING` plus whichever native engine is selected.
 2. Add a persisted setting such as `chat4j.chat.webView.engine`.
 3. Add settings UI for engine selection.
-4. Implement `JcefMessageContentView`.
+4. Implement a native `MessageContentView` such as `JcefMessageContentView` or `SwingWebViewMessageContentView`.
 5. Update `ChatMessageViewFactory` to select the configured engine.
-6. Fall back to Swing if JCEF initialization fails.
+6. Fall back to Swing if native initialization fails.
 7. Handle native binaries, jpackage integration, platform support, app shutdown, and disposal semantics.
 
 ## Verification

@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.5.41</version>
+    <version>26.5.42</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -486,6 +486,48 @@
                                 <format>HTML</format>
                                 <format>JSON</format>
                             </formats>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>swingwebview-spike</id>
+            <dependencies>
+                <dependency>
+                    <groupId>ca.weblite</groupId>
+                    <artifactId>webview</artifactId>
+                    <version>1.0.7</version>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-swingwebview-spike-sources</id>
+                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>add-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${project.basedir}/src/swingwebview-spike/java</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.4.1</version>
+                        <configuration>
+                            <mainClass>com.github.drafael.chat4j.chat.message.SwingWebViewSpikeFrame</mainClass>
                         </configuration>
                     </plugin>
                 </plugins>

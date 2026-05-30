@@ -11,7 +11,10 @@ Use this page as the canonical entry point for implementation and operational de
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
 - [configurable-web-view-engine.md](configurable-web-view-engine.md)
-  - Message rendering boundary for future Swing/JCEF web-view engine selection.
+  - Message rendering boundary for future Swing/native web-view engine selection.
+
+- [swingwebview-findings.md](swingwebview-findings.md)
+  - Research findings and spike notes for `webliteca/swingwebview` as a native message renderer candidate.
 
 - [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
   - Current GitHub Copilot authentication and runtime behavior.

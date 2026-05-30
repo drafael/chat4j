@@ -47,9 +47,6 @@ public final class MarkdownPaletteResolver {
     private static Fonts resolveFonts() {
         Font defaultFont = UIManager.getFont("defaultFont");
         Font monospaceFont = UIManager.getFont("monospaced.font");
-        if (monospaceFont == null) {
-            monospaceFont = UIManager.getFont("TextArea.font");
-        }
         return new Fonts(
                 cssFontStack(defaultFont, BASE_FONT_FALLBACK_STACK),
                 htmlFontFace(defaultFont, BASE_FONT_FALLBACK_FACE),
