@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.chat.message;
 
-import com.formdev.flatlaf.util.SystemInfo;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Arrays;
@@ -24,10 +23,6 @@ public enum ChatWebViewEngine {
 
     public String displayName() {
         return displayName;
-    }
-
-    public static ChatWebViewEngine defaultForCurrentPlatform() {
-        return SystemInfo.isMacOS ? SWING_WEBVIEW : JEDITOR_PANE;
     }
 
     public static ChatWebViewEngine fromSettingValue(String value) {

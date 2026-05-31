@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat.message;
 
 import ca.weblite.webview.swing.WebViewComponent;
+import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
@@ -8,24 +9,39 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 public final class ChatWebViewRuntimeStatusResolver {
 
     private final SettingsRepo settingsRepo;
     private final BooleanSupplier macOsSupplier;
+    private final BooleanSupplier windowsSupplier;
+    private final Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier;
 
     public ChatWebViewRuntimeStatusResolver(@NonNull SettingsRepo settingsRepo) {
-        this(settingsRepo, () -> ChatWebViewEngine.defaultForCurrentPlatform() == ChatWebViewEngine.SWING_WEBVIEW);
+        this(
+                settingsRepo,
+                () -> SystemInfo.isMacOS,
+                () -> SystemInfo.isWindows,
+                ChatWebViewRuntimeStatusResolver::resolveSwingWebViewAvailability
+        );
     }
 
-    ChatWebViewRuntimeStatusResolver(@NonNull SettingsRepo settingsRepo, @NonNull BooleanSupplier macOsSupplier) {
+    ChatWebViewRuntimeStatusResolver(
+            @NonNull SettingsRepo settingsRepo,
+            @NonNull BooleanSupplier macOsSupplier,
+            @NonNull BooleanSupplier windowsSupplier,
+            @NonNull Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier
+    ) {
         this.settingsRepo = settingsRepo;
         this.macOsSupplier = macOsSupplier;
+        this.windowsSupplier = windowsSupplier;
+        this.swingWebViewAvailabilitySupplier = swingWebViewAvailabilitySupplier;
     }
 
     public ChatWebViewRuntimeStatus resolve() {
-        ChatWebViewEngine configuredEngine = resolveConfiguredEngine();
-        SwingWebViewAvailability availability = resolveSwingWebViewAvailability();
+        SwingWebViewAvailability availability = swingWebViewAvailabilitySupplier.get();
+        ChatWebViewEngine configuredEngine = resolveConfiguredEngine(availability);
 
         if (configuredEngine == ChatWebViewEngine.SWING_WEBVIEW && !availability.available()) {
             return new ChatWebViewRuntimeStatus(
@@ -46,23 +62,29 @@ public final class ChatWebViewRuntimeStatusResolver {
         );
     }
 
-    private ChatWebViewEngine resolveConfiguredEngine() {
+    private ChatWebViewEngine resolveConfiguredEngine(SwingWebViewAvailability availability) {
         try {
             String configuredValue = settingsRepo.get(SettingsKeys.CHAT_WEB_VIEW_ENGINE, "");
             if (StringUtils.isBlank(configuredValue)) {
-                return defaultEngine();
+                return defaultEngine(availability);
             }
             return ChatWebViewEngine.fromSettingValue(configuredValue);
         } catch (Exception e) {
-            return defaultEngine();
+            return defaultEngine(availability);
         }
     }
 
-    private ChatWebViewEngine defaultEngine() {
-        return macOsSupplier.getAsBoolean() ? ChatWebViewEngine.SWING_WEBVIEW : ChatWebViewEngine.JEDITOR_PANE;
+    private ChatWebViewEngine defaultEngine(SwingWebViewAvailability availability) {
+        if (macOsSupplier.getAsBoolean()) {
+            return ChatWebViewEngine.SWING_WEBVIEW;
+        }
+        if (windowsSupplier.getAsBoolean() && availability.available()) {
+            return ChatWebViewEngine.SWING_WEBVIEW;
+        }
+        return ChatWebViewEngine.JEDITOR_PANE;
     }
 
-    private SwingWebViewAvailability resolveSwingWebViewAvailability() {
+    private static SwingWebViewAvailability resolveSwingWebViewAvailability() {
         try {
             WebViewComponent.Mode mode = WebViewComponent.resolveDefaultMode();
             return new SwingWebViewAvailability(true, mode.name(), "");
@@ -71,6 +93,6 @@ public final class ChatWebViewRuntimeStatusResolver {
         }
     }
 
-    private record SwingWebViewAvailability(boolean available, String mode, String reason) {
+    record SwingWebViewAvailability(boolean available, String mode, String reason) {
     }
 }

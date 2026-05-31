@@ -1,9 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
+import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.*;
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.intellijthemes.*;
 import com.formdev.flatlaf.intellijthemes.materialthemeuilite.*;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
@@ -15,6 +18,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.FontUIResource;
 import java.awt.*;
+import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -24,6 +28,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.IntStream;
+
+import static java.util.stream.Collectors.toSet;
 
 public class AppearancePanel extends AbstractSettingsPanel {
 
@@ -66,6 +72,14 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     // Current accent color — shared with the system color getter
     private static Color accentColor;
+
+    private static final int WEB_VIEW_HEALTH_ICON_SIZE = 26;
+
+    private final ChatWebViewRuntimeStatus runtimeStatus;
+    private final JLabel webViewHealthIcon = new JLabel();
+    private final JLabel webViewHealthTitle = new JLabel();
+    private final JLabel webViewHealthDetails = new JLabel();
+    private final JLabel restartHint = new JLabel("Changes apply after restarting Chat4J.");
 
     // Theme name -> LaF class name, grouped for display
     private static final Map<String, String> CORE_THEMES = new LinkedHashMap<>();
@@ -269,7 +283,12 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     public AppearancePanel(SettingsRepo settingsRepo) {
+        this(settingsRepo, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+    }
+
+    public AppearancePanel(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus runtimeStatus) {
         super(settingsRepo);
+        this.runtimeStatus = runtimeStatus;
 
         JPanel form = createFormPanel("Appearance");
         GridBagConstraints gbc = createFormConstraints();
@@ -344,7 +363,144 @@ public class AppearancePanel extends AbstractSettingsPanel {
         );
         row = addSectionHint(form, gbc, row, "Font changes are applied immediately across all open windows.");
 
+        row = addSectionHeader(form, gbc, row, "Chat WebView");
+        row = addChatWebViewSettings(form, gbc, row);
+
         addVerticalSpacer(form, gbc, row);
+    }
+
+    private int addChatWebViewSettings(JPanel form, GridBagConstraints gbc, int row) {
+        JComboBox<String> engineComboBox = withPreferredWidth(new JComboBox<>(engineSettingValues()), 220);
+        engineComboBox.setName("chatWebViewEngineComboBox");
+        engineComboBox.setRenderer(new EngineRenderer());
+        addRow(form, gbc, row++, "Engine", engineComboBox);
+        bindComboBox(
+                engineComboBox,
+                SettingsKeys.CHAT_WEB_VIEW_ENGINE,
+                runtimeStatus.configuredEngine().settingValue(),
+                engineValidator(),
+                value -> {
+                    refreshRestartHint(value);
+                    setStatusInfo("Saved — restart Chat4J to apply");
+                }
+        );
+
+        row = addFullWidthRow(form, gbc, row, restartHint);
+
+        row = addSectionHeader(form, gbc, row, "WebView Diagnostics");
+        row = addFullWidthRow(form, gbc, row, createWebViewHealthPanel());
+
+        refreshDiagnostics(readString(
+                SettingsKeys.CHAT_WEB_VIEW_ENGINE,
+                runtimeStatus.configuredEngine().settingValue()
+        ));
+        return row;
+    }
+
+    private SettingsValidator<String> engineValidator() {
+        Set<String> values = Arrays.stream(ChatWebViewEngine.values())
+                .map(ChatWebViewEngine::settingValue)
+                .collect(toSet());
+        return Validators.oneOf(values, "Invalid chat WebView engine");
+    }
+
+    private String[] engineSettingValues() {
+        return Arrays.stream(ChatWebViewEngine.values())
+                .map(ChatWebViewEngine::settingValue)
+                .toArray(String[]::new);
+    }
+
+    private JPanel createWebViewHealthPanel() {
+        JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.setOpaque(false);
+
+        webViewHealthIcon.setPreferredSize(new Dimension(WEB_VIEW_HEALTH_ICON_SIZE, WEB_VIEW_HEALTH_ICON_SIZE));
+        panel.add(webViewHealthIcon, BorderLayout.WEST);
+
+        JPanel textPanel = new JPanel(new GridLayout(0, 1, 0, 2));
+        textPanel.setOpaque(false);
+        Fonts.apply(webViewHealthTitle, Font.BOLD, Fonts.SIZE_BODY);
+        Fonts.apply(webViewHealthDetails, Font.PLAIN, Fonts.SIZE_SMALL);
+        webViewHealthDetails.setForeground(UIManager.getColor("Label.disabledForeground"));
+        textPanel.add(webViewHealthTitle);
+        textPanel.add(webViewHealthDetails);
+        panel.add(textPanel, BorderLayout.CENTER);
+
+        return panel;
+    }
+
+    private void refreshDiagnostics(String configuredValue) {
+        WebViewHealth health = webViewHealth();
+        webViewHealthIcon.setText(null);
+        webViewHealthIcon.setIcon(loadHealthIcon(health.iconPath(), health.color()));
+        webViewHealthTitle.setText(health.title());
+        webViewHealthDetails.setText(health.details());
+        refreshRestartHint(configuredValue);
+    }
+
+    private WebViewHealth webViewHealth() {
+        if (runtimeStatus.hasFallback()) {
+            return new WebViewHealth(
+                    "/icons/settings/triangle-alert.svg",
+                    warningColor(),
+                    "%s fallback active".formatted(runtimeStatus.activeEngine().displayName()),
+                    "%s unavailable: %s".formatted(
+                            runtimeStatus.configuredEngine().displayName(),
+                            StringUtils.defaultIfBlank(runtimeStatus.fallbackReason(), "unknown error"))
+            );
+        }
+        if (runtimeStatus.activeEngine() == ChatWebViewEngine.SWING_WEBVIEW) {
+            String mode = StringUtils.defaultIfBlank(runtimeStatus.swingWebViewMode(), "unknown mode");
+            return new WebViewHealth(
+                    "/icons/settings/circle-check.svg",
+                    successColor(),
+                    "%s active".formatted(runtimeStatus.activeEngine().displayName()),
+                    "Native WebView · %s component".formatted(mode)
+            );
+        }
+        return new WebViewHealth(
+                "/icons/settings/java-original.svg",
+                null,
+                "%s active".formatted(runtimeStatus.activeEngine().displayName()),
+                "Swing HTML renderer · Native WebView disabled"
+        );
+    }
+
+    private Icon loadHealthIcon(String iconPath, Color color) {
+        URL url = AppearancePanel.class.getResource(iconPath);
+        if (url == null) {
+            return null;
+        }
+        FlatSVGIcon icon = new FlatSVGIcon(url).derive(WEB_VIEW_HEALTH_ICON_SIZE, WEB_VIEW_HEALTH_ICON_SIZE);
+        if (color != null) {
+            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, original) -> color));
+        }
+        return icon;
+    }
+
+    private Color successColor() {
+        Color color = UIManager.getColor("Actions.Green");
+        return color != null ? color : new Color(34, 139, 34);
+    }
+
+    private Color warningColor() {
+        Color color = UIManager.getColor("Actions.Yellow");
+        return color != null ? color : new Color(180, 120, 0);
+    }
+
+
+    private void refreshRestartHint(String configuredValue) {
+        ChatWebViewEngine configuredEngine = ChatWebViewEngine.fromSettingValue(configuredValue);
+        if (runtimeStatus.hasFallback()) {
+            restartHint.setText("Chat4J is using %s for this session. See diagnostics below."
+                    .formatted(runtimeStatus.activeEngine().displayName()));
+            return;
+        }
+        if (configuredEngine != runtimeStatus.activeEngine()) {
+            restartHint.setText("Restart required: currently using %s.".formatted(runtimeStatus.activeEngine().displayName()));
+            return;
+        }
+        restartHint.setText("Changes apply after restarting Chat4J.");
     }
 
     private JComboBox<Object> createThemeSelector() {
@@ -623,6 +779,27 @@ public class AppearancePanel extends AbstractSettingsPanel {
         @Override
         public int getIconHeight() {
             return SIZE;
+        }
+    }
+
+    private record WebViewHealth(String iconPath, Color color, String title, String details) {
+    }
+
+    private static final class EngineRenderer extends DefaultListCellRenderer {
+
+        @Override
+        public Component getListCellRendererComponent(
+                JList<?> list,
+                Object value,
+                int index,
+                boolean isSelected,
+                boolean cellHasFocus
+        ) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            if (value instanceof String settingValue) {
+                label.setText(ChatWebViewEngine.fromSettingValue(settingValue).displayName());
+            }
+            return label;
         }
     }
 

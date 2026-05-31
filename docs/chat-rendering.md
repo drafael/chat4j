@@ -12,10 +12,10 @@ chat4j.chat.webView.engine
 
 Values:
 
-- `jeditor-pane` — Swing `JEditorPane`; default outside macOS and fallback everywhere.
-- `swing-webview` — one full-transcript SwingWebView; default on macOS.
+- `jeditor-pane` — Swing `JEditorPane`; fallback everywhere and default when native WebView is not selected.
+- `swing-webview` — one full-transcript SwingWebView; default on macOS, and default on Windows only when the startup capability check passes.
 
-Engine changes require restart because startup resolves the active renderer once. If SwingWebView is configured/defaulted but unavailable, Chat4J keeps the setting for diagnostics, warns non-fatally, and uses `JEditorPane` for the session.
+Engine changes require restart because startup resolves the active renderer once. If SwingWebView is explicitly configured but unavailable, Chat4J keeps the setting for diagnostics, warns non-fatally, and uses `JEditorPane` for the session. On Windows with no saved engine setting, Chat4J only defaults to SwingWebView after the startup capability check passes; otherwise it starts with `JEditorPane` without treating that as a fallback.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ Key classes:
 
 - `ChatWebViewEngine` — persisted engine values.
 - `ChatWebViewRuntimeStatus` / `ChatWebViewRuntimeStatusResolver` — startup resolution, defaulting, and fallback reason.
-- `ChatWebViewPanel` — settings and diagnostics UI.
+- `AppearancePanel` — appearance settings plus WebView engine and diagnostics UI.
 - `ChatMessageViewFactory`, `MessageBubble`, `MessageContentView` — renderer-neutral message boundary.
 - `JEditorPaneMessageContentView` — Swing fallback/default renderer.
 - `SwingWebViewTranscriptView` — production full-transcript WebView renderer.
@@ -142,6 +142,6 @@ Targeted tests:
 
 Manual checks:
 
-1. Confirm platform default (`SwingWebView` on macOS, `JEditorPane` elsewhere).
-2. Switch engine in **Settings → Chat WebView**, restart, and confirm diagnostics.
+1. Confirm platform default (`SwingWebView` on macOS, capability-gated `SwingWebView` on Windows, `JEditorPane` elsewhere).
+2. Switch engine in **Settings → Appearance**, restart, and confirm diagnostics.
 3. Verify existing chats, streaming, conversation switching, markdown/raw mode, tables, code copy, source chips/previews, links, blocked unsafe links, scrolling, shutdown, and math/chem examples.

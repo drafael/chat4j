@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsRepo;
@@ -12,6 +13,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
+import java.net.URL;
 import java.util.List;
 
 import static java.util.Collections.emptyList;
@@ -87,7 +89,7 @@ public class SettingsDialog extends JDialog {
 
         sectionList = new JList<>(sectionModel);
         sectionList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        sectionList.setFixedCellHeight(34);
+        sectionList.setFixedCellHeight(42);
         sectionList.setCellRenderer(new SettingsSectionRenderer());
         sectionList.setBorder(new EmptyBorder(6, 6, 6, 6));
         Color selectionBackground = UIManager.getColor("List.selectionBackground");
@@ -138,11 +140,10 @@ public class SettingsDialog extends JDialog {
 
     private List<SettingsSection> createSections(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus chatWebViewRuntimeStatus) {
         return List.of(
-                new SettingsSection("general", "General", new GeneralPanel(settingsRepo)),
-                new SettingsSection("appearance", "Appearance", new AppearancePanel(settingsRepo)),
-                new SettingsSection("chat-webview", "Chat WebView", new ChatWebViewPanel(settingsRepo, chatWebViewRuntimeStatus)),
-                new SettingsSection("providers", "Providers", new ProvidersPanel(settingsRepo)),
-                new SettingsSection("prompts", "Prompts", new PromptsPanel(settingsRepo))
+                new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo)),
+                new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus)),
+                new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
+                new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
 
@@ -233,6 +234,8 @@ public class SettingsDialog extends JDialog {
 
     private static final class SettingsSectionRenderer extends DefaultListCellRenderer {
 
+        private static final int ICON_SIZE = 20;
+
         @Override
         public Component getListCellRendererComponent(
                 JList<?> list,
@@ -244,19 +247,33 @@ public class SettingsDialog extends JDialog {
             JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             if (value instanceof SettingsSection section) {
                 label.setText(section.title());
-                label.setIcon(null);
+                label.setIcon(loadSectionIcon(section.iconPath(), label.getForeground()));
             }
             if (isSelected) {
                 label.setBackground(list.getSelectionBackground());
                 label.setForeground(list.getSelectionForeground());
+                label.setIcon(value instanceof SettingsSection section
+                        ? loadSectionIcon(section.iconPath(), list.getSelectionForeground())
+                        : null);
                 label.setOpaque(true);
             }
-            label.setBorder(new EmptyBorder(4, 10, 4, 10));
+            label.setIconTextGap(12);
+            label.setBorder(new EmptyBorder(6, 12, 6, 12));
             return label;
+        }
+
+        private Icon loadSectionIcon(String iconPath, Color color) {
+            URL url = SettingsDialog.class.getResource(iconPath);
+            if (url == null) {
+                return null;
+            }
+            FlatSVGIcon icon = new FlatSVGIcon(url).derive(ICON_SIZE, ICON_SIZE);
+            icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, original) -> color));
+            return icon;
         }
     }
 
-    private record SettingsSection(String id, String title, JComponent content) {
+    private record SettingsSection(String id, String title, String iconPath, JComponent content) {
     }
 
     private record SavePendingResult(boolean saved, String message) {

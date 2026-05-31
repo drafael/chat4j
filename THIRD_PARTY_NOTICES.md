@@ -42,6 +42,21 @@ The Highlight.js license text is included at:
 src/main/resources/web/highlight/LICENSE
 ```
 
+## Devicon 2.16.0
+
+- Project: https://devicon.dev/
+- Source: https://github.com/devicons/devicon
+- License: MIT
+- Bundled asset: `src/main/resources/icons/settings/java-original.svg`
+
+The Devicon license text is included at:
+
+```text
+src/main/resources/icons/settings/devicon-LICENSE
+```
+
+Java is a trademark of Oracle and/or its affiliates. The bundled icon is used only to identify the Java/Swing fallback renderer and does not imply endorsement.
+
 ## GraalJS Community / GraalVM Polyglot 24.2.1
 
 - Project: https://www.graalvm.org/javascript/
