@@ -78,7 +78,7 @@ Assets and notices:
 
 ## Packaging
 
-SwingWebView and GraalJS Community are normal Maven runtime dependencies.
+SwingWebView and GraalJS Community are normal Maven runtime dependencies. The shaded jar must merge `META-INF/services` entries; otherwise GraalJS can load `js` but not its dependent `regex` language, causing packaged-app math rendering to fall back to raw LaTeX.
 
 ```bash
 mvn -q package
