@@ -9,8 +9,10 @@ final class MarkdownInlineRenderer {
 
     private static final Pattern INLINE_CODE_PATTERN = Pattern.compile("`([^`]+?)`");
     private static final Pattern INLINE_CODE_TOKEN_PATTERN = Pattern.compile("@@INLINE_CODE_(\\d+)@@");
-    private static final Pattern DISPLAY_MATH_PATTERN = Pattern.compile("(?s)(?<!\\\\)\\$\\$(.+?)(?<!\\\\)\\$\\$");
-    private static final Pattern INLINE_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?!\\$)(.+?)(?<!\\\\)\\$(?!\\$)");
+    private static final Pattern DISPLAY_DOLLAR_MATH_PATTERN = Pattern.compile("(?s)(?<!\\\\)\\$\\$(.+?)(?<!\\\\)\\$\\$");
+    private static final Pattern DISPLAY_BRACKET_MATH_PATTERN = Pattern.compile("(?s)\\\\\\[(.+?)\\\\\\]");
+    private static final Pattern INLINE_DOLLAR_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?!\\$)(.+?)(?<!\\\\)\\$(?!\\$)");
+    private static final Pattern INLINE_PAREN_MATH_PATTERN = Pattern.compile("\\\\\\((.+?)\\\\\\)");
     private static final Pattern MATH_TOKEN_PATTERN = Pattern.compile("@@MATH_(\\d+)@@");
     private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\(((?:https?|mailto):[^)\\s]+)\\)");
     private static final Pattern AUTO_LINK_PATTERN = Pattern.compile("&lt;((?:https?|mailto):[^\\s]+?)&gt;");
@@ -78,12 +80,22 @@ final class MarkdownInlineRenderer {
     private static MathExtraction extractMathSegments(String text) {
         List<String> mathSegments = new ArrayList<>();
 
-        String withDisplayMathTokens = DISPLAY_MATH_PATTERN.matcher(text).replaceAll(matchResult -> {
+        String withDisplayDollarMathTokens = DISPLAY_DOLLAR_MATH_PATTERN.matcher(text).replaceAll(matchResult -> {
             mathSegments.add(matchResult.group());
             return mathToken(mathSegments.size() - 1);
         });
 
-        String withAllMathTokens = INLINE_MATH_PATTERN.matcher(withDisplayMathTokens).replaceAll(matchResult -> {
+        String withDisplayBracketMathTokens = DISPLAY_BRACKET_MATH_PATTERN.matcher(withDisplayDollarMathTokens).replaceAll(matchResult -> {
+            mathSegments.add(matchResult.group());
+            return mathToken(mathSegments.size() - 1);
+        });
+
+        String withInlineDollarMathTokens = INLINE_DOLLAR_MATH_PATTERN.matcher(withDisplayBracketMathTokens).replaceAll(matchResult -> {
+            mathSegments.add(matchResult.group());
+            return mathToken(mathSegments.size() - 1);
+        });
+
+        String withAllMathTokens = INLINE_PAREN_MATH_PATTERN.matcher(withInlineDollarMathTokens).replaceAll(matchResult -> {
             mathSegments.add(matchResult.group());
             return mathToken(mathSegments.size() - 1);
         });

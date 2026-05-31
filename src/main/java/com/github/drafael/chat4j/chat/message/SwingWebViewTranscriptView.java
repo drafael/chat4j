@@ -20,10 +20,14 @@ import java.awt.*;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
@@ -34,6 +38,11 @@ public final class SwingWebViewTranscriptView {
     private static final String COPY_ICON = iconDataUri("/icons/input/copy.svg");
     private static final String REGENERATE_ICON = iconDataUri("/icons/chat/refresh-cw.svg");
     private static final String ARROW_DOWN_ICON = iconDataUri("/icons/chat/arrow-down.svg");
+    private static final Pattern CSS_FONT_URL_PATTERN = Pattern.compile("url\\((['\\\"]?)(fonts/([^)'\\\"?]+))\\1\\)");
+    private static final String KATEX_CSS = inlineStylesheetFonts(resourceText("/web/katex/katex.min.css"));
+    private static final String KATEX_SCRIPT = resourceText("/web/katex/katex.min.js");
+    private static final String MHCHEM_SCRIPT = resourceText("/web/katex/contrib/mhchem.min.js");
+    private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
 
     private final WebViewComponent webView;
     private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
@@ -79,6 +88,7 @@ public final class SwingWebViewTranscriptView {
     ) {
         RenderMode nextRenderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
         boolean styleChanged = this.renderMode != nextRenderMode || this.dark != dark;
+        boolean jumpButtonChanged = this.jumpButtonVisible != jumpButtonVisible;
         this.entries = List.copyOf(entries == null ? emptyList() : entries);
         this.renderMode = nextRenderMode;
         this.dark = dark;
@@ -90,11 +100,15 @@ public final class SwingWebViewTranscriptView {
         }
 
         updateTranscriptHtml(scrollToBottom);
+        if (jumpButtonChanged) {
+            updateJumpButtonChrome();
+            SwingUtilities.invokeLater(this::updateJumpButtonChrome);
+        }
     }
 
     public void reload(boolean scrollToBottom) {
         documentInitialized = true;
-        webView.setUrl(toDataUrl(renderDocument(scrollToBottom)));
+        webView.setUrl(toDocumentUrl(renderDocument(scrollToBottom)));
     }
 
     public void scrollToBottom() {
@@ -164,6 +178,7 @@ public final class SwingWebViewTranscriptView {
                 <html>
                 <head>
                   <meta charset="UTF-8">
+                  %s
                   <style>
                     html, body { margin: 0; min-height: 100%%; background: %s; color: %s; font-family: %s; font-size: %dpx; line-height: 1.4; scrollbar-color: transparent transparent; scrollbar-width: none; }
                     body { box-sizing: border-box; padding: 24px 16px 104px 16px; overflow-y: auto; -ms-overflow-style: none; }
@@ -226,6 +241,16 @@ public final class SwingWebViewTranscriptView {
                     .message table.md-code-block tr.code-header font { color: %s !important; font-family: %s !important; font-size: %dpx !important; }
                     .message code, .message pre, .message table.md-code-block tr.code-body font { font-family: %s !important; font-size: %dpx !important; line-height: 1.45; }
                     .message code.md-latex-inline, .message code:not(.md-latex-inline) { background-color: %s; border: 1px solid %s; border-radius: 4px; padding: 1px 4px; font-size: %dpx !important; }
+                    .message .chat4j-math-inline { display: inline-block; max-width: none; overflow: visible; vertical-align: -0.12em; line-height: 1.2; }
+                    .message .chat4j-math-inline::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+                    .message .chat4j-math-inline .katex { font-size: 1.04em; }
+                    .message .chat4j-math-display { display: block; box-sizing: border-box; width: 100%%; margin: 10px 0 16px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0 4px 0; scrollbar-color: %s %s; }
+                    .message .chat4j-math-display .katex-display { margin: 0; }
+                    .message .chat4j-math-display .katex { text-align: left; }
+                    .message .chat4j-math-display::-webkit-scrollbar { height: 8px !important; display: block !important; background-color: %s !important; }
+                    .message .chat4j-math-display::-webkit-scrollbar-track { background-color: %s !important; border-radius: 999px !important; }
+                    .message .chat4j-math-display::-webkit-scrollbar-thumb { background-color: %s !important; border-radius: 999px !important; border: 2px solid %s !important; }
+                    .message .chat4j-math-display::-webkit-scrollbar-thumb:hover { background-color: %s !important; }
                     .activity-box { box-sizing: border-box; position: relative; width: 100%%; border: 1px solid %s; border-radius: 10px; padding: 0; color: %s; background: transparent; }
                     .activity-box summary { cursor: pointer; list-style: none; padding: 7px 40px 7px 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
                     .activity-copy-button { top: 4px; right: 6px; }
@@ -280,7 +305,7 @@ public final class SwingWebViewTranscriptView {
                     @keyframes chat4j-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                   </style>
                 </head>
-                <body>
+                <body onload="if(window.chat4jRenderMath){window.chat4jRenderMath(document.querySelector('.transcript')||document.body);}">
                   <main class="transcript">%s</main>
                   <div id="chat4j-top-fade" class="chat4j-fade top"></div>
                   <div id="chat4j-bottom-fade" class="chat4j-fade bottom"></div>
@@ -291,10 +316,12 @@ public final class SwingWebViewTranscriptView {
                   </div>
                   <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
                   <button id="chat4j-jump-bottom" class="jump-button%s" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);"></button>
+                  <script>if(window.chat4jRenderMath){window.chat4jRenderMath(document.querySelector('.transcript')||document.body);}</script>
                   %s
                 </body>
                 </html>
                 """.formatted(
+                mathHeadAssets(),
                 background,
                 palette.textColor(),
                 palette.baseFontFamily(),
@@ -345,6 +372,13 @@ public final class SwingWebViewTranscriptView {
                 palette.inlineCodeBg(),
                 palette.codeBorder(),
                 codeFontSize,
+                scrollbarThumb,
+                scrollbarTrack,
+                scrollbarTrack,
+                scrollbarTrack,
+                scrollbarThumb,
+                scrollbarTrack,
+                scrollbarHoverThumb,
                 borderColor,
                 palette.mutedTextColor(),
                 palette.mutedTextColor(),
@@ -402,6 +436,23 @@ public final class SwingWebViewTranscriptView {
         );
     }
 
+    private void updateJumpButtonChrome() {
+        String script = """
+                (function() {
+                  var jump = document.getElementById('chat4j-jump-bottom');
+                  if (!jump) {
+                    return;
+                  }
+                  jump.style.display = %s;
+                  jump.classList.toggle('streaming', %s);
+                })();
+                """.formatted(
+                toJsonString(jumpButtonVisible ? "flex" : "none"),
+                jumpButtonVisible ? "true" : "false"
+        );
+        webView.eval(script);
+    }
+
     private void updateTranscriptHtml(boolean scrollToBottom) {
         Palette palette = MarkdownPaletteResolver.resolve(dark);
         Color panelBackground = uiManagerColor("Panel.background", dark ? new Color(30, 31, 34) : new Color(247, 248, 250));
@@ -413,6 +464,9 @@ public final class SwingWebViewTranscriptView {
                   var transcript = document.querySelector('.transcript');
                   if (transcript) {
                     transcript.innerHTML = %s;
+                  }
+                  if (window.chat4jRenderMath) {
+                    window.chat4jRenderMath(transcript);
                   }
                   if (window.chat4jInstallTranscriptActions) {
                     window.chat4jInstallTranscriptActions();
@@ -493,6 +547,7 @@ public final class SwingWebViewTranscriptView {
     }
 
     private void prepareRenderedDocument(Document document, boolean replaceInlineCitationsWithChips) {
+        renderMathFallbacks(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
         annotateSourceLinks(document, replaceInlineCitationsWithChips);
         document.select("table.md-code-block").forEach(table -> {
@@ -505,6 +560,32 @@ public final class SwingWebViewTranscriptView {
             }
             table.addClass("without-header");
             rows.addClass("code-body");
+        });
+    }
+
+    static void renderMathFallbacks(Document document) {
+        document.select("code.md-latex-inline").forEach(code ->
+                KATEX_RENDERER.render(code.text(), false).ifPresent(html -> {
+                    Element replacement = new Element("span")
+                            .addClass("chat4j-math-inline")
+                            .attr("data-chat4j-math-rendered", "server");
+                    replacement.html(html);
+                    code.replaceWith(replacement);
+                })
+        );
+
+        document.select("table.md-latex-block").forEach(table -> {
+            Element pre = table.selectFirst("pre");
+            if (pre == null) {
+                return;
+            }
+            KATEX_RENDERER.render(pre.text(), true).ifPresent(html -> {
+                Element replacement = new Element("div")
+                        .addClass("chat4j-math-display")
+                        .attr("data-chat4j-math-rendered", "server");
+                replacement.html(html);
+                table.replaceWith(replacement);
+            });
         });
     }
 
@@ -872,10 +953,16 @@ public final class SwingWebViewTranscriptView {
                     }
                     window.chat4jInstallTranscriptActions = function() {
                         hideTranscriptMenu();
+                        if (window.chat4jRenderMath) {
+                            window.chat4jRenderMath(document.querySelector('.transcript') || document.body);
+                        }
                         installCodeCopyButtons();
                         installCustomScrollbar();
                     };
                     window.addEventListener('load', function() {
+                        if (window.chat4jRenderMath) {
+                            window.chat4jRenderMath(document.querySelector('.transcript') || document.body);
+                        }
                         installCodeCopyButtons();
                         installCustomScrollbar();
                         setTimeout(function() {
@@ -1014,9 +1101,178 @@ public final class SwingWebViewTranscriptView {
         }
     }
 
-    private String toDataUrl(String html) {
-        String encoded = Base64.getEncoder().encodeToString(html.getBytes(StandardCharsets.UTF_8));
-        return "data:text/html;charset=UTF-8;base64,%s".formatted(encoded);
+    private String toDocumentUrl(String html) {
+        try {
+            Path document = Files.createTempFile("chat4j-transcript-", ".html");
+            Files.writeString(document, html, StandardCharsets.UTF_8);
+            document.toFile().deleteOnExit();
+            return document.toUri().toString();
+        } catch (Exception e) {
+            String encoded = Base64.getEncoder().encodeToString(html.getBytes(StandardCharsets.UTF_8));
+            return "data:text/html;charset=UTF-8;base64,%s".formatted(encoded);
+        }
+    }
+
+    static String mathHeadAssets() {
+        if (StringUtils.isBlank(KATEX_CSS) && StringUtils.isBlank(KATEX_SCRIPT)) {
+            return "";
+        }
+
+        return """
+                <style id="chat4j-katex-css">%s</style>
+                <script id="chat4j-katex-script">%s</script>
+                <script id="chat4j-mhchem-script">%s</script>
+                <script id="chat4j-math-render-script">%s</script>
+                """.formatted(
+                KATEX_CSS,
+                safeScriptContent(KATEX_SCRIPT),
+                safeScriptContent(MHCHEM_SCRIPT),
+                safeScriptContent(mathRenderScript())
+        );
+    }
+
+    static String katexScript() {
+        return KATEX_SCRIPT;
+    }
+
+    static String mhchemScript() {
+        return MHCHEM_SCRIPT;
+    }
+
+    static String mathBridgeScript() {
+        if (StringUtils.isBlank(KATEX_SCRIPT)) {
+            return mathRenderScript();
+        }
+
+        return "%s\n%s\n%s".formatted(KATEX_SCRIPT, MHCHEM_SCRIPT, mathRenderScript());
+    }
+
+    private static String mathRenderScript() {
+        return """
+                (function() {
+                    function closestCodeBlockShell(table) {
+                        var parent = table ? table.parentNode : null;
+                        return parent && parent.classList && parent.classList.contains('code-block-shell') ? parent : null;
+                    }
+                    function parseDelimitedMath(source, fallbackDisplayMode) {
+                        var text = String(source || '').trim();
+                        if (!text) {
+                            return null;
+                        }
+                        if (text.length >= 4 && text.slice(0, 2) === '$$' && text.slice(-2) === '$$') {
+                            return { tex: text.slice(2, -2).trim(), displayMode: true };
+                        }
+                        if (text.length >= 4 && text.slice(0, 2) === '\\\\[' && text.slice(-2) === '\\\\]') {
+                            return { tex: text.slice(2, -2).trim(), displayMode: true };
+                        }
+                        if (text.length >= 4 && text.slice(0, 2) === '\\\\(' && text.slice(-2) === '\\\\)') {
+                            return { tex: text.slice(2, -2).trim(), displayMode: false };
+                        }
+                        if (text.length >= 2 && text.charAt(0) === '$' && text.charAt(text.length - 1) === '$') {
+                            return { tex: text.slice(1, -1).trim(), displayMode: false };
+                        }
+                        return { tex: text, displayMode: fallbackDisplayMode === true };
+                    }
+                    function renderOptions(displayMode) {
+                        return {
+                            displayMode: displayMode,
+                            throwOnError: false,
+                            trust: false,
+                            strict: 'warn'
+                        };
+                    }
+                    function renderIntoReplacement(sourceNode, parsed) {
+                        if (!sourceNode || !sourceNode.parentNode || !parsed || !parsed.tex || typeof window.katex === 'undefined') {
+                            return;
+                        }
+                        var target = document.createElement(parsed.displayMode ? 'div' : 'span');
+                        target.className = parsed.displayMode ? 'chat4j-math-display' : 'chat4j-math-inline';
+                        window.katex.render(parsed.tex, target, renderOptions(parsed.displayMode));
+                        target.setAttribute('data-chat4j-math-rendered', 'true');
+                        sourceNode.parentNode.replaceChild(target, sourceNode);
+                    }
+                    function renderInlineMath(root) {
+                        Array.prototype.forEach.call(root.querySelectorAll('code.md-latex-inline:not([data-chat4j-math-rendered])'), function(code) {
+                            try {
+                                renderIntoReplacement(code, parseDelimitedMath(code.textContent, false));
+                            } catch (error) {
+                                code.setAttribute('data-chat4j-math-rendered', 'error');
+                            }
+                        });
+                    }
+                    function renderDisplayMath(root) {
+                        Array.prototype.forEach.call(root.querySelectorAll('table.md-latex-block:not([data-chat4j-math-rendered])'), function(table) {
+                            var pre = table.querySelector('tr.code-body pre') || table.querySelector('pre');
+                            if (!pre) {
+                                return;
+                            }
+                            try {
+                                renderIntoReplacement(closestCodeBlockShell(table) || table, parseDelimitedMath(pre.textContent, true));
+                            } catch (error) {
+                                table.setAttribute('data-chat4j-math-rendered', 'error');
+                            }
+                        });
+                    }
+                    window.chat4jRenderMath = function(root) {
+                        if (typeof window.katex === 'undefined') {
+                            return;
+                        }
+                        var targetRoot = root || document;
+                        renderDisplayMath(targetRoot);
+                        renderInlineMath(targetRoot);
+                    };
+                })();
+                """;
+    }
+
+    private static String inlineStylesheetFonts(String css) {
+        if (StringUtils.isBlank(css)) {
+            return "";
+        }
+
+        Matcher matcher = CSS_FONT_URL_PATTERN.matcher(css);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) {
+            String fontPath = "/web/katex/%s".formatted(matcher.group(2));
+            String dataUri = fontDataUri(fontPath);
+            if (StringUtils.isBlank(dataUri)) {
+                matcher.appendReplacement(result, Matcher.quoteReplacement(matcher.group()));
+            } else {
+                matcher.appendReplacement(result, Matcher.quoteReplacement("url(%s)".formatted(dataUri)));
+            }
+        }
+        matcher.appendTail(result);
+        return result.toString();
+    }
+
+    private static String fontDataUri(String path) {
+        byte[] bytes = resourceBytes(path);
+        if (bytes.length == 0) {
+            return "";
+        }
+
+        String mediaType = StringUtils.endsWithIgnoreCase(path, ".woff2")
+                ? "font/woff2"
+                : StringUtils.endsWithIgnoreCase(path, ".woff") ? "font/woff" : "font/ttf";
+        String encoded = Base64.getEncoder().encodeToString(bytes);
+        return "data:%s;base64,%s".formatted(mediaType, encoded);
+    }
+
+    private static String safeScriptContent(String script) {
+        return StringUtils.defaultString(script).replace("</script", "<\\/script");
+    }
+
+    private static String resourceText(String path) {
+        byte[] bytes = resourceBytes(path);
+        return bytes.length == 0 ? "" : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static byte[] resourceBytes(String path) {
+        try (InputStream input = SwingWebViewTranscriptView.class.getResourceAsStream(path)) {
+            return input == null ? new byte[0] : input.readAllBytes();
+        } catch (Exception e) {
+            return new byte[0];
+        }
     }
 
     private static String iconDataUri(String path) {

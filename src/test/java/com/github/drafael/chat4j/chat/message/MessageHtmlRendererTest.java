@@ -63,6 +63,34 @@ class MessageHtmlRendererTest {
     }
 
     @Test
+    @DisplayName("Preview mode preserves chemistry formulas as explicit inline LaTeX fallback")
+    void render_whenChemistryFormulaIsInline_preservesLatexFallbackClass() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, "Carbon dioxide is $\\ce{CO2}$.", false);
+
+        var document = Jsoup.parse(html);
+        var inlineMath = document.select("code.md-latex-inline");
+
+        assertThat(inlineMath).hasSize(1);
+        assertThat(inlineMath.text()).contains("$\\ce{CO2}$");
+    }
+
+    @Test
+    @DisplayName("Preview mode keeps formulas in table cells detectable for WebView math rendering")
+    void render_whenTableCellContainsFormula_preservesLatexFallbackClass() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Species | Formula |
+                | --- | --- |
+                | Carbon dioxide | $\\ce{CO2}$ |
+                """, false);
+
+        var document = Jsoup.parse(html);
+        var formulaCell = document.select("table.md-table tr").get(1).select("td").get(1);
+
+        assertThat(formulaCell.select("code.md-latex-inline")).hasSize(1);
+        assertThat(formulaCell.text()).contains("$\\ce{CO2}$");
+    }
+
+    @Test
     @DisplayName("Markdown mode renders escaped source text with original formatting")
     void render_whenMarkdownModeSelected_escapesTextAndPreservesFormatting() {
         String markdown = "<b>x</b>\n  **second**\n```java\nString x;\n```";

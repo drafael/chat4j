@@ -147,6 +147,56 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Single-line display LaTeX fallback renders math block as highlighted code block")
+    void toHtml_whenMarkdownContainsSingleLineDisplayLatexBlock_rendersCodeBlockFallback() {
+        String body = renderBody("$$\\oiint_C \\mathbf{E} \\cdot d\\boldsymbol{\\ell} = -\\frac{d\\Phi_B}{dt}$$");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-latex-block\"")
+                .contains("latex</font>")
+                .contains("\\oiint_C \\mathbf{E} \\cdot d\\boldsymbol{\\ell} = -\\frac{d\\Phi_B}{dt}")
+                .doesNotContain("$$");
+    }
+
+    @Test
+    @DisplayName("Bracket display LaTeX fallback renders math block as highlighted code block")
+    void toHtml_whenMarkdownContainsBracketDisplayLatexBlock_rendersCodeBlockFallback() {
+        String body = renderBody("\\[\nm = \\frac{Q \\cdot M}{F \\cdot z}\n\\]");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-latex-block\"")
+                .contains("latex</font>")
+                .contains("m = \\frac{Q \\cdot M}{F \\cdot z}")
+                .doesNotContain("\\[")
+                .doesNotContain("\\]");
+    }
+
+    @Test
+    @DisplayName("Bare display LaTeX lines render as math fallback blocks")
+    void toHtml_whenMarkdownContainsBareDisplayLatexLine_rendersCodeBlockFallback() {
+        String formula = "\\text{PI}_3^- (\\text{aq}) + \\text{P} (\\text{s}) \\xrightarrow{\\text{Heat}} \\text{I}_3^- \\text{(in situ)}} \\text{I}_5^- + \\text{H}_2\\text{O} + \\text{PH}_3(\\text{g})";
+
+        String body = renderBody(formula);
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-latex-block\"")
+                .contains("latex</font>")
+                .contains("\\xrightarrow{\\text{Heat}}")
+                .doesNotContain("<p>" + formula + "</p>");
+    }
+
+    @Test
+    @DisplayName("Parenthesized inline LaTeX fallback renders math expression as inline code")
+    void toHtml_whenMarkdownContainsParenthesizedInlineLatex_rendersInlineCodeFallback() {
+        String body = renderBody("Total charge \\(Q\\) equals \\(I \\cdot t\\).");
+
+        assertThat(body)
+                .contains("<code class=\"md-latex-inline\"")
+                .contains("\\(Q\\)")
+                .contains("\\(I \\cdot t\\)");
+    }
+
+    @Test
     @DisplayName("Blank lines produce line breaks between paragraphs")
     void toHtml_whenMarkdownContainsBlankLines_rendersLineBreakBetweenParagraphs() {
         String body = renderBody("first\n\nsecond");

@@ -5,8 +5,16 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 final class MarkdownBlockRenderer {
+
+    private static final Pattern BARE_DISPLAY_LATEX_PATTERN = Pattern.compile(
+            "^\\\\(?:ce|text|frac|sum|prod|int|iint|iiint|oint|oiint|nabla|partial|mathcal|mathbf|boldsymbol|vec|overline|underline|Phi|Delta|Omega|alpha|beta|gamma|lambda|mu|nu|theta|omega)\\b.*"
+    );
+    private static final Pattern LATEX_OPERATOR_PATTERN = Pattern.compile(
+            ".*(?:[_^=+]|\\\\(?:to|rightarrow|leftarrow|xrightarrow|frac|cdot|times|ce)\\b|->|←|→|⟶).*"
+    );
 
     private MarkdownBlockRenderer() {
     }
@@ -50,6 +58,16 @@ final class MarkdownBlockRenderer {
 
         if (trimmed.startsWith("$$")) {
             handleDisplayMathBlock(line, cursor, state, palette);
+            return;
+        }
+
+        if (trimmed.startsWith("\\[")) {
+            handleBracketDisplayMathBlock(line, cursor, state, palette);
+            return;
+        }
+
+        if (isBareDisplayLatexLine(trimmed)) {
+            handleBareDisplayMathBlock(trimmed, state, palette);
             return;
         }
 
@@ -121,47 +139,64 @@ final class MarkdownBlockRenderer {
 
         String trimmedFirstLine = firstLine.trim();
         String afterOpen = trimmedFirstLine.substring(2);
-        if (afterOpen.contains("$$")) {
-            handleParagraph(trimmedFirstLine, state, palette);
-            return;
-        }
+        collectDisplayMathBlock(trimmedFirstLine, afterOpen, "$$", cursor, state, palette);
+    }
 
+    private static void handleBracketDisplayMathBlock(String firstLine, LineCursor cursor, RenderState state, Palette palette) {
+        state.closeListIfOpen();
+
+        String trimmedFirstLine = firstLine.trim();
+        String afterOpen = trimmedFirstLine.substring(2);
+        collectDisplayMathBlock(trimmedFirstLine, afterOpen, "\\]", cursor, state, palette);
+    }
+
+    private static void collectDisplayMathBlock(
+            String fallbackFirstLine,
+            String afterOpen,
+            String closeDelimiter,
+            LineCursor cursor,
+            RenderState state,
+            Palette palette
+    ) {
         StringBuilder math = new StringBuilder();
-        if (!afterOpen.isBlank()) {
-            math.append(afterOpen.stripLeading());
-        }
+        String trailingAfterClose = appendUntilCloseDelimiter(math, afterOpen, closeDelimiter);
 
-        String trailingAfterClose = "";
-        while (cursor.hasNext()) {
-            String line = cursor.next();
-            int closeIndex = line.indexOf("$$");
-            if (closeIndex >= 0) {
-                if (closeIndex > 0) {
-                    if (math.length() > 0) {
-                        math.append("\n");
-                    }
-                    math.append(line, 0, closeIndex);
-                }
-                trailingAfterClose = line.substring(closeIndex + 2).trim();
-                break;
-            }
-
-            if (math.length() > 0) {
-                math.append("\n");
-            }
-            math.append(line);
+        while (trailingAfterClose == null && cursor.hasNext()) {
+            trailingAfterClose = appendUntilCloseDelimiter(math, cursor.next(), closeDelimiter);
         }
 
         String fallbackMathCode = math.toString().stripTrailing();
         if (fallbackMathCode.isBlank()) {
-            handleParagraph(trimmedFirstLine, state, palette);
+            handleParagraph(fallbackFirstLine, state, palette);
         } else {
-            appendCodeBlock(state.html, fallbackMathCode, "latex", palette);
+            appendCodeBlock(state.html, fallbackMathCode.stripLeading(), "latex", palette);
         }
 
-        if (!trailingAfterClose.isBlank()) {
-            handleParagraph(trailingAfterClose, state, palette);
+        if (StringUtils.isNotBlank(trailingAfterClose)) {
+            handleParagraph(trailingAfterClose.trim(), state, palette);
         }
+    }
+
+    private static String appendUntilCloseDelimiter(StringBuilder math, String line, String closeDelimiter) {
+        int closeIndex = line.indexOf(closeDelimiter);
+        String mathLine = closeIndex >= 0 ? line.substring(0, closeIndex) : line;
+        if (!mathLine.isBlank() || math.length() > 0) {
+            if (math.length() > 0) {
+                math.append("\n");
+            }
+            math.append(mathLine);
+        }
+        return closeIndex >= 0 ? line.substring(closeIndex + closeDelimiter.length()) : null;
+    }
+
+    private static void handleBareDisplayMathBlock(String trimmed, RenderState state, Palette palette) {
+        state.closeListIfOpen();
+        appendCodeBlock(state.html, trimmed, "latex", palette);
+    }
+
+    private static boolean isBareDisplayLatexLine(String trimmed) {
+        return BARE_DISPLAY_LATEX_PATTERN.matcher(trimmed).matches()
+                && LATEX_OPERATOR_PATTERN.matcher(trimmed).matches();
     }
 
     private static void handleHorizontalRule(RenderState state) {

@@ -2,50 +2,32 @@
 
 Use this page as the canonical entry point for implementation and operational details.
 
-## Core runtime and provider behavior
-
-- [agent-mode.md](agent-mode.md)
-  - Current Agent Mode behavior, adapter selection, and fallback/runtime rules.
+## Core runtime
 
 - [provider-capability-architecture.md](provider-capability-architecture.md)
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
-- [configurable-web-view-engine.md](configurable-web-view-engine.md)
-  - Configurable `JEditorPane` / `SwingWebView` chat rendering architecture and packaging notes.
+- [provider-auth-runtime.md](provider-auth-runtime.md)
+  - Copilot and Codex authentication, runtime routing, token storage, and provider-specific troubleshooting.
 
-- [swingwebview-integration.md](swingwebview-integration.md)
-  - Current SwingWebView production integration behavior, settings, packaging, and validation.
+- [agent-mode.md](agent-mode.md)
+  - Agent Mode behavior, adapter selection, and fallback/runtime rules.
 
-- [swingwebview-findings.md](swingwebview-findings.md)
-  - SwingWebView integration findings, API notes, limitations, and package validation checks.
+- [chat-rendering.md](chat-rendering.md)
+  - `JEditorPane` / SwingWebView rendering, settings, fallback behavior, math/chem rendering, packaging, and validation.
 
-- [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
-  - Current GitHub Copilot authentication and runtime behavior.
+## Operations and packaging
 
-- [codex-auth-device-flow.md](codex-auth-device-flow.md)
-  - Current OpenAI Codex OAuth (authorization code + PKCE) and runtime behavior.
-
-- [copilot-integration-header-behavior.md](copilot-integration-header-behavior.md)
-  - Header-routing evidence, curl proofs, and upstream reference links for Copilot model behavior.
-
-## Operations, packaging, and versioning
-
-- [logging.md](logging.md)
-  - Current logging stack, level resolution, and operational logging behavior.
+- [runtime-operations.md](runtime-operations.md)
+  - Startup flow, macOS jpackage shell-environment loading, logging, and diagnostics.
 
 - [calver.md](calver.md)
-  - Current CalVer versioning, pre-commit bump flow, and packaging alignment.
+  - CalVer versioning, pre-commit bump flow, and packaging version alignment.
 
-- [macos-jpackage-environment-variables.md](macos-jpackage-environment-variables.md)
-  - Why environment variables are missing in macOS `.app` launches and how Chat4J works around it.
+- [ui-platform-notes.md](ui-platform-notes.md)
+  - macOS HiDPI font rules and app icon regeneration notes.
 
-## Additional guides
+## Notices
 
-- [startup-architecture.md](startup-architecture.md)
-  - Startup flow, bootstrap responsibilities, and extension points.
-
-- [macos-hidpi-font-rendering.md](macos-hidpi-font-rendering.md)
-  - Notes and guidance for macOS HiDPI font rendering behavior.
-
-- [icon-creation-guide.md](icon-creation-guide.md)
-  - Instructions for creating app icons and source assets.
+- [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
+  - Bundled KaTeX/mhchem and GraalJS Community license notes.
