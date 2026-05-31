@@ -135,8 +135,8 @@ class ShutdownFlowCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Request rejects null save action produced by factory")
-    void request_whenFactoryReturnsNull_throwsException() {
+    @DisplayName("Request rejects null save action produced by supplier")
+    void request_whenSupplierReturnsNull_throwsException() {
         var subject = new ShutdownFlowCoordinator(new RecordingShutdownDispatcher());
 
         assertThatThrownBy(() -> subject.request(
@@ -155,7 +155,7 @@ class ShutdownFlowCoordinatorTest {
                 }
         ))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveActionFactory must not return null");
+                .hasMessageContaining("saveActionSupplier must not return null");
     }
 
     private static class RecordingShutdownDispatcher implements ShutdownFlowCoordinator.ShutdownDispatcher {

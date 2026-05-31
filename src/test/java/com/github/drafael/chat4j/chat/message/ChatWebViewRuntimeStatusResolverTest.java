@@ -16,9 +16,9 @@ class ChatWebViewRuntimeStatusResolverTest {
     private Path tempDir;
 
     @Test
-    @DisplayName("Default settings use JEditorPane as the active engine")
-    void resolve_whenNoSettingConfigured_usesJEditorPane() {
-        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo());
+    @DisplayName("Default settings use JEditorPane outside macOS")
+    void resolve_whenNoSettingConfiguredOutsideMacOs_usesJEditorPane() {
+        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo(), () -> false);
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
@@ -28,11 +28,23 @@ class ChatWebViewRuntimeStatusResolverTest {
     }
 
     @Test
+    @DisplayName("Default settings use SwingWebView on macOS")
+    void resolve_whenNoSettingConfiguredOnMacOs_usesSwingWebView() {
+        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo(), () -> true);
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(result.hasFallback()).isFalse();
+    }
+
+    @Test
     @DisplayName("Invalid configured engine falls back to JEditorPane")
     void resolve_whenInvalidEngineConfigured_usesJEditorPane() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, "invalid");
-        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo);
+        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo, () -> true);
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
@@ -46,7 +58,7 @@ class ChatWebViewRuntimeStatusResolverTest {
     void resolve_whenSwingWebViewConfigured_usesSwingWebViewWhenAvailable() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.SWING_WEBVIEW.settingValue());
-        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo);
+        var subject = new ChatWebViewRuntimeStatusResolver(settingsRepo, () -> false);
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 

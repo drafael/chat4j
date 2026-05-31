@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.message;
 
 import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +43,23 @@ class MessageHtmlRendererTest {
                 .contains("String x;")
                 .startsWith("<html><head><style>")
                 .endsWith("</body></html>");
+    }
+
+    @Test
+    @DisplayName("Markdown tables keep inline-code pipes inside the same cell")
+    void render_whenTableCellsContainInlineCodePipes_keepsColumnCountStable() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Area | Java | TypeScript | Why It Matters |
+                | --- | --- | --- | --- |
+                | Null Handling | `Optional<T>` | `T | null | undefined` — but no built-in null-safety | Enable `--strictNullChecks`. |
+                """, false);
+
+        var document = Jsoup.parse(html);
+        var dataRowCells = document.select("table.md-table tr").get(1).select("td");
+
+        assertThat(dataRowCells).hasSize(4);
+        assertThat(dataRowCells.get(2).text()).contains("T | null | undefined");
+        assertThat(dataRowCells.get(3).text()).contains("--strictNullChecks");
     }
 
     @Test

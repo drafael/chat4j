@@ -40,7 +40,7 @@ public class ChatWebViewPanel extends AbstractSettingsPanel {
         bindComboBox(
                 engineComboBox,
                 SettingsKeys.CHAT_WEB_VIEW_ENGINE,
-                ChatWebViewEngine.JEDITOR_PANE.settingValue(),
+                runtimeStatus.configuredEngine().settingValue(),
                 engineValidator(),
                 value -> {
                     refreshConfiguredEngine(value);
@@ -62,7 +62,7 @@ public class ChatWebViewPanel extends AbstractSettingsPanel {
 
         refreshDiagnostics(readString(
                 SettingsKeys.CHAT_WEB_VIEW_ENGINE,
-                ChatWebViewEngine.JEDITOR_PANE.settingValue()
+                runtimeStatus.configuredEngine().settingValue()
         ));
     }
 

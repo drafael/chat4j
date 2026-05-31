@@ -1,10 +1,10 @@
 # Configurable Web View Engine Architecture
 
-Chat4J supports configurable chat message rendering engines behind shared rendering boundaries. The default remains Swing `JEditorPane`. SwingWebView mode uses one full-transcript WebView for the chat scroll area rather than embedding one native WebView per message.
+Chat4J supports configurable chat message rendering engines behind shared rendering boundaries. SwingWebView is the default on macOS; Swing `JEditorPane` remains the default on other platforms and the fallback renderer. SwingWebView mode uses one full-transcript WebView for the chat scroll area rather than embedding one native WebView per message.
 
 ## Goals
 
-- Keep `JEditorPane` as the safe default.
+- Use SwingWebView by default on macOS while keeping `JEditorPane` as the safe fallback and non-macOS default.
 - Keep chat orchestration independent from concrete rendering components.
 - Preserve shared message behavior: roles, render mode, context menu, selection/copy hooks, external-link policy, and disposal.
 - Fall back to `JEditorPane` if `SwingWebView` is configured but unavailable.
@@ -20,8 +20,8 @@ chat4j.chat.webView.engine
 
 Supported values:
 
-- `jeditor-pane` — default, Swing `JEditorPane` renderer.
-- `swing-webview` — renders the whole transcript in one embedded native WebView while the composer/sidebar/model UI remain Swing.
+- `jeditor-pane` — Swing `JEditorPane` renderer and non-macOS default.
+- `swing-webview` — macOS default; renders the whole transcript in one embedded native WebView while the composer/sidebar/model UI remain Swing.
 
 Changes require restarting Chat4J. The active engine is resolved once during startup.
 
@@ -40,7 +40,7 @@ The settings window has a separate **Chat WebView** section. It includes:
 
 ## Runtime Resolution and Fallback
 
-Startup uses `ChatWebViewRuntimeStatusResolver` to read the configured engine and check SwingWebView availability. If `swing-webview` is configured but unavailable, Chat4J uses `JEditorPane` for the current session, keeps the persisted setting unchanged, and shows a non-fatal warning.
+Startup uses `ChatWebViewRuntimeStatusResolver` to read the configured engine or choose the platform default, then check SwingWebView availability. If `swing-webview` is configured/defaulted but unavailable, Chat4J uses `JEditorPane` for the current session, keeps the persisted setting unchanged, and shows a non-fatal warning.
 
 `ChatMessageViewFactory` still creates `JEditorPaneMessageContentView` for individual Swing message views. SwingWebView mode does not use per-message WebViews; it mirrors those message views into a single transcript WebView.
 
@@ -133,8 +133,8 @@ git diff --check
 
 Manual checks:
 
-1. Start with default `JEditorPane` and confirm normal chat rendering.
-2. Open **Settings → Chat WebView** and select `SwingWebView`.
+1. Start with the platform default (`SwingWebView` on macOS, `JEditorPane` elsewhere) and confirm normal chat rendering.
+2. Open **Settings → Chat WebView** and select the alternate engine.
 3. Restart Chat4J.
-4. Confirm diagnostics show active `SwingWebView`.
+4. Confirm diagnostics show the selected active engine, or a clear `JEditorPane` fallback reason.
 5. Verify markdown preview, raw markdown mode, code blocks, long lines, external links, blocked unsafe links, streaming, existing chat loading, transcript scrolling, theme changes, and app shutdown.

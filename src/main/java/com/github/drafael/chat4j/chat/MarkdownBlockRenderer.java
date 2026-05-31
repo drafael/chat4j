@@ -198,15 +198,12 @@ final class MarkdownBlockRenderer {
                 continue;
             }
 
-            String[] cells = tableLine.split("\\|");
+            List<String> cells = splitTableCells(tableLine);
             boolean isHeader = !headerDone && t == 0;
 
             state.html.append("<tr>");
-            for (int c = 1; c < cells.length; c++) {
-                String cell = cells[c].trim();
-                if (cell.isEmpty() && c == cells.length - 1) {
-                    continue;
-                }
+            for (String rawCell : cells) {
+                String cell = rawCell.trim();
                 if (isHeader) {
                     state.html.append("<td style=\"padding: 6px 10px; border-bottom: 2px solid ")
                             .append(palette.codeBorder()).append(";\"><b>")
@@ -220,6 +217,46 @@ final class MarkdownBlockRenderer {
             state.html.append("</tr>");
         }
         state.html.append("</table>");
+    }
+
+    private static List<String> splitTableCells(String tableLine) {
+        String line = StringUtils.defaultString(tableLine).trim();
+        if (line.startsWith("|")) {
+            line = line.substring(1);
+        }
+        if (line.endsWith("|")) {
+            line = line.substring(0, line.length() - 1);
+        }
+
+        List<String> cells = new ArrayList<>();
+        StringBuilder cell = new StringBuilder();
+        boolean inInlineCode = false;
+        for (int index = 0; index < line.length(); index++) {
+            char current = line.charAt(index);
+            if (current == '\\' && index + 1 < line.length()) {
+                char next = line.charAt(index + 1);
+                if (next == '|') {
+                    cell.append(next);
+                    index++;
+                    continue;
+                }
+                cell.append(current);
+                continue;
+            }
+            if (current == '`') {
+                inInlineCode = !inInlineCode;
+                cell.append(current);
+                continue;
+            }
+            if (current == '|' && !inInlineCode) {
+                cells.add(cell.toString());
+                cell.setLength(0);
+                continue;
+            }
+            cell.append(current);
+        }
+        cells.add(cell.toString());
+        return cells;
     }
 
     private static boolean isTableLine(String line) {

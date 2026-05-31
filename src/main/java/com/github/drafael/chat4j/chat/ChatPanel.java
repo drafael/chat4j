@@ -179,7 +179,7 @@ public class ChatPanel extends JPanel {
     private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
-    private final Map<UUID, Message> latestCompletedAssistantMessages = new ConcurrentHashMap<>();
+    private final Map<UUID, Message> pendingCompletedAssistantRecoveries = new ConcurrentHashMap<>();
     private volatile long activeStreamSessionId = -1L;
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
@@ -427,6 +427,9 @@ public class ChatPanel extends JPanel {
         if (modelPopup != null) {
             modelPopup.dispose();
             modelPopup = null;
+        }
+        if (webTranscriptView != null && !webTranscriptView.isDisposed()) {
+            webTranscriptView.dispose();
         }
         super.removeNotify();
     }
@@ -774,6 +777,7 @@ public class ChatPanel extends JPanel {
 
         boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
         boolean startsConversation = visibleConversation && history.isEmpty();
+        clearPendingAssistantRecovery(sendJob.conversationId);
         if (visibleConversation) {
             inputBar.clear();
             history.add(userMessage);
@@ -1981,6 +1985,7 @@ public class ChatPanel extends JPanel {
         }
 
         history.set(state.messageIndex(), replacement);
+        clearPendingAssistantRecovery(resolveConversationId());
         finishEditingAndRestoreComposer(state);
         loadHistory(new ArrayList<>(history));
         notifyMessageSubmitted();
@@ -2010,6 +2015,8 @@ public class ChatPanel extends JPanel {
         }
 
         history.set(state.messageIndex(), replacement);
+        UUID conversationId = resolveConversationId();
+        clearPendingAssistantRecovery(conversationId);
         int keepCount = state.messageIndex() + 1;
         if (history.size() > keepCount) {
             history.subList(keepCount, history.size()).clear();
@@ -2017,7 +2024,6 @@ public class ChatPanel extends JPanel {
 
         finishEditingAndRestoreComposer(state);
         loadHistory(new ArrayList<>(history));
-        UUID conversationId = resolveConversationId();
         if (historyTruncatedListener != null && conversationId != null) {
             historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
         }
@@ -2120,8 +2126,9 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        truncateHistoryAndBubbles(keepCount);
         UUID conversationId = resolveConversationId();
+        clearPendingAssistantRecovery(conversationId);
+        truncateHistoryAndBubbles(keepCount);
         if (historyTruncatedListener != null && conversationId != null) {
             historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
         }
@@ -2252,7 +2259,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void refreshWebTranscript(boolean scrollToBottom, boolean forceReload) {
-        if (!isSwingWebViewTranscriptEnabled() || messagesPanel == null) {
+        if (!isSwingWebViewTranscriptEnabled() || webTranscriptView.isDisposed() || messagesPanel == null) {
             return;
         }
 
@@ -2671,6 +2678,7 @@ public class ChatPanel extends JPanel {
 
     private void clearChat(boolean cancelActiveStream) {
         if (cancelActiveStream) {
+            clearPendingAssistantRecovery(activeConversationId);
             cancelStreaming();
         }
 
@@ -2710,7 +2718,7 @@ public class ChatPanel extends JPanel {
         clearChat(false);
 
         List<Message> normalizedMessages = new ArrayList<>(normalizeLoadedHistory(messages));
-        mergeRecentlyCompletedAssistantMessage(normalizedMessages);
+        recoverPendingCompletedAssistantMessage(normalizedMessages);
         for (Message msg : normalizedMessages) {
             history.add(msg);
             int messageIndex = history.size() - 1;
@@ -2998,18 +3006,24 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void mergeRecentlyCompletedAssistantMessage(List<Message> messages) {
+    private void recoverPendingCompletedAssistantMessage(List<Message> messages) {
         if (activeConversationId == null) {
             return;
         }
-        Message latestAssistantMessage = latestCompletedAssistantMessages.get(activeConversationId);
-        if (latestAssistantMessage == null || latestAssistantMessage.role() != Role.ASSISTANT) {
+        Message completedAssistantMessage = pendingCompletedAssistantRecoveries.remove(activeConversationId);
+        if (completedAssistantMessage == null || completedAssistantMessage.role() != Role.ASSISTANT) {
             return;
         }
-        if (messages.stream().anyMatch(message -> isSameAssistantMessage(message, latestAssistantMessage))) {
+        if (messages.stream().anyMatch(message -> isSameAssistantMessage(message, completedAssistantMessage))) {
             return;
         }
-        messages.add(latestAssistantMessage);
+        messages.add(completedAssistantMessage);
+    }
+
+    private void clearPendingAssistantRecovery(UUID conversationId) {
+        if (conversationId != null) {
+            pendingCompletedAssistantRecoveries.remove(conversationId);
+        }
     }
 
     private boolean isSameAssistantMessage(Message candidate, Message expected) {
@@ -3251,8 +3265,8 @@ public class ChatPanel extends JPanel {
             refreshWebTranscript(false, true);
         }
 
-        if (conversationId != null) {
-            latestCompletedAssistantMessages.put(conversationId, assistantMessage);
+        if (conversationId != null && !isVisibleConversation(conversationId)) {
+            pendingCompletedAssistantRecoveries.put(conversationId, assistantMessage);
         }
 
         boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);

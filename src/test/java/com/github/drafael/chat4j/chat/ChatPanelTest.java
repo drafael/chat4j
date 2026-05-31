@@ -2122,6 +2122,11 @@ class ChatPanelTest {
         assertThat(subject.getHistory()).hasSize(2);
         assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
         assertThat(subject.getHistory().get(1).content()).isEqualTo("saved answer");
+
+        SwingUtilities.invokeAndWait(() -> subject.loadHistory(List.of(Message.user("ping"))));
+
+        assertThat(subject.getHistory()).hasSize(1);
+        assertThat(subject.getHistory().getFirst().content()).isEqualTo("ping");
     }
 
     @Test

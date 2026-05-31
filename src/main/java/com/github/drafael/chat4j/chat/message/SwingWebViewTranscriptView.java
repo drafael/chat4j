@@ -10,15 +10,20 @@ import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.provider.api.Role;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 
 import javax.swing.*;
 import java.awt.*;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
@@ -28,6 +33,7 @@ public final class SwingWebViewTranscriptView {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String COPY_ICON = iconDataUri("/icons/input/copy.svg");
     private static final String REGENERATE_ICON = iconDataUri("/icons/chat/refresh-cw.svg");
+    private static final String ARROW_DOWN_ICON = iconDataUri("/icons/chat/arrow-down.svg");
 
     private final WebViewComponent webView;
     private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
@@ -111,6 +117,15 @@ public final class SwingWebViewTranscriptView {
         String bubbleBackground = cssColor(userBubbleColor(panelBackground));
         String borderColor = cssColor(uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
         Color menuBackgroundColor = uiManagerColor("PopupMenu.background", panelBackground);
+        Color buttonBackgroundColor = uiManagerColor("Button.background", blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.04f));
+        Color buttonBorderColor = uiManagerColor("Button.borderColor", uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
+        Color sourceAccentColor = uiManagerColor("Component.accentColor", dark ? new Color(60, 190, 188) : new Color(1, 106, 113));
+        Color sourceChipBackgroundColor = blend(panelBackground, sourceAccentColor, dark ? 0.18f : 0.08f);
+        Color sourceChipBorderColor = blend(panelBackground, sourceAccentColor, dark ? 0.52f : 0.34f);
+        Color sourceChipTextColor = blend(uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK), sourceAccentColor, dark ? 0.36f : 0.28f);
+        Color sourceChipHoverBackgroundColor = blend(panelBackground, sourceAccentColor, dark ? 0.28f : 0.14f);
+        Color jumpRingColor = uiManagerColor("ProgressBar.foreground", uiManagerColor("Component.accentColor", dark ? new Color(88, 166, 255) : new Color(70, 130, 230)));
+        Color jumpRingTrackColor = alphaColor(uiManagerColor("ProgressBar.background", buttonBorderColor), 96);
         Color hoverBackgroundColor = uiManagerColor(
                 "MenuItem.selectionBackground",
                 blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.08f)
@@ -118,6 +133,14 @@ public final class SwingWebViewTranscriptView {
         Color hoverForegroundColor = uiManagerColor("MenuItem.selectionForeground", uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK));
         Color iconColor = uiManagerColor("Label.disabledForeground", blend(hoverForegroundColor, panelBackground, dark ? 0.36f : 0.28f));
         String menuBackground = cssColor(menuBackgroundColor);
+        String buttonBackground = cssColor(buttonBackgroundColor);
+        String buttonBorder = cssColor(buttonBorderColor);
+        String sourceChipBackground = cssColor(sourceChipBackgroundColor);
+        String sourceChipBorder = cssColor(sourceChipBorderColor);
+        String sourceChipText = cssColor(sourceChipTextColor);
+        String sourceChipHoverBackground = cssColor(sourceChipHoverBackgroundColor);
+        String jumpRing = cssColor(jumpRingColor);
+        String jumpRingTrack = alphaCssColor(jumpRingTrackColor);
         String hoverBackground = cssColor(hoverBackgroundColor);
         String hoverForeground = cssColor(hoverForegroundColor);
         String iconColorValue = cssColor(iconColor);
@@ -155,11 +178,11 @@ public final class SwingWebViewTranscriptView {
                     .chat4j-fade.top { top: 0; height: 34px; background: linear-gradient(to bottom, %s 0%%, %s 38%%, rgba(%d,%d,%d,0) 100%%); }
                     .chat4j-fade.bottom { bottom: 0; height: 42px; background: linear-gradient(to top, %s 0%%, %s 34%%, rgba(%d,%d,%d,0) 100%%); }
                     .transcript { max-width: none; margin: 0; }
-                    .row { display: flex; margin: 10px 0 34px 0; }
+                    .row { display: flex; margin: 6px 0 26px 0; }
                     .row.user { justify-content: flex-end; }
                     .row.assistant, .row.activity { justify-content: flex-start; }
                     .message { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
-                    .message.user { max-width: 72%%; background: %s; border-radius: 16px; padding: 12px 16px; }
+                    .message.user { max-width: 72%%; background: %s; border-radius: 12px; padding: 8px 14px; }
                     .row.user .message.user { margin-left: auto; }
                     .message.assistant { width: 100%%; padding: 0; }
                     .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: %s; font-weight: 700; line-height: 1.25; }
@@ -167,7 +190,8 @@ public final class SwingWebViewTranscriptView {
                     .message h2 { font-size: 19px; margin: 18px 0 9px 0; }
                     .message h3 { font-size: 17px; margin: 16px 0 8px 0; }
                     .message h4, .message h5, .message h6 { font-size: 15px; margin: 14px 0 7px 0; }
-                    .message p { margin: 8px 0 14px 0; }
+                    .message p { margin: 6px 0 10px 0; }
+                    .message.user p { margin: 2px 0; }
                     .message ul, .message ol { margin: 8px 0 16px 0; padding-left: 26px; }
                     .message li { margin: 5px 0; }
                     .message hr { border: none; border-top: 1px solid %s; margin: 18px 0; height: 0; background: transparent; }
@@ -183,35 +207,45 @@ public final class SwingWebViewTranscriptView {
                     .message table.md-table th:first-child, .message table.md-table td:first-child { min-width: 150px; }
                     .message table.md-table th:not(:first-child), .message table.md-table td:not(:first-child) { min-width: 220px; }
                     .message table.md-table code { word-break: normal; overflow-wrap: normal; white-space: nowrap; font-size: %dpx !important; }
-                    .code-block-shell { position: relative; margin: 10px 0 20px 0; }
+                    .code-block-shell { position: relative; margin: 10px 0 20px 0; border-radius: 3px; }
                     .code-block-shell table.md-code-block { margin: 0 !important; }
-                    .code-copy-button { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: 1px solid %s; border-radius: 6px; background: %s; color: %s; display: none; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; }
-                    .code-block-shell:hover .code-copy-button { display: flex; }
-                    .code-copy-button:hover { background: %s; color: %s; }
-                    .code-copy-button .icon { width: 14px; height: 14px; }
-                    .message table.md-code-block { border-collapse: collapse !important; border-spacing: 0 !important; margin: 10px 0 20px 0 !important; width: 100%%; border: 0 !important; }
-                    .message table.md-code-block tr.code-header td { background-color: %s !important; border: 1px solid %s !important; border-bottom: 0 !important; padding: 3px 10px !important; color: %s !important; }
-                    .message table.md-code-block tr.code-body td { background-color: %s !important; border: 1px solid %s !important; padding: 10px 14px !important; }
+                    .code-copy-button, .activity-copy-button { position: absolute; width: 24px; height: 24px; border: 1px solid %s; border-radius: 5px; background: %s; color: %s; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.92); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease, color 120ms ease, border-color 120ms ease; }
+                    .code-copy-button { top: 6px; right: 6px; }
+                    .code-block-shell:hover .code-copy-button, .activity-box:hover .activity-copy-button { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .code-copy-button:hover, .activity-copy-button:hover { background: %s; color: %s; transform: translateY(0) scale(1.04); }
+                    .code-copy-button .icon, .activity-copy-button .icon { width: 14px; height: 14px; }
+                    .copy-flash .icon.copy, .message-action-button.copy-flash .icon.copy { animation: chat4j-copy-pop 420ms cubic-bezier(.2,.8,.2,1); }
+                    .copy-flash { animation: chat4j-copy-button-flash 420ms ease; }
+                    @keyframes chat4j-copy-pop { 0%% { transform: scale(1); } 35%% { transform: scale(0.78); } 70%% { transform: scale(1.22); } 100%% { transform: scale(1); } }
+                    @keyframes chat4j-copy-button-flash { 0%% { filter: none; } 35%% { filter: brightness(1.12); } 100%% { filter: none; } }
+                    .message table.md-code-block { border-collapse: separate !important; border-spacing: 0 !important; margin: 10px 0 20px 0 !important; width: 100%%; border: 0 !important; border-radius: 3px !important; }
+                    .message table.md-code-block tr.code-header td { background-color: %s !important; border: 1px solid %s !important; border-bottom: 0 !important; border-radius: 3px 3px 0 0 !important; padding: 3px 10px !important; color: %s !important; }
+                    .message table.md-code-block tr.code-body td { background-color: %s !important; border: 1px solid %s !important; border-radius: 0 0 3px 3px !important; padding: 10px 14px !important; }
+                    .message table.md-code-block.without-header tr.code-body td { border-radius: 3px !important; }
                     .message table.md-code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45 !important; }
                     .message table.md-code-block tr.code-header font { color: %s !important; font-family: %s !important; font-size: %dpx !important; }
                     .message code, .message pre, .message table.md-code-block tr.code-body font { font-family: %s !important; font-size: %dpx !important; line-height: 1.45; }
                     .message code.md-latex-inline, .message code:not(.md-latex-inline) { background-color: %s; border: 1px solid %s; border-radius: 4px; padding: 1px 4px; font-size: %dpx !important; }
-                    .activity-box { box-sizing: border-box; width: 100%%; border: 1px solid %s; border-radius: 12px; padding: 0; color: %s; background: transparent; }
-                    .activity-box summary { cursor: pointer; list-style: none; padding: 9px 12px; font-weight: 600; }
+                    .activity-box { box-sizing: border-box; position: relative; width: 100%%; border: 1px solid %s; border-radius: 10px; padding: 0; color: %s; background: transparent; }
+                    .activity-box summary { cursor: pointer; list-style: none; padding: 7px 40px 7px 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+                    .activity-copy-button { top: 4px; right: 6px; }
                     .activity-box summary::-webkit-details-marker { display: none; }
-                    .activity-box summary::before { content: '▸'; display: inline-block; width: 18px; color: %s; }
+                    .activity-box summary::before { content: '›'; display: inline-flex; align-items: center; justify-content: center; width: 14px; color: %s; font-size: 16px; line-height: 1; transition: transform 120ms ease; }
                     .activity-box[open] summary { border-bottom: 1px solid %s; }
-                    .activity-box[open] summary::before { content: '▾'; }
-                    .activity-content { box-sizing: border-box; padding: 10px 14px 12px 30px; }
+                    .activity-box[open] summary::before { transform: rotate(90deg); }
+                    .activity-content { box-sizing: border-box; padding: 8px 12px 10px 24px; }
                     .activity-content .message.assistant { padding: 0; }
                     .activity-content .message > :first-child { margin-top: 0; }
                     .activity-content .message > :last-child { margin-bottom: 0; }
-                    .activity-content ul, .activity-content ol { margin: 6px 0 10px 0; padding-left: 22px; }
+                    .activity-content ul, .activity-content ol { margin: 4px 0 8px 0; padding-left: 20px; }
+                    .activity-content .message p { margin: 4px 0 8px 0; }
+                    .activity-content .message h1, .activity-content .message h2, .activity-content .message h3 { margin-top: 8px; margin-bottom: 5px; }
                     .message-shell { position: relative; width: 100%%; }
-                    .message-actions { position: absolute; right: 4px; bottom: -30px; display: none; gap: 4px; padding: 2px; border-radius: 8px; background: %s; border: 1px solid %s; box-shadow: 0 3px 10px rgba(0,0,0,0.12); z-index: 10; }
-                    .row:hover .message-actions { display: flex; }
-                    .message-action-button { width: 24px; height: 24px; border: none; border-radius: 6px; background: transparent; color: %s; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
-                    .message-action-button:hover { background: %s; color: %s; }
+                    .message-actions { position: absolute; right: 4px; bottom: -30px; display: flex; gap: 4px; padding: 2px; border-radius: 8px; background: %s; border: 1px solid %s; box-shadow: 0 3px 10px rgba(0,0,0,0.12); z-index: 10; opacity: 0; pointer-events: none; transform: translateY(4px) scale(0.96); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1); }
+                    .row.assistant .message-actions { left: 0; right: auto; }
+                    .row:hover .message-actions { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .message-action-button { width: 24px; height: 24px; border: none; border-radius: 6px; background: transparent; color: %s; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: background 120ms ease, color 120ms ease, transform 120ms ease; }
+                    .message-action-button:hover { background: %s; color: %s; transform: scale(1.04); }
                     .transcript-menu { position: fixed; min-width: 232px; display: none; padding: 5px 0; border-radius: 10px; background: %s; border: 1px solid %s; box-shadow: 0 8px 24px rgba(0,0,0,0.22); z-index: 100; }
                     .transcript-menu button { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; column-gap: 8px; width: 100%%; height: 28px; border: none; border-radius: 0; background: transparent; color: %s; text-align: left; padding: 3px 22px 3px 14px; font: inherit; cursor: pointer; }
                     .transcript-menu button:hover { background: %s; color: %s; }
@@ -224,8 +258,26 @@ public final class SwingWebViewTranscriptView {
                     .transcript-menu-separator { height: 1px; margin: 4px 8px; background: %s; }
                     a { color: %s; text-decoration: none; }
                     a:hover { text-decoration: underline; }
-                    .jump-button { position: fixed; left: 50%%; bottom: 24px; transform: translateX(-50%%); width: 44px; height: 44px; border-radius: 999px; border: none; background: %s; color: %s; font-size: 24px; line-height: 1; display: %s; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.18); cursor: pointer; z-index: 20; }
-                    .jump-button:hover { filter: brightness(1.06); }
+                    a.source-citation { display: inline-flex; align-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: %dpx; font-weight: 600; line-height: 18px; text-decoration: none; vertical-align: baseline; }
+                    .source-chip-row { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0 6px 0; }
+                    a.source-chip { display: inline-flex; align-items: center; gap: 2px; height: 20px; padding: 0 6px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: %dpx; font-weight: 600; line-height: 20px; text-decoration: none; letter-spacing: -0.01em; box-shadow: 0 1px 0 rgba(0,0,0,0.03); }
+                    .source-chip-count { color: currentColor; opacity: 0.68; font-weight: 500; }
+                    a.source-citation:hover, a.source-chip:hover { background: %s; color: %s; border-color: currentColor; text-decoration: none; }
+                    .source-preview { position: fixed; display: none; width: min(420px, calc(100vw - 32px)); padding: 0; border-radius: 12px; background: %s; border: 1px solid %s; color: %s; box-shadow: 0 12px 32px rgba(0,0,0,0.24); z-index: 130; overflow: hidden; pointer-events: none; }
+                    .source-preview.visible { display: block; animation: chat4j-source-pop 110ms cubic-bezier(.2,.8,.2,1); }
+                    .source-preview-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px 12px; border-bottom: 1px solid %s; color: %s; }
+                    .source-preview-favicon { width: 22px; height: 22px; border-radius: 999px; border: 1px solid %s; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: %s; background: %s; flex: 0 0 auto; }
+                    .source-preview-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                    .source-preview-body { padding: 10px 12px 12px 12px; }
+                    .source-preview-title { font-weight: 700; margin-bottom: 6px; color: %s; }
+                    .source-preview-snippet { color: %s; line-height: 1.35; }
+                    @keyframes chat4j-source-pop { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+                    .jump-button { position: fixed; left: 50%%; bottom: 14px; transform: translateX(-50%%); width: 44px; height: 44px; border-radius: 999px; border: 1px solid %s; background: %s; color: %s; font-size: 0; line-height: 1; display: %s; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.18); cursor: pointer; z-index: 20; }
+                    .jump-button:hover { background: %s; color: %s; }
+                    .jump-button::before { content: ''; position: absolute; inset: 1px; border-radius: 999px; border: 2px solid %s; opacity: 0.42; }
+                    .jump-button::after { content: ''; width: 16px; height: 16px; background: currentColor; -webkit-mask: url('%s') center / contain no-repeat; mask: url('%s') center / contain no-repeat; }
+                    .jump-button.streaming::before { border-color: %s; border-top-color: %s; opacity: 1; animation: chat4j-spin 900ms linear infinite; }
+                    @keyframes chat4j-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                   </style>
                 </head>
                 <body>
@@ -233,8 +285,12 @@ public final class SwingWebViewTranscriptView {
                   <div id="chat4j-top-fade" class="chat4j-fade top"></div>
                   <div id="chat4j-bottom-fade" class="chat4j-fade bottom"></div>
                   <div id="chat4j-transcript-menu" class="transcript-menu"></div>
+                  <div id="chat4j-source-preview" class="source-preview" aria-hidden="true">
+                    <div class="source-preview-header"><span class="source-preview-favicon"></span><span class="source-preview-domain"></span></div>
+                    <div class="source-preview-body"><div class="source-preview-title"></div><div class="source-preview-snippet"></div></div>
+                  </div>
                   <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
-                  <button id="chat4j-jump-bottom" class="jump-button" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);">↓</button>
+                  <button id="chat4j-jump-bottom" class="jump-button%s" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);"></button>
                   %s
                 </body>
                 </html>
@@ -309,10 +365,39 @@ public final class SwingWebViewTranscriptView {
                 REGENERATE_ICON,
                 borderColor,
                 palette.linkColor(),
-                palette.linkColor(),
+                sourceChipBackground,
+                sourceChipBorder,
+                sourceChipText,
+                Math.max(10, baseBodyFontSize - 2),
+                sourceChipBackground,
+                sourceChipBorder,
+                sourceChipText,
+                Math.max(10, baseBodyFontSize - 2),
+                sourceChipHoverBackground,
+                sourceChipText,
+                menuBackground,
+                borderColor,
+                palette.textColor(),
+                borderColor,
+                palette.mutedTextColor(),
+                borderColor,
+                palette.mutedTextColor(),
                 palette.inlineCodeBg(),
+                palette.textColor(),
+                palette.mutedTextColor(),
+                buttonBorder,
+                buttonBackground,
+                palette.textColor(),
                 jumpButtonVisible ? "flex" : "none",
+                hoverBackground,
+                hoverForeground,
+                jumpRingTrack,
+                ARROW_DOWN_ICON,
+                ARROW_DOWN_ICON,
+                jumpRingTrack,
+                jumpRing,
                 entriesHtml,
+                jumpButtonVisible ? " streaming" : "",
                 scrollScript
         );
     }
@@ -338,6 +423,7 @@ public final class SwingWebViewTranscriptView {
                   var jump = document.getElementById('chat4j-jump-bottom');
                   if (jump) {
                     jump.style.display = %s;
+                    jump.classList.toggle('streaming', %s);
                   }
                   if (%s) {
                     window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);
@@ -346,6 +432,7 @@ public final class SwingWebViewTranscriptView {
                 """.formatted(
                 toJsonString(entriesHtml),
                 toJsonString(jumpButtonVisible ? "flex" : "none"),
+                jumpButtonVisible ? "true" : "false",
                 scrollToBottom ? "true" : "false"
         );
         webView.eval(script);
@@ -361,7 +448,7 @@ public final class SwingWebViewTranscriptView {
         if (entry.kind() == EntryKind.ACTIVITY) {
             String renderedActivity = messageHtmlRenderer.render(Role.ASSISTANT, renderMode, entry.text(), dark);
             Document activityDocument = Jsoup.parse(renderedActivity);
-            prepareRenderedDocument(activityDocument);
+            prepareRenderedDocument(activityDocument, false);
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
             String content = StringUtils.isBlank(entry.text())
                     ? ""
@@ -370,7 +457,7 @@ public final class SwingWebViewTranscriptView {
             return """
                     <section class="row activity">
                       <details class="activity-box"%s>
-                        <summary>%s</summary>
+                        <summary>%s<button class="activity-copy-button" title="Copy activity" data-action="copy-activity"><span class="icon copy" aria-hidden="true"></span></button></summary>
                         %s
                       </details>
                     </section>
@@ -379,7 +466,7 @@ public final class SwingWebViewTranscriptView {
 
         String rendered = messageHtmlRenderer.render(entry.role(), renderMode, entry.text(), dark);
         Document document = Jsoup.parse(rendered);
-        prepareRenderedDocument(document);
+        prepareRenderedDocument(document, entry.role() == Role.ASSISTANT);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String actions = entry.messageIndex() < 0
@@ -405,17 +492,145 @@ public final class SwingWebViewTranscriptView {
                 """.formatted(roleClass, entry.messageIndex(), actions, roleClass, body);
     }
 
-    private void prepareRenderedDocument(Document document) {
+    private void prepareRenderedDocument(Document document, boolean replaceInlineCitationsWithChips) {
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
+        annotateSourceLinks(document, replaceInlineCitationsWithChips);
         document.select("table.md-code-block").forEach(table -> {
             var rows = table.select("tr");
             if (rows.size() > 1) {
+                table.addClass("with-header");
                 rows.first().addClass("code-header");
                 rows.last().addClass("code-body");
                 return;
             }
+            table.addClass("without-header");
             rows.addClass("code-body");
         });
+    }
+
+    private void annotateSourceLinks(Document document, boolean replaceInlineCitationsWithChips) {
+        Map<String, SourcePreview> previewsByUrl = new LinkedHashMap<>();
+        document.select("a[href]").stream()
+                .filter(anchor -> isHttpUrl(anchor.attr("href")))
+                .forEach(anchor -> previewsByUrl.merge(anchor.attr("href"), sourcePreview(anchor), this::preferSourcePreview));
+
+        document.select("a[href]").forEach(anchor -> {
+            SourcePreview preview = previewsByUrl.get(anchor.attr("href"));
+            if (preview == null) {
+                return;
+            }
+
+            anchor.addClass("source-link");
+            if (isCitationAnchor(anchor)) {
+                if (replaceInlineCitationsWithChips && !isInsideSourcesList(anchor)) {
+                    applyInlineSourceChip(anchor, preview);
+                } else {
+                    anchor.addClass("source-citation");
+                }
+            }
+            anchor.attr("data-source-title", preview.title());
+            anchor.attr("data-source-domain", preview.domain());
+            anchor.attr("data-source-url", preview.url());
+            anchor.attr("data-source-snippet", preview.snippet());
+        });
+    }
+
+    private boolean isInsideSourcesList(Element anchor) {
+        Element listItem = anchor.closest("li");
+        if (listItem == null || listItem.parent() == null) {
+            return false;
+        }
+        Element previous = listItem.parent().previousElementSibling();
+        if (previous == null) {
+            return false;
+        }
+        String heading = StringUtils.removeEnd(StringUtils.defaultString(previous.text()).trim(), ":");
+        return Strings.CI.equals(heading, "Sources");
+    }
+
+    private void applyInlineSourceChip(Element anchor, SourcePreview preview) {
+        anchor.removeClass("source-citation");
+        anchor.addClass("source-chip");
+        anchor.empty();
+        anchor.appendElement("span").addClass("source-chip-label").text(sourceChipLabel(preview.domain()));
+    }
+
+    private String sourceChipLabel(String domain) {
+        String value = StringUtils.defaultIfBlank(domain, "source");
+        String[] parts = value.split("\\.");
+        if (parts.length >= 2 && parts[parts.length - 1].length() <= 3) {
+            return parts[parts.length - 2];
+        }
+        return parts.length == 0 ? value : parts[0];
+    }
+
+    private SourcePreview preferSourcePreview(SourcePreview existing, SourcePreview candidate) {
+        boolean existingNumeric = isCitationText(existing.title());
+        boolean candidateNumeric = isCitationText(candidate.title());
+        if (existingNumeric && !candidateNumeric) {
+            return candidate;
+        }
+        if (!candidateNumeric && candidate.snippet().length() > existing.snippet().length()) {
+            return candidate;
+        }
+        return existing;
+    }
+
+    private boolean isCitationAnchor(Element anchor) {
+        return isCitationText(anchor.text());
+    }
+
+    private boolean isCitationText(String text) {
+        String normalized = StringUtils.removeEnd(StringUtils.removeStart(StringUtils.trimToEmpty(text), "["), "]");
+        return normalized.matches("\\d+");
+    }
+
+    private SourcePreview sourcePreview(Element anchor) {
+        String href = anchor.attr("href");
+        String title = StringUtils.defaultIfBlank(anchor.text(), sourceDomain(href));
+        String domain = sourceDomain(href);
+        String context = sourceContext(anchor);
+        String snippet = sourceSnippet(context, title, href);
+        return new SourcePreview(title, domain, href, snippet);
+    }
+
+    private String sourceContext(Element anchor) {
+        Element listItem = anchor.closest("li");
+        if (listItem != null) {
+            return listItem.text();
+        }
+        Element paragraph = anchor.closest("p");
+        return paragraph == null ? anchor.parent() == null ? anchor.text() : anchor.parent().text() : paragraph.text();
+    }
+
+    private String sourceSnippet(String context, String title, String url) {
+        String snippet = StringUtils.defaultString(context)
+                .replaceFirst("^\\s*\\d+\\.\\s*", "")
+                .trim();
+        if (StringUtils.startsWithIgnoreCase(snippet, title)) {
+            snippet = snippet.substring(title.length()).trim();
+        }
+        snippet = snippet.replaceFirst("^[—–-]\\s*", "").trim();
+        if (StringUtils.isBlank(snippet) || Strings.CS.equals(snippet, title)) {
+            snippet = url;
+        }
+        return StringUtils.abbreviate(snippet, 260);
+    }
+
+    private boolean isHttpUrl(String href) {
+        return StringUtils.startsWithAny(StringUtils.lowerCase(href), "http://", "https://");
+    }
+
+    private String sourceDomain(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return StringUtils.defaultIfBlank(StringUtils.removeStart(host, "www."), url);
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    private record SourcePreview(String title, String domain, String url, String snippet) {
     }
 
     private String bridgeScript() {
@@ -450,11 +665,62 @@ public final class SwingWebViewTranscriptView {
                             window.chat4jTranscriptAction(action, String(messageIndex), payloadText);
                         }
                     }
+                    function animateCopyButton(button) {
+                        if (!button) {
+                            return;
+                        }
+                        button.classList.remove('copy-flash');
+                        void button.offsetWidth;
+                        button.classList.add('copy-flash');
+                        setTimeout(function() {
+                            button.classList.remove('copy-flash');
+                        }, 460);
+                    }
                     function hideTranscriptMenu() {
                         var menu = document.getElementById('chat4j-transcript-menu');
                         if (menu) {
                             menu.style.display = 'none';
                         }
+                    }
+                    function hideSourcePreview() {
+                        var preview = document.getElementById('chat4j-source-preview');
+                        if (!preview) {
+                            return;
+                        }
+                        preview.classList.remove('visible');
+                        preview.setAttribute('aria-hidden', 'true');
+                    }
+                    function sourceInitial(domain) {
+                        var value = String(domain || '').trim();
+                        return value.length > 0 ? value.charAt(0).toUpperCase() : '↗';
+                    }
+                    function showSourcePreview(anchor, event) {
+                        var preview = document.getElementById('chat4j-source-preview');
+                        if (!preview || !anchor) {
+                            return;
+                        }
+                        preview.querySelector('.source-preview-favicon').textContent = sourceInitial(anchor.getAttribute('data-source-domain'));
+                        preview.querySelector('.source-preview-domain').textContent = anchor.getAttribute('data-source-domain') || '';
+                        preview.querySelector('.source-preview-title').textContent = anchor.getAttribute('data-source-title') || anchor.textContent || '';
+                        preview.querySelector('.source-preview-snippet').textContent = anchor.getAttribute('data-source-snippet') || '';
+                        preview.classList.add('visible');
+                        preview.setAttribute('aria-hidden', 'false');
+                        positionSourcePreview(event || { clientX: anchor.getBoundingClientRect().left, clientY: anchor.getBoundingClientRect().bottom });
+                    }
+                    function positionSourcePreview(event) {
+                        var preview = document.getElementById('chat4j-source-preview');
+                        if (!preview || !preview.classList.contains('visible')) {
+                            return;
+                        }
+                        var margin = 12;
+                        var rect = preview.getBoundingClientRect();
+                        var x = Math.min(Math.max(margin, event.clientX + 14), Math.max(margin, window.innerWidth - rect.width - margin));
+                        var y = event.clientY + 16;
+                        if (y + rect.height + margin > window.innerHeight) {
+                            y = Math.max(margin, event.clientY - rect.height - 14);
+                        }
+                        preview.style.left = x + 'px';
+                        preview.style.top = y + 'px';
                     }
                     function showTranscriptMenu(event, row) {
                         var menu = document.getElementById('chat4j-transcript-menu');
@@ -505,6 +771,7 @@ public final class SwingWebViewTranscriptView {
                             button.onclick = function(event) {
                                 var code = table.querySelector('tr.code-body pre') || table.querySelector('pre') || table;
                                 dispatchTranscriptAction('copy-text', -1, String(code.textContent || ''));
+                                animateCopyButton(button);
                                 event.preventDefault();
                                 event.stopPropagation();
                             };
@@ -616,7 +883,48 @@ public final class SwingWebViewTranscriptView {
                             updateCustomScrollbar();
                         }, 50);
                     });
+                    document.addEventListener('mouseover', function(event) {
+                        var sourceLink = closest(event.target, 'a[data-source-url]');
+                        if (sourceLink) {
+                            showSourcePreview(sourceLink, event);
+                        }
+                    }, true);
+                    document.addEventListener('mousemove', function(event) {
+                        positionSourcePreview(event);
+                    }, true);
+                    document.addEventListener('mouseout', function(event) {
+                        var sourceLink = closest(event.target, 'a[data-source-url]');
+                        if (sourceLink) {
+                            hideSourcePreview();
+                        }
+                    }, true);
+                    document.addEventListener('focusin', function(event) {
+                        var sourceLink = closest(event.target, 'a[data-source-url]');
+                        if (sourceLink) {
+                            showSourcePreview(sourceLink, event);
+                        }
+                    }, true);
+                    document.addEventListener('focusout', function(event) {
+                        if (closest(event.target, 'a[data-source-url]')) {
+                            hideSourcePreview();
+                        }
+                    }, true);
                     document.addEventListener('click', function (event) {
+                        hideSourcePreview();
+                        var activityCopyButton = closest(event.target, 'button[data-action="copy-activity"]');
+                        if (activityCopyButton) {
+                            var activityBox = closest(activityCopyButton, '.activity-box');
+                            var activityContent = activityBox ? activityBox.querySelector('.activity-content') : null;
+                            var activitySummary = activityBox ? activityBox.querySelector('summary') : null;
+                            var text = activityContent && String(activityContent.textContent || '').trim().length > 0
+                                    ? activityContent.textContent
+                                    : (activitySummary ? activitySummary.textContent : '');
+                            dispatchTranscriptAction('copy-text', -1, String(text || ''));
+                            animateCopyButton(activityCopyButton);
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                        }
                         var actionButton = closest(event.target, 'button[data-action][data-message-index]');
                         if (actionButton) {
                             event.preventDefault();
@@ -626,6 +934,9 @@ public final class SwingWebViewTranscriptView {
                                     Number(actionButton.getAttribute('data-message-index')),
                                     ''
                             );
+                            if (actionButton.getAttribute('data-action') === 'copy') {
+                                animateCopyButton(actionButton);
+                            }
                             return;
                         }
                         hideTranscriptMenu();
@@ -681,6 +992,14 @@ public final class SwingWebViewTranscriptView {
 
     private String alphaCssColor(Color color, float alpha) {
         return "rgba(%d,%d,%d,%.3f)".formatted(color.getRed(), color.getGreen(), color.getBlue(), clamp(alpha));
+    }
+
+    private String alphaCssColor(Color color) {
+        return "rgba(%d,%d,%d,%.3f)".formatted(color.getRed(), color.getGreen(), color.getBlue(), color.getAlpha() / 255f);
+    }
+
+    private Color alphaColor(Color color, int alpha) {
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(0, Math.min(255, alpha)));
     }
 
     private float clamp(float value) {

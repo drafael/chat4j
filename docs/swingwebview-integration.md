@@ -1,14 +1,15 @@
 # SwingWebView Integration
 
-Chat4J includes SwingWebView as a configurable alternative to the default Swing `JEditorPane` chat renderer. `JEditorPane` remains the default and safest option. SwingWebView is available in normal builds and can be enabled from **Settings → Chat WebView**.
+Chat4J includes SwingWebView as a configurable alternative to the Swing `JEditorPane` chat renderer. SwingWebView is the default on macOS. `JEditorPane` remains the default on other platforms and the fallback when SwingWebView is unavailable. SwingWebView is available in normal builds and can be changed from **Settings → Chat WebView**.
 
 ## Current Behavior
 
-- `JEditorPane` is the default engine.
+- `SwingWebView` is the default engine on macOS.
+- `JEditorPane` is the default engine on non-macOS platforms.
 - `SwingWebView` is packaged as a normal runtime dependency.
 - Engine changes require restarting Chat4J.
 - Startup resolves the active engine once per session.
-- If SwingWebView is configured but unavailable, Chat4J falls back to `JEditorPane`, keeps the configured setting unchanged, and shows a non-fatal warning.
+- If SwingWebView is the default/configured engine but unavailable, Chat4J falls back to `JEditorPane`, keeps the configured/default engine visible in diagnostics, and shows a non-fatal warning.
 - Production SwingWebView mode renders the whole transcript in one WebView. It does not embed one native WebView per message.
 
 ## Settings

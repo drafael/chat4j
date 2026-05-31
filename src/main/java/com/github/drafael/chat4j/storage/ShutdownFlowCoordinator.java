@@ -4,6 +4,7 @@ import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 public class ShutdownFlowCoordinator {
 
@@ -22,7 +23,7 @@ public class ShutdownFlowCoordinator {
             @NonNull Runnable markShutdownInProgress,
             long timeoutMillis,
             @NonNull Runnable preShutdownAction,
-            @NonNull SaveActionFactory saveActionFactory,
+            @NonNull Supplier<ShutdownSaveDispatchCoordinator.SaveAction> saveActionSupplier,
             @NonNull Runnable finishAction,
             @NonNull Runnable timeoutAction,
             @NonNull ShutdownSaveDispatchCoordinator.FailureHandler failureHandler
@@ -35,14 +36,9 @@ public class ShutdownFlowCoordinator {
 
         markShutdownInProgress.run();
         preShutdownAction.run();
-        var saveAction = Validate.notNull(saveActionFactory.create(), "saveActionFactory must not return null");
+        var saveAction = Validate.notNull(saveActionSupplier.get(), "saveActionSupplier must not return null");
         shutdownDispatcher.dispatch(timeoutMillis, saveAction, finishAction::run, timeoutAction::run, failureHandler);
         return true;
-    }
-
-    @FunctionalInterface
-    public interface SaveActionFactory {
-        ShutdownSaveDispatchCoordinator.SaveAction create();
     }
 
     @FunctionalInterface

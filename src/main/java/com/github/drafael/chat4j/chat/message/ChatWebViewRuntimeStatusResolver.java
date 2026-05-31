@@ -4,14 +4,23 @@ import ca.weblite.webview.swing.WebViewComponent;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+
+import java.util.function.BooleanSupplier;
 
 public final class ChatWebViewRuntimeStatusResolver {
 
     private final SettingsRepo settingsRepo;
+    private final BooleanSupplier macOsSupplier;
 
     public ChatWebViewRuntimeStatusResolver(@NonNull SettingsRepo settingsRepo) {
+        this(settingsRepo, () -> ChatWebViewEngine.defaultForCurrentPlatform() == ChatWebViewEngine.SWING_WEBVIEW);
+    }
+
+    ChatWebViewRuntimeStatusResolver(@NonNull SettingsRepo settingsRepo, @NonNull BooleanSupplier macOsSupplier) {
         this.settingsRepo = settingsRepo;
+        this.macOsSupplier = macOsSupplier;
     }
 
     public ChatWebViewRuntimeStatus resolve() {
@@ -39,13 +48,18 @@ public final class ChatWebViewRuntimeStatusResolver {
 
     private ChatWebViewEngine resolveConfiguredEngine() {
         try {
-            return ChatWebViewEngine.fromSettingValue(settingsRepo.get(
-                    SettingsKeys.CHAT_WEB_VIEW_ENGINE,
-                    ChatWebViewEngine.JEDITOR_PANE.settingValue()
-            ));
+            String configuredValue = settingsRepo.get(SettingsKeys.CHAT_WEB_VIEW_ENGINE, "");
+            if (StringUtils.isBlank(configuredValue)) {
+                return defaultEngine();
+            }
+            return ChatWebViewEngine.fromSettingValue(configuredValue);
         } catch (Exception e) {
-            return ChatWebViewEngine.JEDITOR_PANE;
+            return defaultEngine();
         }
+    }
+
+    private ChatWebViewEngine defaultEngine() {
+        return macOsSupplier.getAsBoolean() ? ChatWebViewEngine.SWING_WEBVIEW : ChatWebViewEngine.JEDITOR_PANE;
     }
 
     private SwingWebViewAvailability resolveSwingWebViewAvailability() {
