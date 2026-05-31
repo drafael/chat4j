@@ -2,6 +2,9 @@ package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
+import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
+import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
+import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatusResolver;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
 import com.github.drafael.chat4j.chat.ChatSearchPopupCoordinator;
 import com.github.drafael.chat4j.chat.NewChatCoordinator;
@@ -28,6 +31,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
@@ -207,6 +211,7 @@ public class MainFrame extends JFrame {
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
+    private final ChatWebViewRuntimeStatus chatWebViewRuntimeStatus;
     private final PromptCatalogRepo promptCatalogRepo;
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
     private final PromptVariablesDialog promptVariablesDialog = new PromptVariablesDialog();
@@ -381,6 +386,7 @@ public class MainFrame extends JFrame {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
+        this.chatWebViewRuntimeStatus = new ChatWebViewRuntimeStatusResolver(settingsRepo).resolve();
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
         this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
                 conversationRepo,
@@ -535,6 +541,7 @@ public class MainFrame extends JFrame {
         installCloseHandlers();
         installDesktopHandlers();
         setupKeyboardShortcuts();
+        showChatWebViewFallbackWarningIfNeeded();
 
         chatPanel.getInputBar().requestInputFocus();
     }
@@ -558,12 +565,18 @@ public class MainFrame extends JFrame {
     }
 
     private ChatPanel createConfiguredChatPanel() {
-        ChatPanel panel = new ChatPanel(modelCacheService, modelFavoritesService);
+        ChatPanel panel = new ChatPanel(
+                modelCacheService,
+                modelFavoritesService,
+                new ChatMessageViewFactory(),
+                chatWebViewRuntimeStatus.activeEngine()
+        );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
+        panel.setOnUserMessageSubmitted(this::onUserMessageSubmitted);
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
         panel.setPromptQuickActions(promptQuickActions());
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
@@ -577,6 +590,20 @@ public class MainFrame extends JFrame {
         panel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
         panel.setActiveConversationId(conversationState.currentConversationId());
         return panel;
+    }
+
+    private void showChatWebViewFallbackWarningIfNeeded() {
+        if (!chatWebViewRuntimeStatus.hasFallback()) {
+            return;
+        }
+
+        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+                this,
+                "SwingWebView could not start, so Chat4J is using JEditorPane for this session.\n\n%s"
+                        .formatted(chatWebViewRuntimeStatus.fallbackReason()),
+                "Chat WebView Fallback",
+                JOptionPane.WARNING_MESSAGE
+        ));
     }
 
     private void installCloseHandlers() {
@@ -894,6 +921,45 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private UUID onUserMessageSubmitted(ChatPanel.UserMessageEvent event) throws Exception {
+        if (event == null || event.message() == null) {
+            return event == null ? null : event.conversationId();
+        }
+
+        if (event.conversationId() != null) {
+            conversationPersistenceCoordinator.persistAssistantMessage(event.conversationId(), event.message());
+            sidebarPanel.refresh();
+            return event.conversationId();
+        }
+
+        String modelKey = ModelSelectionCodec.format(
+                StringUtils.defaultIfBlank(event.providerName(), "Unknown"),
+                StringUtils.defaultIfBlank(event.modelId(), "unknown")
+        );
+        CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
+                null,
+                List.of(event.message()),
+                modelKey,
+                event.reasoningLevel(),
+                event.agentModeEnabled(),
+                event.agentProjectRoot()
+        );
+
+        if (event.visibleConversation()) {
+            currentConversationSaveUiApplyCoordinator.apply(
+                    saveResult,
+                    conversationState::setCurrentConversationId,
+                    chatPanel::setActiveConversationId,
+                    sidebarPanel::refresh,
+                    sidebarPanel::selectConversation,
+                    true
+            );
+        } else {
+            sidebarPanel.refresh();
+        }
+        return saveResult.conversationId();
+    }
+
     private boolean onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
         return assistantMessageCompletionEventDispatchCoordinator.handle(
                 event,
@@ -1053,7 +1119,7 @@ public class MainFrame extends JFrame {
         settingsOpenFlowCoordinator.open(
                 SwingUtilities.isEventDispatchThread(),
                 () -> SwingUtilities.invokeLater(this::openSettings),
-                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(this, settingsRepo)),
+                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(this, settingsRepo, chatWebViewRuntimeStatus)),
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();

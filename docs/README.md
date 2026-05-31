@@ -11,7 +11,13 @@ Use this page as the canonical entry point for implementation and operational de
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
 - [configurable-web-view-engine.md](configurable-web-view-engine.md)
-  - Message rendering boundary for future Swing/JCEF web-view engine selection.
+  - Configurable `JEditorPane` / `SwingWebView` chat rendering architecture and packaging notes.
+
+- [swingwebview-integration.md](swingwebview-integration.md)
+  - Current SwingWebView production integration behavior, settings, packaging, and validation.
+
+- [swingwebview-findings.md](swingwebview-findings.md)
+  - SwingWebView integration findings, API notes, limitations, and package validation checks.
 
 - [copilot-auth-device-flow.md](copilot-auth-device-flow.md)
   - Current GitHub Copilot authentication and runtime behavior.

@@ -1,0 +1,796 @@
+package com.github.drafael.chat4j.chat.message;
+
+import ca.weblite.webview.swing.WebViewComponent;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.chat.CodeFontResolver;
+import com.github.drafael.chat4j.chat.MarkdownPaletteResolver;
+import com.github.drafael.chat4j.chat.Palette;
+import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.provider.api.Role;
+import org.apache.commons.lang3.StringUtils;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+
+import javax.swing.*;
+import java.awt.*;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.List;
+
+import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.joining;
+
+public final class SwingWebViewTranscriptView {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String COPY_ICON = iconDataUri("/icons/input/copy.svg");
+    private static final String REGENERATE_ICON = iconDataUri("/icons/chat/refresh-cw.svg");
+
+    private final WebViewComponent webView;
+    private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
+    private List<Entry> entries = emptyList();
+    private RenderMode renderMode = RenderMode.PREVIEW;
+    private boolean dark;
+    private boolean jumpButtonVisible;
+    private boolean documentInitialized;
+    private boolean disposed;
+    private TranscriptActionListener actionListener;
+
+    public SwingWebViewTranscriptView() {
+        webView = WebViewComponent.create();
+        webView.addOnBeforeLoad(bridgeScript());
+        webView.addJavascriptCallback("chat4jOpenExternalLink", raw -> {
+            String link = unwrapCallbackArg(raw);
+            if (StringUtils.isNotBlank(link)) {
+                ExternalLinkSupport.openExternalLink(link);
+            }
+        });
+        webView.addJavascriptCallback("chat4jTranscriptAction", raw -> {
+            TranscriptAction action = unwrapTranscriptAction(raw);
+            if (actionListener != null && action != null) {
+                actionListener.handle(action.action(), action.messageIndex(), action.text());
+            }
+        });
+    }
+
+    public JComponent component() {
+        return webView;
+    }
+
+    public void setActionListener(TranscriptActionListener actionListener) {
+        this.actionListener = actionListener;
+    }
+
+    public void setTranscript(
+            List<Entry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean scrollToBottom,
+            boolean jumpButtonVisible
+    ) {
+        RenderMode nextRenderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
+        boolean styleChanged = this.renderMode != nextRenderMode || this.dark != dark;
+        this.entries = List.copyOf(entries == null ? emptyList() : entries);
+        this.renderMode = nextRenderMode;
+        this.dark = dark;
+        this.jumpButtonVisible = jumpButtonVisible;
+
+        if (!documentInitialized || styleChanged) {
+            reload(scrollToBottom);
+            return;
+        }
+
+        updateTranscriptHtml(scrollToBottom);
+    }
+
+    public void reload(boolean scrollToBottom) {
+        documentInitialized = true;
+        webView.setUrl(toDataUrl(renderDocument(scrollToBottom)));
+    }
+
+    public void scrollToBottom() {
+        webView.eval("window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);");
+    }
+
+    public void dispose() {
+        disposed = true;
+        webView.dispose();
+    }
+
+    public boolean isDisposed() {
+        return disposed;
+    }
+
+    private String renderDocument(boolean scrollToBottom) {
+        Palette palette = MarkdownPaletteResolver.resolve(dark);
+        Color panelBackground = uiManagerColor("Panel.background", dark ? new Color(30, 31, 34) : new Color(247, 248, 250));
+        String background = cssColor(panelBackground);
+        String bubbleBackground = cssColor(userBubbleColor(panelBackground));
+        String borderColor = cssColor(uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
+        Color menuBackgroundColor = uiManagerColor("PopupMenu.background", panelBackground);
+        Color hoverBackgroundColor = uiManagerColor(
+                "MenuItem.selectionBackground",
+                blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.08f)
+        );
+        Color hoverForegroundColor = uiManagerColor("MenuItem.selectionForeground", uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK));
+        Color iconColor = uiManagerColor("Label.disabledForeground", blend(hoverForegroundColor, panelBackground, dark ? 0.36f : 0.28f));
+        String menuBackground = cssColor(menuBackgroundColor);
+        String hoverBackground = cssColor(hoverBackgroundColor);
+        String hoverForeground = cssColor(hoverForegroundColor);
+        String iconColorValue = cssColor(iconColor);
+        Color scrollbarTrackColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.06f : 0.025f);
+        Color scrollbarThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.34f : 0.24f);
+        Color scrollbarHoverThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.46f : 0.34f);
+        String scrollbarTrack = cssColor(scrollbarTrackColor);
+        String scrollbarThumb = cssColor(scrollbarThumbColor);
+        String scrollbarHoverThumb = cssColor(scrollbarHoverThumbColor);
+        int baseBodyFontSize = Fonts.scale(Fonts.SIZE_BODY);
+        int bodyFontSize = baseBodyFontSize + 1;
+        int codeFontSize = Math.max(11, baseBodyFontSize - 1);
+        int tableFontSize = baseBodyFontSize;
+        int languageFontSize = Math.max(10, baseBodyFontSize - 2);
+        String entriesHtml = renderEntriesHtml(palette, bubbleBackground, borderColor);
+        String scrollScript = scrollToBottom
+                ? "<script>window.addEventListener('load', function(){ setTimeout(function(){ window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); }, 0); });</script>"
+                : "";
+
+        return """
+                <html>
+                <head>
+                  <meta charset="UTF-8">
+                  <style>
+                    html, body { margin: 0; min-height: 100%%; background: %s; color: %s; font-family: %s; font-size: %dpx; line-height: 1.4; scrollbar-color: transparent transparent; scrollbar-width: none; }
+                    body { box-sizing: border-box; padding: 24px 16px 104px 16px; overflow-y: auto; -ms-overflow-style: none; }
+                    html::-webkit-scrollbar, body::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; background: transparent !important; }
+                    .chat4j-scrollbar { position: fixed; top: 5px; right: 3px; bottom: 5px; width: 10px; border-radius: 999px; background: transparent; z-index: 95; opacity: 0; transition: opacity 120ms ease; }
+                    body:hover .chat4j-scrollbar, .chat4j-scrollbar.visible, .chat4j-scrollbar.dragging { opacity: 1; }
+                    .chat4j-scrollbar-thumb { position: absolute; top: 0; right: 1px; width: 8px; min-height: 32px; border-radius: 999px; background: %s; }
+                    .chat4j-scrollbar-thumb:hover, .chat4j-scrollbar.dragging .chat4j-scrollbar-thumb { background: %s; }
+                    .chat4j-scrollbar.hidden { display: none; }
+                    .chat4j-fade { position: fixed; left: 0; right: 0; pointer-events: none; z-index: 90; opacity: 0; transition: opacity 140ms ease; }
+                    .chat4j-fade.visible { opacity: 1; }
+                    .chat4j-fade.top { top: 0; height: 34px; background: linear-gradient(to bottom, %s 0%%, %s 38%%, rgba(%d,%d,%d,0) 100%%); }
+                    .chat4j-fade.bottom { bottom: 0; height: 42px; background: linear-gradient(to top, %s 0%%, %s 34%%, rgba(%d,%d,%d,0) 100%%); }
+                    .transcript { max-width: none; margin: 0; }
+                    .row { display: flex; margin: 10px 0 34px 0; }
+                    .row.user { justify-content: flex-end; }
+                    .row.assistant, .row.activity { justify-content: flex-start; }
+                    .message { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
+                    .message.user { max-width: 72%%; background: %s; border-radius: 16px; padding: 12px 16px; }
+                    .row.user .message.user { margin-left: auto; }
+                    .message.assistant { width: 100%%; padding: 0; }
+                    .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: %s; font-weight: 700; line-height: 1.25; }
+                    .message h1 { font-size: 22px; margin: 18px 0 10px 0; }
+                    .message h2 { font-size: 19px; margin: 18px 0 9px 0; }
+                    .message h3 { font-size: 17px; margin: 16px 0 8px 0; }
+                    .message h4, .message h5, .message h6 { font-size: 15px; margin: 14px 0 7px 0; }
+                    .message p { margin: 8px 0 14px 0; }
+                    .message ul, .message ol { margin: 8px 0 16px 0; padding-left: 26px; }
+                    .message li { margin: 5px 0; }
+                    .message hr { border: none; border-top: 1px solid %s; margin: 18px 0; height: 0; background: transparent; }
+                    .message blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid %s; background: %s; }
+                    .message .table-wrap { width: 100%%; overflow-x: auto; margin: 10px 0 16px 0; scrollbar-color: %s %s; }
+                    .message .table-wrap::-webkit-scrollbar { height: 10px !important; display: block !important; background-color: %s !important; }
+                    .message .table-wrap::-webkit-scrollbar-track { background-color: %s !important; border-radius: 999px !important; }
+                    .message .table-wrap::-webkit-scrollbar-thumb { background-color: %s !important; border-radius: 999px !important; border: 2px solid %s !important; }
+                    .message .table-wrap::-webkit-scrollbar-thumb:hover { background-color: %s !important; }
+                    .message .table-wrap::-webkit-scrollbar-corner { background-color: %s !important; }
+                    .message table.md-table { border-collapse: collapse; margin: 0; width: 100%%; min-width: 760px; table-layout: auto; font-size: %dpx; }
+                    .message table.md-table th, .message table.md-table td { border-bottom: 1px solid %s; padding: 8px 12px; vertical-align: top; word-break: normal; overflow-wrap: break-word; white-space: normal; }
+                    .message table.md-table th:first-child, .message table.md-table td:first-child { min-width: 150px; }
+                    .message table.md-table th:not(:first-child), .message table.md-table td:not(:first-child) { min-width: 220px; }
+                    .message table.md-table code { word-break: normal; overflow-wrap: normal; white-space: nowrap; font-size: %dpx !important; }
+                    .code-block-shell { position: relative; margin: 10px 0 20px 0; }
+                    .code-block-shell table.md-code-block { margin: 0 !important; }
+                    .code-copy-button { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: 1px solid %s; border-radius: 6px; background: %s; color: %s; display: none; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; }
+                    .code-block-shell:hover .code-copy-button { display: flex; }
+                    .code-copy-button:hover { background: %s; color: %s; }
+                    .code-copy-button .icon { width: 14px; height: 14px; }
+                    .message table.md-code-block { border-collapse: collapse !important; border-spacing: 0 !important; margin: 10px 0 20px 0 !important; width: 100%%; border: 0 !important; }
+                    .message table.md-code-block tr.code-header td { background-color: %s !important; border: 1px solid %s !important; border-bottom: 0 !important; padding: 3px 10px !important; color: %s !important; }
+                    .message table.md-code-block tr.code-body td { background-color: %s !important; border: 1px solid %s !important; padding: 10px 14px !important; }
+                    .message table.md-code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45 !important; }
+                    .message table.md-code-block tr.code-header font { color: %s !important; font-family: %s !important; font-size: %dpx !important; }
+                    .message code, .message pre, .message table.md-code-block tr.code-body font { font-family: %s !important; font-size: %dpx !important; line-height: 1.45; }
+                    .message code.md-latex-inline, .message code:not(.md-latex-inline) { background-color: %s; border: 1px solid %s; border-radius: 4px; padding: 1px 4px; font-size: %dpx !important; }
+                    .activity-box { box-sizing: border-box; width: 100%%; border: 1px solid %s; border-radius: 12px; padding: 0; color: %s; background: transparent; }
+                    .activity-box summary { cursor: pointer; list-style: none; padding: 9px 12px; font-weight: 600; }
+                    .activity-box summary::-webkit-details-marker { display: none; }
+                    .activity-box summary::before { content: '▸'; display: inline-block; width: 18px; color: %s; }
+                    .activity-box[open] summary { border-bottom: 1px solid %s; }
+                    .activity-box[open] summary::before { content: '▾'; }
+                    .activity-content { box-sizing: border-box; padding: 10px 14px 12px 30px; }
+                    .activity-content .message.assistant { padding: 0; }
+                    .activity-content .message > :first-child { margin-top: 0; }
+                    .activity-content .message > :last-child { margin-bottom: 0; }
+                    .activity-content ul, .activity-content ol { margin: 6px 0 10px 0; padding-left: 22px; }
+                    .message-shell { position: relative; width: 100%%; }
+                    .message-actions { position: absolute; right: 4px; bottom: -30px; display: none; gap: 4px; padding: 2px; border-radius: 8px; background: %s; border: 1px solid %s; box-shadow: 0 3px 10px rgba(0,0,0,0.12); z-index: 10; }
+                    .row:hover .message-actions { display: flex; }
+                    .message-action-button { width: 24px; height: 24px; border: none; border-radius: 6px; background: transparent; color: %s; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+                    .message-action-button:hover { background: %s; color: %s; }
+                    .transcript-menu { position: fixed; min-width: 232px; display: none; padding: 5px 0; border-radius: 10px; background: %s; border: 1px solid %s; box-shadow: 0 8px 24px rgba(0,0,0,0.22); z-index: 100; }
+                    .transcript-menu button { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; column-gap: 8px; width: 100%%; height: 28px; border: none; border-radius: 0; background: transparent; color: %s; text-align: left; padding: 3px 22px 3px 14px; font: inherit; cursor: pointer; }
+                    .transcript-menu button:hover { background: %s; color: %s; }
+                    .transcript-menu .label { white-space: nowrap; }
+                    .transcript-menu .shortcut { margin-left: 24px; color: currentColor; opacity: 0.82; white-space: nowrap; }
+                    .icon { width: 16px; height: 16px; opacity: 0.86; flex: 0 0 auto; background: currentColor; display: inline-block; }
+                    .message-action-button .icon { width: 15px; height: 15px; }
+                    .icon.copy { -webkit-mask: url('%s') center / contain no-repeat; mask: url('%s') center / contain no-repeat; }
+                    .icon.regenerate { -webkit-mask: url('%s') center / contain no-repeat; mask: url('%s') center / contain no-repeat; }
+                    .transcript-menu-separator { height: 1px; margin: 4px 8px; background: %s; }
+                    a { color: %s; text-decoration: none; }
+                    a:hover { text-decoration: underline; }
+                    .jump-button { position: fixed; left: 50%%; bottom: 24px; transform: translateX(-50%%); width: 44px; height: 44px; border-radius: 999px; border: none; background: %s; color: %s; font-size: 24px; line-height: 1; display: %s; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.18); cursor: pointer; z-index: 20; }
+                    .jump-button:hover { filter: brightness(1.06); }
+                  </style>
+                </head>
+                <body>
+                  <main class="transcript">%s</main>
+                  <div id="chat4j-top-fade" class="chat4j-fade top"></div>
+                  <div id="chat4j-bottom-fade" class="chat4j-fade bottom"></div>
+                  <div id="chat4j-transcript-menu" class="transcript-menu"></div>
+                  <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
+                  <button id="chat4j-jump-bottom" class="jump-button" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);">↓</button>
+                  %s
+                </body>
+                </html>
+                """.formatted(
+                background,
+                palette.textColor(),
+                palette.baseFontFamily(),
+                bodyFontSize,
+                scrollbarThumb,
+                scrollbarHoverThumb,
+                background,
+                alphaCssColor(panelBackground, 0.92f),
+                panelBackground.getRed(),
+                panelBackground.getGreen(),
+                panelBackground.getBlue(),
+                background,
+                alphaCssColor(panelBackground, 0.92f),
+                panelBackground.getRed(),
+                panelBackground.getGreen(),
+                panelBackground.getBlue(),
+                bubbleBackground,
+                palette.textColor(),
+                palette.codeBorder(),
+                palette.codeBorder(),
+                palette.surfaceBg(),
+                scrollbarThumb,
+                scrollbarTrack,
+                scrollbarTrack,
+                scrollbarTrack,
+                scrollbarThumb,
+                scrollbarTrack,
+                scrollbarHoverThumb,
+                scrollbarTrack,
+                tableFontSize,
+                palette.codeBorder(),
+                codeFontSize,
+                borderColor,
+                menuBackground,
+                iconColorValue,
+                hoverBackground,
+                hoverForeground,
+                palette.inlineCodeBg(),
+                palette.codeBorder(),
+                palette.mutedTextColor(),
+                palette.codeBg(),
+                palette.codeBorder(),
+                palette.mutedTextColor(),
+                palette.baseFontFamily(),
+                languageFontSize,
+                palette.monoFontFamily(),
+                codeFontSize,
+                palette.inlineCodeBg(),
+                palette.codeBorder(),
+                codeFontSize,
+                borderColor,
+                palette.mutedTextColor(),
+                palette.mutedTextColor(),
+                borderColor,
+                menuBackground,
+                borderColor,
+                iconColorValue,
+                hoverBackground,
+                hoverForeground,
+                menuBackground,
+                borderColor,
+                palette.textColor(),
+                hoverBackground,
+                hoverForeground,
+                COPY_ICON,
+                COPY_ICON,
+                REGENERATE_ICON,
+                REGENERATE_ICON,
+                borderColor,
+                palette.linkColor(),
+                palette.linkColor(),
+                palette.inlineCodeBg(),
+                jumpButtonVisible ? "flex" : "none",
+                entriesHtml,
+                scrollScript
+        );
+    }
+
+    private void updateTranscriptHtml(boolean scrollToBottom) {
+        Palette palette = MarkdownPaletteResolver.resolve(dark);
+        Color panelBackground = uiManagerColor("Panel.background", dark ? new Color(30, 31, 34) : new Color(247, 248, 250));
+        String bubbleBackground = cssColor(userBubbleColor(panelBackground));
+        String borderColor = cssColor(uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
+        String entriesHtml = renderEntriesHtml(palette, bubbleBackground, borderColor);
+        String script = """
+                (function() {
+                  var transcript = document.querySelector('.transcript');
+                  if (transcript) {
+                    transcript.innerHTML = %s;
+                  }
+                  if (window.chat4jInstallTranscriptActions) {
+                    window.chat4jInstallTranscriptActions();
+                  }
+                  if (window.chat4jUpdateFadeOverlays) {
+                    window.chat4jUpdateFadeOverlays();
+                  }
+                  var jump = document.getElementById('chat4j-jump-bottom');
+                  if (jump) {
+                    jump.style.display = %s;
+                  }
+                  if (%s) {
+                    window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);
+                  }
+                })();
+                """.formatted(
+                toJsonString(entriesHtml),
+                toJsonString(jumpButtonVisible ? "flex" : "none"),
+                scrollToBottom ? "true" : "false"
+        );
+        webView.eval(script);
+    }
+
+    private String renderEntriesHtml(Palette palette, String bubbleBackground, String borderColor) {
+        return entries.stream()
+                .map(entry -> renderEntry(entry, palette, bubbleBackground, borderColor))
+                .collect(joining("\n"));
+    }
+
+    private String renderEntry(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
+        if (entry.kind() == EntryKind.ACTIVITY) {
+            String renderedActivity = messageHtmlRenderer.render(Role.ASSISTANT, renderMode, entry.text(), dark);
+            Document activityDocument = Jsoup.parse(renderedActivity);
+            prepareRenderedDocument(activityDocument);
+            String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
+            String content = StringUtils.isBlank(entry.text())
+                    ? ""
+                    : "<div class=\"activity-content\"><div class=\"message assistant\">%s</div></div>".formatted(activityBody);
+            String openAttribute = entry.collapsed() ? "" : " open";
+            return """
+                    <section class="row activity">
+                      <details class="activity-box"%s>
+                        <summary>%s</summary>
+                        %s
+                      </details>
+                    </section>
+                    """.formatted(openAttribute, escapeHtml(entry.title()), content);
+        }
+
+        String rendered = messageHtmlRenderer.render(entry.role(), renderMode, entry.text(), dark);
+        Document document = Jsoup.parse(rendered);
+        prepareRenderedDocument(document);
+        String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
+        String roleClass = entry.role() == Role.USER ? "user" : "assistant";
+        String actions = entry.messageIndex() < 0
+                ? ""
+                : """
+                  <div class="message-actions" data-message-index="%d">
+                    <button class="message-action-button" title="Copy message" data-action="copy" data-message-index="%d"><span class="icon copy" aria-hidden="true"></span></button>
+                    <button class="message-action-button" title="%s" data-action="regenerate" data-message-index="%d"><span class="icon regenerate" aria-hidden="true"></span></button>
+                  </div>
+                """.formatted(
+                        entry.messageIndex(),
+                        entry.messageIndex(),
+                        entry.role() == Role.USER ? "Regenerate response" : "Regenerate this response",
+                        entry.messageIndex()
+                );
+        return """
+                <section class="row %s" data-message-index="%d">
+                  <div class="message-shell">
+                    %s
+                    <div class="message %s">%s</div>
+                  </div>
+                </section>
+                """.formatted(roleClass, entry.messageIndex(), actions, roleClass, body);
+    }
+
+    private void prepareRenderedDocument(Document document) {
+        document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
+        document.select("table.md-code-block").forEach(table -> {
+            var rows = table.select("tr");
+            if (rows.size() > 1) {
+                rows.first().addClass("code-header");
+                rows.last().addClass("code-body");
+                return;
+            }
+            rows.addClass("code-body");
+        });
+    }
+
+    private String bridgeScript() {
+        return """
+                (function () {
+                    function closest(node, selector) {
+                        if (!node) {
+                            return null;
+                        }
+                        if (node.closest) {
+                            return node.closest(selector);
+                        }
+                        while (node && node.tagName) {
+                            if (matches(node, selector)) {
+                                return node;
+                            }
+                            node = node.parentNode;
+                        }
+                        return null;
+                    }
+                    function matches(node, selector) {
+                        var matcher = node.matches || node.msMatchesSelector || node.webkitMatchesSelector;
+                        return matcher ? matcher.call(node, selector) : false;
+                    }
+                    function selectedText() {
+                        var selection = window.getSelection ? window.getSelection() : null;
+                        return selection ? String(selection.toString()) : '';
+                    }
+                    function dispatchTranscriptAction(action, messageIndex, text) {
+                        var payloadText = text || '';
+                        if (window.chat4jTranscriptAction && (messageIndex >= 0 || payloadText.length > 0)) {
+                            window.chat4jTranscriptAction(action, String(messageIndex), payloadText);
+                        }
+                    }
+                    function hideTranscriptMenu() {
+                        var menu = document.getElementById('chat4j-transcript-menu');
+                        if (menu) {
+                            menu.style.display = 'none';
+                        }
+                    }
+                    function showTranscriptMenu(event, row) {
+                        var menu = document.getElementById('chat4j-transcript-menu');
+                        if (!menu || !row) {
+                            return;
+                        }
+                        var messageIndex = Number(row.getAttribute('data-message-index'));
+                        if (messageIndex < 0) {
+                            return;
+                        }
+                        var regenerateLabel = row.classList.contains('user') ? 'Regenerate Response' : 'Regenerate This Response';
+                        var selection = selectedText().trim();
+                        var selectedCopy = selection.length > 0
+                                ? '<button data-action="copy-selected"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Selected Text</span><span class="shortcut">⌘C</span></button><div class="transcript-menu-separator"></div>'
+                                : '';
+                        menu.setAttribute('data-selected-text', selection);
+                        menu.innerHTML = selectedCopy
+                                + '<button data-action="copy"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Message</span><span class="shortcut"></span></button>'
+                                + '<div class="transcript-menu-separator"></div>'
+                                + '<button data-action="regenerate"><span class="icon regenerate" aria-hidden="true"></span><span class="label">' + regenerateLabel + '</span><span class="shortcut"></span></button>';
+                        Array.prototype.forEach.call(menu.querySelectorAll('button[data-action]'), function(button) {
+                            button.onclick = function(clickEvent) {
+                                clickEvent.preventDefault();
+                                clickEvent.stopPropagation();
+                                var action = button.getAttribute('data-action');
+                                var text = action === 'copy-selected' ? menu.getAttribute('data-selected-text') : '';
+                                dispatchTranscriptAction(action, messageIndex, text);
+                                hideTranscriptMenu();
+                            };
+                        });
+                        menu.style.left = Math.min(event.clientX, Math.max(0, window.innerWidth - 240)) + 'px';
+                        menu.style.top = Math.min(event.clientY, Math.max(0, window.innerHeight - 120)) + 'px';
+                        menu.style.display = 'block';
+                    }
+                    function installCodeCopyButtons() {
+                        Array.prototype.forEach.call(document.querySelectorAll('table.md-code-block'), function(table) {
+                            if (table.parentNode && table.parentNode.classList && table.parentNode.classList.contains('code-block-shell')) {
+                                return;
+                            }
+                            var shell = document.createElement('div');
+                            shell.className = 'code-block-shell';
+                            table.parentNode.insertBefore(shell, table);
+                            shell.appendChild(table);
+                            var button = document.createElement('button');
+                            button.className = 'code-copy-button';
+                            button.title = 'Copy code';
+                            button.innerHTML = '<span class="icon copy" aria-hidden="true"></span>';
+                            button.onclick = function(event) {
+                                var code = table.querySelector('tr.code-body pre') || table.querySelector('pre') || table;
+                                dispatchTranscriptAction('copy-text', -1, String(code.textContent || ''));
+                                event.preventDefault();
+                                event.stopPropagation();
+                            };
+                            shell.appendChild(button);
+                        });
+                    }
+                    function scrollRoot() {
+                        return document.scrollingElement || document.documentElement || document.body;
+                    }
+                    function updateFadeOverlays() {
+                        var root = scrollRoot();
+                        var topFade = document.getElementById('chat4j-top-fade');
+                        var bottomFade = document.getElementById('chat4j-bottom-fade');
+                        if (!root || !topFade || !bottomFade) {
+                            return;
+                        }
+                        var scrollHeight = Math.max(root.scrollHeight, document.body ? document.body.scrollHeight : 0);
+                        var clientHeight = Math.max(root.clientHeight || 0, window.innerHeight || 0);
+                        var scrollTop = root.scrollTop || 0;
+                        var maxScroll = Math.max(0, scrollHeight - clientHeight);
+                        topFade.classList.toggle('visible', scrollTop > 3);
+                        bottomFade.classList.toggle('visible', maxScroll - scrollTop > 3);
+                    }
+                    window.chat4jUpdateFadeOverlays = updateFadeOverlays;
+                    function updateCustomScrollbar() {
+                        var root = scrollRoot();
+                        var track = document.getElementById('chat4j-scrollbar');
+                        var thumb = document.getElementById('chat4j-scrollbar-thumb');
+                        updateFadeOverlays();
+                        if (!root || !track || !thumb) {
+                            return;
+                        }
+                        var scrollHeight = Math.max(root.scrollHeight, document.body ? document.body.scrollHeight : 0);
+                        var clientHeight = Math.max(root.clientHeight || 0, window.innerHeight || 0);
+                        if (scrollHeight <= clientHeight + 1) {
+                            track.classList.add('hidden');
+                            return;
+                        }
+                        track.classList.remove('hidden');
+                        var trackHeight = track.clientHeight;
+                        var thumbHeight = Math.max(32, Math.round(trackHeight * clientHeight / scrollHeight));
+                        var maxTop = Math.max(0, trackHeight - thumbHeight);
+                        var maxScroll = Math.max(1, scrollHeight - clientHeight);
+                        var top = Math.round(maxTop * (root.scrollTop || 0) / maxScroll);
+                        thumb.style.height = thumbHeight + 'px';
+                        thumb.style.transform = 'translateY(' + top + 'px)';
+                    }
+                    function installCustomScrollbar() {
+                        var track = document.getElementById('chat4j-scrollbar');
+                        var thumb = document.getElementById('chat4j-scrollbar-thumb');
+                        if (!track || !thumb || track.getAttribute('data-installed') === 'true') {
+                            updateCustomScrollbar();
+                            return;
+                        }
+                        track.setAttribute('data-installed', 'true');
+                        var dragging = false;
+                        var dragStartY = 0;
+                        var dragStartScrollTop = 0;
+                        thumb.addEventListener('mousedown', function(event) {
+                            dragging = true;
+                            dragStartY = event.clientY;
+                            dragStartScrollTop = scrollRoot().scrollTop || 0;
+                            track.classList.add('dragging');
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }, true);
+                        track.addEventListener('mousedown', function(event) {
+                            if (event.target === thumb) {
+                                return;
+                            }
+                            var root = scrollRoot();
+                            var rect = track.getBoundingClientRect();
+                            var thumbTop = thumb.getBoundingClientRect().top - rect.top;
+                            var direction = event.clientY < rect.top + thumbTop ? -1 : 1;
+                            root.scrollTop += direction * Math.max(80, root.clientHeight * 0.85);
+                            updateCustomScrollbar();
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }, true);
+                        document.addEventListener('mousemove', function(event) {
+                            if (!dragging) {
+                                return;
+                            }
+                            var root = scrollRoot();
+                            var trackHeight = Math.max(1, track.clientHeight - thumb.clientHeight);
+                            var scrollRange = Math.max(1, root.scrollHeight - root.clientHeight);
+                            root.scrollTop = dragStartScrollTop + ((event.clientY - dragStartY) / trackHeight) * scrollRange;
+                            updateCustomScrollbar();
+                            event.preventDefault();
+                        }, true);
+                        document.addEventListener('mouseup', function() {
+                            dragging = false;
+                            track.classList.remove('dragging');
+                        }, true);
+                        window.addEventListener('scroll', updateCustomScrollbar, true);
+                        window.addEventListener('resize', updateCustomScrollbar);
+                        setTimeout(updateCustomScrollbar, 0);
+                    }
+                    window.chat4jInstallTranscriptActions = function() {
+                        hideTranscriptMenu();
+                        installCodeCopyButtons();
+                        installCustomScrollbar();
+                    };
+                    window.addEventListener('load', function() {
+                        installCodeCopyButtons();
+                        installCustomScrollbar();
+                        setTimeout(function() {
+                            installCodeCopyButtons();
+                            updateCustomScrollbar();
+                        }, 50);
+                    });
+                    document.addEventListener('click', function (event) {
+                        var actionButton = closest(event.target, 'button[data-action][data-message-index]');
+                        if (actionButton) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            dispatchTranscriptAction(
+                                    actionButton.getAttribute('data-action'),
+                                    Number(actionButton.getAttribute('data-message-index')),
+                                    ''
+                            );
+                            return;
+                        }
+                        hideTranscriptMenu();
+                        var anchor = closest(event.target, 'a[href]');
+                        if (!anchor) {
+                            return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (window.chat4jOpenExternalLink) {
+                            window.chat4jOpenExternalLink(anchor.href);
+                        }
+                    }, true);
+                    document.addEventListener('contextmenu', function (event) {
+                        var row = closest(event.target, '.row[data-message-index]');
+                        if (!row) {
+                            hideTranscriptMenu();
+                            return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        showTranscriptMenu(event, row);
+                    }, true);
+                })();
+                """;
+    }
+
+    private Color userBubbleColor(Color panelBackground) {
+        float[] hsb = Color.RGBtoHSB(panelBackground.getRed(), panelBackground.getGreen(), panelBackground.getBlue(), null);
+        boolean darkTheme = hsb[2] <= 0.5f;
+        float brightness = clamp(hsb[2] + (darkTheme ? 0.10f : -0.04f));
+        float saturation = clamp(hsb[1] + (darkTheme ? -0.02f : 0.02f));
+        return Color.getHSBColor(hsb[0], saturation, brightness);
+    }
+
+    private Color uiManagerColor(String key, Color fallback) {
+        Color color = UIManager.getColor(key);
+        return color == null ? fallback : color;
+    }
+
+    private Color blend(Color base, Color overlay, float ratio) {
+        float safeRatio = clamp(ratio);
+        float inverse = 1f - safeRatio;
+        int red = Math.round(base.getRed() * inverse + overlay.getRed() * safeRatio);
+        int green = Math.round(base.getGreen() * inverse + overlay.getGreen() * safeRatio);
+        int blue = Math.round(base.getBlue() * inverse + overlay.getBlue() * safeRatio);
+        return new Color(red, green, blue);
+    }
+
+    private String cssColor(Color color) {
+        return "#%02x%02x%02x".formatted(color.getRed(), color.getGreen(), color.getBlue());
+    }
+
+    private String alphaCssColor(Color color, float alpha) {
+        return "rgba(%d,%d,%d,%.3f)".formatted(color.getRed(), color.getGreen(), color.getBlue(), clamp(alpha));
+    }
+
+    private float clamp(float value) {
+        return Math.max(0f, Math.min(1f, value));
+    }
+
+    private String toJsonString(String value) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(StringUtils.defaultString(value));
+        } catch (Exception e) {
+            return "\"\"";
+        }
+    }
+
+    private String toDataUrl(String html) {
+        String encoded = Base64.getEncoder().encodeToString(html.getBytes(StandardCharsets.UTF_8));
+        return "data:text/html;charset=UTF-8;base64,%s".formatted(encoded);
+    }
+
+    private static String iconDataUri(String path) {
+        try (InputStream input = SwingWebViewTranscriptView.class.getResourceAsStream(path)) {
+            if (input == null) {
+                return "";
+            }
+            String encoded = Base64.getEncoder().encodeToString(input.readAllBytes());
+            return "data:image/svg+xml;base64,%s".formatted(encoded);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String escapeHtml(String text) {
+        return StringUtils.defaultString(text)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
+    private String unwrapCallbackArg(String raw) {
+        String value = StringUtils.defaultString(raw).trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(value);
+            if (node.has("args") && node.get("args").isArray() && !node.get("args").isEmpty()) {
+                return node.get("args").get(0).asText("");
+            }
+            if (node.isArray() && !node.isEmpty()) {
+                return node.get(0).asText("");
+            }
+            if (node.isTextual() || node.isNumber() || node.isBoolean()) {
+                return node.asText("");
+            }
+        } catch (Exception ignored) {
+            // Fall back to legacy raw string handling.
+        }
+
+        return StringUtils.unwrap(value, '"');
+    }
+
+    private TranscriptAction unwrapTranscriptAction(String raw) {
+        String value = StringUtils.defaultString(raw).trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(value);
+            JsonNode args = node.has("args") && node.get("args").isArray() ? node.get("args") : node;
+            if (args.isArray() && args.size() >= 2) {
+                String text = args.size() >= 3 ? args.get(2).asText("") : "";
+                return new TranscriptAction(args.get(0).asText(""), args.get(1).asInt(-1), text);
+            }
+        } catch (Exception ignored) {
+            // Ignore malformed callback payloads.
+        }
+
+        return null;
+    }
+
+    private record TranscriptAction(String action, int messageIndex, String text) {
+    }
+
+    @FunctionalInterface
+    public interface TranscriptActionListener {
+        void handle(String action, int messageIndex, String text);
+    }
+
+    public record Entry(EntryKind kind, Role role, String title, String text, boolean collapsed, int messageIndex) {
+
+        public static Entry message(Role role, String text, int messageIndex) {
+            return new Entry(EntryKind.MESSAGE, role, "", StringUtils.defaultString(text), false, messageIndex);
+        }
+
+        public static Entry activity(String title, String text, boolean collapsed) {
+            return new Entry(
+                    EntryKind.ACTIVITY,
+                    Role.ASSISTANT,
+                    StringUtils.defaultIfBlank(title, "Activity"),
+                    StringUtils.defaultString(text),
+                    collapsed,
+                    -1
+            );
+        }
+    }
+
+    public enum EntryKind {
+        MESSAGE,
+        ACTIVITY
+    }
+}

@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemInfo;
+import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
 
@@ -27,12 +28,20 @@ public class SettingsDialog extends JDialog {
     private final PropertyChangeListener lafChangeListener;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepo settingsRepo) {
+        this(owner, settingsRepo, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepo settingsRepo,
+            @NonNull ChatWebViewRuntimeStatus chatWebViewRuntimeStatus
+    ) {
         super(owner, "Settings", true);
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
 
-        add(createSettingsShell(settingsRepo), BorderLayout.CENTER);
+        add(createSettingsShell(settingsRepo, chatWebViewRuntimeStatus), BorderLayout.CENTER);
         add(createActionBar(), BorderLayout.SOUTH);
 
         lafChangeListener = event -> {
@@ -70,8 +79,8 @@ public class SettingsDialog extends JDialog {
         add(titleBarSpacer, BorderLayout.NORTH);
     }
 
-    private JComponent createSettingsShell(SettingsRepo settingsRepo) {
-        sections = createSections(settingsRepo);
+    private JComponent createSettingsShell(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus chatWebViewRuntimeStatus) {
+        sections = createSections(settingsRepo, chatWebViewRuntimeStatus);
 
         DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
         sections.forEach(sectionModel::addElement);
@@ -127,10 +136,11 @@ public class SettingsDialog extends JDialog {
         return splitPane;
     }
 
-    private List<SettingsSection> createSections(SettingsRepo settingsRepo) {
+    private List<SettingsSection> createSections(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus chatWebViewRuntimeStatus) {
         return List.of(
                 new SettingsSection("general", "General", new GeneralPanel(settingsRepo)),
                 new SettingsSection("appearance", "Appearance", new AppearancePanel(settingsRepo)),
+                new SettingsSection("chat-webview", "Chat WebView", new ChatWebViewPanel(settingsRepo, chatWebViewRuntimeStatus)),
                 new SettingsSection("providers", "Providers", new ProvidersPanel(settingsRepo)),
                 new SettingsSection("prompts", "Prompts", new PromptsPanel(settingsRepo))
         );

@@ -1892,6 +1892,239 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Reloading a streaming conversation reattaches the full in-flight assistant text")
+    void loadHistory_whenConversationIsStillStreaming_restoresBufferedAssistantText() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var firstTokenDelivered = new CountDownLatch(1);
+        var releaseSecondToken = new CountDownLatch(1);
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("first ");
+                firstTokenDelivered.countDown();
+                try {
+                    releaseSecondToken.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onToken.accept("second");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.loadHistory(List.of(Message.user("other chat")));
+            subject.setActiveConversationId(originalConversationId);
+            subject.loadHistory(List.of(Message.user("ping")));
+        });
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        assertThat(assistantBubble(messagesPanel).getFullText()).isEqualTo("first ");
+
+        releaseSecondToken.countDown();
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2
+                    && "first second".equals(subject.getHistory().get(1).content())
+                    && "first second".equals(assistantBubble(messagesPanel).getFullText());
+        });
+    }
+
+    @Test
+    @DisplayName("Reloading a streaming conversation during Ollama thinking restores buffered thinking text")
+    void loadHistory_whenStreamingThinkingOnly_restoresBufferedThinkingActivity() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var thinkingDelivered = new CountDownLatch(1);
+        var releaseAnswer = new CountDownLatch(1);
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("<think>hidden reasoning");
+                thinkingDelivered.countDown();
+                try {
+                    releaseAnswer.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onToken.accept("</think>visible answer");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("ollama-model");
+            }
+
+            @Override
+            public String name() {
+                return "Ollama";
+            }
+
+            @Override
+            public String envVarName() {
+                return "OLLAMA_API_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(thinkingDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.loadHistory(List.of(Message.user("other chat")));
+            subject.setActiveConversationId(originalConversationId);
+            subject.loadHistory(List.of(Message.user("ping")));
+        });
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).stream()
+                .filter(bubble -> bubble.getFullText().contains("hidden reasoning"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(thinkingBubble.isVisible()).isTrue();
+
+        releaseAnswer.countDown();
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2
+                    && "visible answer".equals(subject.getHistory().get(1).content())
+                    && assistantBubble(messagesPanel).getFullText().equals("visible answer");
+        });
+    }
+
+    @Test
+    @DisplayName("Loading stale history after background stream completion keeps completed assistant response")
+    void loadHistory_whenBackgroundStreamCompletedAfterRecordsLoaded_keepsAssistantResponse() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var firstTokenDelivered = new CountDownLatch(1);
+        var releaseCompletion = new CountDownLatch(1);
+        var persistedAssistant = new CountDownLatch(1);
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+        subject.setOnAssistantMessageCompleted(event -> {
+            if (event.message().role() == Role.ASSISTANT) {
+                persistedAssistant.countDown();
+            }
+            return true;
+        });
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("saved answer");
+                firstTokenDelivered.countDown();
+                try {
+                    releaseCompletion.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.loadHistory(List.of(Message.user("other chat")));
+        });
+
+        releaseCompletion.countDown();
+        assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.loadHistory(List.of(Message.user("ping")));
+        });
+
+        assertThat(subject.getHistory()).hasSize(2);
+        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(subject.getHistory().get(1).content()).isEqualTo("saved answer");
+    }
+
+    @Test
     @DisplayName("Switching conversations while streaming re-enables input in the newly visible chat")
     void setActiveConversationId_whenSwitchingAwayFromStreamingConversation_reEnablesInputBar() throws Exception {
         var originalConversationId = UUID.randomUUID();

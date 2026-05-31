@@ -210,6 +210,10 @@ public class ActivityBubble extends JPanel {
         return collapsed;
     }
 
+    public String getTitleText() {
+        return titleLabel.getText();
+    }
+
     public void setTitle(String title) {
         String titleText = StringUtils.defaultIfBlank(title, "Thinking");
         statusTone = resolveStatusTone(titleText);
