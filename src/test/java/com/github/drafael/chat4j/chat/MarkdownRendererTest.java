@@ -86,6 +86,7 @@ class MarkdownRendererTest {
         String body = renderBody("```java\nint x = 1;\n```\n```\n<tag>\n```");
 
         assertThat(body)
+                .contains("data-code-language=\"java\"")
                 .contains("java</font>")
                 .contains("int x = 1;")
                 .contains("&lt;tag&gt;")

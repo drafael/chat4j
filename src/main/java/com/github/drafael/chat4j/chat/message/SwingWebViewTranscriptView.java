@@ -43,6 +43,7 @@ public final class SwingWebViewTranscriptView {
     private static final String KATEX_SCRIPT = resourceText("/web/katex/katex.min.js");
     private static final String MHCHEM_SCRIPT = resourceText("/web/katex/contrib/mhchem.min.js");
     private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
+    private static final HighlightJsCodeRenderer HIGHLIGHT_RENDERER = HighlightJsCodeRenderer.instance();
 
     private final WebViewComponent webView;
     private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
@@ -169,6 +170,7 @@ public final class SwingWebViewTranscriptView {
         int codeFontSize = Math.max(11, baseBodyFontSize - 1);
         int tableFontSize = baseBodyFontSize;
         int languageFontSize = Math.max(10, baseBodyFontSize - 2);
+        String syntaxHighlightCss = syntaxHighlightCss();
         String entriesHtml = renderEntriesHtml(palette, bubbleBackground, borderColor);
         String scrollScript = scrollToBottom
                 ? "<script>window.addEventListener('load', function(){ setTimeout(function(){ window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); }, 0); });</script>"
@@ -222,6 +224,7 @@ public final class SwingWebViewTranscriptView {
                     .message table.md-table th:first-child, .message table.md-table td:first-child { min-width: 150px; }
                     .message table.md-table th:not(:first-child), .message table.md-table td:not(:first-child) { min-width: 220px; }
                     .message table.md-table code { word-break: normal; overflow-wrap: normal; white-space: nowrap; font-size: %dpx !important; }
+                    %s
                     .code-block-shell { position: relative; margin: 10px 0 20px 0; border-radius: 3px; }
                     .code-block-shell table.md-code-block { margin: 0 !important; }
                     .code-copy-button, .activity-copy-button { position: absolute; width: 24px; height: 24px; border: 1px solid %s; border-radius: 5px; background: %s; color: %s; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.92); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease, color 120ms ease, border-color 120ms ease; }
@@ -354,6 +357,7 @@ public final class SwingWebViewTranscriptView {
                 tableFontSize,
                 palette.codeBorder(),
                 codeFontSize,
+                syntaxHighlightCss,
                 borderColor,
                 menuBackground,
                 iconColorValue,
@@ -500,7 +504,7 @@ public final class SwingWebViewTranscriptView {
 
     private String renderEntry(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
         if (entry.kind() == EntryKind.ACTIVITY) {
-            String renderedActivity = messageHtmlRenderer.render(Role.ASSISTANT, renderMode, entry.text(), dark);
+            String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), palette);
             Document activityDocument = Jsoup.parse(renderedActivity);
             prepareRenderedDocument(activityDocument, false);
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
@@ -518,7 +522,7 @@ public final class SwingWebViewTranscriptView {
                     """.formatted(openAttribute, escapeHtml(entry.title()), content);
         }
 
-        String rendered = messageHtmlRenderer.render(entry.role(), renderMode, entry.text(), dark);
+        String rendered = renderEntryContentHtml(entry.role(), entry.text(), palette);
         Document document = Jsoup.parse(rendered);
         prepareRenderedDocument(document, entry.role() == Role.ASSISTANT);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
@@ -546,7 +550,39 @@ public final class SwingWebViewTranscriptView {
                 """.formatted(roleClass, entry.messageIndex(), actions, roleClass, body);
     }
 
+    private String renderEntryContentHtml(Role role, String text, Palette palette) {
+        if (renderMode == RenderMode.MARKDOWN) {
+            return renderRawMarkdownSourceHtml(text, palette);
+        }
+        return messageHtmlRenderer.render(role, renderMode, text, dark);
+    }
+
+    private String renderRawMarkdownSourceHtml(String text, Palette palette) {
+        int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
+        String source = escapeHtml(StringUtils.defaultString(text));
+        return """
+                <html><body><table class="md-code-block" data-code-language="markdown" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin: 6px 0;">
+                  <tr><td bgcolor="%s" style="border: 1px solid %s; border-bottom: none; padding: 2px 8px; font-size: %dpx;"><font face="%s" color="%s">markdown</font></td></tr>
+                  <tr><td bgcolor="%s" style="border: 1px solid %s; padding: 8px 12px;"><pre style="margin: 0;"><font face="%s" color="%s" style="font-size: %dpx;">%s</font></pre></td></tr>
+                </table></body></html>
+                """.formatted(
+                palette.codeHeaderBg(),
+                palette.hrColor(),
+                languageFontSize,
+                palette.baseFontFamilyAttr(),
+                palette.mutedTextColor(),
+                palette.codeBg(),
+                palette.hrColor(),
+                palette.monoFontFamilyAttr(),
+                palette.codeText(),
+                codeFontSize,
+                source
+        );
+    }
+
     private void prepareRenderedDocument(Document document, boolean replaceInlineCitationsWithChips) {
+        renderCodeHighlights(document);
         renderMathFallbacks(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
         annotateSourceLinks(document, replaceInlineCitationsWithChips);
@@ -561,6 +597,33 @@ public final class SwingWebViewTranscriptView {
             table.addClass("without-header");
             rows.addClass("code-body");
         });
+    }
+
+    static void renderCodeHighlights(Document document) {
+        document.select("table.md-code-block:not(.md-latex-block)").forEach(table -> {
+            String language = StringUtils.defaultIfBlank(table.attr("data-code-language"), codeBlockHeaderText(table));
+            Element pre = table.selectFirst("pre");
+            if (pre == null) {
+                return;
+            }
+
+            HIGHLIGHT_RENDERER.render(pre.wholeText(), language).ifPresent(html -> {
+                String normalizedLanguage = HIGHLIGHT_RENDERER.normalizeLanguage(language);
+                pre.html(html);
+                pre.addClass("hljs");
+                pre.addClass("language-%s".formatted(normalizedLanguage));
+                pre.attr("data-chat4j-highlighted", "server");
+            });
+        });
+    }
+
+    private static String codeBlockHeaderText(Element table) {
+        var rows = table.select("tr");
+        if (rows.size() <= 1) {
+            return "";
+        }
+        Element header = rows.first();
+        return header == null ? "" : header.text();
     }
 
     static void renderMathFallbacks(Document document) {
@@ -1049,6 +1112,44 @@ public final class SwingWebViewTranscriptView {
                     }, true);
                 })();
                 """;
+    }
+
+    private String syntaxHighlightCss() {
+        String keyword = dark ? "#ff7ab2" : "#9a3412";
+        String string = dark ? "#8bd5a0" : "#166534";
+        String comment = dark ? "#7f8c98" : "#6b7280";
+        String number = dark ? "#f5c177" : "#b45309";
+        String neutral = dark ? "#c7cbd1" : "#4b5563";
+        String tag = dark ? "#89ddff" : "#0369a1";
+        String meta = dark ? "#c792ea" : "#7e22ce";
+        String section = dark ? "#f78c6c" : "#b91c1c";
+        return """
+                    .message pre.hljs { color: inherit; background: transparent; }
+                    .message .hljs-keyword, .message .hljs-selector-tag, .message .hljs-subst, .message .chat4j-primitive { color: %s; }
+                    .message .hljs-string, .message .hljs-doctag, .message .hljs-regexp { color: %s; }
+                    .message .hljs-comment, .message .hljs-quote { color: %s; font-style: italic; }
+                    .message .hljs-number, .message .hljs-literal { color: %s; }
+                    .message .hljs-title, .message .hljs-title.function_, .message .hljs-class, .message .hljs-title.class_, .message .hljs-title.class_.inherited__, .message .hljs-type, .message .hljs-built_in, .message .hljs-variable, .message .hljs-variable.language_, .message .hljs-template-variable, .message .hljs-operator, .message .hljs-property, .message .hljs-params, .message .hljs-punctuation, .message .hljs-attr, .message .hljs-attribute { color: %s; }
+                    .message pre.language-typescript .hljs-built_in, .message pre.language-ts .hljs-built_in, .message pre.language-javascript .hljs-built_in, .message pre.language-js .hljs-built_in { color: %s; }
+                    .message .hljs-tag, .message .hljs-name, .message .hljs-selector-id, .message .hljs-selector-class { color: %s; }
+                    .message .hljs-meta, .message .hljs-symbol, .message .hljs-bullet { color: %s; }
+                    .message .hljs-section, .message .hljs-strong { color: %s; font-weight: 700; }
+                    .message .hljs-emphasis { font-style: italic; }
+                    .message .hljs-addition { color: %s; }
+                    .message .hljs-deletion { color: %s; }
+                """.formatted(
+                keyword,
+                string,
+                comment,
+                number,
+                neutral,
+                keyword,
+                tag,
+                meta,
+                section,
+                string,
+                section
+        );
     }
 
     private Color userBubbleColor(Color panelBackground) {

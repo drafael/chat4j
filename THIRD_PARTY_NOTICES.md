@@ -29,6 +29,19 @@ The KaTeX mhchem extension is distributed with KaTeX. The extension notes that i
 src/main/resources/web/katex/contrib/mhchem-NOTICE.txt
 ```
 
+## Highlight.js 11.11.1
+
+- Project: https://highlightjs.org/
+- Source: https://github.com/highlightjs/highlight.js
+- License: BSD 3-Clause
+- Bundled asset: `src/main/resources/web/highlight/highlight.min.js`
+
+The Highlight.js license text is included at:
+
+```text
+src/main/resources/web/highlight/LICENSE
+```
+
 ## GraalJS Community / GraalVM Polyglot 24.2.1
 
 - Project: https://www.graalvm.org/javascript/
@@ -38,4 +51,4 @@ src/main/resources/web/katex/contrib/mhchem-NOTICE.txt
 - Licenses declared by the community JavaScript artifacts: Universal Permissive License (UPL), Version 1.0 and MIT License
 - Notable transitive license: `org.graalvm.shadowed:icu4j` declares the Unicode/ICU License
 
-Chat4J uses GraalJS Community to server-render KaTeX HTML before the transcript is handed to SwingWebView. This avoids depending on native WebView script execution for math rendering.
+Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to SwingWebView. This avoids depending on native WebView script execution for math and syntax highlighting.

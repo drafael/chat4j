@@ -62,4 +62,80 @@ class SwingWebViewTranscriptViewTest {
         assertThat(document.select(".chat4j-math-inline .katex")).hasSize(1);
         assertThat(document.select(".chat4j-math-display .katex-display")).hasSize(1);
     }
+
+    @Test
+    @DisplayName("Supported code blocks are highlighted before WebView load")
+    void renderCodeHighlights_whenDocumentContainsSupportedCodeBlock_replacesPreHtmlWithHighlightSpans() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block\" data-code-language=\"java\"><tr><td>java</td></tr><tr><td><pre>class Demo { String value = &quot;ok&quot;; }</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SwingWebViewTranscriptView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs.language-java")).hasSize(1);
+        assertThat(document.select("pre .hljs-keyword")).isNotEmpty();
+        assertThat(document.select("pre .hljs-string")).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("Unlabelled code blocks stay plain")
+    void renderCodeHighlights_whenDocumentContainsUnlabelledCodeBlock_keepsFallbackMarkup() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block\"><tr><td><pre>class Demo {}</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SwingWebViewTranscriptView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs")).isEmpty();
+        assertThat(document.select("pre").text()).contains("class Demo");
+    }
+
+    @Test
+    @DisplayName("Unsupported languages stay plain")
+    void renderCodeHighlights_whenDocumentContainsUnsupportedLanguage_keepsFallbackMarkup() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block\" data-code-language=\"mermaid\"><tr><td>mermaid</td></tr><tr><td><pre>graph TD;</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SwingWebViewTranscriptView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs")).isEmpty();
+        assertThat(document.select("pre").text()).contains("graph TD");
+    }
+
+    @Test
+    @DisplayName("LaTeX fallback blocks are not syntax-highlighted")
+    void renderCodeHighlights_whenDocumentContainsLatexFallback_keepsMathBlockForMathRenderer() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block md-latex-block\" data-code-language=\"latex\"><tr><td>latex</td></tr><tr><td><pre>m = \\frac{Q}{F}</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SwingWebViewTranscriptView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs")).isEmpty();
+        assertThat(document.select("table.md-latex-block")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Markdown source blocks are highlighted when explicitly labelled")
+    void renderCodeHighlights_whenDocumentContainsMarkdownSource_highlightsMarkdownTokens() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block\" data-code-language=\"markdown\"><tr><td>markdown</td></tr><tr><td><pre># Title\n\n```java\nclass Demo {}\n```</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SwingWebViewTranscriptView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs.language-markdown")).hasSize(1);
+        assertThat(document.select("pre .hljs-section")).isNotEmpty();
+    }
 }

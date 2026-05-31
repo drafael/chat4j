@@ -40,12 +40,37 @@ Key classes:
 The transcript WebView owns:
 
 - Markdown, table, code, activity-bubble, and source-preview HTML.
+- Theme-aware syntax highlighting for labelled fenced code blocks and raw Markdown/source mode.
 - Theme-aware CSS matching FlatLaf colors.
 - Safe external-link routing for `http`, `https`, and `mailto`; `javascript:`, `file:`, and `data:` links are rejected.
 - Selected-text copy, context-menu actions, code/activity copy buttons, hover actions, custom scrollbar, fades, and jump-to-latest control.
 - Session-scoped streaming updates; stale callbacks are ignored when they do not belong to the visible session.
 
 When conversation history loads or a visible stream completes, the transcript is refreshed to avoid stale DOM state. Native WebView resources are disposed from `ChatPanel.removeNotify()`.
+
+## Syntax highlighting
+
+SwingWebView uses bundled Highlight.js through GraalJS Community before the document is handed to the native WebView.
+
+Behavior:
+
+- Preview mode highlights fenced code blocks only when they declare a supported language.
+- Unlabelled code fences are not auto-detected and remain plain.
+- Unsupported languages remain plain while keeping the language header.
+- Inline code is not highlighted.
+- Math fallback blocks are excluded from syntax highlighting.
+- Markdown/raw mode renders the whole user or assistant message as highlighted `markdown` source.
+
+Chat4J owns the `.hljs-*` CSS colors so highlighting follows the active light/dark FlatLaf theme. Highlight.js assets are bundled at `src/main/resources/web/highlight/` and listed in `THIRD_PARTY_NOTICES.md`.
+
+Initial bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScript, JSON, XML/HTML, CSS, Bash/Shell, YAML, SQL, Python, diff, and plaintext. Common aliases are normalized before rendering, for example `js` → `javascript`, `ts` → `typescript`, `sh`/`shell` → `bash`, `md` → `markdown`, and `html` → `xml`.
+
+Color normalization is intentionally conservative rather than fully semantic:
+
+- keywords, control-flow words, modifiers, and TypeScript/JavaScript built-in primitive types use the keyword color;
+- Java/Kotlin primitive types are post-processed with `chat4j-primitive` so `int`, `long`, `boolean`, `void`, etc. use the keyword color while class names remain neutral;
+- class names, method names, variables, fields/properties, attributes, operators, params, and punctuation use a neutral code color;
+- strings, comments, numbers/literals, tags/selectors, metadata, Markdown sections, and diff additions/deletions keep distinct colors.
 
 ## Math and chemistry rendering
 

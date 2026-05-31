@@ -361,8 +361,12 @@ final class MarkdownBlockRenderer {
         String borderStyle = latexFallback ? "dashed" : "solid";
         String tableClass = latexFallback ? "md-code-block md-latex-block" : "md-code-block";
         String headerBackground = latexFallback ? palette.inlineCodeBg() : palette.codeHeaderBg();
+        String languageAttribute = StringUtils.isNotEmpty(lang)
+                ? " data-code-language=\"%s\"".formatted(lang)
+                : "";
 
-        html.append("<table class=\"").append(tableClass).append("\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
+        html.append("<table class=\"").append(tableClass).append("\"").append(languageAttribute)
+                .append(" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"")
                 .append(" style=\"margin: 6px 0;\">");
 
         if (StringUtils.isNotEmpty(lang)) {
