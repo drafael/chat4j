@@ -48,6 +48,29 @@ public class ConversationPersistenceCoordinator {
         persistedMessageCounter.incrementIfPresent(conversationId);
     }
 
+    public boolean persistMessageIfConversationExists(
+            @NonNull UUID conversationId,
+            @NonNull Message message
+    ) throws Exception {
+        if (!conversationExists(conversationId)) {
+            return false;
+        }
+
+        try {
+            persistAssistantMessage(conversationId, message);
+            return true;
+        } catch (Exception e) {
+            if (!conversationExists(conversationId)) {
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    public boolean conversationExists(@NonNull UUID conversationId) throws Exception {
+        return conversationRepo.findById(conversationId).isPresent();
+    }
+
     public void persistConversationAgentSettings(@NonNull UUID conversationId, boolean agentModeEnabled, Path agentProjectRoot)
             throws Exception  {
         conversationRepo.updateAgentSettings(conversationId, agentModeEnabled, agentProjectRoot);

@@ -69,10 +69,13 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -86,8 +89,9 @@ import java.util.regex.Pattern;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
-import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toCollection;
+import static java.util.stream.Collectors.toMap;
 
 @Slf4j
 public class ChatPanel extends JPanel {
@@ -2677,6 +2681,71 @@ public class ChatPanel extends JPanel {
         clearChat(false);
     }
 
+    public void discardConversations(Collection<UUID> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) {
+            return;
+        }
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> discardConversations(conversationIds));
+            return;
+        }
+
+        Set<UUID> ids = conversationIds.stream()
+                .filter(Objects::nonNull)
+                .collect(toCollection(HashSet::new));
+        if (ids.isEmpty()) {
+            return;
+        }
+
+        pendingCompletedAssistantRecoveries.keySet().removeAll(ids);
+        activeSendJobs.values().stream()
+                .filter(sendJob -> ids.contains(sendJob.conversationId))
+                .toList()
+                .forEach(this::discardSendJob);
+        activeSessions.values().stream()
+                .filter(session -> ids.contains(session.conversationId))
+                .toList()
+                .forEach(this::discardStreamingSession);
+
+        if (ids.contains(activeConversationId)) {
+            clearChat(false);
+            setActiveConversationId(null);
+        }
+        updateGenerationIndicator();
+    }
+
+    private void discardSendJob(SendJob sendJob) {
+        if (sendJob == null) {
+            return;
+        }
+        sendJob.cancelled.set(true);
+        sendJob.finished = true;
+        activeSendJobs.remove(sendJob.jobId);
+        Thread worker = sendJob.worker;
+        if (worker != null) {
+            worker.interrupt();
+        }
+    }
+
+    private void discardStreamingSession(StreamingSession session) {
+        if (session == null) {
+            return;
+        }
+        session.cancelled.set(true);
+        session.finished = true;
+        activeSessions.remove(session.sessionId);
+        if (session.provider != null) {
+            session.provider.cancelActiveRequest();
+        }
+        Thread worker = session.worker;
+        if (worker != null) {
+            worker.interrupt();
+        }
+        if (!hasLiveStreamingSession(session.conversationId)) {
+            notifyConversationStreamingChanged(session.conversationId, false);
+        }
+    }
+
     private void clearChat(boolean cancelActiveStream) {
         if (cancelActiveStream) {
             clearPendingAssistantRecovery(activeConversationId);
@@ -2715,11 +2784,16 @@ public class ChatPanel extends JPanel {
         return streaming;
     }
 
+    public void loadConversationHistory(UUID conversationId, List<Message> messages) {
+        setActiveConversationId(conversationId);
+        loadHistory(messages);
+    }
+
     public void loadHistory(List<Message> messages) {
         clearChat(false);
 
         List<Message> normalizedMessages = new ArrayList<>(normalizeLoadedHistory(messages));
-        recoverPendingCompletedAssistantMessage(normalizedMessages);
+        recoverPendingCompletedAssistantMessage(activeConversationId, normalizedMessages);
         for (Message msg : normalizedMessages) {
             history.add(msg);
             int messageIndex = history.size() - 1;
@@ -3007,11 +3081,11 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void recoverPendingCompletedAssistantMessage(List<Message> messages) {
-        if (activeConversationId == null) {
+    private void recoverPendingCompletedAssistantMessage(UUID conversationId, List<Message> messages) {
+        if (conversationId == null) {
             return;
         }
-        Message completedAssistantMessage = pendingCompletedAssistantRecoveries.remove(activeConversationId);
+        Message completedAssistantMessage = pendingCompletedAssistantRecoveries.remove(conversationId);
         if (completedAssistantMessage == null || completedAssistantMessage.role() != Role.ASSISTANT) {
             return;
         }
@@ -3266,11 +3340,11 @@ public class ChatPanel extends JPanel {
             refreshWebTranscript(false, true);
         }
 
-        if (conversationId != null && !isVisibleConversation(conversationId)) {
+        boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
+        if (persistedByListener && conversationId != null && !isVisibleConversation(conversationId)) {
             pendingCompletedAssistantRecoveries.put(conversationId, assistantMessage);
         }
 
-        boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
         if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
             notifyMessageSubmitted();
         }

@@ -533,6 +533,7 @@ public class MainFrame extends JFrame {
 
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
+        sidebarPanel.setOnConversationsDeleted(this::handleConversationsDeleted);
         sidebarPanel.setOnSettings(this::openSettings);
 
         splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
@@ -711,12 +712,34 @@ public class MainFrame extends JFrame {
         applyCurrentRenderMode();
     }
 
+    private void handleConversationsDeleted(List<UUID> deletedConversationIds) {
+        if (deletedConversationIds == null || deletedConversationIds.isEmpty()) {
+            return;
+        }
+
+        clearedConversationIds.removeAll(deletedConversationIds);
+        chatPanel.discardConversations(deletedConversationIds);
+
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (currentConversationId == null || !deletedConversationIds.contains(currentConversationId)) {
+            return;
+        }
+
+        chatPanel.clearChat();
+        conversationState.clearCurrentConversationId();
+        chatPanel.setActiveConversationId(null);
+        sidebarPanel.clearSelection();
+        resetConversationRuntimeState();
+        chatPanel.getInputBar().requestInputFocus();
+        applyCurrentRenderMode();
+    }
+
     private void loadConversation(UUID id) {
         conversationLoadStartCoordinator.start(
                 id,
                 () -> saveCurrentConversation(false),
                 conversationState::setCurrentConversationId,
-                chatPanel::setActiveConversationId,
+                ignored -> {},
                 conversationLoadCoordinator::loadAsync,
                 this::applyLoadedConversation,
                 this::handleConversationLoadFailure
@@ -881,7 +904,7 @@ public class MainFrame extends JFrame {
                 conversationId,
                 records,
                 conversation,
-                chatPanel::loadHistory,
+                messages -> chatPanel.loadConversationHistory(conversationId, messages),
                 conversationPersistenceCoordinator::markConversationLoaded,
                 chatPanel::setSelectedModel,
                 sidebarPanel::selectConversation
@@ -931,16 +954,23 @@ public class MainFrame extends JFrame {
             return event == null ? null : event.conversationId();
         }
 
-        if (event.conversationId() != null) {
-            conversationPersistenceCoordinator.persistAssistantMessage(event.conversationId(), event.message());
-            sidebarPanel.refresh();
-            return event.conversationId();
-        }
-
+        UUID conversationId = event.conversationId();
         String modelKey = ModelSelectionCodec.format(
                 StringUtils.defaultIfBlank(event.providerName(), "Unknown"),
                 StringUtils.defaultIfBlank(event.modelId(), "unknown")
         );
+
+        boolean persistedExistingConversation = conversationId != null
+                && conversationPersistenceCoordinator.persistMessageIfConversationExists(conversationId, event.message());
+        if (persistedExistingConversation) {
+            sidebarPanel.refresh();
+            return conversationId;
+        }
+
+        if (conversationId != null) {
+            log.warn("Conversation {} was missing while persisting a user message; creating a replacement conversation", conversationId);
+        }
+
         CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
                 null,
                 List.of(event.message()),

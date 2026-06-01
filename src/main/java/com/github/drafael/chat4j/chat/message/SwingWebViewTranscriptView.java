@@ -14,6 +14,8 @@ import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
 
 import javax.swing.*;
 import java.awt.*;
@@ -182,7 +184,7 @@ public final class SwingWebViewTranscriptView {
                   <meta charset="UTF-8">
                   %s
                   <style>
-                    html, body { margin: 0; min-height: 100%%; background: %s; color: %s; font-family: %s; font-size: %dpx; line-height: 1.4; scrollbar-color: transparent transparent; scrollbar-width: none; }
+                    html, body { margin: 0; min-height: 100%%; background: %s; color: %s; font-family: %s; font-size: %dpx; line-height: 1.62; scrollbar-color: transparent transparent; scrollbar-width: none; }
                     body { box-sizing: border-box; padding: 24px 36px 96px 28px; overflow-y: auto; -ms-overflow-style: none; }
                     html::-webkit-scrollbar, body::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; background: transparent !important; }
                     .chat4j-scrollbar { position: fixed; top: 5px; right: 3px; bottom: 5px; width: 10px; border-radius: 999px; background: transparent; z-index: 95; opacity: 0; transition: opacity 120ms ease; }
@@ -201,16 +203,17 @@ public final class SwingWebViewTranscriptView {
                     .message { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
                     .message.user { max-width: 72%%; background: %s; border-radius: 12px; padding: 8px 14px; }
                     .row.user .message.user { margin-left: auto; }
-                    .message.assistant { width: 100%%; padding: 0; }
-                    .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: %s; font-weight: 700; line-height: 1.25; }
-                    .message h1 { font-size: 22px; margin: 18px 0 10px 0; }
-                    .message h2 { font-size: 19px; margin: 18px 0 9px 0; }
-                    .message h3 { font-size: 17px; margin: 16px 0 8px 0; }
-                    .message h4, .message h5, .message h6 { font-size: 15px; margin: 14px 0 7px 0; }
-                    .message p { margin: 6px 0 10px 0; }
+                    .message.assistant { width: 100%%; padding: 0; line-height: 1.72; }
+                    .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: %s; font-weight: 700; line-height: 1.24; }
+                    .message h1 { font-size: 22px; margin: 14px 0 8px 0; }
+                    .message h2 { font-size: 19px; margin: 13px 0 7px 0; }
+                    .message h3 { font-size: 17px; margin: 12px 0 6px 0; }
+                    .message h4, .message h5, .message h6 { font-size: 15px; margin: 10px 0 5px 0; }
+                    .message br + h1, .message br + h2, .message br + h3, .message br + h4, .message br + h5, .message br + h6 { margin-top: 6px; }
+                    .message p { margin: 8px 0 10px 0; }
                     .message.user p { margin: 2px 0; }
-                    .message ul, .message ol { margin: 8px 0 16px 0; padding-left: 26px; }
-                    .message li { margin: 5px 0; }
+                    .message ul, .message ol { margin: 10px 0 16px 0; padding-left: 26px; }
+                    .message li { margin: 8px 0; }
                     .message hr { border: none; border-top: 1px solid %s; margin: 18px 0; height: 0; background: transparent; }
                     .message blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid %s; background: %s; }
                     .message .table-wrap { width: 100%%; overflow-x: auto; margin: 10px 0 16px 0; scrollbar-color: %s %s; }
@@ -241,6 +244,7 @@ public final class SwingWebViewTranscriptView {
                     .message table.md-code-block tr.code-body td { background-color: %s !important; border: 1px solid %s !important; border-radius: 0 0 3px 3px !important; padding: 10px 14px !important; }
                     .message table.md-code-block.without-header tr.code-body td { border-radius: 3px !important; }
                     .message table.md-code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45 !important; }
+                    .message table.md-code-block[data-code-language="markdown"] pre { line-height: 1.7 !important; }
                     .message table.md-code-block tr.code-header font { color: %s !important; font-family: %s !important; font-size: %dpx !important; }
                     .message code, .message pre, .message table.md-code-block tr.code-body font { font-family: %s !important; font-size: %dpx !important; line-height: 1.45; }
                     .message code.md-latex-inline, .message code:not(.md-latex-inline) { background-color: %s; border: 1px solid %s; border-radius: 4px; padding: 1px 4px; font-size: %dpx !important; }
@@ -286,7 +290,7 @@ public final class SwingWebViewTranscriptView {
                     .transcript-menu-separator { height: 1px; margin: 4px 8px; background: %s; }
                     a { color: %s; text-decoration: none; }
                     a:hover { text-decoration: underline; }
-                    a.source-citation { display: inline-flex; align-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: %dpx; font-weight: 600; line-height: 18px; text-decoration: none; vertical-align: baseline; }
+                    a.source-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 18px; padding: 0 5px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: %dpx; font-weight: 600; line-height: 18px; text-decoration: none; vertical-align: baseline; }
                     .source-chip-row { display: flex; flex-wrap: wrap; gap: 3px; margin: 3px 0 6px 0; }
                     a.source-chip { display: inline-flex; align-items: center; gap: 2px; height: 20px; padding: 0 6px; border-radius: 999px; background: %s; border: 1px solid %s; color: %s; font-size: %dpx; font-weight: 600; line-height: 20px; text-decoration: none; letter-spacing: -0.01em; box-shadow: 0 1px 0 rgba(0,0,0,0.03); }
                     .source-chip-count { color: currentColor; opacity: 0.68; font-weight: 500; }
@@ -498,8 +502,28 @@ public final class SwingWebViewTranscriptView {
 
     private String renderEntriesHtml(Palette palette, String bubbleBackground, String borderColor) {
         return entries.stream()
-                .map(entry -> renderEntry(entry, palette, bubbleBackground, borderColor))
+                .map(entry -> renderEntrySafely(entry, palette, bubbleBackground, borderColor))
                 .collect(joining("\n"));
+    }
+
+    private String renderEntrySafely(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
+        try {
+            return renderEntry(entry, palette, bubbleBackground, borderColor);
+        } catch (Exception e) {
+            return renderFallbackEntry(entry);
+        }
+    }
+
+    private String renderFallbackEntry(Entry entry) {
+        String roleClass = entry.role() == Role.USER ? "user" : "assistant";
+        String text = escapeHtml(entry.text()).replace("\n", "<br>");
+        return """
+                <section class="row %s" data-message-index="%d">
+                  <div class="message-shell">
+                    <div class="message %s">%s</div>
+                  </div>
+                </section>
+                """.formatted(roleClass, entry.messageIndex(), roleClass, text);
     }
 
     private String renderEntry(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
@@ -524,7 +548,7 @@ public final class SwingWebViewTranscriptView {
 
         String rendered = renderEntryContentHtml(entry.role(), entry.text(), palette);
         Document document = Jsoup.parse(rendered);
-        prepareRenderedDocument(document, entry.role() == Role.ASSISTANT);
+        prepareRenderedDocument(document, false);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String actions = entry.messageIndex() < 0
@@ -586,6 +610,7 @@ public final class SwingWebViewTranscriptView {
         renderMathFallbacks(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
         annotateSourceLinks(document, replaceInlineCitationsWithChips);
+        removeAdjacentDuplicateSourceCitations(document);
         document.select("table.md-code-block").forEach(table -> {
             var rows = table.select("tr");
             if (rows.size() > 1) {
@@ -670,6 +695,7 @@ public final class SwingWebViewTranscriptView {
                     applyInlineSourceChip(anchor, preview);
                 } else {
                     anchor.addClass("source-citation");
+                    anchor.text(citationNumber(anchor.text()));
                 }
             }
             anchor.attr("data-source-title", preview.title());
@@ -677,6 +703,39 @@ public final class SwingWebViewTranscriptView {
             anchor.attr("data-source-url", preview.url());
             anchor.attr("data-source-snippet", preview.snippet());
         });
+    }
+
+    static void removeAdjacentDuplicateSourceCitations(Document document) {
+        document.select("a.source-citation").forEach(anchor -> {
+            Element previous = previousSourceCitation(anchor);
+            if (previous == null || !sameCitation(previous, anchor)) {
+                return;
+            }
+
+            removeBlankPreviousSibling(anchor);
+            anchor.remove();
+        });
+    }
+
+    private static Element previousSourceCitation(Element anchor) {
+        Node previous = anchor.previousSibling();
+        while (previous instanceof TextNode textNode && StringUtils.isBlank(textNode.text())) {
+            previous = previous.previousSibling();
+        }
+        return previous instanceof Element element && element.hasClass("source-citation") ? element : null;
+    }
+
+    private static boolean sameCitation(Element first, Element second) {
+        String firstUrl = StringUtils.defaultIfBlank(first.attr("data-source-url"), first.attr("href"));
+        String secondUrl = StringUtils.defaultIfBlank(second.attr("data-source-url"), second.attr("href"));
+        return Strings.CS.equals(firstUrl, secondUrl) && Strings.CS.equals(first.text(), second.text());
+    }
+
+    private static void removeBlankPreviousSibling(Element anchor) {
+        Node previous = anchor.previousSibling();
+        if (previous instanceof TextNode textNode && StringUtils.isBlank(textNode.text())) {
+            textNode.remove();
+        }
     }
 
     private boolean isInsideSourcesList(Element anchor) {
@@ -722,6 +781,10 @@ public final class SwingWebViewTranscriptView {
 
     private boolean isCitationAnchor(Element anchor) {
         return isCitationText(anchor.text());
+    }
+
+    private String citationNumber(String text) {
+        return StringUtils.removeEnd(StringUtils.removeStart(StringUtils.trimToEmpty(text), "["), "]");
     }
 
     private boolean isCitationText(String text) {

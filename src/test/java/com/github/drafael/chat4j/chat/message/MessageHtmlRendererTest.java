@@ -108,6 +108,19 @@ class MessageHtmlRendererTest {
     }
 
     @Test
+    @DisplayName("Assistant preview HTML preserves square brackets for JEditorPane source citations")
+    void render_whenAssistantHasNumberedSources_keepsBracketedCitationText() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                Claim[1]
+
+                Sources:
+                [1] https://example.com/source
+                """, false);
+
+        assertThat(html).contains("href=\"https://example.com/source\">[1]</a>");
+    }
+
+    @Test
     @DisplayName("Assistant preview mode delegates to markdown rendering")
     void render_whenAssistantPreviewModeSelected_rendersMarkdownHtml() {
         String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, "**bold**", false);

@@ -17,7 +17,7 @@ final class MarkdownCssBuilder {
                 color: %s;
                 margin: 0;
                 padding: 0;
-                line-height: 1.4;
+                line-height: 1.7;
                 word-wrap: break-word;
             }
             h1, h2, h3, h4, h5, h6 {
@@ -33,12 +33,12 @@ final class MarkdownCssBuilder {
             h5 { font-size: %dpx; margin-top: 8px; margin-bottom: 3px; }
             h6 { font-size: %dpx; margin-top: 8px; margin-bottom: 3px; }
             p {
-                margin: 5px 0;
+                margin: 8px 0 10px 0;
                 word-wrap: break-word;
             }
-            ul, ol { margin: 4px 0; padding-left: 20px; }
+            ul, ol { margin: 8px 0 14px 0; padding-left: 20px; }
             li {
-                margin: 1px 0;
+                margin: 4px 0;
                 word-wrap: break-word;
             }
             a { color: %s; text-decoration: none; }

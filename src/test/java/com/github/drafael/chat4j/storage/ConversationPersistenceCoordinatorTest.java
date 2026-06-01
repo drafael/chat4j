@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.Role;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.stream.IntStream;
@@ -59,6 +60,20 @@ class ConversationPersistenceCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Persist if exists returns false when conversation is deleted before insert")
+    void persistMessageIfConversationExists_whenConversationDisappearsDuringInsert_returnsFalse() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DisappearingConversationRepo(conversationId);
+        var counter = new PersistedMessageCounter();
+        var subject = new ConversationPersistenceCoordinator(repo, counter);
+
+        boolean persisted = subject.persistMessageIfConversationExists(conversationId, Message.user("hello"));
+
+        assertThat(persisted).isFalse();
+        assertThat(repo.addMessageCalls).hasValue(1);
+    }
+
+    @Test
     @DisplayName("Persisting assistant message increments known persisted count")
     void persistAssistantMessage_whenConversationWasLoaded_incrementsPersistedCounter() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -74,6 +89,27 @@ class ConversationPersistenceCoordinatorTest {
         assertThat(repo.addedMessages).hasSize(1);
         assertThat(repo.addedMessages.getFirst().role()).isEqualTo(Role.ASSISTANT);
         assertThat(repo.addedMessages.getFirst().content()).isEqualTo("hello");
+    }
+
+    private static class DisappearingConversationRepo extends FakeConversationRepo {
+
+        private final AtomicInteger findCalls = new AtomicInteger();
+        private final AtomicInteger addMessageCalls = new AtomicInteger();
+
+        private DisappearingConversationRepo(UUID conversationId) {
+            super(conversationId, 0);
+        }
+
+        @Override
+        public void addMessage(UUID conversationId, Message message) throws SQLException {
+            addMessageCalls.incrementAndGet();
+            throw new SQLException("referential integrity constraint violation", "23506");
+        }
+
+        @Override
+        public Optional<ConversationRecord> findById(UUID id) {
+            return findCalls.incrementAndGet() == 1 ? super.findById(id) : Optional.empty();
+        }
     }
 
     private static class FakeConversationRepo extends ConversationRepo {
@@ -107,13 +143,28 @@ class ConversationPersistenceCoordinatorTest {
         }
 
         @Override
-        public void addMessage(UUID conversationId, Message message) {
+        public void addMessage(UUID conversationId, Message message) throws SQLException {
             addedMessages.add(message);
         }
 
         @Override
         public Optional<ConversationRecord> findById(UUID id) {
-            return Optional.empty();
+            if (!createdConversationId.equals(id)) {
+                return Optional.empty();
+            }
+            LocalDateTime now = LocalDateTime.now();
+            return Optional.of(new ConversationRecord(
+                    id,
+                    "title",
+                    "OpenAI",
+                    "gpt-4.1",
+                    false,
+                    "off",
+                    false,
+                    null,
+                    now,
+                    now
+            ));
         }
     }
 }

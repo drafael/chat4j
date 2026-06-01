@@ -1892,6 +1892,50 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Loading conversation history recovers pending assistant for the loaded conversation")
+    void loadConversationHistory_whenPendingAssistantExists_recoversForLoadedConversation() throws Exception {
+        UUID loadedConversationId = UUID.randomUUID();
+        UUID otherConversationId = UUID.randomUUID();
+        Message recoveredAssistant = Message.assistant("sonar result");
+        @SuppressWarnings("unchecked")
+        Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
+        pendingRecoveries.put(loadedConversationId, recoveredAssistant);
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(otherConversationId);
+            subject.loadConversationHistory(loadedConversationId, List.of(Message.user("question")));
+        });
+
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .containsExactly("question", "sonar result");
+        assertThat(readField(subject, "activeConversationId")).isEqualTo(loadedConversationId);
+        assertThat(pendingRecoveries).doesNotContainKey(loadedConversationId);
+    }
+
+    @Test
+    @DisplayName("Failed non-visible assistant persistence does not queue stale recovery")
+    void persistAssistantResponse_whenPersistenceFails_doesNotQueuePendingRecovery() throws Exception {
+        UUID originalConversationId = UUID.randomUUID();
+        UUID visibleConversationId = UUID.randomUUID();
+        AtomicInteger persistCalls = new AtomicInteger();
+        subject.setActiveConversationId(visibleConversationId);
+        subject.setOnAssistantMessageCompleted(event -> {
+            persistCalls.incrementAndGet();
+            return false;
+        });
+        StreamingSession session = new StreamingSession(1L, originalConversationId, null);
+        session.response.append("deleted sonar result");
+
+        invokePersistAssistantResponse(subject, session, null, true);
+
+        @SuppressWarnings("unchecked")
+        Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
+        assertThat(persistCalls).hasValue(1);
+        assertThat(pendingRecoveries).doesNotContainKey(originalConversationId);
+        assertThat(subject.getHistory()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Reloading a streaming conversation reattaches the full in-flight assistant text")
     void loadHistory_whenConversationIsStillStreaming_restoresBufferedAssistantText() throws Exception {
         var originalConversationId = UUID.randomUUID();
@@ -2264,6 +2308,22 @@ class ChatPanelTest {
         Field field = ChatPanel.class.getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(chatPanel, value);
+    }
+
+    private static void invokePersistAssistantResponse(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            SendJob sendJob,
+            boolean allowBlankContent
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "persistAssistantResponse",
+                StreamingSession.class,
+                SendJob.class,
+                boolean.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session, sendJob, allowBlankContent);
     }
 
     private static RenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {

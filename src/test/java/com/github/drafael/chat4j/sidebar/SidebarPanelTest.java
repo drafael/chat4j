@@ -20,7 +20,9 @@ import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -251,6 +253,34 @@ class SidebarPanelTest {
 
 
     @Test
+    @DisplayName("Deleting a conversation notifies deletion callback without starting a new chat")
+    void deleteConversation_whenDeletionCallbackConfigured_doesNotInvokeNewChatCallback() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DeletableConversationRepo(grouped("Today", conversation(conversationId, "Delete me")));
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var newChatCalls = new AtomicInteger();
+        var deletedIds = new AtomicReference<List<UUID>>();
+
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo);
+            panel.setOnNewChat(newChatCalls::incrementAndGet);
+            panel.setOnConversationsDeleted(deletedIds::set);
+            panelRef.set(panel);
+        });
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Delete me"));
+
+        SwingUtilities.invokeAndWait(() -> invokeDeleteConversation(
+                panelRef.get(),
+                new ConversationItem(conversationId, "Delete me", "OpenAI", "gpt-4.1", false, LocalDateTime.now())
+        ));
+
+        assertThat(repo.deletedConversationIds).containsExactly(conversationId);
+        assertThat(deletedIds.get()).containsExactly(conversationId);
+        assertThat(newChatCalls).hasValue(0);
+    }
+
+    @Test
     @DisplayName("Streaming state swaps the provider icon for a loading icon and restores it afterwards")
     void setConversationStreaming_whenStateChanges_swapsConversationIcon() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -361,6 +391,16 @@ class SidebarPanelTest {
         return iconRef.get();
     }
 
+    private void invokeDeleteConversation(SidebarPanel panel, ConversationItem conversation) {
+        try {
+            Method method = SidebarPanel.class.getDeclaredMethod("deleteConversation", ConversationItem.class);
+            method.setAccessible(true);
+            method.invoke(panel, conversation);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private DefaultListModel<?> readListModel(SidebarPanel panel) {
         try {
             Field field = SidebarPanel.class.getDeclaredField("listModel");
@@ -449,6 +489,20 @@ class SidebarPanelTest {
         public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
             sleep(delayMillis);
             return grouped;
+        }
+    }
+
+    private static class DeletableConversationRepo extends DelayedConversationRepo {
+
+        private final List<UUID> deletedConversationIds = new ArrayList<>();
+
+        private DeletableConversationRepo(Map<String, List<ConversationRepo.ConversationRecord>> grouped) {
+            super(0, grouped);
+        }
+
+        @Override
+        public void deleteConversation(UUID id) {
+            deletedConversationIds.add(id);
         }
     }
 

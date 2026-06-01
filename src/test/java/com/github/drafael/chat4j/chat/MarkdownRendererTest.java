@@ -124,6 +124,17 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Currency ranges do not render as inline LaTeX")
+    void toHtml_whenMarkdownContainsCurrencyRange_keepsCurrencyTextReadable() {
+        String body = renderBody("Market value grew from $24.7 billion in 2025 to $45.8 billion by 2035.");
+
+        assertThat(body)
+                .contains("$24.7 billion in 2025 to $45.8 billion")
+                .doesNotContain("chat4j-math-inline")
+                .doesNotContain("md-latex-inline");
+    }
+
+    @Test
     @DisplayName("Inline LaTeX fallback renders math expression as inline code")
     void toHtml_whenMarkdownContainsInlineLatex_rendersInlineCodeFallback() {
         String body = renderBody("Faraday law uses $\\mathcal{E}$ as electromotive force.");

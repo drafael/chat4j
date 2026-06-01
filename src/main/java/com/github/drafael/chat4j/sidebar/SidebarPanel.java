@@ -40,6 +40,7 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.ListSelectionEvent;
+import java.awt.AWTEvent;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -47,6 +48,7 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dialog;
 import java.awt.Dimension;
+import java.awt.EventQueue;
 import java.awt.Font;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
@@ -135,12 +137,14 @@ public class SidebarPanel extends JPanel {
     private final Icon loadingIcon = new LoadingIcon(() -> loadingIconFrame);
 
     private Consumer<UUID> onConversationSelected;
+    private Consumer<List<UUID>> onConversationsDeleted;
     private Runnable onNewChat;
     private Runnable onSettings;
     private boolean suppressSelection;
     private int hoveredIndex = -1;
     private final AtomicLong refreshRequestCounter = new AtomicLong();
     private UUID pendingSelectionConversationId;
+    private UUID notifiedSelectionConversationId;
     private Map<String, List<ConversationRecord>> lastGroupedConversations = emptyMap();
 
     public SidebarPanel(ConversationRepo conversationRepo) {
@@ -198,6 +202,7 @@ public class SidebarPanel extends JPanel {
         }
 
         pendingSelectionConversationId = id;
+        notifiedSelectionConversationId = id;
         expandGroupContaining(id);
         withSelectionSuppressed(this::applyPendingSelection);
     }
@@ -209,6 +214,7 @@ public class SidebarPanel extends JPanel {
         }
 
         pendingSelectionConversationId = null;
+        notifiedSelectionConversationId = null;
         withSelectionSuppressed(conversationList::clearSelection);
     }
 
@@ -238,6 +244,10 @@ public class SidebarPanel extends JPanel {
 
     public void setOnNewChat(Runnable handler) {
         onNewChat = handler;
+    }
+
+    public void setOnConversationsDeleted(Consumer<List<UUID>> handler) {
+        onConversationsDeleted = handler;
     }
 
     public void setOnSettings(Runnable handler) {
@@ -392,15 +402,28 @@ public class SidebarPanel extends JPanel {
     }
 
     private void handleSelectionChanged(ListSelectionEvent event) {
-        if (event.getValueIsAdjusting() || suppressSelection) {
+        if (event.getValueIsAdjusting() || suppressSelection || shouldSuppressSelectionForMouseAction()) {
             return;
         }
 
         selectedConversationId().ifPresent(id -> {
+            notifiedSelectionConversationId = id;
             if (onConversationSelected != null) {
                 onConversationSelected.accept(id);
             }
         });
+    }
+
+    private boolean shouldSuppressSelectionForMouseAction() {
+        AWTEvent currentEvent = EventQueue.getCurrentEvent();
+        if (!(currentEvent instanceof MouseEvent mouseEvent) || mouseEvent.getComponent() != conversationList) {
+            return false;
+        }
+        if (SwingUtilities.isRightMouseButton(mouseEvent) || mouseEvent.isPopupTrigger()) {
+            return true;
+        }
+        int index = resolveListIndex(mouseEvent.getPoint());
+        return index >= 0 && resolveHoverIcon(mouseEvent) != HoverIcon.NONE;
     }
 
     private void handleMouseClick(MouseEvent event) {
@@ -417,8 +440,14 @@ public class SidebarPanel extends JPanel {
 
         if (entry instanceof ConversationItem conversation && SwingUtilities.isLeftMouseButton(event)) {
             switch (resolveHoverIcon(event)) {
-                case TRASH -> handleDelete(conversation, event.isShiftDown());
-                case STAR -> handleToggleFavorite(conversation);
+                case TRASH -> {
+                    restoreNotifiedSelection();
+                    handleDelete(conversation, event.isShiftDown());
+                }
+                case STAR -> {
+                    restoreNotifiedSelection();
+                    handleToggleFavorite(conversation);
+                }
                 case NONE -> {
                 }
             }
@@ -528,9 +557,7 @@ public class SidebarPanel extends JPanel {
         runRepositoryAction(DELETE_CONVERSATION_ERROR, CONVERSATIONS_TITLE, () -> {
             conversationRepo.deleteConversation(conversation.id());
             refresh();
-            if (onNewChat != null) {
-                onNewChat.run();
-            }
+            notifyConversationsDeleted(List.of(conversation.id()));
         });
     }
 
@@ -548,9 +575,7 @@ public class SidebarPanel extends JPanel {
                 List<UUID> ids = groupRecords.stream().map(ConversationRepo.ConversationRecord::id).toList();
                 conversationRepo.deleteConversations(ids);
                 refresh();
-                if (onNewChat != null) {
-                    onNewChat.run();
-                }
+                notifyConversationsDeleted(ids);
             }
         });
     }
@@ -562,11 +587,14 @@ public class SidebarPanel extends JPanel {
         }
 
         runRepositoryAction(DELETE_ALL_ERROR, CONVERSATIONS_TITLE, () -> {
+            List<UUID> ids = conversationRepo.findAllGroupedByDate().values().stream()
+                    .flatMap(List::stream)
+                    .map(ConversationRecord::id)
+                    .distinct()
+                    .toList();
             conversationRepo.deleteAllConversations();
             refresh();
-            if (onNewChat != null) {
-                onNewChat.run();
-            }
+            notifyConversationsDeleted(ids);
         });
     }
 
@@ -575,6 +603,14 @@ public class SidebarPanel extends JPanel {
             conversationRepo.toggleFavorite(conversation.id());
             refresh();
         });
+    }
+
+    private void notifyConversationsDeleted(List<UUID> ids) {
+        if (onConversationsDeleted != null) {
+            onConversationsDeleted.accept(ids);
+        } else if (onNewChat != null) {
+            onNewChat.run();
+        }
     }
 
     private void renameConversation(ConversationItem conversation, String newTitle) {
@@ -589,9 +625,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        UUID selectedConversationId = pendingSelectionConversationId != null
-                ? pendingSelectionConversationId
-                : selectedConversationId().orElse(null);
+        UUID selectedConversationId = selectionIdToRestore();
 
         lastGroupedConversations = grouped;
         withSelectionSuppressed(() -> {
@@ -607,14 +641,21 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        UUID selectedConversationId = pendingSelectionConversationId != null
-                ? pendingSelectionConversationId
-                : selectedConversationId().orElse(null);
+        UUID selectedConversationId = selectionIdToRestore();
         withSelectionSuppressed(() -> {
             int restoreIndex = rebuildConversationList(filteredConversations(lastGroupedConversations), selectedConversationId);
             restoreSelection(restoreIndex);
             applyPendingSelection();
         });
+    }
+
+    private UUID selectionIdToRestore() {
+        if (pendingSelectionConversationId != null) {
+            return pendingSelectionConversationId;
+        }
+        return notifiedSelectionConversationId != null
+                ? notifiedSelectionConversationId
+                : selectedConversationId().orElse(null);
     }
 
     private Map<String, List<ConversationRecord>> filteredConversations(Map<String, List<ConversationRecord>> grouped) {
@@ -666,6 +707,21 @@ public class SidebarPanel extends JPanel {
         });
     }
 
+    private void restoreNotifiedSelection() {
+        withSelectionSuppressed(() -> {
+            if (notifiedSelectionConversationId == null) {
+                conversationList.clearSelection();
+                return;
+            }
+            OptionalInt index = findConversationIndex(notifiedSelectionConversationId);
+            if (index.isPresent()) {
+                conversationList.setSelectedIndex(index.getAsInt());
+            } else {
+                conversationList.clearSelection();
+            }
+        });
+    }
+
     private void showContextMenu(MouseEvent event) {
         int index = resolveListIndex(event.getPoint());
         if (index < 0) {
@@ -673,7 +729,7 @@ public class SidebarPanel extends JPanel {
         }
 
         conversationItemAt(index).ifPresent(conversation -> {
-            conversationList.setSelectedIndex(index);
+            restoreNotifiedSelection();
             String groupName = findGroupForIndex(index);
             JPopupMenu menu = createContextMenu(conversation, groupName);
             menu.show(conversationList, event.getX(), event.getY());

@@ -35,7 +35,7 @@ final class MessageHtmlRenderer {
 
         String fontFamily = monospaced ? palette.monoFontFamily() : palette.baseFontFamily();
         int fontSize = monospaced ? CodeFontResolver.resolveCodeFontSize() : Fonts.scale(Fonts.SIZE_SMALL);
-        return "<html><head><style>body { color: %s; margin: 0; padding: 0; } pre { font-family: %s; font-size: %dpx; line-height: 1.4; margin: 0; padding: 0; white-space: pre-wrap; word-wrap: break-word; }</style></head><body><pre>%s</pre></body></html>"
+        return "<html><head><style>body { color: %s; margin: 0; padding: 0; } pre { font-family: %s; font-size: %dpx; line-height: 1.7; margin: 0; padding: 0; white-space: pre-wrap; word-wrap: break-word; }</style></head><body><pre>%s</pre></body></html>"
                 .formatted(palette.textColor(), fontFamily, fontSize, escaped);
     }
 

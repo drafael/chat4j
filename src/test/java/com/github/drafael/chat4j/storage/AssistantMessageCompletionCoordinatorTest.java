@@ -47,6 +47,50 @@ class AssistantMessageCompletionCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Persist ignores events for missing conversations")
+    void persist_whenConversationNoLongerExists_returnsIgnoredResult() throws Exception {
+        AtomicInteger persistCalls = new AtomicInteger();
+        var subject = new AssistantMessageCompletionCoordinator(
+                (conversationId, message) -> persistCalls.incrementAndGet(),
+                conversationId -> false
+        );
+
+        AssistantMessageCompletionCoordinator.PersistResult result = subject.persist(
+                UUID.randomUUID(),
+                Message.assistant("done"),
+                UUID.randomUUID()
+        );
+
+        assertThat(result.handled()).isFalse();
+        assertThat(result.conversationIdToSelect()).isNull();
+        assertThat(persistCalls.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("Persist ignores race where conversation is deleted during insert")
+    void persist_whenConversationDisappearsDuringInsert_returnsIgnoredResult() throws Exception {
+        AtomicInteger existsCalls = new AtomicInteger();
+        AtomicInteger persistCalls = new AtomicInteger();
+        var subject = new AssistantMessageCompletionCoordinator(
+                (conversationId, message) -> {
+                    persistCalls.incrementAndGet();
+                    throw new IllegalStateException("referential integrity constraint violation");
+                },
+                conversationId -> existsCalls.incrementAndGet() == 1
+        );
+
+        AssistantMessageCompletionCoordinator.PersistResult result = subject.persist(
+                UUID.randomUUID(),
+                Message.assistant("done"),
+                UUID.randomUUID()
+        );
+
+        assertThat(result.handled()).isFalse();
+        assertThat(result.conversationIdToSelect()).isNull();
+        assertThat(persistCalls).hasValue(1);
+    }
+
+    @Test
     @DisplayName("Persist handles valid event and requests sidebar reselection for active conversation")
     void persist_whenConversationMatchesActive_returnsHandledWithConversationToSelect() throws Exception {
         AtomicInteger persistCalls = new AtomicInteger();

@@ -88,6 +88,30 @@ class CurrentConversationSaveCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Save recreates missing current conversation")
+    void save_whenCurrentConversationMissing_createsReplacementConversation() throws Exception {
+        UUID missingId = UUID.randomUUID();
+        UUID replacementId = UUID.randomUUID();
+        var persistedConversationId = new AtomicReference<UUID>();
+        var subject = new CurrentConversationSaveCoordinator(
+                new ConversationTitleDeriver(),
+                (title, provider, model) -> replacementId,
+                (id, history) -> persistedConversationId.set(id),
+                (id, agentModeEnabled, agentProjectRoot) -> {},
+                (id, reasoningLevel) -> {},
+                id -> !id.equals(missingId)
+        );
+        List<Message> history = List.of(Message.user("hello"));
+
+        var result = subject.save(missingId, history, "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
+
+        assertThat(result.saved()).isTrue();
+        assertThat(result.createdConversation()).isTrue();
+        assertThat(result.conversationId()).isEqualTo(replacementId);
+        assertThat(persistedConversationId.get()).isEqualTo(replacementId);
+    }
+
+    @Test
     @DisplayName("Save validates history")
     void save_whenHistoryMissing_throwsException() {
         var subject = new CurrentConversationSaveCoordinator(

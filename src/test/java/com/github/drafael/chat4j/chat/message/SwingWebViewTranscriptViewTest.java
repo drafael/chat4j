@@ -64,6 +64,23 @@ class SwingWebViewTranscriptViewTest {
     }
 
     @Test
+    @DisplayName("Adjacent duplicate source citations are collapsed")
+    void removeAdjacentDuplicateSourceCitations_whenSameCitationRepeats_removesDuplicateAnchor() {
+        var document = Jsoup.parse("""
+                <html><body><p>
+                  Text <a class="source-citation" href="https://example.com/a" data-source-url="https://example.com/a">9</a>
+                  <a class="source-citation" href="https://example.com/a" data-source-url="https://example.com/a">9</a>
+                  next <a class="source-citation" href="https://example.com/b" data-source-url="https://example.com/b">10</a>
+                </p></body></html>
+                """);
+
+        SwingWebViewTranscriptView.removeAdjacentDuplicateSourceCitations(document);
+
+        assertThat(document.select("a.source-citation")).hasSize(2);
+        assertThat(document.select("a.source-citation").eachText()).containsExactly("9", "10");
+    }
+
+    @Test
     @DisplayName("Supported code blocks are highlighted before WebView load")
     void renderCodeHighlights_whenDocumentContainsSupportedCodeBlock_replacesPreHtmlWithHighlightSpans() {
         var document = Jsoup.parse("""

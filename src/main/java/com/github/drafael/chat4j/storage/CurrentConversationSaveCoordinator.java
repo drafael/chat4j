@@ -17,6 +17,7 @@ public class CurrentConversationSaveCoordinator {
     private final HistoryPersister historyPersister;
     private final ConversationAgentSettingsPersister conversationAgentSettingsPersister;
     private final ConversationReasoningLevelPersister conversationReasoningLevelPersister;
+    private final ConversationExistsChecker conversationExistsChecker;
 
     public CurrentConversationSaveCoordinator(
             ConversationTitleDeriver conversationTitleDeriver,
@@ -27,7 +28,8 @@ public class CurrentConversationSaveCoordinator {
                 conversationPersistenceCoordinator::createConversation,
                 conversationPersistenceCoordinator::persistConversationHistory,
                 conversationPersistenceCoordinator::persistConversationAgentSettings,
-                conversationPersistenceCoordinator::persistConversationReasoningLevel
+                conversationPersistenceCoordinator::persistConversationReasoningLevel,
+                conversationPersistenceCoordinator::conversationExists
         );
     }
 
@@ -38,11 +40,30 @@ public class CurrentConversationSaveCoordinator {
             @NonNull ConversationAgentSettingsPersister conversationAgentSettingsPersister,
             @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister
     ) {
+        this(
+                conversationTitleDeriver,
+                conversationCreator,
+                historyPersister,
+                conversationAgentSettingsPersister,
+                conversationReasoningLevelPersister,
+                conversationId -> true
+        );
+    }
+
+    CurrentConversationSaveCoordinator(
+            @NonNull ConversationTitleDeriver conversationTitleDeriver,
+            @NonNull ConversationCreator conversationCreator,
+            @NonNull HistoryPersister historyPersister,
+            @NonNull ConversationAgentSettingsPersister conversationAgentSettingsPersister,
+            @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister,
+            @NonNull ConversationExistsChecker conversationExistsChecker
+    ) {
         this.conversationTitleDeriver = conversationTitleDeriver;
         this.conversationCreator = conversationCreator;
         this.historyPersister = historyPersister;
         this.conversationAgentSettingsPersister = conversationAgentSettingsPersister;
         this.conversationReasoningLevelPersister = conversationReasoningLevelPersister;
+        this.conversationExistsChecker = conversationExistsChecker;
     }
 
     public SaveResult save(
@@ -60,6 +81,10 @@ public class CurrentConversationSaveCoordinator {
 
         UUID conversationId = currentConversationId;
         boolean createdConversation = false;
+
+        if (conversationId != null && !conversationExistsChecker.exists(conversationId)) {
+            conversationId = null;
+        }
 
         if (conversationId == null) {
             String title = conversationTitleDeriver.derive(history.getFirst());
@@ -107,5 +132,10 @@ public class CurrentConversationSaveCoordinator {
     @FunctionalInterface
     interface ConversationReasoningLevelPersister {
         void persist(UUID conversationId, ReasoningLevel reasoningLevel) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface ConversationExistsChecker {
+        boolean exists(UUID conversationId) throws Exception;
     }
 }

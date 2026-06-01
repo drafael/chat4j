@@ -9,21 +9,43 @@ import java.util.UUID;
 public class AssistantMessageCompletionCoordinator {
 
     private final AssistantMessagePersister assistantMessagePersister;
+    private final ConversationExistsChecker conversationExistsChecker;
 
     public AssistantMessageCompletionCoordinator(ConversationPersistenceCoordinator conversationPersistenceCoordinator) {
-        this(conversationPersistenceCoordinator::persistAssistantMessage);
+        this(
+                conversationPersistenceCoordinator::persistAssistantMessage,
+                conversationPersistenceCoordinator::conversationExists
+        );
     }
 
     AssistantMessageCompletionCoordinator(@NonNull AssistantMessagePersister assistantMessagePersister) {
+        this(assistantMessagePersister, conversationId -> true);
+    }
+
+    AssistantMessageCompletionCoordinator(
+            @NonNull AssistantMessagePersister assistantMessagePersister,
+            @NonNull ConversationExistsChecker conversationExistsChecker
+    ) {
         this.assistantMessagePersister = assistantMessagePersister;
+        this.conversationExistsChecker = conversationExistsChecker;
     }
 
     public PersistResult persist(UUID conversationId, Message message, UUID currentConversationId) throws Exception {
         if (conversationId == null || message == null) {
             return PersistResult.ignoredResult();
         }
+        if (!conversationExistsChecker.exists(conversationId)) {
+            return PersistResult.ignoredResult();
+        }
 
-        assistantMessagePersister.persist(conversationId, message);
+        try {
+            assistantMessagePersister.persist(conversationId, message);
+        } catch (Exception e) {
+            if (!conversationExistsChecker.exists(conversationId)) {
+                return PersistResult.ignoredResult();
+            }
+            throw e;
+        }
         UUID conversationIdToSelect = Objects.equals(currentConversationId, conversationId)
                 ? currentConversationId
                 : null;
@@ -45,5 +67,10 @@ public class AssistantMessageCompletionCoordinator {
     @FunctionalInterface
     interface AssistantMessagePersister {
         void persist(UUID conversationId, Message message) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface ConversationExistsChecker {
+        boolean exists(UUID conversationId) throws Exception;
     }
 }

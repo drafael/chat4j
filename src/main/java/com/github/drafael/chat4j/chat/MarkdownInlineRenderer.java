@@ -11,7 +11,7 @@ final class MarkdownInlineRenderer {
     private static final Pattern INLINE_CODE_TOKEN_PATTERN = Pattern.compile("@@INLINE_CODE_(\\d+)@@");
     private static final Pattern DISPLAY_DOLLAR_MATH_PATTERN = Pattern.compile("(?s)(?<!\\\\)\\$\\$(.+?)(?<!\\\\)\\$\\$");
     private static final Pattern DISPLAY_BRACKET_MATH_PATTERN = Pattern.compile("(?s)\\\\\\[(.+?)\\\\\\]");
-    private static final Pattern INLINE_DOLLAR_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?!\\$)(.+?)(?<!\\\\)\\$(?!\\$)");
+    private static final Pattern INLINE_DOLLAR_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?![\\$\\d.,])(.+?)(?<!\\\\)\\$(?!\\$)");
     private static final Pattern INLINE_PAREN_MATH_PATTERN = Pattern.compile("\\\\\\((.+?)\\\\\\)");
     private static final Pattern MATH_TOKEN_PATTERN = Pattern.compile("@@MATH_(\\d+)@@");
     private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\(((?:https?|mailto):[^)\\s]+)\\)");
