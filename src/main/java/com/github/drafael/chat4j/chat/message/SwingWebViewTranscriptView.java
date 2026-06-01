@@ -183,7 +183,7 @@ public final class SwingWebViewTranscriptView {
                   %s
                   <style>
                     html, body { margin: 0; min-height: 100%%; background: %s; color: %s; font-family: %s; font-size: %dpx; line-height: 1.4; scrollbar-color: transparent transparent; scrollbar-width: none; }
-                    body { box-sizing: border-box; padding: 24px 16px 104px 16px; overflow-y: auto; -ms-overflow-style: none; }
+                    body { box-sizing: border-box; padding: 24px 36px 96px 28px; overflow-y: auto; -ms-overflow-style: none; }
                     html::-webkit-scrollbar, body::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; background: transparent !important; }
                     .chat4j-scrollbar { position: fixed; top: 5px; right: 3px; bottom: 5px; width: 10px; border-radius: 999px; background: transparent; z-index: 95; opacity: 0; transition: opacity 120ms ease; }
                     body:hover .chat4j-scrollbar, .chat4j-scrollbar.visible, .chat4j-scrollbar.dragging { opacity: 1; }
