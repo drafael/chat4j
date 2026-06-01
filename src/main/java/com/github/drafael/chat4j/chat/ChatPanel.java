@@ -32,6 +32,7 @@ import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.github.drafael.chat4j.web.BrowsedPage;
 import com.github.drafael.chat4j.web.ModelWebQueryPlanner;
 import com.github.drafael.chat4j.web.PerplexityWebSearchProvider;
@@ -2477,7 +2478,7 @@ public class ChatPanel extends JPanel {
                 this::requestClearChat
         );
 
-        JPopupMenu popup = new JPopupMenu();
+        JPopupMenu popup = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
         popup.add(copyItem);
         popup.addSeparator();
         popup.add(selectMessageItem);

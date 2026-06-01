@@ -3,6 +3,7 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.chat.RenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
+import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
 import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
 import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatusResolver;
 import com.github.drafael.chat4j.chat.ChatSearchPopup;
@@ -27,6 +28,7 @@ import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
+import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
@@ -387,6 +389,9 @@ public class MainFrame extends JFrame {
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
         this.chatWebViewRuntimeStatus = new ChatWebViewRuntimeStatusResolver(settingsRepo).resolve();
+        if (chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.SWING_WEBVIEW) {
+            PopupMenuSupport.preferHeavyweightPopups();
+        }
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
         this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
                 conversationRepo,

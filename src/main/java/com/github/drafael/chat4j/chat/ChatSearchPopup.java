@@ -153,6 +153,7 @@ public class ChatSearchPopup extends JDialog {
         );
 
         this.outsideClickListener = createOutsideClickListener();
+        registerWindowFocusListener();
     }
 
     public void show(Component relativeTo) {
@@ -190,6 +191,15 @@ public class ChatSearchPopup extends JDialog {
     public void dispose() {
         uninstallOutsideClickListener();
         super.dispose();
+    }
+
+    private void registerWindowFocusListener() {
+        addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowLostFocus(WindowEvent e) {
+                hidePopup();
+            }
+        });
     }
 
     private AWTEventListener createOutsideClickListener() {

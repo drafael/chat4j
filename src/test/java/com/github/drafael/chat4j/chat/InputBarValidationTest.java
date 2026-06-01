@@ -369,6 +369,22 @@ class InputBarValidationTest {
         assertThat(slashSuggestionsList.getUI()).isNotInstanceOf(SentinelListUi.class);
     }
 
+    @Test
+    @DisplayName("Input popups use heavyweight windows so they appear above native WebView")
+    void configurePopupMenus_whenInputBarCreated_disablesLightweightPopups() throws Exception {
+        InputBar subject = new InputBar();
+
+        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
+
+        assertThat(readSlashPopupMenu(subject).isLightWeightPopupEnabled()).isFalse();
+        assertThat(readReasoningLevelMenu(subject).isLightWeightPopupEnabled()).isFalse();
+        assertThat(readWebSearchMenu(subject).isLightWeightPopupEnabled()).isFalse();
+        assertThat(readWebSearchSubmenus(subject))
+                .extracting(menu -> menu.getPopupMenu().isLightWeightPopupEnabled())
+                .containsOnly(false);
+        assertThat(readInputTextArea(subject).getComponentPopupMenu().isLightWeightPopupEnabled()).isFalse();
+    }
+
     @SuppressWarnings("unchecked")
     private Optional<?> invokeToComposerAttachment(InputBar inputBar, Path path) throws Exception {
         Method method = InputBar.class.getDeclaredMethod("toComposerAttachment", Path.class);
@@ -437,10 +453,35 @@ class InputBarValidationTest {
         return (JPopupMenu) field.get(inputBar);
     }
 
+    private JPopupMenu readReasoningLevelMenu(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("reasoningLevelMenu");
+        field.setAccessible(true);
+        return (JPopupMenu) field.get(inputBar);
+    }
+
+    private JPopupMenu readSlashPopupMenu(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("slashPopupMenu");
+        field.setAccessible(true);
+        return (JPopupMenu) field.get(inputBar);
+    }
+
+    private List<JMenu> readWebSearchSubmenus(InputBar inputBar) throws Exception {
+        return List.of(readWebSearchMenu(inputBar).getComponents()).stream()
+                .filter(JMenu.class::isInstance)
+                .map(JMenu.class::cast)
+                .toList();
+    }
+
     private JList<?> readSlashSuggestionsList(InputBar inputBar) throws Exception {
         Field field = InputBar.class.getDeclaredField("slashSuggestionsList");
         field.setAccessible(true);
         return (JList<?>) field.get(inputBar);
+    }
+
+    private JTextArea readInputTextArea(InputBar inputBar) throws Exception {
+        Field field = InputBar.class.getDeclaredField("textArea");
+        field.setAccessible(true);
+        return (JTextArea) field.get(inputBar);
     }
 
     private static class SentinelListUi extends BasicListUI {

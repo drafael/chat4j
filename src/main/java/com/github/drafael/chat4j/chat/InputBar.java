@@ -8,6 +8,7 @@ import com.formdev.flatlaf.util.SystemFileChooser;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -76,11 +77,11 @@ public class InputBar extends JPanel {
     private final JButton commandCenterButton;
     private final JButton thinkingButton;
     private final JToggleButton webSearchButton;
-    private final JPopupMenu webSearchMenu = new JPopupMenu();
+    private final JPopupMenu webSearchMenu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
     private final Map<String, JRadioButtonMenuItem> webSearchOptionItems = new LinkedHashMap<>();
     private final JToggleButton agentModeButton;
     private final JButton clearChatButton;
-    private final JPopupMenu reasoningLevelMenu = new JPopupMenu();
+    private final JPopupMenu reasoningLevelMenu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
     private final Map<ReasoningLevel, JRadioButtonMenuItem> reasoningLevelItems = new LinkedHashMap<>();
     private final JPanel projectRootRowPanel;
     private final JLabel projectRootIconLabel;
@@ -88,7 +89,7 @@ public class InputBar extends JPanel {
     private final JLabel agentAccessLabel;
     private final JLabel validationLabel;
     private JButton cancelGenerationButton;
-    private JLayeredPane slashPopupLayeredPane;
+    private final JPopupMenu slashPopupMenu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
     private final SlashPopupPanel slashPopupContentPanel = new SlashPopupPanel(
             this::resolveListBackground,
             this::resolvePopupBorderColor
@@ -801,7 +802,7 @@ public class InputBar extends JPanel {
         webSearchMenu.removeAll();
 
         if (!webSearchOptions.isEmpty()) {
-            JMenu searchWithMenu = new JMenu("Search with");
+            JMenu searchWithMenu = PopupMenuSupport.configureNativeSafeMenu(new JMenu("Search with"));
             ButtonGroup optionGroup = new ButtonGroup();
             webSearchOptionItems.clear();
             webSearchOptions.stream()
@@ -817,7 +818,7 @@ public class InputBar extends JPanel {
             webSearchMenu.add(searchWithMenu);
         }
 
-        JMenu browseTopMenu = new JMenu("Browse top");
+        JMenu browseTopMenu = PopupMenuSupport.configureNativeSafeMenu(new JMenu("Browse top"));
         ButtonGroup browseGroup = new ButtonGroup();
         for (int topN : List.of(1, 2, 3, 5, 10)) {
             JRadioButtonMenuItem item = new JRadioButtonMenuItem(String.valueOf(topN));
@@ -1511,7 +1512,7 @@ public class InputBar extends JPanel {
                 "/icons/input/clipboard-paste.svg"
         );
 
-        JPopupMenu popup = new JPopupMenu();
+        JPopupMenu popup = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
         popup.add(cutItem);
         popup.add(copyItem);
         popup.add(pasteItem);
@@ -1638,6 +1639,9 @@ public class InputBar extends JPanel {
             }
         });
 
+        slashPopupMenu.setBorder(null);
+        slashPopupMenu.setOpaque(false);
+        slashPopupMenu.setFocusable(false);
         slashPopupScrollPane = new JScrollPane(slashSuggestionsList);
         slashPopupScrollPane.setBorder(null);
         slashPopupScrollPane.setViewportBorder(null);
@@ -1646,6 +1650,7 @@ public class InputBar extends JPanel {
         slashPopupContentPanel.setLayout(new BorderLayout());
         slashPopupContentPanel.setOpaque(true);
         slashPopupContentPanel.add(slashPopupScrollPane, BorderLayout.CENTER);
+        slashPopupMenu.add(slashPopupContentPanel);
         applySlashPopupBorder();
     }
 
@@ -1827,8 +1832,7 @@ public class InputBar extends JPanel {
         int visibleRows = Math.max(1, Math.min(slashSuggestionsList.getVisibleRowCount(), slashSuggestions.size()));
         int rowHeight = Math.max(1, slashSuggestionsList.getFixedCellHeight());
         int popupHeight = (visibleRows * rowHeight) + 2;
-        JLayeredPane layeredPane = ensureSlashPopupLayeredPane();
-        if (layeredPane == null) {
+        if (!isShowing()) {
             return;
         }
 
@@ -1839,61 +1843,24 @@ public class InputBar extends JPanel {
         ));
         applySlashPopupBorder();
 
-        Point location;
-        try {
-            Point anchorInInputBar = new Point((getWidth() - popupWidth) / 2, 0);
-            Point anchorInLayeredPane = SwingUtilities.convertPoint(this, anchorInInputBar, layeredPane);
-            int y = Math.max(6, anchorInLayeredPane.y - popupHeight - 8);
-            location = new Point(anchorInLayeredPane.x, y);
-        } catch (Exception e) {
-            location = SwingUtilities.convertPoint(textArea, 6, 6, layeredPane);
-        }
-
-        if (slashPopupContentPanel.getParent() != layeredPane) {
-            Container currentParent = slashPopupContentPanel.getParent();
-            if (currentParent != null) {
-                currentParent.remove(slashPopupContentPanel);
-            }
-            layeredPane.add(slashPopupContentPanel, JLayeredPane.POPUP_LAYER);
-        }
-
-        slashPopupContentPanel.setBounds(
-                location.x - decorationInset,
-                location.y - decorationInset,
+        int popupX = Math.max(6, (getWidth() - popupWidth) / 2) - decorationInset;
+        int popupY = -popupHeight - 8 - decorationInset;
+        slashPopupMenu.setPopupSize(
                 popupWidth + (decorationInset * 2),
                 popupHeight + (decorationInset * 2)
         );
-        slashPopupContentPanel.setVisible(true);
-        layeredPane.moveToFront(slashPopupContentPanel);
-        layeredPane.revalidate();
-        layeredPane.repaint(slashPopupContentPanel.getBounds());
+        slashPopupMenu.show(this, popupX, popupY);
         installSlashPopupOutsideClickListener();
     }
 
     private void hideSlashPopup() {
         slashTokenStart = -1;
-        Container parent = slashPopupContentPanel.getParent();
-        if (parent != null) {
-            Rectangle bounds = slashPopupContentPanel.getBounds();
-            parent.remove(slashPopupContentPanel);
-            parent.revalidate();
-            parent.repaint(bounds.x, bounds.y, bounds.width, bounds.height);
-        }
+        slashPopupMenu.setVisible(false);
         uninstallSlashPopupOutsideClickListener();
     }
 
     private boolean isSlashPopupVisible() {
-        return slashPopupContentPanel.getParent() != null && slashPopupContentPanel.isVisible();
-    }
-
-    private JLayeredPane ensureSlashPopupLayeredPane() {
-        JRootPane rootPane = SwingUtilities.getRootPane(this);
-        if (rootPane == null) {
-            return null;
-        }
-
-        slashPopupLayeredPane = rootPane.getLayeredPane();
-        return slashPopupLayeredPane;
+        return slashPopupMenu.isVisible();
     }
 
     private void installSlashPopupOutsideClickListener() {
@@ -2029,6 +1996,7 @@ public class InputBar extends JPanel {
             return;
         }
 
+        SwingUtilities.updateComponentTreeUI(slashPopupMenu);
         SwingUtilities.updateComponentTreeUI(slashPopupContentPanel);
         applySlashPopupBorder();
     }
@@ -2038,6 +2006,8 @@ public class InputBar extends JPanel {
             return;
         }
 
+        slashPopupMenu.setBorder(null);
+        slashPopupMenu.setOpaque(false);
         slashPopupContentPanel.applyThemeBorder();
         if (slashPopupScrollPane != null) {
             slashPopupScrollPane.setBorder(null);

@@ -8,6 +8,7 @@ import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.PopupMenuSupport;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -690,7 +691,7 @@ public class SidebarPanel extends JPanel {
     }
 
     private JPopupMenu createContextMenu(ConversationItem conversation, String groupName) {
-        var menu = new JPopupMenu();
+        var menu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
         menu.add(createRenameMenuItem(conversation));
         menu.add(createFavoriteMenuItem(conversation));
         menu.addSeparator();
