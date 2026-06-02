@@ -200,11 +200,26 @@ final class MarkdownInlineRenderer {
     }
 
     private record CodeExtraction(String text, List<String> codeSegments) {
+        @Override
+        public String toString() {
+            return "CodeExtraction[text=<masked>, codeSegments=%d]"
+                    .formatted(codeSegments == null ? 0 : codeSegments.size());
+        }
     }
 
     private record LinkExtraction(String text, List<String> linkSegments) {
+        @Override
+        public String toString() {
+            return "LinkExtraction[text=<masked>, linkSegments=%d]"
+                    .formatted(linkSegments == null ? 0 : linkSegments.size());
+        }
     }
 
     private record MathExtraction(String text, List<String> mathSegments) {
+        @Override
+        public String toString() {
+            return "MathExtraction[text=<masked>, mathSegments=%d]"
+                    .formatted(mathSegments == null ? 0 : mathSegments.size());
+        }
     }
 }

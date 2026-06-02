@@ -8,11 +8,7 @@ public final class ChatMessageViewFactory {
     private final MessageHtmlRenderer messageHtmlRenderer;
 
     public ChatMessageViewFactory() {
-        this(ChatWebViewEngine.JEDITOR_PANE);
-    }
-
-    public ChatMessageViewFactory(ChatWebViewEngine engine) {
-        this(providerFor(engine), new MessageHtmlRenderer());
+        this(JEditorPaneMessageContentView::new, new MessageHtmlRenderer());
     }
 
     ChatMessageViewFactory(MessageContentViewProvider contentViewProvider, MessageHtmlRenderer messageHtmlRenderer) {
@@ -24,7 +20,4 @@ public final class ChatMessageViewFactory {
         return new MessageBubble(role, contentViewProvider, messageHtmlRenderer);
     }
 
-    private static MessageContentViewProvider providerFor(ChatWebViewEngine engine) {
-        return JEditorPaneMessageContentView::new;
-    }
 }

@@ -24,4 +24,10 @@ public record ChatWebViewRuntimeStatus(
     public boolean hasFallback() {
         return configuredEngine != activeEngine && StringUtils.isNotBlank(fallbackReason);
     }
+
+    @Override
+    public String toString() {
+        return "ChatWebViewRuntimeStatus[configuredEngine=%s, activeEngine=%s, swingWebViewAvailable=%s, swingWebViewMode=%s, fallbackReason=<masked>]"
+                .formatted(configuredEngine, activeEngine, swingWebViewAvailable, swingWebViewMode);
+    }
 }

@@ -1120,7 +1120,7 @@ public class MainFrame extends JFrame {
                         this::toggleSidebar,
                         () -> openChatSearch(null),
                         this::openCommandCenter,
-                        () -> chatPanel.showModelPopupCentered()
+                        chatPanel::showModelPopupCentered
                 )
         );
     }
@@ -1187,7 +1187,7 @@ public class MainFrame extends JFrame {
                 ),
                 new CommandCenterAction(
                         "Switch selected model",
-                        () -> chatPanel.showModelPopupCentered(),
+                        chatPanel::showModelPopupCentered,
                         this::canUseCommandCenterAction
                 ),
                 new CommandCenterAction("Open settings", this::openSettings, this::canUseCommandCenterAction, "%s,".formatted(shortcut))
@@ -1346,7 +1346,7 @@ public class MainFrame extends JFrame {
                         yesNo(status.available()),
                         modelCountByProvider.getOrDefault(status.name(), 0)
                 ))
-                .reduce((left, right) -> "%s\n%s".formatted(left, right))
+                .reduce("%s\n%s"::formatted)
                 .orElse("");
 
         String header = rowPattern.formatted("Provider", "Enabled", "Authenticated", "Available", "Models");
@@ -1383,7 +1383,7 @@ public class MainFrame extends JFrame {
 
         String rows = entries.stream()
                 .map(entry -> rowPattern.formatted(entry.getKey(), entry.getValue().size()))
-                .reduce((left, right) -> "%s\n%s".formatted(left, right))
+                .reduce("%s\n%s"::formatted)
                 .orElse(rowPattern.formatted("none", 0));
 
         return "%s\n%s\n%s\n%s\n%s".formatted(separator, header, separator, rows, separator);
@@ -1500,7 +1500,7 @@ public class MainFrame extends JFrame {
                         chatPanel::hideModelPopup,
                         this::syncTogglePreviewMenuSelection,
                         this::toggleSidebar,
-                        () -> chatPanel.showModelPopupCentered(),
+                        chatPanel::showModelPopupCentered,
                         () -> openChatSearch(null),
                         selected -> renderModeToggleCoordinator.apply(
                                 selected,
@@ -1594,40 +1594,8 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void rebuildThemesMenuStructure() {
-        themeMenuCoordinator.rebuildStructure(themeMenuContext());
-    }
-
-    private void syncThemeMenuSelection() {
-        themeMenuCoordinator.syncSelection(themeMenuContext());
-    }
-
-    private void rebuildFontMenuStructure() {
-        fontMenuCoordinator.rebuildStructure(fontMenuContext());
-    }
-
     private void syncFontMenuSelection() {
         fontMenuCoordinator.syncSelection(fontMenuContext());
-    }
-
-    private void applyAppFontFamilyFromMenu(String fontFamily) {
-        fontMenuCoordinator.applyAppFontFamily(fontMenuContext(), fontFamily);
-    }
-
-    private void applyAppFontSizeFromMenu(int appFontSize) {
-        fontMenuCoordinator.applyAppFontSize(fontMenuContext(), appFontSize);
-    }
-
-    private void applyCodeFontFromMenu(String fontFamily) {
-        fontMenuCoordinator.applyCodeFont(fontMenuContext(), fontFamily);
-    }
-
-    private void restoreAppFontFromMenu() {
-        fontMenuCoordinator.restoreAppFont(fontMenuContext());
-    }
-
-    private void adjustAppFontSizeFromMenu(boolean increase) {
-        fontMenuCoordinator.adjustAppFontSize(fontMenuContext(), increase);
     }
 
     private MainFrameFontMenuCoordinator.FontMenuContext fontMenuContext() {
@@ -1637,10 +1605,6 @@ public class MainFrame extends JFrame {
                 fontMenuState,
                 message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
         );
-    }
-
-    private void applyThemeFromMenu(String themeName, String className) {
-        themeMenuCoordinator.applyTheme(themeName, className, themeMenuContext());
     }
 
     private MainFrameThemeMenuCoordinator.ThemeMenuContext themeMenuContext() {

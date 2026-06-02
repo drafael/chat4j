@@ -90,5 +90,9 @@ public final class ChatWebViewRuntimeStatusResolver {
     }
 
     record SwingWebViewAvailability(boolean available, String mode, String reason) {
+        @Override
+        public String toString() {
+            return "SwingWebViewAvailability[available=%s, mode=%s, reason=<masked>]".formatted(available, mode);
+        }
     }
 }

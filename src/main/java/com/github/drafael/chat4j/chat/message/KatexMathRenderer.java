@@ -162,6 +162,11 @@ final class KatexMathRenderer {
 
     record MathSource(String tex, boolean displayMode) {
 
+        @Override
+        public String toString() {
+            return "MathSource[tex=<masked>, displayMode=%s]".formatted(displayMode);
+        }
+
         static MathSource parse(String source, boolean fallbackDisplayMode) {
             String text = StringUtils.trimToEmpty(source);
             if (text.length() >= 4 && text.startsWith("$$") && text.endsWith("$$")) {
@@ -181,5 +186,9 @@ final class KatexMathRenderer {
     }
 
     private record RenderKey(String tex, boolean displayMode) {
+        @Override
+        public String toString() {
+            return "RenderKey[tex=<masked>, displayMode=%s]".formatted(displayMode);
+        }
     }
 }

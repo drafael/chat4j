@@ -1943,7 +1943,7 @@ public class InputBar extends JPanel {
         }
 
         removeSlashTokenFromText();
-        if (activeSkills.stream().noneMatch(skill -> skill.equalsIgnoreCase(selected.name()))) {
+        if (activeSkills.stream().noneMatch(skill -> Strings.CI.equals(skill, selected.name()))) {
             activeSkills.add(selected.name());
             refreshChips();
         }

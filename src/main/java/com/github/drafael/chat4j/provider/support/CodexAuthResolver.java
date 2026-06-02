@@ -342,8 +342,6 @@ public class CodexAuthResolver {
         try {
             String callbackInput = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
             return parseAuthorizationInput(callbackInput);
-        } catch (TimeoutException e) {
-            return null;
         } catch (Exception e) {
             return null;
         } finally {
@@ -413,9 +411,9 @@ public class CodexAuthResolver {
         String html = """
                 <!doctype html>
                 <html>
-                <head><meta charset=\"utf-8\"><title>%s</title></head>
-                <body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px\">
-                  <h2 style=\"color:%s\">%s</h2>
+                <head><meta charset="utf-8"><title>%s</title></head>
+                <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px">
+                  <h2 style="color:%s">%s</h2>
                   <p>%s</p>
                 </body>
                 </html>

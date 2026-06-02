@@ -181,5 +181,9 @@ final class HighlightJsCodeRenderer {
     }
 
     private record RenderKey(String source, String language) {
+        @Override
+        public String toString() {
+            return "RenderKey[source=<masked>, language=%s]".formatted(language);
+        }
     }
 }

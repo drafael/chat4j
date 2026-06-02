@@ -822,13 +822,9 @@ public final class SwingWebViewTranscriptView {
     }
 
     private static String renderAttachmentHtml(TranscriptAttachment attachment) {
-        if (attachment == null) {
-            return "";
-        }
-        if (attachment.image()) {
-            return renderImageAttachmentHtml(attachment);
-        }
-        return renderFileAttachmentHtml(attachment);
+        return attachment == null
+                ? ""
+                : attachment.image() ? renderImageAttachmentHtml(attachment) : renderFileAttachmentHtml(attachment);
     }
 
     private static String renderImageAttachmentHtml(TranscriptAttachment attachment) {
@@ -970,10 +966,9 @@ public final class SwingWebViewTranscriptView {
     }
 
     private String renderEntryContentHtml(Role role, String text, TranscriptRenderSnapshot snapshot) {
-        if (snapshot.renderMode() == RenderMode.MARKDOWN) {
-            return renderRawMarkdownSourceHtml(text, snapshot);
-        }
-        return messageHtmlRenderer.render(role, snapshot.renderMode(), text, snapshot.dark(), snapshot.palette());
+        return snapshot.renderMode() == RenderMode.MARKDOWN
+                ? renderRawMarkdownSourceHtml(text, snapshot)
+                : messageHtmlRenderer.render(role, snapshot.renderMode(), text, snapshot.dark(), snapshot.palette());
     }
 
     private String renderRawMarkdownSourceHtml(String text, TranscriptRenderSnapshot snapshot) {
@@ -1180,12 +1175,15 @@ public final class SwingWebViewTranscriptView {
     }
 
     private String citationNumber(String text) {
-        return StringUtils.removeEnd(StringUtils.removeStart(StringUtils.trimToEmpty(text), "["), "]");
+        return stripCitationBrackets(text);
     }
 
     private boolean isCitationText(String text) {
-        String normalized = StringUtils.removeEnd(StringUtils.removeStart(StringUtils.trimToEmpty(text), "["), "]");
-        return normalized.matches("\\d+");
+        return stripCitationBrackets(text).matches("\\d+");
+    }
+
+    private String stripCitationBrackets(String text) {
+        return Strings.CS.removeEnd(Strings.CS.removeStart(StringUtils.trimToEmpty(text), "["), "]");
     }
 
     private SourcePreview sourcePreview(Element anchor) {
@@ -1210,7 +1208,7 @@ public final class SwingWebViewTranscriptView {
         String snippet = StringUtils.defaultString(context)
                 .replaceFirst("^\\s*\\d+\\.\\s*", "")
                 .trim();
-        if (StringUtils.startsWithIgnoreCase(snippet, title)) {
+        if (Strings.CI.startsWith(snippet, title)) {
             snippet = snippet.substring(title.length()).trim();
         }
         snippet = snippet.replaceFirst("^[—–-]\\s*", "").trim();
@@ -1221,19 +1219,23 @@ public final class SwingWebViewTranscriptView {
     }
 
     private boolean isHttpUrl(String href) {
-        return StringUtils.startsWithAny(StringUtils.lowerCase(href), "http://", "https://");
+        return Strings.CI.startsWith(href, "http://") || Strings.CI.startsWith(href, "https://");
     }
 
     private String sourceDomain(String url) {
         try {
             String host = URI.create(url).getHost();
-            return StringUtils.defaultIfBlank(StringUtils.removeStart(host, "www."), url);
+            return StringUtils.defaultIfBlank(Strings.CS.removeStart(host, "www."), url);
         } catch (Exception e) {
             return url;
         }
     }
 
     private record SourcePreview(String title, String domain, String url, String snippet) {
+        @Override
+        public String toString() {
+            return "SourcePreview[title=%s, domain=%s, url=<masked>, snippet=<masked>]".formatted(title, domain);
+        }
     }
 
     private String bridgeScript() {
@@ -1861,9 +1863,9 @@ public final class SwingWebViewTranscriptView {
             return "";
         }
 
-        String mediaType = StringUtils.endsWithIgnoreCase(path, ".woff2")
+        String mediaType = Strings.CI.endsWith(path, ".woff2")
                 ? "font/woff2"
-                : StringUtils.endsWithIgnoreCase(path, ".woff") ? "font/woff" : "font/ttf";
+                : Strings.CI.endsWith(path, ".woff") ? "font/woff" : "font/ttf";
         String encoded = Base64.getEncoder().encodeToString(bytes);
         return "data:%s;base64,%s".formatted(mediaType, encoded);
     }
@@ -1955,9 +1957,18 @@ public final class SwingWebViewTranscriptView {
     }
 
     private record TranscriptAction(String action, int messageIndex, String text) {
+        @Override
+        public String toString() {
+            return "TranscriptAction[action=%s, messageIndex=%d, text=<masked>]".formatted(action, messageIndex);
+        }
     }
 
     private record DocumentUrl(String url, Path path) {
+        @Override
+        public String toString() {
+            return "DocumentUrl[url=<masked>, path=<masked>]";
+        }
+
         private void deleteFile() {
             if (path == null) {
                 return;
@@ -1996,6 +2007,11 @@ public final class SwingWebViewTranscriptView {
             int languageFontSize,
             String syntaxHighlightCss
     ) {
+        @Override
+        public String toString() {
+            return "DocumentChrome[panelBackground=%s, bodyFontSize=%d, codeFontSize=%d]"
+                    .formatted(panelBackground, bodyFontSize, codeFontSize);
+        }
     }
 
     private record TranscriptRenderSnapshot(
@@ -2008,6 +2024,11 @@ public final class SwingWebViewTranscriptView {
             int codeFontSize,
             float fontScaleFactor
     ) {
+        @Override
+        public String toString() {
+            return "TranscriptRenderSnapshot[entries=%d, renderMode=%s, dark=%s, jumpButtonVisible=%s, codeFontSize=%d, fontScaleFactor=%s]"
+                    .formatted(entries.size(), renderMode, dark, jumpButtonVisible, codeFontSize, fontScaleFactor);
+        }
     }
 
     @FunctionalInterface
@@ -2020,6 +2041,12 @@ public final class SwingWebViewTranscriptView {
             storagePath = StringUtils.defaultString(storagePath);
             originalName = StringUtils.defaultString(originalName);
             mimeType = StringUtils.defaultString(mimeType);
+        }
+
+        @Override
+        public String toString() {
+            return "TranscriptAttachment[storagePath=<masked>, originalName=%s, mimeType=%s, sizeBytes=%d, image=%s]"
+                    .formatted(originalName, mimeType, sizeBytes, image);
         }
     }
 
@@ -2036,6 +2063,12 @@ public final class SwingWebViewTranscriptView {
             title = StringUtils.defaultString(title);
             text = StringUtils.defaultString(text);
             attachments = attachments == null ? emptyList() : List.copyOf(attachments);
+        }
+
+        @Override
+        public String toString() {
+            return "Entry[kind=%s, role=%s, title=%s, text=<masked>, collapsed=%s, messageIndex=%d, attachments=%d]"
+                    .formatted(kind, role, title, collapsed, messageIndex, attachments.size());
         }
 
         public static Entry message(Role role, String text, int messageIndex) {

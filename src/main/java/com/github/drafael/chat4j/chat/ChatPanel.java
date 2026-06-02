@@ -4078,9 +4078,18 @@ public class ChatPanel extends JPanel {
             Path agentProjectRoot,
             boolean visibleConversation
     ) {
+        @Override
+        public String toString() {
+            return "UserMessageEvent[conversationId=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, visibleConversation=%s]"
+                    .formatted(conversationId, providerName, modelId, reasoningLevel, agentModeEnabled, visibleConversation);
+        }
     }
 
     public record AssistantMessageEvent(UUID conversationId, Message message) {
+        @Override
+        public String toString() {
+            return "AssistantMessageEvent[conversationId=%s, message=<masked>]".formatted(conversationId);
+        }
     }
 
     public record HistoryTruncatedEvent(UUID conversationId, int keepMessageCount) {

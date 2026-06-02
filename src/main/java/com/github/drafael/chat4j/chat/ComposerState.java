@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.chat;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.util.List;
+
 import static java.util.Collections.emptyList;
 
 public record ComposerState(String text, List<ComposerAttachment> attachments, List<String> activeSkills) {
@@ -12,7 +15,13 @@ public record ComposerState(String text, List<ComposerAttachment> attachments, L
     }
 
     public boolean isEmpty() {
-        return text.trim().isEmpty() && attachments.isEmpty() && activeSkills.isEmpty();
+        return StringUtils.isBlank(text) && attachments.isEmpty() && activeSkills.isEmpty();
+    }
+
+    @Override
+    public String toString() {
+        return "ComposerState[text=<masked>, attachments=%d, activeSkills=%d]"
+                .formatted(attachments.size(), activeSkills.size());
     }
 
     public static ComposerState empty() {

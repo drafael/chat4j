@@ -135,5 +135,9 @@ final class SourceReferenceLinkifier {
     }
 
     private record SourceLine(String prefix, String number, String url, String suffix) {
+        @Override
+        public String toString() {
+            return "SourceLine[prefix=%s, number=%s, url=<masked>, suffix=%s]".formatted(prefix, number, suffix);
+        }
     }
 }

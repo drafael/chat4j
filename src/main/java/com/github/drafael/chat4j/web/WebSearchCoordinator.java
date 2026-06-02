@@ -107,7 +107,7 @@ public class WebSearchCoordinator {
                 .map(WebSearchResult::url)
                 .filter(StringUtils::isNotBlank)
                 .collect(toMap(
-                        url -> normalizeUrlForDedupe(url),
+                        this::normalizeUrlForDedupe,
                         url -> url,
                         (first, ignored) -> first,
                         LinkedHashMap::new

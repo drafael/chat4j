@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.chat;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
+
+import java.util.Arrays;
 
 public enum RenderMode {
     PREVIEW("preview", "Preview"),
@@ -23,16 +26,10 @@ public enum RenderMode {
     }
 
     public static RenderMode fromSettingValue(String value) {
-        if (StringUtils.isBlank(value)) {
-            return PREVIEW;
-        }
-
-        String normalized = value.trim();
-        for (RenderMode mode : values()) {
-            if (mode.settingValue.equalsIgnoreCase(normalized) || mode.name().equalsIgnoreCase(normalized)) {
-                return mode;
-            }
-        }
-        return PREVIEW;
+        String normalized = StringUtils.trimToEmpty(value);
+        return Arrays.stream(values())
+                .filter(mode -> Strings.CI.equals(mode.settingValue, normalized) || Strings.CI.equals(mode.name(), normalized))
+                .findFirst()
+                .orElse(PREVIEW);
     }
 }

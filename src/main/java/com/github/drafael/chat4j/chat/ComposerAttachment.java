@@ -13,4 +13,10 @@ public record ComposerAttachment(Path path, String mimeType, long sizeBytes, boo
     public String displayName() {
         return path.getFileName() == null ? path.toString() : path.getFileName().toString();
     }
+
+    @Override
+    public String toString() {
+        return "ComposerAttachment[path=<masked>, mimeType=%s, sizeBytes=%d, image=%s]"
+                .formatted(mimeType, sizeBytes, image);
+    }
 }

@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.util.Fonts;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -357,7 +358,7 @@ final class MarkdownBlockRenderer {
         int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
         int codeFontSize = CodeFontResolver.resolveCodeFontSize();
         String blockBorder = palette.hrColor();
-        boolean latexFallback = lang != null && "latex".equalsIgnoreCase(lang.trim());
+        boolean latexFallback = Strings.CI.equals(StringUtils.trimToEmpty(lang), "latex");
         String borderStyle = latexFallback ? "dashed" : "solid";
         String tableClass = latexFallback ? "md-code-block md-latex-block" : "md-code-block";
         String headerBackground = latexFallback ? palette.inlineCodeBg() : palette.codeHeaderBg();
