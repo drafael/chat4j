@@ -5,6 +5,7 @@ import org.apache.commons.lang3.StringUtils;
 import javax.swing.*;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
+import java.util.function.Supplier;
 
 /**
  * Font helpers that honor the currently selected UI font family and size.
@@ -25,6 +26,7 @@ public final class Fonts {
     private static final int DESIGN_BASE_SIZE = SIZE_BODY;
     private static final String FONT_STYLE_PROPERTY = "chat4j.font.style";
     private static final String FONT_SIZE_PROPERTY = "chat4j.font.designSize";
+    private static final ThreadLocal<Float> SCALE_FACTOR_OVERRIDE = new ThreadLocal<>();
 
     private Fonts() {
     }
@@ -119,7 +121,26 @@ public final class Fonts {
         return null;
     }
 
+    public static <T> T withScaleFactor(float scaleFactor, Supplier<T> action) {
+        Float previous = SCALE_FACTOR_OVERRIDE.get();
+        SCALE_FACTOR_OVERRIDE.set(scaleFactor);
+        try {
+            return action.get();
+        } finally {
+            if (previous == null) {
+                SCALE_FACTOR_OVERRIDE.remove();
+            } else {
+                SCALE_FACTOR_OVERRIDE.set(previous);
+            }
+        }
+    }
+
     private static float scaleFactor() {
+        Float override = SCALE_FACTOR_OVERRIDE.get();
+        if (override != null) {
+            return override;
+        }
+
         Font base = resolveBaseUiFont();
         int selectedSize = base != null ? base.getSize() : DESIGN_BASE_SIZE;
         return selectedSize / (float) DESIGN_BASE_SIZE;

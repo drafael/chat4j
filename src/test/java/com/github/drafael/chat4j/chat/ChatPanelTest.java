@@ -981,6 +981,17 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Jump to latest remains visible when scroll is not at conversation end")
+    void setAutoScrollEnabled_whenScrollNotAtBottom_showsJumpToLatestButton() throws Exception {
+        setField(subject, "atBottom", false);
+
+        subject.setAutoScrollEnabled(true);
+
+        JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
+        assertThat(jumpToLatestOverlay.isVisible()).isTrue();
+    }
+
+    @Test
     @DisplayName("Render mode switch updates state and emits change callback")
     void setRenderMode_whenChanged_updatesStateAndNotifiesListener() {
         var capturedMode = new AtomicReference<RenderMode>();

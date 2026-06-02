@@ -175,6 +175,7 @@ public class ChatPanel extends JPanel {
     private String currentProviderApiKey;
     private volatile boolean currentProviderResolving;
     private boolean conversationLoading;
+    private boolean batchMessageRefresh;
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
@@ -397,7 +398,7 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        boolean shouldShow = !autoScrollEnabled && (streaming || !atBottom);
+        boolean shouldShow = !atBottom || (!autoScrollEnabled && streaming);
         if (jumpToLatestOverlay.isVisible() != shouldShow) {
             jumpToLatestOverlay.setVisible(shouldShow);
             if (bodyLayered != null) {
@@ -2313,6 +2314,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void finishMessageWrapperAdd() {
+        if (batchMessageRefresh) {
+            return;
+        }
         addBottomFiller();
         refreshMessageColumnInsets();
         messagesPanel.revalidate();
@@ -2337,7 +2341,7 @@ public class ChatPanel extends JPanel {
                 .filter(Objects::nonNull)
                 .toList();
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
-        boolean showJumpButton = !autoScrollEnabled && streaming;
+        boolean showJumpButton = streaming;
         webTranscriptView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
         if (forceReload) {
             webTranscriptView.reload(shouldScrollToBottom);
@@ -2829,6 +2833,37 @@ public class ChatPanel extends JPanel {
         updateClearChatButtonVisibility();
     }
 
+    private void clearChatForHistoryLoad() {
+        disposeMessageViews();
+        currentAssistantWebSearchBubble = null;
+        currentAssistantActivityBubble = null;
+        clearCurrentAgentToolBubbleState();
+        currentAssistantBubble = null;
+        history.clear();
+        assistantBubbles.clear();
+        thinkingBubbles.clear();
+        messagesPanel.removeAll();
+        messageRow = 0;
+    }
+
+    private void finishHistoryLoadRefresh() {
+        addBottomFiller();
+        refreshMessageColumnInsets();
+        messagesPanel.revalidate();
+        messagesPanel.repaint();
+        messagesCardLayout.show(messagesContainer, history.isEmpty() ? CARD_EMPTY : CARD_CHAT);
+        updateClearChatButtonVisibility();
+        SwingUtilities.invokeLater(() -> {
+            updateAtBottom();
+            refreshJumpOverlay();
+        });
+        if (history.isEmpty()) {
+            refreshWebTranscript(false);
+            return;
+        }
+        SwingUtilities.invokeLater(() -> refreshWebTranscript(false, true));
+    }
+
     private void disposeMessageViews() {
         thinkingBubbles.forEach(ActivityBubble::dispose);
         collectBubbles().stream()
@@ -2850,50 +2885,55 @@ public class ChatPanel extends JPanel {
     }
 
     public void loadHistory(List<Message> messages) {
-        clearChat(false);
+        clearChatForHistoryLoad();
 
-        List<Message> normalizedMessages = new ArrayList<>(normalizeLoadedHistory(messages));
-        recoverPendingCompletedAssistantMessage(activeConversationId, normalizedMessages);
-        for (Message msg : normalizedMessages) {
-            history.add(msg);
-            int messageIndex = history.size() - 1;
-            if (msg.role() == Role.USER) {
-                addUserBubble(msg, messageIndex);
-                continue;
-            }
-
-            if (msg.role() == Role.ASSISTANT) {
-                String assistantThinking = normalizeThinkingText(msg.meta() == null
-                        ? ""
-                        : StringUtils.defaultString(msg.meta().assistantThinking()));
-                if (hasVisibleThinkingContent(assistantThinking)) {
-                    addActivityBubble(new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY), assistantThinking);
-                }
-
-                String assistantWebSearch = normalizeWebSearchActivity(msg.meta() == null
-                        ? ""
-                        : StringUtils.defaultString(msg.meta().assistantWebSearch()));
-                if (StringUtils.isNotBlank(assistantWebSearch)) {
-                    addActivityBubble(new ActivityBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT), assistantWebSearch);
-                }
-
-                List<AgentToolActivityMeta> agentToolActivities = msg.meta() == null
-                        ? emptyList()
-                        : msg.meta().agentToolActivities();
-                agentToolActivities.stream()
-                        .map(this::toAgentToolActivity)
-                        .forEach(this::addPersistedAgentToolBubble);
-
-                if (StringUtils.isBlank(msg.content())) {
+        batchMessageRefresh = true;
+        try {
+            List<Message> normalizedMessages = new ArrayList<>(normalizeLoadedHistory(messages));
+            recoverPendingCompletedAssistantMessage(activeConversationId, normalizedMessages);
+            for (Message msg : normalizedMessages) {
+                history.add(msg);
+                int messageIndex = history.size() - 1;
+                if (msg.role() == Role.USER) {
+                    addUserBubble(msg, messageIndex);
                     continue;
                 }
-            }
 
-            addBubble(createMessageView(msg.role()), msg.content(), msg.role());
+                if (msg.role() == Role.ASSISTANT) {
+                    String assistantThinking = normalizeThinkingText(msg.meta() == null
+                            ? ""
+                            : StringUtils.defaultString(msg.meta().assistantThinking()));
+                    if (hasVisibleThinkingContent(assistantThinking)) {
+                        addActivityBubble(new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY), assistantThinking);
+                    }
+
+                    String assistantWebSearch = normalizeWebSearchActivity(msg.meta() == null
+                            ? ""
+                            : StringUtils.defaultString(msg.meta().assistantWebSearch()));
+                    if (StringUtils.isNotBlank(assistantWebSearch)) {
+                        addActivityBubble(new ActivityBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT), assistantWebSearch);
+                    }
+
+                    List<AgentToolActivityMeta> agentToolActivities = msg.meta() == null
+                            ? emptyList()
+                            : msg.meta().agentToolActivities();
+                    agentToolActivities.stream()
+                            .map(this::toAgentToolActivity)
+                            .forEach(this::addPersistedAgentToolBubble);
+
+                    if (StringUtils.isBlank(msg.content())) {
+                        continue;
+                    }
+                }
+
+                addBubble(createMessageView(msg.role()), msg.content(), msg.role());
+            }
+        } finally {
+            batchMessageRefresh = false;
         }
+
         attachVisibleStreamingSession(visibleStreamingSession());
-        updateClearChatButtonVisibility();
-        refreshWebTranscript(false, true);
+        finishHistoryLoadRefresh();
     }
 
     public String getSelectedModel() {

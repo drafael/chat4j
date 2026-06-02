@@ -705,7 +705,7 @@ public class MainFrame extends JFrame {
         chatPanel.setConversationLoading(false);
         conversationLoadCoordinator.invalidatePendingLoads();
         newChatCoordinator.start(
-                () -> saveCurrentConversation(false),
+                this::saveCurrentConversationInBackgroundForNavigation,
                 conversationState::clearCurrentConversationId,
                 () -> chatPanel.setActiveConversationId(null),
                 sidebarPanel::clearSelection,
@@ -748,7 +748,7 @@ public class MainFrame extends JFrame {
         chatPanel.setConversationLoading(true);
         conversationLoadStartCoordinator.start(
                 id,
-                () -> saveCurrentConversation(false),
+                this::saveCurrentConversationInBackgroundForNavigation,
                 ignored -> {},
                 ignored -> {},
                 conversationLoadCoordinator::loadAsync,
@@ -790,6 +790,71 @@ public class MainFrame extends JFrame {
                     JOptionPane.ERROR_MESSAGE
             );
         }
+    }
+
+    private void saveCurrentConversationInBackgroundForNavigation() {
+        UUID currentConversationId = conversationState.currentConversationId();
+        List<Message> history = chatPanel.getHistory();
+        if (history.isEmpty()) {
+            return;
+        }
+
+        String selectedModel = chatPanel.getSelectedModel();
+        ReasoningLevel reasoningLevel = chatPanel.getInputBar().getReasoningLevel();
+        boolean agentModeEnabled = chatPanel.getInputBar().isAgentModeRequested();
+        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
+        boolean retitleClearedConversation = shouldRetitleClearedConversation(currentConversationId, history);
+
+        Thread.startVirtualThread(() -> {
+            try {
+                UUID savedConversationId = saveConversationSnapshotForNavigation(
+                        currentConversationId,
+                        history,
+                        selectedModel,
+                        reasoningLevel,
+                        agentModeEnabled,
+                        agentProjectRoot
+                );
+                if (savedConversationId == null) {
+                    return;
+                }
+                if (retitleClearedConversation) {
+                    conversationRepo.updateTitle(savedConversationId, conversationTitleDeriver.derive(history.getFirst()));
+                    SwingUtilities.invokeLater(() -> clearedConversationIds.remove(savedConversationId));
+                }
+                SwingUtilities.invokeLater(sidebarPanel::refresh);
+            } catch (Exception e) {
+                warnWithoutStack("Failed to persist current conversation", e);
+            }
+        });
+    }
+
+    private UUID saveConversationSnapshotForNavigation(
+            UUID currentConversationId,
+            List<Message> history,
+            String selectedModel,
+            ReasoningLevel reasoningLevel,
+            boolean agentModeEnabled,
+            Path agentProjectRoot
+    ) throws Exception {
+        if (currentConversationId == null) {
+            CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
+                    null,
+                    history,
+                    selectedModel,
+                    reasoningLevel,
+                    agentModeEnabled,
+                    agentProjectRoot
+            );
+            return saveResult.saved() ? saveResult.conversationId() : null;
+        }
+
+        if (!conversationPersistenceCoordinator.conversationExists(currentConversationId)) {
+            return null;
+        }
+
+        int persistedCount = conversationPersistenceCoordinator.persistConversationHistory(currentConversationId, history);
+        return persistedCount == history.size() ? currentConversationId : null;
     }
 
     private void saveCurrentConversation(boolean selectCreatedConversation) {

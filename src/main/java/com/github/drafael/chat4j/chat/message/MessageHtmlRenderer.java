@@ -14,7 +14,10 @@ import static java.util.stream.Collectors.joining;
 final class MessageHtmlRenderer {
 
     String render(Role role, RenderMode renderMode, String text, boolean isDark) {
-        Palette palette = MarkdownPaletteResolver.resolve(isDark);
+        return render(role, renderMode, text, isDark, MarkdownPaletteResolver.resolve(isDark));
+    }
+
+    String render(Role role, RenderMode renderMode, String text, boolean isDark, Palette palette) {
         String safeText = StringUtils.defaultString(text);
 
         if (role == Role.USER) {
@@ -27,7 +30,7 @@ final class MessageHtmlRenderer {
             return toEscapedHtml(safeText, palette, true);
         }
 
-        return MarkdownRenderer.toHtml(safeText, isDark);
+        return MarkdownRenderer.toHtml(safeText, palette);
     }
 
     String toEscapedHtml(String text, Palette palette, boolean monospaced) {
@@ -49,7 +52,7 @@ final class MessageHtmlRenderer {
                 .filter(line -> appendBadgeLine(line, badgeHtml, badgeBackground, badgeText, fallbackBackground, fallbackText))
                 .collect(joining("\n"));
 
-        String html = MarkdownRenderer.toHtml(markdown, isDark);
+        String html = MarkdownRenderer.toHtml(markdown, palette);
         if (badgeHtml.isEmpty()) {
             return html;
         }
@@ -88,7 +91,7 @@ final class MessageHtmlRenderer {
     }
 
     private int badgeFontSize() {
-        return Fonts.scale(Fonts.SIZE_BADGE);
+        return Math.max(9, CodeFontResolver.resolveCodeFontSize() - 1);
     }
 
     private String toUserLineHtml(String line,

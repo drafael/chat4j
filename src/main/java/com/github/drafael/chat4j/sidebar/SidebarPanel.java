@@ -145,6 +145,7 @@ public class SidebarPanel extends JPanel {
     private final AtomicLong refreshRequestCounter = new AtomicLong();
     private UUID pendingSelectionConversationId;
     private UUID notifiedSelectionConversationId;
+    private boolean initialSelectionNotificationSent;
     private Map<String, List<ConversationRecord>> lastGroupedConversations = emptyMap();
 
     public SidebarPanel(ConversationRepo conversationRepo) {
@@ -240,6 +241,14 @@ public class SidebarPanel extends JPanel {
 
     public void setOnConversationSelected(Consumer<UUID> handler) {
         onConversationSelected = handler;
+        if (handler == null) {
+            return;
+        }
+        selectedConversationId().ifPresent(id -> {
+            initialSelectionNotificationSent = true;
+            notifiedSelectionConversationId = id;
+            handler.accept(id);
+        });
     }
 
     public void setOnNewChat(Runnable handler) {
@@ -633,6 +642,7 @@ public class SidebarPanel extends JPanel {
             restoreSelection(restoreIndex);
             applyPendingSelection();
         });
+        notifyInitialSelectionIfNeeded();
     }
 
     private void applyConversationFilter() {
@@ -646,6 +656,17 @@ public class SidebarPanel extends JPanel {
             int restoreIndex = rebuildConversationList(filteredConversations(lastGroupedConversations), selectedConversationId);
             restoreSelection(restoreIndex);
             applyPendingSelection();
+        });
+    }
+
+    private void notifyInitialSelectionIfNeeded() {
+        if (initialSelectionNotificationSent || onConversationSelected == null) {
+            return;
+        }
+        selectedConversationId().ifPresent(id -> {
+            initialSelectionNotificationSent = true;
+            notifiedSelectionConversationId = id;
+            onConversationSelected.accept(id);
         });
     }
 

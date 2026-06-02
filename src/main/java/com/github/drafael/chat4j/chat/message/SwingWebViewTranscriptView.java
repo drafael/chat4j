@@ -19,6 +19,7 @@ import org.jsoup.nodes.TextNode;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.HierarchyEvent;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +29,9 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,17 +53,33 @@ public final class SwingWebViewTranscriptView {
 
     private final WebViewComponent webView;
     private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
+    private final ExecutorService renderExecutor = Executors.newSingleThreadExecutor(
+            Thread.ofVirtual().name("chat4j-transcript-render-", 0).factory()
+    );
+    private final AtomicLong renderRequestCounter = new AtomicLong();
     private List<Entry> entries = emptyList();
     private RenderMode renderMode = RenderMode.PREVIEW;
     private boolean dark;
     private boolean jumpButtonVisible;
     private boolean documentInitialized;
+    private boolean documentLoadPending;
+    private DocumentUrl pendingDocumentUrl;
+    private long pendingDocumentRequestId;
+    private boolean pendingDocumentScrollToBottom;
+    private Path currentDocumentPath;
     private boolean disposed;
     private TranscriptActionListener actionListener;
 
     public SwingWebViewTranscriptView() {
         webView = WebViewComponent.create();
         webView.addOnBeforeLoad(bridgeScript());
+        webView.addHierarchyListener(event -> {
+            long flags = event.getChangeFlags();
+            if ((flags & (HierarchyEvent.DISPLAYABILITY_CHANGED | HierarchyEvent.SHOWING_CHANGED)) == 0) {
+                return;
+            }
+            applyPendingDocumentUrl();
+        });
         webView.addJavascriptCallback("chat4jOpenExternalLink", raw -> {
             String link = unwrapCallbackArg(raw);
             if (StringUtils.isNotBlank(link)) {
@@ -97,12 +117,19 @@ public final class SwingWebViewTranscriptView {
         this.dark = dark;
         this.jumpButtonVisible = jumpButtonVisible;
 
-        if (!documentInitialized || styleChanged) {
+        if (styleChanged) {
+            reload(scrollToBottom);
+            return;
+        }
+        if (documentLoadPending) {
+            return;
+        }
+        if (!documentInitialized) {
             reload(scrollToBottom);
             return;
         }
 
-        updateTranscriptHtml(scrollToBottom);
+        scheduleTranscriptHtmlUpdate(scrollToBottom, transcriptRenderSnapshot());
         if (jumpButtonChanged) {
             updateJumpButtonChrome();
             SwingUtilities.invokeLater(this::updateJumpButtonChrome);
@@ -110,8 +137,25 @@ public final class SwingWebViewTranscriptView {
     }
 
     public void reload(boolean scrollToBottom) {
-        documentInitialized = true;
-        webView.setUrl(toDocumentUrl(renderDocument(scrollToBottom)));
+        if (disposed) {
+            return;
+        }
+        long requestId = renderRequestCounter.incrementAndGet();
+        documentInitialized = false;
+        documentLoadPending = true;
+        TranscriptRenderSnapshot snapshot = transcriptRenderSnapshot();
+        renderExecutor.execute(() -> {
+            if (disposed || requestId != renderRequestCounter.get()) {
+                return;
+            }
+            String document = renderWithSnapshotFonts(snapshot, () -> renderDocument(scrollToBottom, snapshot));
+            SwingUtilities.invokeLater(() -> {
+                if (disposed || requestId != renderRequestCounter.get()) {
+                    return;
+                }
+                applyDocumentUrl(requestId, toDocumentUrl(document), scrollToBottom);
+            });
+        });
     }
 
     public void scrollToBottom() {
@@ -120,6 +164,10 @@ public final class SwingWebViewTranscriptView {
 
     public void dispose() {
         disposed = true;
+        renderRequestCounter.incrementAndGet();
+        renderExecutor.shutdownNow();
+        deletePendingDocumentUrl();
+        replaceCurrentDocumentPath(null);
         webView.dispose();
     }
 
@@ -127,53 +175,36 @@ public final class SwingWebViewTranscriptView {
         return disposed;
     }
 
-    private String renderDocument(boolean scrollToBottom) {
-        Palette palette = MarkdownPaletteResolver.resolve(dark);
-        Color panelBackground = uiManagerColor("Panel.background", dark ? new Color(30, 31, 34) : new Color(247, 248, 250));
-        String background = cssColor(panelBackground);
-        String bubbleBackground = cssColor(userBubbleColor(panelBackground));
-        String borderColor = cssColor(uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
-        Color menuBackgroundColor = uiManagerColor("PopupMenu.background", panelBackground);
-        Color buttonBackgroundColor = uiManagerColor("Button.background", blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.04f));
-        Color buttonBorderColor = uiManagerColor("Button.borderColor", uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
-        Color sourceAccentColor = uiManagerColor("Component.accentColor", dark ? new Color(60, 190, 188) : new Color(1, 106, 113));
-        Color sourceChipBackgroundColor = blend(panelBackground, sourceAccentColor, dark ? 0.18f : 0.08f);
-        Color sourceChipBorderColor = blend(panelBackground, sourceAccentColor, dark ? 0.52f : 0.34f);
-        Color sourceChipTextColor = blend(uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK), sourceAccentColor, dark ? 0.36f : 0.28f);
-        Color sourceChipHoverBackgroundColor = blend(panelBackground, sourceAccentColor, dark ? 0.28f : 0.14f);
-        Color jumpRingColor = uiManagerColor("ProgressBar.foreground", uiManagerColor("Component.accentColor", dark ? new Color(88, 166, 255) : new Color(70, 130, 230)));
-        Color jumpRingTrackColor = alphaColor(uiManagerColor("ProgressBar.background", buttonBorderColor), 96);
-        Color hoverBackgroundColor = uiManagerColor(
-                "MenuItem.selectionBackground",
-                blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.08f)
-        );
-        Color hoverForegroundColor = uiManagerColor("MenuItem.selectionForeground", uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK));
-        Color iconColor = uiManagerColor("Label.disabledForeground", blend(hoverForegroundColor, panelBackground, dark ? 0.36f : 0.28f));
-        String menuBackground = cssColor(menuBackgroundColor);
-        String buttonBackground = cssColor(buttonBackgroundColor);
-        String buttonBorder = cssColor(buttonBorderColor);
-        String sourceChipBackground = cssColor(sourceChipBackgroundColor);
-        String sourceChipBorder = cssColor(sourceChipBorderColor);
-        String sourceChipText = cssColor(sourceChipTextColor);
-        String sourceChipHoverBackground = cssColor(sourceChipHoverBackgroundColor);
-        String jumpRing = cssColor(jumpRingColor);
-        String jumpRingTrack = alphaCssColor(jumpRingTrackColor);
-        String hoverBackground = cssColor(hoverBackgroundColor);
-        String hoverForeground = cssColor(hoverForegroundColor);
-        String iconColorValue = cssColor(iconColor);
-        Color scrollbarTrackColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.06f : 0.025f);
-        Color scrollbarThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.34f : 0.24f);
-        Color scrollbarHoverThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.46f : 0.34f);
-        String scrollbarTrack = cssColor(scrollbarTrackColor);
-        String scrollbarThumb = cssColor(scrollbarThumbColor);
-        String scrollbarHoverThumb = cssColor(scrollbarHoverThumbColor);
-        int baseBodyFontSize = Fonts.scale(Fonts.SIZE_BODY);
-        int bodyFontSize = baseBodyFontSize + 1;
-        int codeFontSize = Math.max(11, baseBodyFontSize - 1);
-        int tableFontSize = baseBodyFontSize;
-        int languageFontSize = Math.max(10, baseBodyFontSize - 2);
-        String syntaxHighlightCss = syntaxHighlightCss();
-        String entriesHtml = renderEntriesHtml(palette, bubbleBackground, borderColor);
+    private String renderDocument(boolean scrollToBottom, TranscriptRenderSnapshot snapshot) {
+        boolean jumpButtonVisible = snapshot.jumpButtonVisible();
+        Palette palette = snapshot.palette();
+        DocumentChrome chrome = snapshot.chrome();
+        Color panelBackground = chrome.panelBackground();
+        String background = chrome.background();
+        String bubbleBackground = chrome.bubbleBackground();
+        String borderColor = chrome.borderColor();
+        String menuBackground = chrome.menuBackground();
+        String buttonBackground = chrome.buttonBackground();
+        String buttonBorder = chrome.buttonBorder();
+        String sourceChipBackground = chrome.sourceChipBackground();
+        String sourceChipBorder = chrome.sourceChipBorder();
+        String sourceChipText = chrome.sourceChipText();
+        String sourceChipHoverBackground = chrome.sourceChipHoverBackground();
+        String jumpRing = chrome.jumpRing();
+        String jumpRingTrack = chrome.jumpRingTrack();
+        String hoverBackground = chrome.hoverBackground();
+        String hoverForeground = chrome.hoverForeground();
+        String iconColorValue = chrome.iconColorValue();
+        String scrollbarTrack = chrome.scrollbarTrack();
+        String scrollbarThumb = chrome.scrollbarThumb();
+        String scrollbarHoverThumb = chrome.scrollbarHoverThumb();
+        int baseBodyFontSize = chrome.baseBodyFontSize();
+        int bodyFontSize = chrome.bodyFontSize();
+        int codeFontSize = chrome.codeFontSize();
+        int tableFontSize = chrome.tableFontSize();
+        int languageFontSize = chrome.languageFontSize();
+        String syntaxHighlightCss = chrome.syntaxHighlightCss();
+        String entriesHtml = renderEntriesHtml(snapshot);
         String scrollScript = scrollToBottom
                 ? "<script>window.addEventListener('load', function(){ setTimeout(function(){ window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); }, 0); });</script>"
                 : "";
@@ -322,7 +353,7 @@ public final class SwingWebViewTranscriptView {
                     <div class="source-preview-body"><div class="source-preview-title"></div><div class="source-preview-snippet"></div></div>
                   </div>
                   <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
-                  <button id="chat4j-jump-bottom" class="jump-button%s" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);"></button>
+                  <button id="chat4j-jump-bottom" class="jump-button%s" data-streaming="%s" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); if(window.chat4jUpdateJumpButton){setTimeout(window.chat4jUpdateJumpButton, 0);}"></button>
                   <script>if(window.chat4jRenderMath){window.chat4jRenderMath(document.querySelector('.transcript')||document.body);}</script>
                   %s
                 </body>
@@ -440,6 +471,7 @@ public final class SwingWebViewTranscriptView {
                 jumpRing,
                 entriesHtml,
                 jumpButtonVisible ? " streaming" : "",
+                jumpButtonVisible ? "true" : "false",
                 scrollScript
         );
     }
@@ -451,22 +483,177 @@ public final class SwingWebViewTranscriptView {
                   if (!jump) {
                     return;
                   }
-                  jump.style.display = %s;
+                  jump.setAttribute('data-streaming', %s);
                   jump.classList.toggle('streaming', %s);
+                  if (window.chat4jUpdateJumpButton) {
+                    window.chat4jUpdateJumpButton();
+                  } else {
+                    jump.style.display = %s;
+                  }
                 })();
                 """.formatted(
-                toJsonString(jumpButtonVisible ? "flex" : "none"),
-                jumpButtonVisible ? "true" : "false"
+                toJsonString(jumpButtonVisible ? "true" : "false"),
+                jumpButtonVisible ? "true" : "false",
+                toJsonString(jumpButtonVisible ? "flex" : "none")
         );
         webView.eval(script);
     }
 
-    private void updateTranscriptHtml(boolean scrollToBottom) {
+    private void applyDocumentUrl(long requestId, DocumentUrl documentUrl, boolean scrollToBottom) {
+        if (disposed || requestId != renderRequestCounter.get()) {
+            documentUrl.deleteFile();
+            return;
+        }
+        if (!webView.isDisplayable()) {
+            deletePendingDocumentUrl();
+            pendingDocumentUrl = documentUrl;
+            pendingDocumentRequestId = requestId;
+            pendingDocumentScrollToBottom = scrollToBottom;
+            return;
+        }
+
+        pendingDocumentUrl = null;
+        pendingDocumentRequestId = 0L;
+        pendingDocumentScrollToBottom = false;
+        webView.setUrl(documentUrl.url());
+        replaceCurrentDocumentPath(documentUrl.path());
+        documentInitialized = true;
+        documentLoadPending = false;
+        schedulePostReloadTranscriptUpdate(requestId, scrollToBottom);
+    }
+
+    private void applyPendingDocumentUrl() {
+        if (disposed || pendingDocumentUrl == null || !webView.isDisplayable()) {
+            return;
+        }
+        applyDocumentUrl(pendingDocumentRequestId, pendingDocumentUrl, pendingDocumentScrollToBottom);
+    }
+
+    private void deletePendingDocumentUrl() {
+        if (pendingDocumentUrl != null) {
+            pendingDocumentUrl.deleteFile();
+        }
+        pendingDocumentUrl = null;
+        pendingDocumentRequestId = 0L;
+        pendingDocumentScrollToBottom = false;
+    }
+
+    private void replaceCurrentDocumentPath(Path nextPath) {
+        Path previousPath = currentDocumentPath;
+        currentDocumentPath = nextPath;
+        if (previousPath != null && !previousPath.equals(nextPath)) {
+            try {
+                Files.deleteIfExists(previousPath);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void schedulePostReloadTranscriptUpdate(long reloadRequestId, boolean scrollToBottom) {
+        Timer timer = new Timer(150, event -> {
+            if (disposed || reloadRequestId != renderRequestCounter.get() || !documentInitialized) {
+                return;
+            }
+            scheduleTranscriptHtmlUpdate(scrollToBottom, transcriptRenderSnapshot());
+        });
+        timer.setRepeats(false);
+        timer.start();
+    }
+
+    private void scheduleTranscriptHtmlUpdate(boolean scrollToBottom, TranscriptRenderSnapshot snapshot) {
+        if (disposed) {
+            return;
+        }
+        long requestId = renderRequestCounter.incrementAndGet();
+        renderExecutor.execute(() -> {
+            if (disposed || requestId != renderRequestCounter.get()) {
+                return;
+            }
+            String entriesHtml = renderWithSnapshotFonts(snapshot, () -> renderEntriesHtml(snapshot, requestId));
+            if (entriesHtml == null) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (disposed || requestId != renderRequestCounter.get() || !documentInitialized) {
+                    return;
+                }
+                updateTranscriptHtml(scrollToBottom, snapshot, entriesHtml);
+            });
+        });
+    }
+
+    private TranscriptRenderSnapshot transcriptRenderSnapshot() {
         Palette palette = MarkdownPaletteResolver.resolve(dark);
+        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
+        return new TranscriptRenderSnapshot(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                palette,
+                documentChrome(dark, palette),
+                codeFontSize,
+                Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY
+        );
+    }
+
+    private <T> T renderWithSnapshotFonts(TranscriptRenderSnapshot snapshot, java.util.function.Supplier<T> action) {
+        return Fonts.withScaleFactor(
+                snapshot.fontScaleFactor(),
+                () -> CodeFontResolver.withResolvedCodeFontSize(snapshot.codeFontSize(), action)
+        );
+    }
+
+    private DocumentChrome documentChrome(boolean dark, Palette palette) {
         Color panelBackground = uiManagerColor("Panel.background", dark ? new Color(30, 31, 34) : new Color(247, 248, 250));
-        String bubbleBackground = cssColor(userBubbleColor(panelBackground));
-        String borderColor = cssColor(uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228)));
-        String entriesHtml = renderEntriesHtml(palette, bubbleBackground, borderColor);
+        Color componentBorderColor = uiManagerColor("Component.borderColor", dark ? new Color(60, 63, 67) : new Color(217, 221, 228));
+        Color menuBackgroundColor = uiManagerColor("PopupMenu.background", panelBackground);
+        Color buttonBackgroundColor = uiManagerColor("Button.background", blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.04f));
+        Color buttonBorderColor = uiManagerColor("Button.borderColor", componentBorderColor);
+        Color sourceAccentColor = uiManagerColor("Component.accentColor", dark ? new Color(60, 190, 188) : new Color(1, 106, 113));
+        Color labelForegroundColor = uiManagerColor("Label.foreground", dark ? Color.WHITE : Color.BLACK);
+        Color hoverBackgroundColor = uiManagerColor(
+                "MenuItem.selectionBackground",
+                blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.14f : 0.08f)
+        );
+        Color hoverForegroundColor = uiManagerColor("MenuItem.selectionForeground", labelForegroundColor);
+        Color iconColor = uiManagerColor("Label.disabledForeground", blend(hoverForegroundColor, panelBackground, dark ? 0.36f : 0.28f));
+        Color jumpRingColor = uiManagerColor("ProgressBar.foreground", uiManagerColor("Component.accentColor", dark ? new Color(88, 166, 255) : new Color(70, 130, 230)));
+        Color jumpRingTrackColor = alphaColor(uiManagerColor("ProgressBar.background", buttonBorderColor), 96);
+        Color scrollbarTrackColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.06f : 0.025f);
+        Color scrollbarThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.34f : 0.24f);
+        Color scrollbarHoverThumbColor = blend(panelBackground, dark ? Color.WHITE : Color.BLACK, dark ? 0.46f : 0.34f);
+        int baseBodyFontSize = Fonts.scale(Fonts.SIZE_BODY);
+        return new DocumentChrome(
+                panelBackground,
+                cssColor(panelBackground),
+                cssColor(userBubbleColor(panelBackground)),
+                cssColor(componentBorderColor),
+                cssColor(menuBackgroundColor),
+                cssColor(buttonBackgroundColor),
+                cssColor(buttonBorderColor),
+                cssColor(blend(panelBackground, sourceAccentColor, dark ? 0.18f : 0.08f)),
+                cssColor(blend(panelBackground, sourceAccentColor, dark ? 0.52f : 0.34f)),
+                cssColor(blend(labelForegroundColor, sourceAccentColor, dark ? 0.36f : 0.28f)),
+                cssColor(blend(panelBackground, sourceAccentColor, dark ? 0.28f : 0.14f)),
+                cssColor(jumpRingColor),
+                alphaCssColor(jumpRingTrackColor),
+                cssColor(hoverBackgroundColor),
+                cssColor(hoverForegroundColor),
+                cssColor(iconColor),
+                cssColor(scrollbarTrackColor),
+                cssColor(scrollbarThumbColor),
+                cssColor(scrollbarHoverThumbColor),
+                baseBodyFontSize,
+                baseBodyFontSize + 1,
+                Math.max(11, baseBodyFontSize - 1),
+                baseBodyFontSize,
+                Math.max(10, baseBodyFontSize - 2),
+                syntaxHighlightCss()
+        );
+    }
+
+    private void updateTranscriptHtml(boolean scrollToBottom, TranscriptRenderSnapshot snapshot, String entriesHtml) {
         String script = """
                 (function() {
                   var transcript = document.querySelector('.transcript');
@@ -484,8 +671,13 @@ public final class SwingWebViewTranscriptView {
                   }
                   var jump = document.getElementById('chat4j-jump-bottom');
                   if (jump) {
-                    jump.style.display = %s;
+                    jump.setAttribute('data-streaming', %s);
                     jump.classList.toggle('streaming', %s);
+                    if (window.chat4jUpdateJumpButton) {
+                      window.chat4jUpdateJumpButton();
+                    } else {
+                      jump.style.display = %s;
+                    }
                   }
                   if (%s) {
                     window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0);
@@ -493,22 +685,51 @@ public final class SwingWebViewTranscriptView {
                 })();
                 """.formatted(
                 toJsonString(entriesHtml),
-                toJsonString(jumpButtonVisible ? "flex" : "none"),
-                jumpButtonVisible ? "true" : "false",
+                toJsonString(snapshot.jumpButtonVisible() ? "true" : "false"),
+                snapshot.jumpButtonVisible() ? "true" : "false",
+                toJsonString(snapshot.jumpButtonVisible() ? "flex" : "none"),
                 scrollToBottom ? "true" : "false"
         );
         webView.eval(script);
     }
 
-    private String renderEntriesHtml(Palette palette, String bubbleBackground, String borderColor) {
-        return entries.stream()
-                .map(entry -> renderEntrySafely(entry, palette, bubbleBackground, borderColor))
+    private String renderEntriesHtml(TranscriptRenderSnapshot snapshot) {
+        return snapshot.entries().stream()
+                .map(entry -> renderEntrySafely(entry, snapshot))
                 .collect(joining("\n"));
     }
 
-    private String renderEntrySafely(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
+    private String renderEntriesHtml(TranscriptRenderSnapshot snapshot, long requestId) {
+        StringBuilder html = new StringBuilder();
+        for (Entry entry : snapshot.entries()) {
+            if (disposed || requestId != renderRequestCounter.get()) {
+                return null;
+            }
+            if (!html.isEmpty()) {
+                html.append("\n");
+            }
+            html.append(renderEntrySafely(entry, snapshot));
+        }
+        return html.toString();
+    }
+
+    private String renderEntriesHtml(Palette palette, String bubbleBackground, String borderColor) {
+        TranscriptRenderSnapshot snapshot = new TranscriptRenderSnapshot(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                palette,
+                documentChrome(dark, palette),
+                CodeFontResolver.resolveCodeFontSize(),
+                Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY
+        );
+        return renderEntriesHtml(snapshot);
+    }
+
+    private String renderEntrySafely(Entry entry, TranscriptRenderSnapshot snapshot) {
         try {
-            return renderEntry(entry, palette, bubbleBackground, borderColor);
+            return renderEntry(entry, snapshot);
         } catch (Exception e) {
             return renderFallbackEntry(entry);
         }
@@ -526,9 +747,9 @@ public final class SwingWebViewTranscriptView {
                 """.formatted(roleClass, entry.messageIndex(), roleClass, text);
     }
 
-    private String renderEntry(Entry entry, Palette palette, String bubbleBackground, String borderColor) {
+    private String renderEntry(Entry entry, TranscriptRenderSnapshot snapshot) {
         if (entry.kind() == EntryKind.ACTIVITY) {
-            String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), palette);
+            String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), snapshot);
             Document activityDocument = Jsoup.parse(renderedActivity);
             prepareRenderedDocument(activityDocument, false);
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
@@ -546,7 +767,7 @@ public final class SwingWebViewTranscriptView {
                     """.formatted(openAttribute, escapeHtml(entry.title()), content);
         }
 
-        String rendered = renderEntryContentHtml(entry.role(), entry.text(), palette);
+        String rendered = renderEntryContentHtml(entry.role(), entry.text(), snapshot);
         Document document = Jsoup.parse(rendered);
         prepareRenderedDocument(document, false);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
@@ -574,16 +795,17 @@ public final class SwingWebViewTranscriptView {
                 """.formatted(roleClass, entry.messageIndex(), actions, roleClass, body);
     }
 
-    private String renderEntryContentHtml(Role role, String text, Palette palette) {
-        if (renderMode == RenderMode.MARKDOWN) {
-            return renderRawMarkdownSourceHtml(text, palette);
+    private String renderEntryContentHtml(Role role, String text, TranscriptRenderSnapshot snapshot) {
+        if (snapshot.renderMode() == RenderMode.MARKDOWN) {
+            return renderRawMarkdownSourceHtml(text, snapshot);
         }
-        return messageHtmlRenderer.render(role, renderMode, text, dark);
+        return messageHtmlRenderer.render(role, snapshot.renderMode(), text, snapshot.dark(), snapshot.palette());
     }
 
-    private String renderRawMarkdownSourceHtml(String text, Palette palette) {
-        int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
-        int codeFontSize = CodeFontResolver.resolveCodeFontSize();
+    private String renderRawMarkdownSourceHtml(String text, TranscriptRenderSnapshot snapshot) {
+        Palette palette = snapshot.palette();
+        int languageFontSize = snapshot.chrome().languageFontSize();
+        int codeFontSize = snapshot.codeFontSize();
         String source = escapeHtml(StringUtils.defaultString(text));
         return """
                 <html><body><table class="md-code-block" data-code-language="markdown" width="100%%" cellpadding="0" cellspacing="0" border="0" style="margin: 6px 0;">
@@ -1003,11 +1225,27 @@ public final class SwingWebViewTranscriptView {
                         bottomFade.classList.toggle('visible', maxScroll - scrollTop > 3);
                     }
                     window.chat4jUpdateFadeOverlays = updateFadeOverlays;
+                    function updateJumpButtonVisibility() {
+                        var root = scrollRoot();
+                        var jump = document.getElementById('chat4j-jump-bottom');
+                        if (!root || !jump) {
+                            return;
+                        }
+                        var scrollHeight = Math.max(root.scrollHeight, document.body ? document.body.scrollHeight : 0);
+                        var clientHeight = Math.max(root.clientHeight || 0, window.innerHeight || 0);
+                        var maxScroll = Math.max(0, scrollHeight - clientHeight);
+                        var scrollTop = root.scrollTop || 0;
+                        var streaming = jump.getAttribute('data-streaming') === 'true';
+                        var atBottom = maxScroll - scrollTop <= 3;
+                        jump.style.display = (streaming || !atBottom) ? 'flex' : 'none';
+                    }
+                    window.chat4jUpdateJumpButton = updateJumpButtonVisibility;
                     function updateCustomScrollbar() {
                         var root = scrollRoot();
                         var track = document.getElementById('chat4j-scrollbar');
                         var thumb = document.getElementById('chat4j-scrollbar-thumb');
                         updateFadeOverlays();
+                        updateJumpButtonVisibility();
                         if (!root || !track || !thumb) {
                             return;
                         }
@@ -1265,15 +1503,15 @@ public final class SwingWebViewTranscriptView {
         }
     }
 
-    private String toDocumentUrl(String html) {
+    private DocumentUrl toDocumentUrl(String html) {
         try {
             Path document = Files.createTempFile("chat4j-transcript-", ".html");
             Files.writeString(document, html, StandardCharsets.UTF_8);
             document.toFile().deleteOnExit();
-            return document.toUri().toString();
+            return new DocumentUrl(document.toUri().toString(), document);
         } catch (Exception e) {
             String encoded = Base64.getEncoder().encodeToString(html.getBytes(StandardCharsets.UTF_8));
-            return "data:text/html;charset=UTF-8;base64,%s".formatted(encoded);
+            return new DocumentUrl("data:text/html;charset=UTF-8;base64,%s".formatted(encoded), null);
         }
     }
 
@@ -1503,6 +1741,59 @@ public final class SwingWebViewTranscriptView {
     }
 
     private record TranscriptAction(String action, int messageIndex, String text) {
+    }
+
+    private record DocumentUrl(String url, Path path) {
+        private void deleteFile() {
+            if (path == null) {
+                return;
+            }
+            try {
+                Files.deleteIfExists(path);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private record DocumentChrome(
+            Color panelBackground,
+            String background,
+            String bubbleBackground,
+            String borderColor,
+            String menuBackground,
+            String buttonBackground,
+            String buttonBorder,
+            String sourceChipBackground,
+            String sourceChipBorder,
+            String sourceChipText,
+            String sourceChipHoverBackground,
+            String jumpRing,
+            String jumpRingTrack,
+            String hoverBackground,
+            String hoverForeground,
+            String iconColorValue,
+            String scrollbarTrack,
+            String scrollbarThumb,
+            String scrollbarHoverThumb,
+            int baseBodyFontSize,
+            int bodyFontSize,
+            int codeFontSize,
+            int tableFontSize,
+            int languageFontSize,
+            String syntaxHighlightCss
+    ) {
+    }
+
+    private record TranscriptRenderSnapshot(
+            List<Entry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean jumpButtonVisible,
+            Palette palette,
+            DocumentChrome chrome,
+            int codeFontSize,
+            float fontScaleFactor
+    ) {
     }
 
     @FunctionalInterface

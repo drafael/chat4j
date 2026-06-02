@@ -137,6 +137,32 @@ class SidebarPanelTest {
     }
 
     @Test
+    @DisplayName("Selection handler is notified when installed after an existing selection")
+    void setOnConversationSelected_whenRowAlreadySelected_notifiesHandler() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Selected chat")));
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var selectedId = new AtomicReference<UUID>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Selected chat"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            DefaultListModel<?> model = readListModel(subject);
+            JList<?> list = readConversationList(subject);
+            int conversationIndex = IntStream.range(0, model.size())
+                    .filter(index -> model.get(index) instanceof ConversationItem)
+                    .findFirst()
+                    .orElseThrow();
+            list.setSelectedIndex(conversationIndex);
+            subject.setOnConversationSelected(selectedId::set);
+        });
+
+        assertThat(selectedId.get()).isEqualTo(conversationId);
+    }
+
+    @Test
     @DisplayName("Filter field narrows conversation list locally")
     void filterField_whenTextEntered_filtersConversationRows() throws Exception {
         var repo = new DelayedConversationRepo(0, grouped(
