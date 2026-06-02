@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat.message;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.Arrays;
 
@@ -26,13 +27,9 @@ public enum ChatWebViewEngine {
     }
 
     public static ChatWebViewEngine fromSettingValue(String value) {
-        if (StringUtils.isBlank(value)) {
-            return JEDITOR_PANE;
-        }
-
-        String normalized = value.trim();
+        String normalized = StringUtils.trimToEmpty(value);
         return Arrays.stream(values())
-                .filter(engine -> engine.settingValue.equalsIgnoreCase(normalized) || engine.name().equalsIgnoreCase(normalized))
+                .filter(engine -> Strings.CI.equals(engine.settingValue, normalized) || Strings.CI.equals(engine.name(), normalized))
                 .findFirst()
                 .orElse(JEDITOR_PANE);
     }

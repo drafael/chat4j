@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.util;
 
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -34,10 +35,8 @@ public final class Fonts {
     public static Font of(int style, int designSize) {
         Font base = resolveBaseUiFont();
         int scaledSize = scale(designSize);
-        if (base != null) {
-            return new Font(base.getFamily(), style, scaledSize);
-        }
-        return new Font(Font.SANS_SERIF, style, scaledSize);
+        String family = base != null ? base.getFamily() : Font.SANS_SERIF;
+        return new Font(family, style, scaledSize);
     }
 
     public static void apply(JComponent component, int style, int designSize) {
@@ -106,19 +105,13 @@ public final class Fonts {
     }
 
     private static String extractText(JComponent component) {
-        if (component instanceof JLabel label) {
-            return label.getText();
-        }
-
-        if (component instanceof AbstractButton button) {
-            return button.getText();
-        }
-
-        if (component instanceof JTextComponent textComponent) {
-            return textComponent.getText();
-        }
-
-        return null;
+        return switch (component) {
+            case null -> null;
+            case JLabel label -> label.getText();
+            case AbstractButton button -> button.getText();
+            case JTextComponent textComponent -> textComponent.getText();
+            default -> null;
+        };
     }
 
     public static <T> T withScaleFactor(float scaleFactor, Supplier<T> action) {
@@ -147,16 +140,10 @@ public final class Fonts {
     }
 
     private static Font resolveBaseUiFont() {
-        Font font = UIManager.getFont("defaultFont");
-        if (font != null) {
-            return font;
-        }
-
-        font = UIManager.getFont("Label.font");
-        if (font != null) {
-            return font;
-        }
-
-        return new Font(Font.SANS_SERIF, Font.PLAIN, DESIGN_BASE_SIZE);
+        return ObjectUtils.firstNonNull(
+                UIManager.getFont("defaultFont"),
+                UIManager.getFont("Label.font"),
+                new Font(Font.SANS_SERIF, Font.PLAIN, DESIGN_BASE_SIZE)
+        );
     }
 }

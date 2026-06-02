@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -28,7 +29,7 @@ class CurrentConversationSaveCoordinatorTest {
         );
         UUID conversationId = UUID.randomUUID();
 
-        var result = subject.save(conversationId, List.of(), "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
+        var result = subject.save(conversationId, emptyList(), "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
 
         assertThat(result.saved()).isFalse();
         assertThat(result.conversationId()).isEqualTo(conversationId);

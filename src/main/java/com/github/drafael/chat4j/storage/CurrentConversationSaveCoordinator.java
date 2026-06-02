@@ -73,7 +73,7 @@ public class CurrentConversationSaveCoordinator {
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot
-    ) throws Exception  {
+    ) throws Exception {
 
         if (history.isEmpty()) {
             return SaveResult.skippedResult(currentConversationId);
@@ -100,10 +100,9 @@ public class CurrentConversationSaveCoordinator {
         }
 
         int persistedCount = historyPersister.persist(conversationId, history);
-        if (persistedCount < history.size()) {
-            return SaveResult.skippedResult(null);
-        }
-        return SaveResult.savedResult(conversationId, createdConversation);
+        return persistedCount < history.size()
+                ? SaveResult.skippedResult(null)
+                : SaveResult.savedResult(conversationId, createdConversation);
     }
 
     public record SaveResult(boolean saved, UUID conversationId, boolean createdConversation) {

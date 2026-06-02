@@ -75,11 +75,11 @@ public final class ProviderAttachmentSupport {
     }
 
     public static String textProjection(ContentPart part) {
-        if (part instanceof FilePart filePart) {
-            return fileTextProjection(filePart);
-        }
-
-        return part == null ? "" : part.asTextProjection();
+        return switch (part) {
+            case FilePart filePart -> fileTextProjection(filePart);
+            case null -> "";
+            default -> part.asTextProjection();
+        };
     }
 
     private static String fileTextProjection(FilePart filePart) {
@@ -149,11 +149,9 @@ public final class ProviderAttachmentSupport {
 
     private static Optional<String> extractedText(String text) {
         String normalized = StringUtils.trimToEmpty(text);
-        if (normalized.isBlank()) {
-            return Optional.empty();
-        }
-
-        return Optional.of(StringUtils.abbreviate(normalized, MAX_EXTRACTED_CHARS));
+        return StringUtils.isBlank(normalized)
+                ? Optional.empty()
+                : Optional.of(StringUtils.abbreviate(normalized, MAX_EXTRACTED_CHARS));
     }
 
     private static String fileExtension(Path path) {

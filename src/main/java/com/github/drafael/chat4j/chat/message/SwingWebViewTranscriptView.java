@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -607,7 +608,7 @@ public final class SwingWebViewTranscriptView {
         );
     }
 
-    private <T> T renderWithSnapshotFonts(TranscriptRenderSnapshot snapshot, java.util.function.Supplier<T> action) {
+    private <T> T renderWithSnapshotFonts(TranscriptRenderSnapshot snapshot, Supplier<T> action) {
         return Fonts.withScaleFactor(
                 snapshot.fontScaleFactor(),
                 () -> CodeFontResolver.withResolvedCodeFontSize(snapshot.codeFontSize(), action)

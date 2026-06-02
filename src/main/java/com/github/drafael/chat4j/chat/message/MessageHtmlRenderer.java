@@ -20,17 +20,14 @@ final class MessageHtmlRenderer {
     String render(Role role, RenderMode renderMode, String text, boolean isDark, Palette palette) {
         String safeText = StringUtils.defaultString(text);
 
-        if (role == Role.USER) {
-            return renderMode == RenderMode.MARKDOWN
+        return switch (role) {
+            case USER -> renderMode == RenderMode.MARKDOWN
                     ? toEscapedHtml(safeText, palette, true)
                     : toUserMarkdownHtml(safeText, palette, isDark);
-        }
-
-        if (renderMode == RenderMode.MARKDOWN) {
-            return toEscapedHtml(safeText, palette, true);
-        }
-
-        return MarkdownRenderer.toHtml(safeText, palette);
+            case null, default -> renderMode == RenderMode.MARKDOWN
+                    ? toEscapedHtml(safeText, palette, true)
+                    : MarkdownRenderer.toHtml(safeText, palette);
+        };
     }
 
     String toEscapedHtml(String text, Palette palette, boolean monospaced) {

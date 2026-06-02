@@ -75,13 +75,9 @@ public final class ChatWebViewRuntimeStatusResolver {
     }
 
     private ChatWebViewEngine defaultEngine(SwingWebViewAvailability availability) {
-        if (macOsSupplier.getAsBoolean()) {
-            return ChatWebViewEngine.SWING_WEBVIEW;
-        }
-        if (windowsSupplier.getAsBoolean() && availability.available()) {
-            return ChatWebViewEngine.SWING_WEBVIEW;
-        }
-        return ChatWebViewEngine.JEDITOR_PANE;
+        return macOsSupplier.getAsBoolean() || (windowsSupplier.getAsBoolean() && availability.available())
+                ? ChatWebViewEngine.SWING_WEBVIEW
+                : ChatWebViewEngine.JEDITOR_PANE;
     }
 
     private static SwingWebViewAvailability resolveSwingWebViewAvailability() {

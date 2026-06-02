@@ -12,6 +12,7 @@ import com.formdev.flatlaf.intellijthemes.materialthemeuilite.*;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.formdev.flatlaf.themes.FlatMacLightLaf;
 import com.formdev.flatlaf.util.ColorFunctions;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -252,10 +253,10 @@ public class AppearancePanel extends AbstractSettingsPanel {
         Font appFont = resolveLookAndFeelDefaultAppFont();
         int size = appFont != null ? appFont.getSize() : (base != null ? base.getSize() : FALLBACK_FONT_SIZE);
 
-        String family = fontFamily;
-        if (StringUtils.isBlank(family) || DEFAULT_CODE_FONT.equals(fontFamily)) {
-            family = base != null ? base.getFamily() : Font.MONOSPACED;
-        }
+        String defaultFamily = base != null ? base.getFamily() : Font.MONOSPACED;
+        String family = StringUtils.isBlank(fontFamily) || DEFAULT_CODE_FONT.equals(fontFamily)
+                ? defaultFamily
+                : fontFamily;
 
         Font codeFont = new Font(family, Font.PLAIN, size);
         UIManager.put("monospaced.font", new FontUIResource(codeFont));
@@ -263,15 +264,11 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     /** Look up the LaF class name for a saved theme display name, or null if not found. */
     public static String classNameForTheme(String displayName) {
-        String cls = CORE_THEMES.get(displayName);
-        if (cls != null) {
-            return cls;
-        }
-        cls = INTELLIJ_THEMES.get(displayName);
-        if (cls != null) {
-            return cls;
-        }
-        return MATERIAL_THEMES.get(displayName);
+        return ObjectUtils.firstNonNull(
+                CORE_THEMES.get(displayName),
+                INTELLIJ_THEMES.get(displayName),
+                MATERIAL_THEMES.get(displayName)
+        );
     }
 
     public static Map<String, Map<String, String>> groupedThemes() {
