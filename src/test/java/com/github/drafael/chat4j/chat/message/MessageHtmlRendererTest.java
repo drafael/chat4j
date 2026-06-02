@@ -26,10 +26,27 @@ class MessageHtmlRendererTest {
                 .contains("badge skill")
                 .contains("badge fallback")
                 .contains(">SKILL</span>brainstorm")
-                .contains(">FALLBACK</span>Files use text references")
+                .contains(">ATTACHMENT</span>")
+                .contains("Files use text references")
                 .contains("Build me a plan")
                 .doesNotContain("[SKILL]")
                 .doesNotContain("[FALLBACK]");
+    }
+
+    @Test
+    @DisplayName("Verbose file fallback notices render as compact attachment notices")
+    void render_whenUserMessageContainsVerboseFallbackNotice_compactsNotice() {
+        String html = subject.render(
+                Role.USER,
+                RenderMode.PREVIEW,
+                "[FALLBACK] Anthropic (claude-sonnet-4-6) supports rich input, but file upload mapping is not enabled yet in Chat4J; sending extracted text when available, otherwise file references.\ndescribe and summarize",
+                false
+        );
+
+        assertThat(html)
+                .contains(">ATTACHMENT</span>")
+                .contains("Extracted text sent · native upload not mapped")
+                .contains("describe and summarize");
     }
 
     @Test

@@ -84,6 +84,7 @@ final class MessageHtmlRenderer {
     ) {
         return """
                 .line { margin: 0 0 3px 0; }
+                .notice { margin: 0 0 6px 0; }
                 .badge { display: inline-block; border-radius: 999px; padding: 1px 6px; font-size: %dpx; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px; }
                 .skill { background: %s; color: %s; }
                 .fallback { background: %s; color: %s; }
@@ -110,11 +111,33 @@ final class MessageHtmlRenderer {
         }
 
         if (line.startsWith("[FALLBACK] ")) {
-            return "<div class='line'><span class='badge fallback' style='background: %s; color: %s;'>FALLBACK</span>%s</div>"
-                    .formatted(fallbackBadgeBackground, fallbackBadgeText, escapeHtml(line.substring(11).trim()));
+            String notice = line.substring(11).trim();
+            return "<div class='line notice fallback-notice' style='margin: 0 0 6px 0; font-size: 0.92em; line-height: 1.35;'><span class='badge fallback' style='background: %s; color: %s; border-radius: 999px; padding: 1px 6px; font-weight: 700; letter-spacing: 0.04em; margin-right: 6px;'>ATTACHMENT</span><span style='opacity: 0.82;' title='%s'>%s</span></div>"
+                    .formatted(
+                            fallbackBadgeBackground,
+                            fallbackBadgeText,
+                            escapeHtmlAttribute(notice),
+                            escapeHtml(compactFallbackNotice(notice))
+                    );
         }
 
         return "<div class='line'>%s</div>".formatted(escapeHtml(line));
+    }
+
+    private String compactFallbackNotice(String notice) {
+        String normalized = StringUtils.defaultString(notice).toLowerCase();
+        if ((normalized.contains("supports rich input") && normalized.contains("file upload mapping"))
+                || normalized.contains("native file upload is not mapped")) {
+            return "Extracted text sent · native upload not mapped";
+        }
+        if (normalized.contains("uses text-only fallback for file attachments")
+                || normalized.contains("native file upload is unavailable")) {
+            return "Extracted text sent · native upload unavailable";
+        }
+        if (normalized.contains("text-only image references")) {
+            return "Image sent as a text reference";
+        }
+        return notice;
     }
 
     private String escapeHtml(String text) {
@@ -122,5 +145,11 @@ final class MessageHtmlRenderer {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    private String escapeHtmlAttribute(String text) {
+        return escapeHtml(text)
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

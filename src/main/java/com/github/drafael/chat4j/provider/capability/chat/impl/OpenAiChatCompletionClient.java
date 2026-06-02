@@ -498,11 +498,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             return message.content();
         }
 
-        return message.parts().stream()
-                .map(ContentPart::asTextProjection)
-                .map(StringUtils::trimToEmpty)
-                .filter(StringUtils::isNotBlank)
-                .collect(joining("\n"));
+        return ProviderAttachmentSupport.textProjection(message.parts());
     }
 
     private String responseRoleLabel(Message message) {
@@ -606,7 +602,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         List<ChatCompletionContentPart> parts = mapUserParts(message, runtime);
         if (parts.isEmpty()) {
             return ChatCompletionUserMessageParam.builder()
-                    .content(message.content())
+                    .content(message.parts().isEmpty() ? message.content() : ProviderAttachmentSupport.textProjection(message.parts()))
                     .build();
         }
 
@@ -637,10 +633,10 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         if (part instanceof ImagePart imagePart && supportsNativeImages(runtime)) {
             return imageToPart(imagePart)
                     .map(List::of)
-                    .orElseGet(() -> List.of(toTextPart(imagePart.asTextProjection())));
+                    .orElseGet(() -> List.of(toTextPart(ProviderAttachmentSupport.textProjection(imagePart))));
         }
 
-        return List.of(toTextPart(part.asTextProjection()));
+        return List.of(toTextPart(ProviderAttachmentSupport.textProjection(part)));
     }
 
     private Optional<ChatCompletionContentPart> imageToPart(ImagePart imagePart) {

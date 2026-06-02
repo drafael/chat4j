@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.BufferedReader;
@@ -410,7 +411,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
     private String buildPrompt(List<Message> history) {
         String transcript = history.stream()
-                .map(message -> "%s:\n%s".formatted(roleLabel(message.role()), message.content()))
+                .map(message -> "%s:\n%s".formatted(roleLabel(message.role()), messageText(message)))
                 .reduce((left, right) -> "%s\n\n%s".formatted(left, right))
                 .orElse("");
 
@@ -423,6 +424,10 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
         return "You are a coding assistant. Answer directly in plain text. Do not execute commands or modify files.\n\nConversation:\n\n%s"
                 .formatted(transcript);
+    }
+
+    private String messageText(Message message) {
+        return message.parts().isEmpty() ? message.content() : ProviderAttachmentSupport.textProjection(message.parts());
     }
 
     private String roleLabel(Role role) {

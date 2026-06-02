@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
+import com.github.drafael.chat4j.chat.message.SwingWebViewTranscriptView;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
@@ -40,6 +41,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +55,7 @@ import java.util.function.Consumer;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 class ChatPanelTest {
 
@@ -992,6 +995,44 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Jump to latest stays hidden when streaming at conversation end")
+    void setAutoScrollEnabled_whenStreamingAtBottom_keepsJumpToLatestHidden() throws Exception {
+        setField(subject, "atBottom", true);
+        setField(subject, "streaming", true);
+
+        Method method = ChatPanel.class.getDeclaredMethod("refreshJumpOverlay");
+        method.setAccessible(true);
+        method.invoke(subject);
+
+        JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
+        assertThat(jumpToLatestOverlay.isVisible()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Jump to latest stops animating when streaming ends away from bottom")
+    void updateGenerationIndicator_whenStreamingEndsAwayFromBottom_stopsJumpAnimation() throws Exception {
+        setField(subject, "atBottom", false);
+        JumpToLatestButton jumpToLatestOverlay = (JumpToLatestButton) readField(subject, "jumpToLatestOverlay");
+        SwingUtilities.invokeAndWait(() -> {
+            jumpToLatestOverlay.setVisible(true);
+            jumpToLatestOverlay.setStreaming(true);
+        });
+
+        Method method = ChatPanel.class.getDeclaredMethod("updateGenerationIndicator");
+        method.setAccessible(true);
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                method.invoke(subject);
+            } catch (ReflectiveOperationException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        assertThat(jumpToLatestOverlay.isVisible()).isTrue();
+        assertThat(jumpToLatestOverlay.isStreaming()).isFalse();
+    }
+
+    @Test
     @DisplayName("Render mode switch updates state and emits change callback")
     void setRenderMode_whenChanged_updatesStateAndNotifiesListener() {
         var capturedMode = new AtomicReference<RenderMode>();
@@ -1126,6 +1167,43 @@ class ChatPanelTest {
                 .contains("hello there")
                 .doesNotContain("[File attached:")
                 .doesNotContain("[Image attached:");
+    }
+
+    @Test
+    @DisplayName("Transcript attachment metadata is populated from the backing user message")
+    void transcriptAttachments_whenUserMessageHasAttachments_returnsWebViewMetadata() throws Exception {
+        AttachmentRef fileRef = new AttachmentRef(UUID.randomUUID(), "/tmp/demo.txt", "demo.txt", "text/plain", 128, "");
+        AttachmentRef imageRef = new AttachmentRef(UUID.randomUUID(), "/tmp/image.png", "image.png", "image/png", 256, "");
+        Message message = new Message(
+                Role.USER,
+                List.of(
+                        new TextPart("hello there"),
+                        new FilePart(fileRef),
+                        new ImagePart(imageRef, null, null)
+                ),
+                Instant.now()
+        );
+
+        subject.loadHistory(List.of(message));
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        Component wrapper = Arrays.stream(messagesPanel.getComponents())
+                .filter(component -> !"filler".equals(component.getName()))
+                .findFirst()
+                .orElseThrow();
+
+        List<SwingWebViewTranscriptView.TranscriptAttachment> attachments = invokeTranscriptAttachments(subject, wrapper);
+
+        assertThat(attachments)
+                .extracting(
+                        SwingWebViewTranscriptView.TranscriptAttachment::originalName,
+                        SwingWebViewTranscriptView.TranscriptAttachment::mimeType,
+                        SwingWebViewTranscriptView.TranscriptAttachment::sizeBytes,
+                        SwingWebViewTranscriptView.TranscriptAttachment::image
+                )
+                .containsExactly(
+                        tuple("demo.txt", "text/plain", 128L, false),
+                        tuple("image.png", "image/png", 256L, true)
+                );
     }
 
     @Test
@@ -2528,6 +2606,16 @@ class ChatPanelTest {
         );
         method.setAccessible(true);
         method.invoke(chatPanel, session, sendJob, allowBlankContent);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<SwingWebViewTranscriptView.TranscriptAttachment> invokeTranscriptAttachments(
+            ChatPanel chatPanel,
+            Component component
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("transcriptAttachments", Component.class);
+        method.setAccessible(true);
+        return (List<SwingWebViewTranscriptView.TranscriptAttachment>) method.invoke(chatPanel, component);
     }
 
     private static RenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {

@@ -18,7 +18,7 @@ class MessageBubbleTest {
         String html = readEditorText(subject);
 
         assertThat(html).contains("SKILL");
-        assertThat(html).contains("FALLBACK");
+        assertThat(html).contains("ATTACHMENT");
         assertThat(html).contains("badge skill");
         assertThat(html).contains("badge fallback");
         assertThat(html).doesNotContain("[SKILL]");

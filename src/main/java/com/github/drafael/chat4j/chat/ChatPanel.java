@@ -398,7 +398,7 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        boolean shouldShow = !atBottom || (!autoScrollEnabled && streaming);
+        boolean shouldShow = !atBottom;
         if (jumpToLatestOverlay.isVisible() != shouldShow) {
             jumpToLatestOverlay.setVisible(shouldShow);
             if (bodyLayered != null) {
@@ -1481,13 +1481,13 @@ public class ChatPanel extends JPanel {
         String modelLabel = StringUtils.defaultIfBlank(providerSnapshot.modelId(), "current model");
 
         if (supportsImageInput) {
-            return "%s (%s) supports rich input, but file upload mapping is not enabled yet in Chat4J; sending file references.".formatted(
+            return "Extracted text sent; native file upload is not mapped for %s (%s).".formatted(
                     providerLabel,
                     modelLabel
             );
         }
 
-        return "%s (%s) uses text-only fallback for file attachments.".formatted(providerLabel, modelLabel);
+        return "Extracted text sent; native file upload is unavailable for %s (%s).".formatted(providerLabel, modelLabel);
     }
 
     private void updateThinkingToggleAvailability(long selectionId) {
@@ -2362,7 +2362,55 @@ public class ChatPanel extends JPanel {
         if (messageView == null) {
             return null;
         }
-        return SwingWebViewTranscriptView.Entry.message(messageView.getRole(), messageView.getFullText(), messageIndex[0]++);
+        int actionMessageIndex = messageIndex[0]++;
+        List<SwingWebViewTranscriptView.TranscriptAttachment> attachments = messageView.getRole() == Role.USER
+                ? transcriptAttachments(component)
+                : emptyList();
+        return SwingWebViewTranscriptView.Entry.message(
+                messageView.getRole(),
+                messageView.getFullText(),
+                actionMessageIndex,
+                attachments
+        );
+    }
+
+    private List<SwingWebViewTranscriptView.TranscriptAttachment> transcriptAttachments(Component component) {
+        int historyMessageIndex = findHistoryMessageIndex(component);
+        if (historyMessageIndex < 0 || historyMessageIndex >= history.size()) {
+            return emptyList();
+        }
+
+        Message message = history.get(historyMessageIndex);
+        if (message.role() != Role.USER) {
+            return emptyList();
+        }
+
+        return userAttachmentRefs(message).stream()
+                .map(ref -> new SwingWebViewTranscriptView.TranscriptAttachment(
+                        ref.storagePath(),
+                        ref.originalName(),
+                        ref.mimeType(),
+                        ref.sizeBytes(),
+                        isImageAttachment(ref)
+                ))
+                .toList();
+    }
+
+    private int findHistoryMessageIndex(Component component) {
+        if (component instanceof JComponent jComponent) {
+            Object value = jComponent.getClientProperty(MESSAGE_INDEX_PROPERTY);
+            if (value instanceof Integer index) {
+                return index;
+            }
+        }
+        if (!(component instanceof Container container)) {
+            return -1;
+        }
+        return Arrays.stream(container.getComponents())
+                .mapToInt(this::findHistoryMessageIndex)
+                .filter(index -> index >= 0)
+                .findFirst()
+                .orElse(-1);
     }
 
     private ActivityBubble findActivityBubble(Component component) {
@@ -2666,6 +2714,10 @@ public class ChatPanel extends JPanel {
                 copyTextToClipboard(text);
                 return;
             }
+            if (Strings.CS.equals(action, "open-attachment")) {
+                openTranscriptAttachment(text);
+                return;
+            }
 
             List<ChatMessageView> bubbles = collectBubbles();
             if (messageIndex < 0 || messageIndex >= bubbles.size()) {
@@ -2681,6 +2733,50 @@ public class ChatPanel extends JPanel {
                 regenerateFromBubble(bubble);
             }
         });
+    }
+
+    private void openTranscriptAttachment(String storagePath) {
+        if (StringUtils.isBlank(storagePath) || !isKnownTranscriptAttachment(storagePath)) {
+            showOpenAttachmentError("Attachment file is not available on disk.");
+            return;
+        }
+
+        Path path;
+        try {
+            path = Path.of(storagePath);
+        } catch (Exception e) {
+            showOpenAttachmentError("Attachment file is not available on disk.");
+            return;
+        }
+
+        if (!Files.exists(path)) {
+            showOpenAttachmentError("Attachment file is not available on disk.");
+            return;
+        }
+
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+            showOpenAttachmentError("Opening attachments is not supported on this system.");
+            return;
+        }
+
+        try {
+            Desktop.getDesktop().open(path.toFile());
+        } catch (IOException e) {
+            showOpenAttachmentError("Unable to open attachment: %s".formatted(path.getFileName()));
+        }
+    }
+
+    private boolean isKnownTranscriptAttachment(String storagePath) {
+        return history.stream()
+                .flatMap(message -> message.parts().stream())
+                .map(this::attachmentRef)
+                .filter(Objects::nonNull)
+                .map(AttachmentRef::storagePath)
+                .anyMatch(path -> Strings.CS.equals(path, storagePath));
+    }
+
+    private void showOpenAttachmentError(String message) {
+        JOptionPane.showMessageDialog(this, message, "Open Attachment", JOptionPane.WARNING_MESSAGE);
     }
 
     private void scrollToBottom() {

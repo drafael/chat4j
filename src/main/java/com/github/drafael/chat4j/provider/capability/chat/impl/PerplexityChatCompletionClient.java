@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -166,7 +167,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
     private ObjectNode toMessageNode(Message message) {
         ObjectNode node = JSON.createObjectNode();
         node.put("role", message.role().name().toLowerCase());
-        node.put("content", message.content());
+        node.put("content", message.parts().isEmpty() ? message.content() : ProviderAttachmentSupport.textProjection(message.parts()));
         return node;
     }
 

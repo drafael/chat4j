@@ -22,6 +22,7 @@ import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import org.apache.commons.lang3.StringUtils;
 
@@ -147,7 +148,10 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
             }
         }
 
-        return builder.content(message.content()).build();
+        String content = message.role() == Role.USER && !message.parts().isEmpty()
+                ? ProviderAttachmentSupport.textProjection(message.parts())
+                : message.content();
+        return builder.content(content).build();
     }
 
     private List<ContentBlockParam> mapUserBlocks(Message message, ProviderRuntime runtime) {
@@ -172,10 +176,10 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         if (part instanceof ImagePart imagePart) {
             return imageToBlock(imagePart)
                     .map(List::of)
-                    .orElseGet(() -> List.of(toTextBlock(imagePart.asTextProjection())));
+                    .orElseGet(() -> List.of(toTextBlock(ProviderAttachmentSupport.textProjection(imagePart))));
         }
 
-        return List.of(toTextBlock(part.asTextProjection()));
+        return List.of(toTextBlock(ProviderAttachmentSupport.textProjection(part)));
     }
 
     private Optional<ContentBlockParam> imageToBlock(ImagePart imagePart) {

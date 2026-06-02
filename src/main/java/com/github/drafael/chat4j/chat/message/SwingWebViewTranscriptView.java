@@ -17,9 +17,12 @@ import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.HierarchyEvent;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -48,6 +51,8 @@ public final class SwingWebViewTranscriptView {
     private static final String KATEX_CSS = inlineStylesheetFonts(resourceText("/web/katex/katex.min.css"));
     private static final String KATEX_SCRIPT = resourceText("/web/katex/katex.min.js");
     private static final String MHCHEM_SCRIPT = resourceText("/web/katex/contrib/mhchem.min.js");
+    private static final int ATTACHMENT_IMAGE_MAX_WIDTH = 420;
+    private static final int ATTACHMENT_IMAGE_MAX_HEIGHT = 360;
     private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
     private static final HighlightJsCodeRenderer HIGHLIGHT_RENDERER = HighlightJsCodeRenderer.instance();
 
@@ -117,11 +122,18 @@ public final class SwingWebViewTranscriptView {
         this.dark = dark;
         this.jumpButtonVisible = jumpButtonVisible;
 
+        if (jumpButtonChanged) {
+            updateJumpButtonChrome();
+            SwingUtilities.invokeLater(this::updateJumpButtonChrome);
+        }
         if (styleChanged) {
             reload(scrollToBottom);
             return;
         }
         if (documentLoadPending) {
+            if (jumpButtonChanged) {
+                reload(scrollToBottom);
+            }
             return;
         }
         if (!documentInitialized) {
@@ -130,10 +142,6 @@ public final class SwingWebViewTranscriptView {
         }
 
         scheduleTranscriptHtmlUpdate(scrollToBottom, transcriptRenderSnapshot());
-        if (jumpButtonChanged) {
-            updateJumpButtonChrome();
-            SwingUtilities.invokeLater(this::updateJumpButtonChrome);
-        }
     }
 
     public void reload(boolean scrollToBottom) {
@@ -195,6 +203,7 @@ public final class SwingWebViewTranscriptView {
         String hoverBackground = chrome.hoverBackground();
         String hoverForeground = chrome.hoverForeground();
         String iconColorValue = chrome.iconColorValue();
+        String attachmentCss = attachmentCss(chrome, palette);
         String scrollbarTrack = chrome.scrollbarTrack();
         String scrollbarThumb = chrome.scrollbarThumb();
         String scrollbarHoverThumb = chrome.scrollbarHoverThumb();
@@ -234,6 +243,7 @@ public final class SwingWebViewTranscriptView {
                     .message { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
                     .message.user { max-width: 72%%; background: %s; border-radius: 12px; padding: 8px 14px; }
                     .row.user .message.user { margin-left: auto; }
+                    %s
                     .message.assistant { width: 100%%; padding: 0; line-height: 1.72; }
                     .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: %s; font-weight: 700; line-height: 1.24; }
                     .message h1 { font-size: 22px; margin: 14px 0 8px 0; }
@@ -337,9 +347,9 @@ public final class SwingWebViewTranscriptView {
                     @keyframes chat4j-source-pop { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
                     .jump-button { position: fixed; left: 50%%; bottom: 14px; transform: translateX(-50%%); width: 44px; height: 44px; border-radius: 999px; border: 1px solid %s; background: %s; color: %s; font-size: 0; line-height: 1; display: %s; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.18); cursor: pointer; z-index: 20; }
                     .jump-button:hover { background: %s; color: %s; }
-                    .jump-button::before { content: ''; position: absolute; inset: 1px; border-radius: 999px; border: 2px solid %s; opacity: 0.42; }
+                    .jump-button::before { content: ''; position: absolute; inset: 1px; border-radius: 999px; border: 2px solid %s; opacity: 0; animation: none; }
                     .jump-button::after { content: ''; width: 16px; height: 16px; background: currentColor; -webkit-mask: url('%s') center / contain no-repeat; mask: url('%s') center / contain no-repeat; }
-                    .jump-button.streaming::before { border-color: %s; border-top-color: %s; opacity: 1; animation: chat4j-spin 900ms linear infinite; }
+                    .jump-button[data-streaming="true"].streaming::before { border-color: %s; border-top-color: %s; opacity: 1; animation: chat4j-spin 900ms linear infinite; }
                     @keyframes chat4j-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                   </style>
                 </head>
@@ -377,6 +387,7 @@ public final class SwingWebViewTranscriptView {
                 panelBackground.getGreen(),
                 panelBackground.getBlue(),
                 bubbleBackground,
+                attachmentCss,
                 palette.textColor(),
                 palette.codeBorder(),
                 palette.codeBorder(),
@@ -488,13 +499,12 @@ public final class SwingWebViewTranscriptView {
                   if (window.chat4jUpdateJumpButton) {
                     window.chat4jUpdateJumpButton();
                   } else {
-                    jump.style.display = %s;
+                    jump.style.display = 'none';
                   }
                 })();
                 """.formatted(
                 toJsonString(jumpButtonVisible ? "true" : "false"),
-                jumpButtonVisible ? "true" : "false",
-                toJsonString(jumpButtonVisible ? "flex" : "none")
+                jumpButtonVisible ? "true" : "false"
         );
         webView.eval(script);
     }
@@ -676,7 +686,7 @@ public final class SwingWebViewTranscriptView {
                     if (window.chat4jUpdateJumpButton) {
                       window.chat4jUpdateJumpButton();
                     } else {
-                      jump.style.display = %s;
+                      jump.style.display = 'none';
                     }
                   }
                   if (%s) {
@@ -687,7 +697,6 @@ public final class SwingWebViewTranscriptView {
                 toJsonString(entriesHtml),
                 toJsonString(snapshot.jumpButtonVisible() ? "true" : "false"),
                 snapshot.jumpButtonVisible() ? "true" : "false",
-                toJsonString(snapshot.jumpButtonVisible() ? "flex" : "none"),
                 scrollToBottom ? "true" : "false"
         );
         webView.eval(script);
@@ -738,13 +747,15 @@ public final class SwingWebViewTranscriptView {
     private String renderFallbackEntry(Entry entry) {
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String text = escapeHtml(entry.text()).replace("\n", "<br>");
+        String attachments = renderAttachmentStripHtml(entry.attachments());
         return """
                 <section class="row %s" data-message-index="%d">
                   <div class="message-shell">
+                    %s
                     <div class="message %s">%s</div>
                   </div>
                 </section>
-                """.formatted(roleClass, entry.messageIndex(), roleClass, text);
+                """.formatted(roleClass, entry.messageIndex(), attachments, roleClass, text);
     }
 
     private String renderEntry(Entry entry, TranscriptRenderSnapshot snapshot) {
@@ -772,6 +783,7 @@ public final class SwingWebViewTranscriptView {
         prepareRenderedDocument(document, false);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
+        String attachments = renderAttachmentStripHtml(entry.attachments());
         String actions = entry.messageIndex() < 0
                 ? ""
                 : """
@@ -789,10 +801,171 @@ public final class SwingWebViewTranscriptView {
                 <section class="row %s" data-message-index="%d">
                   <div class="message-shell">
                     %s
+                    %s
                     <div class="message %s">%s</div>
                   </div>
                 </section>
-                """.formatted(roleClass, entry.messageIndex(), actions, roleClass, body);
+                """.formatted(roleClass, entry.messageIndex(), attachments, actions, roleClass, body);
+    }
+
+    static String renderAttachmentStripHtml(List<TranscriptAttachment> attachments) {
+        List<TranscriptAttachment> safeAttachments = attachments == null ? emptyList() : attachments;
+        if (safeAttachments.isEmpty()) {
+            return "";
+        }
+
+        String content = safeAttachments.stream()
+                .map(SwingWebViewTranscriptView::renderAttachmentHtml)
+                .collect(joining(""));
+        return "<div class=\"attachment-strip\">%s</div>".formatted(content);
+    }
+
+    private static String renderAttachmentHtml(TranscriptAttachment attachment) {
+        if (attachment == null) {
+            return "";
+        }
+        if (attachment.image()) {
+            return renderImageAttachmentHtml(attachment);
+        }
+        return renderFileAttachmentHtml(attachment);
+    }
+
+    private static String renderImageAttachmentHtml(TranscriptAttachment attachment) {
+        String imageDataUri = imageThumbnailDataUri(attachment);
+        if (StringUtils.isBlank(imageDataUri)) {
+            return renderUnavailableAttachmentHtml(attachment, "🖼", "Image unavailable");
+        }
+
+        String title = escapeHtmlAttribute(displayName(attachment));
+        String path = escapeHtmlAttribute(attachment.storagePath());
+        return """
+                <button class="attachment-image-button" type="button" data-action="open-attachment" data-attachment-path="%s" title="%s">
+                  <img class="attachment-image" src="%s" alt="%s">
+                </button>
+                """.formatted(path, title, imageDataUri, title);
+    }
+
+    private static String renderFileAttachmentHtml(TranscriptAttachment attachment) {
+        boolean available = isAttachmentAvailable(attachment);
+        String className = available ? "attachment-chip" : "attachment-chip unavailable";
+        String actionAttributes = available
+                ? " data-action=\"open-attachment\" data-attachment-path=\"%s\"".formatted(escapeHtmlAttribute(attachment.storagePath()))
+                : " disabled";
+        String size = attachment.sizeBytes() > 0 ? formatAttachmentSize(attachment.sizeBytes()) : "";
+        String sizeHtml = StringUtils.isBlank(size) ? "" : "<span class=\"attachment-size\">%s</span>".formatted(escapeHtml(size));
+        return """
+                <button class="%s" type="button"%s title="%s">
+                  <span class="attachment-icon" aria-hidden="true">📄</span>
+                  <span class="attachment-name">%s</span>
+                  %s
+                </button>
+                """.formatted(
+                className,
+                actionAttributes,
+                escapeHtmlAttribute(displayName(attachment)),
+                escapeHtml(displayName(attachment)),
+                sizeHtml
+        );
+    }
+
+    private static String renderUnavailableAttachmentHtml(TranscriptAttachment attachment, String icon, String status) {
+        String size = attachment.sizeBytes() > 0 ? formatAttachmentSize(attachment.sizeBytes()) : status;
+        return """
+                <span class="attachment-chip unavailable" title="%s">
+                  <span class="attachment-icon" aria-hidden="true">%s</span>
+                  <span class="attachment-name">%s</span>
+                  <span class="attachment-size">%s</span>
+                </span>
+                """.formatted(
+                escapeHtmlAttribute(status),
+                escapeHtml(icon),
+                escapeHtml(displayName(attachment)),
+                escapeHtml(size)
+        );
+    }
+
+    private static String imageThumbnailDataUri(TranscriptAttachment attachment) {
+        Path path = attachmentPath(attachment);
+        if (path == null || !Files.exists(path)) {
+            return "";
+        }
+
+        try {
+            BufferedImage image = ImageIO.read(path.toFile());
+            if (image == null) {
+                return "";
+            }
+            BufferedImage thumbnail = renderThumbnail(image);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            ImageIO.write(thumbnail, "png", output);
+            String encoded = Base64.getEncoder().encodeToString(output.toByteArray());
+            return "data:image/png;base64,%s".formatted(encoded);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static BufferedImage renderThumbnail(BufferedImage source) {
+        double scale = Math.min(
+                1.0,
+                Math.min(
+                        ATTACHMENT_IMAGE_MAX_WIDTH / (double) source.getWidth(),
+                        ATTACHMENT_IMAGE_MAX_HEIGHT / (double) source.getHeight()
+                )
+        );
+        int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        BufferedImage thumbnail = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = thumbnail.createGraphics();
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        return thumbnail;
+    }
+
+    private static boolean isAttachmentAvailable(TranscriptAttachment attachment) {
+        Path path = attachmentPath(attachment);
+        return path != null && Files.exists(path);
+    }
+
+    private static Path attachmentPath(TranscriptAttachment attachment) {
+        if (attachment == null || StringUtils.isBlank(attachment.storagePath())) {
+            return null;
+        }
+        try {
+            return Path.of(attachment.storagePath());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String displayName(TranscriptAttachment attachment) {
+        String fallback = attachment.image() ? "image" : "attachment";
+        if (StringUtils.isNotBlank(attachment.originalName())) {
+            return attachment.originalName();
+        }
+        Path path = attachmentPath(attachment);
+        if (path != null && path.getFileName() != null) {
+            return path.getFileName().toString();
+        }
+        return fallback;
+    }
+
+    private static String formatAttachmentSize(long bytes) {
+        if (bytes < 1_000) {
+            return "%d B".formatted(bytes);
+        }
+        if (bytes < 1_000_000) {
+            return "%.1f kB".formatted(bytes / 1_000.0);
+        }
+        if (bytes < 1_000_000_000) {
+            return "%.1f MB".formatted(bytes / 1_000_000.0);
+        }
+        return "%.1f GB".formatted(bytes / 1_000_000_000.0);
     }
 
     private String renderEntryContentHtml(Role role, String text, TranscriptRenderSnapshot snapshot) {
@@ -1237,7 +1410,8 @@ public final class SwingWebViewTranscriptView {
                         var scrollTop = root.scrollTop || 0;
                         var streaming = jump.getAttribute('data-streaming') === 'true';
                         var atBottom = maxScroll - scrollTop <= 3;
-                        jump.style.display = (streaming || !atBottom) ? 'flex' : 'none';
+                        jump.classList.toggle('streaming', streaming && !atBottom);
+                        jump.style.display = atBottom ? 'none' : 'flex';
                     }
                     window.chat4jUpdateJumpButton = updateJumpButtonVisibility;
                     function updateCustomScrollbar() {
@@ -1362,6 +1536,13 @@ public final class SwingWebViewTranscriptView {
                     }, true);
                     document.addEventListener('click', function (event) {
                         hideSourcePreview();
+                        var attachmentButton = closest(event.target, '[data-action="open-attachment"][data-attachment-path]');
+                        if (attachmentButton) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            dispatchTranscriptAction('open-attachment', -1, attachmentButton.getAttribute('data-attachment-path') || '');
+                            return;
+                        }
                         var activityCopyButton = closest(event.target, 'button[data-action="copy-activity"]');
                         if (activityCopyButton) {
                             var activityBox = closest(activityCopyButton, '.activity-box');
@@ -1413,6 +1594,32 @@ public final class SwingWebViewTranscriptView {
                     }, true);
                 })();
                 """;
+    }
+
+    private String attachmentCss(DocumentChrome chrome, Palette palette) {
+        return """
+                    .attachment-strip { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-end; gap: 6px; max-width: 72%%; margin: 0 0 8px auto; }
+                    .attachment-image-button { display: inline-flex; border: 0; background: transparent; padding: 0; margin: 0; cursor: pointer; border-radius: 12px; }
+                    .attachment-image { display: block; max-width: min(%dpx, 33vw); max-height: %dpx; border-radius: 12px; border: 1px solid %s; box-shadow: 0 2px 8px rgba(0,0,0,0.12); object-fit: contain; }
+                    .attachment-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 320px; min-height: 28px; box-sizing: border-box; border-radius: 10px; border: 1px solid %s; background: %s; color: %s; padding: 3px 8px; font: inherit; font-size: %dpx; line-height: 1.2; cursor: pointer; }
+                    .attachment-chip:hover, .attachment-image-button:hover .attachment-image { border-color: currentColor; }
+                    .attachment-chip.unavailable { cursor: default; opacity: 0.72; }
+                    .attachment-chip.unavailable:hover { border-color: %s; }
+                    .attachment-icon { flex: 0 0 auto; }
+                    .attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                    .attachment-size { flex: 0 0 auto; color: %s; font-size: %dpx; }
+                """.formatted(
+                ATTACHMENT_IMAGE_MAX_WIDTH,
+                ATTACHMENT_IMAGE_MAX_HEIGHT,
+                chrome.buttonBorder(),
+                chrome.buttonBorder(),
+                chrome.buttonBackground(),
+                palette.textColor(),
+                Math.max(11, chrome.baseBodyFontSize() - 1),
+                chrome.buttonBorder(),
+                palette.mutedTextColor(),
+                Math.max(10, chrome.baseBodyFontSize() - 2)
+        );
     }
 
     private String syntaxHighlightCss() {
@@ -1689,11 +1896,17 @@ public final class SwingWebViewTranscriptView {
         }
     }
 
-    private String escapeHtml(String text) {
+    private static String escapeHtml(String text) {
         return StringUtils.defaultString(text)
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    private static String escapeHtmlAttribute(String text) {
+        return escapeHtml(text)
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     private String unwrapCallbackArg(String raw) {
@@ -1801,10 +2014,35 @@ public final class SwingWebViewTranscriptView {
         void handle(String action, int messageIndex, String text);
     }
 
-    public record Entry(EntryKind kind, Role role, String title, String text, boolean collapsed, int messageIndex) {
+    public record TranscriptAttachment(String storagePath, String originalName, String mimeType, long sizeBytes, boolean image) {
+        public TranscriptAttachment {
+            storagePath = StringUtils.defaultString(storagePath);
+            originalName = StringUtils.defaultString(originalName);
+            mimeType = StringUtils.defaultString(mimeType);
+        }
+    }
+
+    public record Entry(
+            EntryKind kind,
+            Role role,
+            String title,
+            String text,
+            boolean collapsed,
+            int messageIndex,
+            List<TranscriptAttachment> attachments
+    ) {
+        public Entry {
+            title = StringUtils.defaultString(title);
+            text = StringUtils.defaultString(text);
+            attachments = attachments == null ? emptyList() : List.copyOf(attachments);
+        }
 
         public static Entry message(Role role, String text, int messageIndex) {
-            return new Entry(EntryKind.MESSAGE, role, "", StringUtils.defaultString(text), false, messageIndex);
+            return message(role, text, messageIndex, emptyList());
+        }
+
+        public static Entry message(Role role, String text, int messageIndex, List<TranscriptAttachment> attachments) {
+            return new Entry(EntryKind.MESSAGE, role, "", StringUtils.defaultString(text), false, messageIndex, attachments);
         }
 
         public static Entry activity(String title, String text, boolean collapsed) {
@@ -1814,7 +2052,8 @@ public final class SwingWebViewTranscriptView {
                     StringUtils.defaultIfBlank(title, "Activity"),
                     StringUtils.defaultString(text),
                     collapsed,
-                    -1
+                    -1,
+                    emptyList()
             );
         }
     }

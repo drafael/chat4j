@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.6.5</version>
+    <version>26.6.6</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -24,6 +24,7 @@
         <jackson.version>2.18.3</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.21.2</jsoup.version>
+        <pdfbox.version>3.0.5</pdfbox.version>
         <swingwebview.version>1.0.7</swingwebview.version>
         <graaljs.version>24.2.1</graaljs.version>
         <h2.version>2.3.232</h2.version>
@@ -137,6 +138,11 @@
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>${jsoup.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
         </dependency>
         <dependency>
             <groupId>ca.weblite</groupId>

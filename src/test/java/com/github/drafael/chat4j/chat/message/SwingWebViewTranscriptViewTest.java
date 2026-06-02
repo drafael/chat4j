@@ -3,10 +3,77 @@ package com.github.drafael.chat4j.chat.message;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SwingWebViewTranscriptViewTest {
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    @DisplayName("Attachment strip renders image previews and file chips")
+    void renderAttachmentStripHtml_whenAttachmentsPresent_rendersPreviewAndChip() throws Exception {
+        Path imagePath = tempDir.resolve("photo.png");
+        writePng(imagePath);
+        Path filePath = tempDir.resolve("demo.txt");
+        Files.writeString(filePath, "attachment");
+
+        String html = SwingWebViewTranscriptView.renderAttachmentStripHtml(List.of(
+                new SwingWebViewTranscriptView.TranscriptAttachment(
+                        imagePath.toString(),
+                        "photo \"quoted\".png",
+                        "image/png",
+                        256,
+                        true
+                ),
+                new SwingWebViewTranscriptView.TranscriptAttachment(
+                        filePath.toString(),
+                        "demo <file>.txt",
+                        "text/plain",
+                        128,
+                        false
+                )
+        ));
+        var document = Jsoup.parseBodyFragment(html);
+
+        assertThat(document.select(".attachment-strip")).hasSize(1);
+        assertThat(document.select(".attachment-image")).hasSize(1);
+        assertThat(document.select(".attachment-image").attr("src")).startsWith("data:image/png;base64,");
+        assertThat(document.select(".attachment-image-button").attr("data-attachment-path")).isEqualTo(imagePath.toString());
+        assertThat(document.select(".attachment-chip:not(.unavailable)")).hasSize(1);
+        assertThat(document.select(".attachment-chip").text()).contains("demo <file>.txt", "128 B");
+        assertThat(html).contains("photo &quot;quoted&quot;.png", "demo &lt;file&gt;.txt");
+        assertThat(html).doesNotContain("file://");
+    }
+
+    @Test
+    @DisplayName("Missing image attachments render a fallback chip")
+    void renderAttachmentStripHtml_whenImageMissing_rendersFallbackChip() {
+        String html = SwingWebViewTranscriptView.renderAttachmentStripHtml(List.of(
+                new SwingWebViewTranscriptView.TranscriptAttachment(
+                        tempDir.resolve("missing.png").toString(),
+                        "missing.png",
+                        "image/png",
+                        256,
+                        true
+                )
+        ));
+        var document = Jsoup.parseBodyFragment(html);
+
+        assertThat(document.select(".attachment-image")).isEmpty();
+        assertThat(document.select(".attachment-chip.unavailable")).hasSize(1);
+        assertThat(document.select(".attachment-chip").text()).contains("missing.png", "256 B");
+    }
 
     @Test
     @DisplayName("Math stylesheet is bundled into the WebView document head")
@@ -154,5 +221,17 @@ class SwingWebViewTranscriptViewTest {
 
         assertThat(document.select("pre.hljs.language-markdown")).hasSize(1);
         assertThat(document.select("pre .hljs-section")).isNotEmpty();
+    }
+
+    private static void writePng(Path path) throws Exception {
+        BufferedImage image = new BufferedImage(24, 12, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setColor(Color.BLUE);
+            graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+        } finally {
+            graphics.dispose();
+        }
+        ImageIO.write(image, "png", path.toFile());
     }
 }
