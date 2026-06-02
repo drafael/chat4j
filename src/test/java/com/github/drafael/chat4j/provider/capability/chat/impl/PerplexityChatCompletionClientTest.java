@@ -29,7 +29,7 @@ class PerplexityChatCompletionClientTest {
                     {
                       "choices": [{"message": {"content": "answer"}}],
                       "search_results": [
-                        {"title": "One", "url": "https://example.test/source/"},
+                        {"title": "One [PDF]", "url": "https://example.test/source/"},
                         {"title": "Duplicate", "url": "https://example.test/source"}
                       ],
                       "citations": ["https://example.test/source#"]
@@ -61,7 +61,7 @@ class PerplexityChatCompletionClientTest {
             );
 
             assertThat(output.toString()).contains("Sources:");
-            assertThat(output.toString()).contains("1. [One](https://example.test/source)");
+            assertThat(output.toString()).contains("1. [One \\[PDF\\]](<https://example.test/source>)");
             assertThat(output.toString().split("https://example.test/source", -1)).hasSize(3);
         } finally {
             server.stop(0);
@@ -76,7 +76,7 @@ class PerplexityChatCompletionClientTest {
             byte[] body = """
                     {
                       "choices": [{"message": {"content": "answer [1][1] next [1] [1]"}}],
-                      "search_results": [{"title": "One", "url": "https://example.test/source"}]
+                      "search_results": [{"title": "One", "url": "https://example.test/source_(one)"}]
                     }
                     """.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -104,8 +104,8 @@ class PerplexityChatCompletionClientTest {
                     }
             );
 
-            assertThat(output.toString()).contains("answer [1](https://example.test/source) next [1](https://example.test/source)");
-            assertThat(output.toString().split("https://example.test/source", -1)).hasSize(4);
+            assertThat(output.toString()).contains("answer [1](<https://example.test/source_(one)>) next [1](<https://example.test/source_(one)>)");
+            assertThat(output.toString().split("https://example.test/source_\\(one\\)", -1)).hasSize(4);
         } finally {
             server.stop(0);
         }

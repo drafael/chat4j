@@ -60,6 +60,16 @@ class HighlightJsCodeRendererTest {
     }
 
     @Test
+    @DisplayName("Render cache is bounded")
+    void render_whenManyUniqueCodeBlocksProvided_keepsCacheBounded() {
+        for (int i = 0; i < 600; i++) {
+            subject.render("class Demo%d {}".formatted(i), "java");
+        }
+
+        assertThat(subject.cacheSize()).isLessThanOrEqualTo(512);
+    }
+
+    @Test
     @DisplayName("Common language aliases normalize to bundled Highlight.js languages")
     void normalizeLanguage_whenAliasProvided_returnsCanonicalLanguage() {
         assertThat(subject.normalizeLanguage("js")).isEqualTo("javascript");

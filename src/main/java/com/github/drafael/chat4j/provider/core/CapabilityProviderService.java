@@ -77,6 +77,33 @@ public class CapabilityProviderService implements ProviderService {
         Consumer<Exception> onError,
         BooleanSupplier isCancelled
     ) {
+        streamCompletion(
+                history,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                onThinkingToken,
+                onComplete,
+                onError,
+                isCancelled,
+                this::registerActiveStream,
+                this::clearActiveStream
+        );
+    }
+
+    @Override
+    public void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) {
         try {
             chatCompletionClient.streamCompletion(
                 runtime,
@@ -86,8 +113,8 @@ public class CapabilityProviderService implements ProviderService {
                 onToken,
                 onThinkingToken,
                 isCancelled,
-                this::registerActiveStream,
-                this::clearActiveStream
+                registerActiveStream,
+                clearActiveStream
             );
             if (!isCancelled.getAsBoolean()) {
                 onComplete.run();

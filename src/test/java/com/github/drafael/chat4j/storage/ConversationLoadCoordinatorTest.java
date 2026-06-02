@@ -132,6 +132,32 @@ class ConversationLoadCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Invalidating pending loads makes latest request stale")
+    void invalidatePendingLoads_whenRequestInFlight_marksRequestStale() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        ConversationRepo repo = new ConversationRepo(null) {
+            @Override
+            public List<ConversationRepo.MessageRecord> getMessages(UUID id) {
+                return emptyList();
+            }
+
+            @Override
+            public Optional<ConversationRepo.ConversationRecord> findById(UUID id) {
+                return Optional.empty();
+            }
+        };
+        var subject = new ConversationLoadCoordinator(repo);
+        var callbacks = new CountDownLatch(1);
+
+        long requestId = subject.loadAsync(conversationId, noOpListener(callbacks));
+        assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+
+        subject.invalidatePendingLoads();
+
+        assertThat(subject.isCurrentRequest(requestId)).isFalse();
+    }
+
+    @Test
     @DisplayName("Latest request is treated as current when loads overlap")
     void isCurrentRequest_whenLoadsOverlap_tracksLatestRequestId() throws Exception {
         UUID firstConversationId = UUID.randomUUID();

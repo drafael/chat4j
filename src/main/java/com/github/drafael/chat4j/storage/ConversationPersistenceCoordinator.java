@@ -34,7 +34,9 @@ public class ConversationPersistenceCoordinator {
 
         for (int index = persistedCount; index < history.size(); index++) {
             Message message = history.get(index);
-            conversationRepo.addMessage(conversationId, message);
+            if (!persistMessageIfConversationExists(conversationId, message)) {
+                return persistedCount;
+            }
             persistedCount++;
         }
 

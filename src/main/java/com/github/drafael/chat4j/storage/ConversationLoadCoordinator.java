@@ -35,6 +35,10 @@ public class ConversationLoadCoordinator {
         return requestId == requestCounter.get();
     }
 
+    public void invalidatePendingLoads() {
+        requestCounter.incrementAndGet();
+    }
+
     public interface Listener {
         void onLoaded(
                 long requestId,

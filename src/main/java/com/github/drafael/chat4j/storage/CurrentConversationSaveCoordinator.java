@@ -99,7 +99,10 @@ public class CurrentConversationSaveCoordinator {
             createdConversation = true;
         }
 
-        historyPersister.persist(conversationId, history);
+        int persistedCount = historyPersister.persist(conversationId, history);
+        if (persistedCount < history.size()) {
+            return SaveResult.skippedResult(null);
+        }
         return SaveResult.savedResult(conversationId, createdConversation);
     }
 
@@ -121,7 +124,7 @@ public class CurrentConversationSaveCoordinator {
 
     @FunctionalInterface
     interface HistoryPersister {
-        void persist(UUID conversationId, List<Message> history) throws Exception;
+        int persist(UUID conversationId, List<Message> history) throws Exception;
     }
 
     @FunctionalInterface

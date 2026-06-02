@@ -57,6 +57,16 @@ class KatexMathRendererTest {
     }
 
     @Test
+    @DisplayName("Render cache is bounded")
+    void render_whenManyUniqueExpressionsProvided_keepsCacheBounded() {
+        for (int i = 0; i < 600; i++) {
+            subject.render("$x_%d$".formatted(i), false);
+        }
+
+        assertThat(subject.cacheSize()).isLessThanOrEqualTo(512);
+    }
+
+    @Test
     @DisplayName("Unrecoverable parse errors keep the fallback visible")
     void render_whenKatexCannotParseFormula_returnsEmpty() {
         var result = subject.render("\\notARealCommand{", true);

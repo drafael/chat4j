@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.synchronizedList;
 
@@ -17,6 +18,8 @@ final class StreamingSession {
     final AtomicBoolean cancelled = new AtomicBoolean(false);
     final AtomicBoolean persisted = new AtomicBoolean(false);
     final AtomicBoolean terminalCallbackStarted = new AtomicBoolean(false);
+    final AtomicBoolean activeRequestRegistered = new AtomicBoolean(false);
+    final AtomicReference<AutoCloseable> activeRequest = new AtomicReference<>();
     final StringBuilder response = new StringBuilder();
     final StringBuilder thinking = new StringBuilder();
     final StringBuilder webSearchActivity = new StringBuilder();
@@ -37,5 +40,31 @@ final class StreamingSession {
 
     boolean beginTerminalCallback() {
         return isLive() && terminalCallbackStarted.compareAndSet(false, true);
+    }
+
+    void registerActiveRequest(AutoCloseable request) {
+        activeRequestRegistered.set(true);
+        activeRequest.set(request);
+    }
+
+    void clearActiveRequest() {
+        activeRequest.set(null);
+    }
+
+    boolean hasRegisteredActiveRequest() {
+        return activeRequestRegistered.get();
+    }
+
+    boolean cancelActiveRequest() {
+        AutoCloseable request = activeRequest.getAndSet(null);
+        if (request == null) {
+            return false;
+        }
+
+        try {
+            request.close();
+        } catch (Exception ignored) {
+        }
+        return true;
     }
 }

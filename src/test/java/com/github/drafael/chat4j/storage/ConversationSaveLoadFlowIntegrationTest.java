@@ -56,7 +56,7 @@ class ConversationSaveLoadFlowIntegrationTest {
         var saveCoordinator = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> conversationId,
-                (id, history) -> {},
+                (id, history) -> history.size(),
                 (id, agentModeEnabled, agentProjectRoot) -> {},
                 (id, reasoningLevel) -> {}
         );

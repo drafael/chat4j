@@ -227,14 +227,24 @@ class MarkdownRendererTest {
     @Test
     @DisplayName("Autolinks and markdown links render anchor tags")
     void toHtml_whenMarkdownContainsLinks_rendersAnchors() {
-        String body = renderBody("<https://example.com/path-one> and [OpenRouter](https://openrouter.ai/docs?x=1&y=2)");
+        String body = renderBody("<https://example.com/path-one> and [OpenRouter](<https://openrouter.ai/docs/a_(b)?x=1&y=2>)");
 
         assertThat(body)
                 .contains("href=\"https://example.com/path-one\"")
                 .contains(">https://example.com/path-one</a>")
-                .contains("href=\"https://openrouter.ai/docs?x=1&amp;y=2\"")
+                .contains("href=\"https://openrouter.ai/docs/a_(b)?x=1&amp;y=2\"")
                 .contains(">OpenRouter</a>")
                 .doesNotContain("&#8203;");
+    }
+
+    @Test
+    @DisplayName("Markdown links allow escaped brackets in labels")
+    void toHtml_whenMarkdownLinkLabelContainsEscapedBrackets_rendersAnchor() {
+        String body = renderBody("[About \\[PDF\\]](<https://example.com/report>)");
+
+        assertThat(body)
+                .contains("href=\"https://example.com/report\"")
+                .contains(">About [PDF]</a>");
     }
 
     @Test

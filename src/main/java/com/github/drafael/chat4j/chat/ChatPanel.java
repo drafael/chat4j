@@ -174,6 +174,7 @@ public class ChatPanel extends JPanel {
     private ProviderService currentProvider;
     private String currentProviderApiKey;
     private volatile boolean currentProviderResolving;
+    private boolean conversationLoading;
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
@@ -707,6 +708,11 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        if (conversationLoading) {
+            inputBar.showValidationMessage("Conversation is still loading. Try again in a moment.");
+            return;
+        }
+
         if (isVisibleConversationBusy()) {
             return;
         }
@@ -987,7 +993,7 @@ public class ChatPanel extends JPanel {
                         sendJob.baseUrl,
                         sendJob.apiKey,
                         sendJob.agentSystemPromptAppend,
-                        session.provider,
+                        sessionScopedProvider(session),
                         request,
                         callbacks
                 );
@@ -1004,12 +1010,68 @@ public class ChatPanel extends JPanel {
                         callbacks.onThinkingToken(),
                         callbacks.onComplete(),
                         callbacks.onError(),
-                        session.cancelled::get
+                        session.cancelled::get,
+                        session::registerActiveRequest,
+                        session::clearActiveRequest
                 );
             } catch (Exception e) {
                 callbacks.onError().accept(e);
             }
         });
+    }
+
+    private ProviderService sessionScopedProvider(StreamingSession session) {
+        ProviderService delegate = session.provider;
+        return new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                delegate.streamCompletion(
+                        history,
+                        reasoningLevel,
+                        WebSearchRequestOptions.disabled(),
+                        onToken,
+                        onThinkingToken,
+                        onComplete,
+                        onError,
+                        isCancelled,
+                        session::registerActiveRequest,
+                        session::clearActiveRequest
+                );
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return delegate.availableModels();
+            }
+
+            @Override
+            public void cancelActiveRequest() {
+                session.cancelActiveRequest();
+            }
+
+            @Override
+            public String name() {
+                return delegate.name();
+            }
+
+            @Override
+            public String envVarName() {
+                return delegate.envVarName();
+            }
+
+            @Override
+            public boolean isAvailable() {
+                return delegate.isAvailable();
+            }
+        };
     }
 
     private List<Message> prepareWebSearchContext(
@@ -2734,9 +2796,7 @@ public class ChatPanel extends JPanel {
         session.cancelled.set(true);
         session.finished = true;
         activeSessions.remove(session.sessionId);
-        if (session.provider != null) {
-            session.provider.cancelActiveRequest();
-        }
+        cancelSessionActiveRequest(session, false);
         Thread worker = session.worker;
         if (worker != null) {
             worker.interrupt();
@@ -2984,6 +3044,16 @@ public class ChatPanel extends JPanel {
             clearVisibleStreamReferences();
         }
 
+        applyVisibleConversationInputState();
+    }
+
+    public void setConversationLoading(boolean conversationLoading) {
+        this.conversationLoading = conversationLoading;
+        applyVisibleConversationInputState();
+        updateClearChatButtonVisibility();
+    }
+
+    private void applyVisibleConversationInputState() {
         StreamingSession visibleSession = visibleStreamingSession();
         SendJob visiblePreparingJob = visiblePreparingJob();
 
@@ -2998,7 +3068,7 @@ public class ChatPanel extends JPanel {
         } else {
             activeStreamSessionId = -1L;
             setVisibleStreaming(false);
-            inputBar.setEnabled(true);
+            inputBar.setEnabled(!conversationLoading);
         }
         updateGenerationIndicator();
     }
@@ -3676,9 +3746,7 @@ public class ChatPanel extends JPanel {
                 removeCurrentAgentToolBubblesIfBlank();
             }
 
-            if (session.provider != null) {
-                session.provider.cancelActiveRequest();
-            }
+            cancelSessionActiveRequest(session, true);
             Thread worker = session.worker;
             if (worker != null) {
                 worker.interrupt();
@@ -3786,7 +3854,24 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean isVisibleConversationBusy() {
-        return visiblePreparingJob() != null || visibleStreamingSession() != null;
+        return conversationLoading || visiblePreparingJob() != null || visibleStreamingSession() != null;
+    }
+
+    private void cancelSessionActiveRequest(StreamingSession session, boolean allowLegacyProviderFallback) {
+        boolean cancelledSessionRequest = session.cancelActiveRequest();
+        if (cancelledSessionRequest || !allowLegacyProviderFallback || session.hasRegisteredActiveRequest()) {
+            return;
+        }
+        if (session.provider != null && !hasOtherLiveSessionUsingProvider(session)) {
+            session.provider.cancelActiveRequest();
+        }
+    }
+
+    private boolean hasOtherLiveSessionUsingProvider(StreamingSession targetSession) {
+        return activeSessions.values().stream()
+                .anyMatch(session -> session != targetSession
+                        && session.isLive()
+                        && session.provider == targetSession.provider);
     }
 
     private boolean hasLiveStreamingSession(UUID conversationId) {

@@ -31,6 +31,21 @@ public interface ProviderService {
         streamCompletion(history, reasoningLevel, onToken, onThinkingToken, onComplete, onError, isCancelled);
     }
 
+    default void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) {
+        streamCompletion(history, reasoningLevel, webSearchOptions, onToken, onThinkingToken, onComplete, onError, isCancelled);
+    }
+
     List<String> availableModels();
 
     default void cancelActiveRequest() {

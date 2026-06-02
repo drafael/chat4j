@@ -14,7 +14,11 @@ final class MarkdownInlineRenderer {
     private static final Pattern INLINE_DOLLAR_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?![\\$\\d.,])(.+?)(?<!\\\\)\\$(?!\\$)");
     private static final Pattern INLINE_PAREN_MATH_PATTERN = Pattern.compile("\\\\\\((.+?)\\\\\\)");
     private static final Pattern MATH_TOKEN_PATTERN = Pattern.compile("@@MATH_(\\d+)@@");
-    private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\(((?:https?|mailto):[^)\\s]+)\\)");
+    private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile(
+            "\\[((?:\\\\.|[^\\\\\\]])+)\\]\\((?:&lt;((?:https?|mailto):[^\\s]+)&gt;|((?:https?|mailto):[^)\\s]+))\\)"
+    );
+    private static final Pattern MARKDOWN_LINK_TOKEN_PATTERN = Pattern.compile("@@MARKDOWN_LINK_(\\d+)@@");
+    private static final Pattern ESCAPED_LINK_LABEL_CHAR_PATTERN = Pattern.compile("\\\\([\\[\\]\\\\])");
     private static final Pattern AUTO_LINK_PATTERN = Pattern.compile("&lt;((?:https?|mailto):[^\\s]+?)&gt;");
     private static final Pattern HTML_BREAK_PATTERN = Pattern.compile("(?i)&lt;br\\s*/?&gt;");
     private static final Pattern BOLD_ASTERISK_PATTERN = Pattern.compile("\\*\\*(.+?)\\*\\*");
@@ -30,9 +34,11 @@ final class MarkdownInlineRenderer {
         escaped = normalizeMalformedFenceMarkers(escaped);
 
         CodeExtraction codeExtraction = extractInlineCode(escaped);
-        MathExtraction mathExtraction = extractMathSegments(codeExtraction.text());
+        LinkExtraction linkExtraction = extractMarkdownLinks(codeExtraction.text());
+        MathExtraction mathExtraction = extractMathSegments(linkExtraction.text());
         String rendered = applyInlineFormatting(mathExtraction.text());
 
+        rendered = restoreMarkdownLinks(rendered, linkExtraction.linkSegments());
         rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2, palette);
         rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1, palette);
         rendered = restoreMathSegments(rendered, mathExtraction.mathSegments(), palette);
@@ -64,6 +70,27 @@ final class MarkdownInlineRenderer {
         });
 
         return new CodeExtraction(withTokens, List.copyOf(codeSegments));
+    }
+
+    private static LinkExtraction extractMarkdownLinks(String text) {
+        List<String> linkSegments = new ArrayList<>();
+        String withTokens = MARKDOWN_LINK_PATTERN.matcher(text).replaceAll(matchResult -> {
+            linkSegments.add(matchResult.group());
+            return markdownLinkToken(linkSegments.size() - 1);
+        });
+
+        return new LinkExtraction(withTokens, List.copyOf(linkSegments));
+    }
+
+    private static String restoreMarkdownLinks(String text, List<String> linkSegments) {
+        return MARKDOWN_LINK_TOKEN_PATTERN.matcher(text).replaceAll(matchResult -> {
+            int index = Integer.parseInt(matchResult.group(1));
+            if (index < 0 || index >= linkSegments.size()) {
+                return matchResult.group();
+            }
+
+            return Matcher.quoteReplacement(linkSegments.get(index));
+        });
     }
 
     private static String restoreInlineCode(String text, List<String> codeSegments, Palette palette) {
@@ -118,9 +145,12 @@ final class MarkdownInlineRenderer {
         return pattern.matcher(text).replaceAll(matchResult -> {
             String label = matchResult.group(labelGroup);
             String href = matchResult.group(hrefGroup);
+            if (href == null && matchResult.groupCount() > hrefGroup) {
+                href = matchResult.group(hrefGroup + 1);
+            }
             String renderedLabel = label.matches("\\d+")
                     ? sourceReferenceHtml(label, palette)
-                    : label;
+                    : unescapeLinkLabel(label);
             return Matcher.quoteReplacement("<a href=\"%s\">%s</a>".formatted(href, renderedLabel));
         });
     }
@@ -129,12 +159,20 @@ final class MarkdownInlineRenderer {
         return "[%s]".formatted(label);
     }
 
+    private static String unescapeLinkLabel(String label) {
+        return ESCAPED_LINK_LABEL_CHAR_PATTERN.matcher(label).replaceAll("$1");
+    }
+
     private static String mathToken(int index) {
         return "@@MATH_%d@@".formatted(index);
     }
 
     private static String inlineCodeToken(int index) {
         return "@@INLINE_CODE_%d@@".formatted(index);
+    }
+
+    private static String markdownLinkToken(int index) {
+        return "@@MARKDOWN_LINK_%d@@".formatted(index);
     }
 
     private static String inlineCodeHtml(String code, Palette palette) {
@@ -162,6 +200,9 @@ final class MarkdownInlineRenderer {
     }
 
     private record CodeExtraction(String text, List<String> codeSegments) {
+    }
+
+    private record LinkExtraction(String text, List<String> linkSegments) {
     }
 
     private record MathExtraction(String text, List<String> mathSegments) {

@@ -342,6 +342,7 @@ public class MainFrame extends JFrame {
             new ShutdownFlowCoordinator(shutdownSaveDispatchCoordinator);
     private final MainFrameConversationState conversationState = new MainFrameConversationState();
     private final Set<UUID> clearedConversationIds = new HashSet<>();
+    private UUID pendingLoadConversationId;
     private final MainFrameShutdownState shutdownState = new MainFrameShutdownState();
     private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
     private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
@@ -700,6 +701,9 @@ public class MainFrame extends JFrame {
     }
 
     private void newChat() {
+        pendingLoadConversationId = null;
+        chatPanel.setConversationLoading(false);
+        conversationLoadCoordinator.invalidatePendingLoads();
         newChatCoordinator.start(
                 () -> saveCurrentConversation(false),
                 conversationState::clearCurrentConversationId,
@@ -718,6 +722,11 @@ public class MainFrame extends JFrame {
         }
 
         clearedConversationIds.removeAll(deletedConversationIds);
+        if (pendingLoadConversationId != null && deletedConversationIds.contains(pendingLoadConversationId)) {
+            pendingLoadConversationId = null;
+            chatPanel.setConversationLoading(false);
+            conversationLoadCoordinator.invalidatePendingLoads();
+        }
         chatPanel.discardConversations(deletedConversationIds);
 
         UUID currentConversationId = conversationState.currentConversationId();
@@ -735,10 +744,12 @@ public class MainFrame extends JFrame {
     }
 
     private void loadConversation(UUID id) {
+        pendingLoadConversationId = id;
+        chatPanel.setConversationLoading(true);
         conversationLoadStartCoordinator.start(
                 id,
                 () -> saveCurrentConversation(false),
-                conversationState::setCurrentConversationId,
+                ignored -> {},
                 ignored -> {},
                 conversationLoadCoordinator::loadAsync,
                 this::applyLoadedConversation,
@@ -900,7 +911,7 @@ public class MainFrame extends JFrame {
     ) {
         boolean applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
                 requestId,
-                conversationState.currentConversationId(),
+                pendingLoadConversationId,
                 conversationId,
                 records,
                 conversation,
@@ -911,6 +922,9 @@ public class MainFrame extends JFrame {
         );
 
         if (applied) {
+            pendingLoadConversationId = null;
+            chatPanel.setConversationLoading(false);
+            conversationState.setCurrentConversationId(conversationId);
             applyCurrentRenderMode();
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
                     conversation,
@@ -939,14 +953,18 @@ public class MainFrame extends JFrame {
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
-        conversationLoadFailureCoordinator.handle(
+        boolean handled = conversationLoadFailureCoordinator.handle(
                 requestId,
-                conversationState.currentConversationId(),
+                pendingLoadConversationId,
                 conversationId,
                 e,
                 conversationLoadResultPlanner::shouldHandleFailure,
                 message -> JOptionPane.showMessageDialog(this, message, "Error", JOptionPane.ERROR_MESSAGE)
         );
+        if (handled) {
+            pendingLoadConversationId = null;
+            chatPanel.setConversationLoading(false);
+        }
     }
 
     private UUID onUserMessageSubmitted(ChatPanel.UserMessageEvent event) throws Exception {

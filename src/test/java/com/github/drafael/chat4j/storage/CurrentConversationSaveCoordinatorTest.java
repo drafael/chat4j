@@ -22,7 +22,7 @@ class CurrentConversationSaveCoordinatorTest {
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> UUID.randomUUID(),
-                (conversationId, history) -> {},
+                (conversationId, history) -> history.size(),
                 (conversationId, agentModeEnabled, agentProjectRoot) -> {},
                 (conversationId, reasoningLevel) -> {}
         );
@@ -44,7 +44,10 @@ class CurrentConversationSaveCoordinatorTest {
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> createdId,
-                (conversationId, history) -> persistedHistory.set(history),
+                (conversationId, history) -> {
+                    persistedHistory.set(history);
+                    return history.size();
+                },
                 (conversationId, agentModeEnabled, agentProjectRoot) -> agentSettingsPersisted.set(true),
                 (conversationId, reasoningLevel) -> reasoningPersisted.set(reasoningLevel == ReasoningLevel.OFF)
         );
@@ -72,7 +75,10 @@ class CurrentConversationSaveCoordinatorTest {
                     created.set(true);
                     return UUID.randomUUID();
                 },
-                (id, history) -> persistedHistory.set(history),
+                (id, history) -> {
+                    persistedHistory.set(history);
+                    return history.size();
+                },
                 (id, agentModeEnabled, agentProjectRoot) -> {},
                 (id, reasoningLevel) -> {}
         );
@@ -96,7 +102,10 @@ class CurrentConversationSaveCoordinatorTest {
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> replacementId,
-                (id, history) -> persistedConversationId.set(id),
+                (id, history) -> {
+                    persistedConversationId.set(id);
+                    return history.size();
+                },
                 (id, agentModeEnabled, agentProjectRoot) -> {},
                 (id, reasoningLevel) -> {},
                 id -> !id.equals(missingId)
@@ -112,12 +121,38 @@ class CurrentConversationSaveCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Save skips stale existing conversation when history is not fully persisted")
+    void save_whenExistingConversationDisappearsDuringPersistence_skipsStaleConversation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var subject = new CurrentConversationSaveCoordinator(
+                new ConversationTitleDeriver(),
+                (title, provider, model) -> UUID.randomUUID(),
+                (id, history) -> 0,
+                (id, agentModeEnabled, agentProjectRoot) -> {},
+                (id, reasoningLevel) -> {},
+                id -> true
+        );
+
+        var result = subject.save(
+                conversationId,
+                List.of(Message.user("hello")),
+                "OpenAI:gpt-4o",
+                ReasoningLevel.OFF,
+                false,
+                null
+        );
+
+        assertThat(result.saved()).isFalse();
+        assertThat(result.conversationId()).isNull();
+    }
+
+    @Test
     @DisplayName("Save validates history")
     void save_whenHistoryMissing_throwsException() {
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> UUID.randomUUID(),
-                (conversationId, history) -> {},
+                (conversationId, history) -> history.size(),
                 (conversationId, agentModeEnabled, agentProjectRoot) -> {},
                 (conversationId, reasoningLevel) -> {}
         );

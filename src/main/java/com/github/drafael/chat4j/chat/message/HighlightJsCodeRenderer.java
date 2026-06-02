@@ -8,15 +8,17 @@ import org.graalvm.polyglot.Value;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+
+import static java.util.Collections.synchronizedMap;
 
 final class HighlightJsCodeRenderer {
 
     private static final HighlightJsCodeRenderer INSTANCE = new HighlightJsCodeRenderer();
+    private static final int MAX_CACHE_ENTRIES = 512;
     private static final String HIGHLIGHT_SCRIPT = resourceText("/web/highlight/highlight.min.js");
     private static final Pattern JAVA_PRIMITIVE_TYPE_SPAN = Pattern.compile(
             "<span class=\"hljs-type\">(boolean|byte|char|double|float|int|long|short|void)</span>"
@@ -45,7 +47,12 @@ final class HighlightJsCodeRenderer {
             Map.entry("c#", "csharp")
     );
 
-    private final ConcurrentMap<RenderKey, Optional<String>> cache = new ConcurrentHashMap<>();
+    private final Map<RenderKey, Optional<String>> cache = synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<RenderKey, Optional<String>> eldest) {
+            return size() > MAX_CACHE_ENTRIES;
+        }
+    });
     private Context context;
     private Value renderFunction;
     private boolean unavailable;
@@ -63,7 +70,19 @@ final class HighlightJsCodeRenderer {
             return Optional.empty();
         }
 
-        return cache.computeIfAbsent(new RenderKey(source, normalizedLanguage), this::renderUncached);
+        RenderKey key = new RenderKey(source, normalizedLanguage);
+        Optional<String> cached = cache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
+        Optional<String> rendered = renderUncached(key);
+        cache.put(key, rendered);
+        return rendered;
+    }
+
+    int cacheSize() {
+        return cache.size();
     }
 
     String normalizeLanguage(String language) {

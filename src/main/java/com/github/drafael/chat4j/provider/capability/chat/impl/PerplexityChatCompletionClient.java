@@ -40,7 +40,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern CITATION_MARKER_PATTERN = Pattern.compile("\\[(\\d+)]");
     private static final Pattern DUPLICATE_LINKED_CITATION_PATTERN = Pattern.compile(
-            "(\\s\\[(\\d+)]\\(([^)]+)\\))(?:\\s+\\[\\2]\\(\\3\\))+"
+            "(\\s\\[(\\d+)]\\((<[^>]+>|[^)]+)\\))(?:\\s+\\[\\2]\\(\\3\\))+"
     );
     private static final String DEEP_RESEARCH_MODEL = "sonar-deep-research";
     private static final Duration SYNC_REQUEST_TIMEOUT = Duration.ofSeconds(90);
@@ -248,7 +248,11 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             }
 
             String prefix = matcher.start() > 0 && Character.isWhitespace(answer.charAt(matcher.start() - 1)) ? "" : " ";
-            String replacement = "%s[%d](%s)".formatted(prefix, sourceIndex + 1, sources.get(sourceIndex).url());
+            String replacement = "%s[%d](%s)".formatted(
+                    prefix,
+                    sourceIndex + 1,
+                    markdownLinkDestination(sources.get(sourceIndex).url())
+            );
             matcher.appendReplacement(linked, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(linked);
@@ -269,7 +273,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             if (references.length() > 0) {
                 references.append(" ");
             }
-            references.append("[%d](%s)".formatted(i + 1, sources.get(i).url()));
+            references.append("[%d](%s)".formatted(i + 1, markdownLinkDestination(sources.get(i).url())));
         }
         return references.toString();
     }
@@ -426,11 +430,15 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         return Thread.currentThread().isInterrupted() || (isCancelled != null && isCancelled.getAsBoolean());
     }
 
+    private static String markdownLinkDestination(String url) {
+        return "<%s>".formatted(StringUtils.defaultString(url).replace(">", "%3E"));
+    }
+
     private record Source(String title, String url) {
         private String display() {
             return StringUtils.isBlank(title)
-                    ? "<%s>".formatted(url)
-                    : "[%s](%s)".formatted(markdownLinkText(title), url);
+                    ? markdownLinkDestination(url)
+                    : "[%s](%s)".formatted(markdownLinkText(title), markdownLinkDestination(url));
         }
 
         private String markdownLinkText(String text) {

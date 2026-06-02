@@ -751,6 +751,58 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Conversation loading blocks sends until history is applied")
+    void onSend_whenConversationIsLoading_doesNotStartSend() throws Exception {
+        var providerCalls = new AtomicInteger();
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                providerCalls.incrementAndGet();
+                onToken.accept("pong");
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> {
+            textArea.setText("ping");
+            subject.setConversationLoading(true);
+        });
+
+        invokeOnSend(subject);
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(subject.getHistory()).isEmpty();
+        assertThat(subject.getInputBar().isEnabled()).isFalse();
+
+        SwingUtilities.invokeAndWait(() -> subject.setConversationLoading(false));
+        assertThat(subject.getInputBar().isEnabled()).isTrue();
+    }
+
+    @Test
     @DisplayName("Cancelling an active stream invalidates the session and clears streaming state")
     void cancelStreaming_whenStreamIsActive_invalidatesSessionAndClearsStreamingState() throws Exception {
         setField(subject, "streaming", true);
@@ -760,6 +812,64 @@ class ChatPanelTest {
 
         assertThat((boolean) readField(subject, "streaming")).isFalse();
         assertThat((long) readField(subject, "activeStreamSessionId")).isEqualTo(-1L);
+    }
+
+    @Test
+    @DisplayName("Visible cancel falls back to legacy provider cancellation when no session handle exists")
+    void cancelStreaming_whenLegacyProviderHasNoSessionHandle_callsProviderCancel() throws Exception {
+        var streamStarted = new CountDownLatch(1);
+        var releaseStream = new CountDownLatch(1);
+        var providerCancels = new AtomicInteger();
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseStream.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            @Override
+            public void cancelActiveRequest() {
+                providerCancels.incrementAndGet();
+                releaseStream.countDown();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        subject.cancelStreaming();
+        flushEdt();
+
+        assertThat(providerCancels).hasValue(1);
     }
 
     @Test
@@ -2171,6 +2281,89 @@ class ChatPanelTest {
 
         assertThat(subject.getHistory()).hasSize(1);
         assertThat(subject.getHistory().getFirst().content()).isEqualTo("ping");
+    }
+
+    @Test
+    @DisplayName("Switching conversations keeps the original stream running in the background")
+    void setActiveConversationId_whenSwitchingAwayFromStreamingConversation_keepsOriginalStreamRunning() throws Exception {
+        var originalConversationId = UUID.randomUUID();
+        var visibleConversationId = UUID.randomUUID();
+        var tokenDelivered = new CountDownLatch(1);
+        var releaseCompletion = new CountDownLatch(1);
+        var persistedAssistant = new CountDownLatch(1);
+        var cancellationObserved = new AtomicReference<Boolean>();
+
+        subject.setActiveConversationId(originalConversationId);
+        subject.setConversationIdSupplier(() -> originalConversationId);
+        subject.setOnAssistantMessageCompleted(event -> {
+            if (event.message().role() == Role.ASSISTANT) {
+                persistedAssistant.countDown();
+            }
+            return true;
+        });
+
+        setField(subject, "currentProvider", new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("background answer");
+                tokenDelivered.countDown();
+                try {
+                    releaseCompletion.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                cancellationObserved.set(isCancelled.getAsBoolean());
+                onComplete.run();
+            }
+
+            @Override
+            public List<String> availableModels() {
+                return List.of("test-model");
+            }
+
+            @Override
+            public String name() {
+                return "test";
+            }
+
+            @Override
+            public String envVarName() {
+                return "TEST_KEY";
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        invokeOnSend(subject);
+
+        assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.loadHistory(List.of(Message.user("other chat")));
+        });
+
+        releaseCompletion.countDown();
+        assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        assertThat(cancellationObserved.get()).isFalse();
+        assertThat(subject.getHistory()).extracting(Message::content).containsExactly("other chat");
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.loadHistory(List.of(Message.user("ping")));
+        });
+
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .containsExactly("ping", "background answer");
     }
 
     @Test

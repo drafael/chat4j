@@ -74,6 +74,20 @@ class ConversationPersistenceCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Persist history stops without throwing when conversation is deleted during insert")
+    void persistConversationHistory_whenConversationDisappearsDuringInsert_stopsPersistence() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DisappearingConversationRepo(conversationId);
+        var counter = new PersistedMessageCounter();
+        var subject = new ConversationPersistenceCoordinator(repo, counter);
+
+        int persistedCount = subject.persistConversationHistory(conversationId, List.of(Message.user("hello")));
+
+        assertThat(persistedCount).isZero();
+        assertThat(repo.addMessageCalls).hasValue(1);
+    }
+
+    @Test
     @DisplayName("Persisting assistant message increments known persisted count")
     void persistAssistantMessage_whenConversationWasLoaded_incrementsPersistedCounter() throws Exception {
         UUID conversationId = UUID.randomUUID();
