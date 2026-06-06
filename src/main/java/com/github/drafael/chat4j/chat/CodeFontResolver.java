@@ -19,14 +19,10 @@ public final class CodeFontResolver {
             return resolvedCodeFontSize;
         }
 
+        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
         Font monoFont = UIManager.getFont("monospaced.font");
         if (monoFont == null) {
-            monoFont = UIManager.getFont("TextArea.font");
-        }
-
-        int bodyFontSize = Fonts.scale(Fonts.SIZE_SMALL);
-        if (monoFont == null) {
-            return bodyFontSize;
+            monoFont = new Font(Font.MONOSPACED, Font.PLAIN, bodyFontSize);
         }
 
         JLabel probe = new JLabel();
