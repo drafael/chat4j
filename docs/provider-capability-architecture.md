@@ -51,7 +51,6 @@ This document describes the provider architecture under `src/main/java/com/githu
 - Google AI uses:
   - `GEMINI_API_KEY`
   - fallback `GOOGLEAI_API_KEY`
-  - fallback `GOOGLE_AI_API_KEY`
 
 ## Model Listing and Ordering
 

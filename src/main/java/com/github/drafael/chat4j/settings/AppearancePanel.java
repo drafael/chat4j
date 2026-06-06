@@ -40,7 +40,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     public static final String KEY_APP_FONT_SIZE = SettingsKeys.APP_FONT_SIZE;
     public static final String KEY_CODE_FONT = SettingsKeys.CODE_FONT_FAMILY;
 
-    private static final String DEFAULT_THEME = "GitHub";
+    private static final String DEFAULT_THEME = ThemeSettingsResolver.DEFAULT_THEME;
     public static final String DEFAULT_APP_FONT = "System Default";
     public static final String DEFAULT_CODE_FONT = "Monospaced";
     private static final int FALLBACK_FONT_SIZE = Fonts.SIZE_BODY;
@@ -699,9 +699,9 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     private void applyFallbackTheme() {
         try {
-            FlatMTGitHubIJTheme.setup();
+            FlatMTMaterialLighterIJTheme.setup();
             refreshAllWindows();
-            setStatusError("Failed to apply theme, reverted to GitHub");
+            setStatusError("Failed to apply theme, reverted to Material Lighter");
         } catch (Exception e) {
             setStatusError("Failed to apply theme");
         }

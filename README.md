@@ -53,13 +53,81 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 ### API-key providers (env vars)
 
 - `ANTHROPIC_API_KEY`
-- `GEMINI_API_KEY` (aliases: `GOOGLEAI_API_KEY`, `GOOGLE_AI_API_KEY`)
+- `GEMINI_API_KEY` (alias: `GOOGLEAI_API_KEY`)
 - `OPENAI_API_KEY`
+- `PERPLEXITY_API_KEY`
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
+
+### Setting environment variables
+
+Replace `sk-...` with your real API key. Restart Chat4J after changing environment variables.
+
+#### macOS / Linux (bash or zsh)
+
+For the current terminal session:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+mvn exec:java
+```
+
+To make it persistent, add the export line to your shell profile:
+
+```bash
+# zsh, default on modern macOS
+echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshrc
+
+# bash
+echo 'export OPENAI_API_KEY="sk-..."' >> ~/.bashrc
+```
+
+Reload the profile or open a new terminal:
+
+```bash
+source ~/.zshrc   # or: source ~/.bashrc
+```
+
+On macOS, apps launched from Finder/Dock may not inherit terminal variables. Chat4J tries to load your login shell environment, but if keys are still missing, either launch Chat4J from Terminal or set the variable for GUI apps:
+
+```bash
+launchctl setenv OPENAI_API_KEY "sk-..."
+```
+
+#### Windows PowerShell
+
+For the current PowerShell session:
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+mvn exec:java
+```
+
+To make it persistent for your Windows user account:
+
+```powershell
+setx OPENAI_API_KEY "sk-..."
+```
+
+Close and reopen PowerShell, Command Prompt, or Chat4J after running `setx`.
+
+#### Windows Command Prompt
+
+For the current Command Prompt session:
+
+```cmd
+set OPENAI_API_KEY=sk-...
+mvn exec:java
+```
+
+To make it persistent:
+
+```cmd
+setx OPENAI_API_KEY "sk-..."
+```
 
 ### OAuth providers
 

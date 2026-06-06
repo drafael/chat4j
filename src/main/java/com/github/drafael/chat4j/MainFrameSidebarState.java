@@ -6,7 +6,7 @@ public class MainFrameSidebarState {
     private int lastDividerLocation;
 
     public MainFrameSidebarState() {
-        this(true, 250);
+        this(true, 300);
     }
 
     MainFrameSidebarState(boolean sidebarVisible, int lastDividerLocation) {

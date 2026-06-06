@@ -50,6 +50,7 @@ import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -89,12 +90,16 @@ public class SidebarPanel extends JPanel {
     private static final String DELETE_GROUP_ERROR = "Failed to delete group";
     private static final String DELETE_ALL_ERROR = "Failed to delete all chats";
 
-    private static final int SIDEBAR_WIDTH = 250;
+    private static final int SIDEBAR_WIDTH = 300;
     private static final int HOVER_ICON_SIZE = 14;
     private static final int HOVER_ICON_GAP = 8;
     private static final int HOVER_ICON_PADDING = 10;
     private static final int HOVER_BACKGROUND_PADDING = 8;
     private static final int HOVER_BACKGROUND_FADE_WIDTH = 16;
+    private static final String TRIM_INDICATOR_TEXT = "...";
+    private static final int TRIM_INDICATOR_RIGHT_PADDING = 12;
+    private static final int TRIM_INDICATOR_BACKGROUND_PADDING = 4;
+    private static final int TRIM_INDICATOR_FADE_WIDTH = 14;
     private static final int PROVIDER_ICON_SIZE = 16;
     private static final int SETTINGS_ICON_SIZE = 16;
     private static final int SETTINGS_BUTTON_SIZE = 24;
@@ -278,8 +283,14 @@ public class SidebarPanel extends JPanel {
             }
 
             @Override
+            public boolean getScrollableTracksViewportWidth() {
+                return true;
+            }
+
+            @Override
             protected void paintComponent(Graphics graphics) {
                 super.paintComponent(graphics);
+                paintTrimIndicators(graphics);
                 paintHoverIcons(graphics);
             }
         };
@@ -485,6 +496,118 @@ public class SidebarPanel extends JPanel {
                 case NONE -> null;
             })
             .orElse(null);
+    }
+
+    private void paintTrimIndicators(Graphics graphics) {
+        Rectangle visible = conversationList.getVisibleRect();
+        if (visible.width <= 0 || visible.height <= 0 || listModel.isEmpty()) {
+            return;
+        }
+
+        int firstIndex = conversationList.locationToIndex(new Point(visible.x, visible.y));
+        int lastIndex = conversationList.locationToIndex(new Point(visible.x, visible.y + visible.height - 1));
+        if (firstIndex < 0 || lastIndex < 0) {
+            return;
+        }
+
+        IntStream.rangeClosed(Math.min(firstIndex, lastIndex), Math.max(firstIndex, lastIndex))
+                .forEach(index -> paintTrimIndicatorIfNeeded(graphics, index, visible));
+    }
+
+    private void paintTrimIndicatorIfNeeded(Graphics graphics, int index, Rectangle visible) {
+        Optional<ConversationItem> conversation = conversationItemAt(index);
+        if (conversation.isEmpty()) {
+            return;
+        }
+
+        Rectangle bounds = conversationList.getCellBounds(index, index);
+        if (bounds == null || !bounds.intersects(visible)) {
+            return;
+        }
+
+        JLabel label = conversationRendererLabel(conversation.get(), index);
+        if (!isConversationTitleTrimmed(conversation.get().title(), label, visible.width)) {
+            return;
+        }
+
+        paintTrimIndicator(graphics, label, index, bounds, visible);
+    }
+
+    private JLabel conversationRendererLabel(ConversationItem conversation, int index) {
+        Component component = conversationList.getCellRenderer().getListCellRendererComponent(
+                conversationList,
+                conversation,
+                index,
+                conversationList.getSelectedIndex() == index,
+                false
+        );
+        return component instanceof JLabel label ? label : new JLabel(conversation.title());
+    }
+
+    private static boolean isConversationTitleTrimmed(String title, JLabel label, int viewportWidth) {
+        FontMetrics metrics = label.getFontMetrics(label.getFont());
+        int titleWidth = metrics.stringWidth(title);
+        Insets insets = label.getInsets();
+        Icon icon = label.getIcon();
+        int iconWidth = icon == null ? 0 : icon.getIconWidth() + label.getIconTextGap();
+        int availableTextWidth = Math.max(0, viewportWidth - insets.left - insets.right - iconWidth);
+        return titleWidth > availableTextWidth;
+    }
+
+    private void paintTrimIndicator(Graphics graphics, JLabel label, int index, Rectangle bounds, Rectangle visible) {
+        Graphics2D graphics2d = (Graphics2D) graphics.create();
+        graphics2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        graphics2d.setFont(label.getFont());
+
+        FontMetrics metrics = graphics2d.getFontMetrics();
+        int indicatorWidth = metrics.stringWidth(TRIM_INDICATOR_TEXT);
+        int rightEdge = visible.x + visible.width;
+        int indicatorX = rightEdge - TRIM_INDICATOR_RIGHT_PADDING - indicatorWidth;
+        int backgroundLeft = Math.max(visible.x, indicatorX - TRIM_INDICATOR_BACKGROUND_PADDING);
+        Color background = resolveTrimIndicatorBackground(label, index);
+
+        paintTrimIndicatorBackground(graphics2d, bounds, backgroundLeft, rightEdge, background);
+        graphics2d.setColor(label.getForeground());
+        int baseline = bounds.y + (bounds.height - metrics.getHeight()) / 2 + metrics.getAscent();
+        graphics2d.drawString(TRIM_INDICATOR_TEXT, indicatorX, baseline);
+        graphics2d.dispose();
+    }
+
+    private Color resolveTrimIndicatorBackground(JLabel label, int index) {
+        if (conversationList.getSelectedIndex() == index && label.getBackground() != null) {
+            return label.getBackground();
+        }
+
+        Color background = conversationList.getParent() != null ? conversationList.getParent().getBackground() : null;
+        if (background == null) {
+            background = getBackground();
+        }
+        return background;
+    }
+
+    private static void paintTrimIndicatorBackground(
+            Graphics2D graphics2d,
+            Rectangle bounds,
+            int backgroundLeft,
+            int rightEdge,
+            Color background
+    ) {
+        graphics2d.setPaint(new GradientPaint(
+                backgroundLeft - TRIM_INDICATOR_FADE_WIDTH,
+                0,
+                new Color(background.getRed(), background.getGreen(), background.getBlue(), 0),
+                backgroundLeft,
+                0,
+                background
+        ));
+        graphics2d.fillRect(
+                backgroundLeft - TRIM_INDICATOR_FADE_WIDTH,
+                bounds.y,
+                TRIM_INDICATOR_FADE_WIDTH,
+                bounds.height
+        );
+        graphics2d.setColor(background);
+        graphics2d.fillRect(backgroundLeft, bounds.y, rightEdge - backgroundLeft, bounds.height);
     }
 
     private void paintHoverIcons(Graphics graphics) {

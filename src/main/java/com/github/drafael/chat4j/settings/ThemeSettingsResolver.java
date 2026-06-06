@@ -9,7 +9,7 @@ import java.sql.SQLException;
 
 public class ThemeSettingsResolver {
 
-    public static final String DEFAULT_THEME = "GitHub";
+    public static final String DEFAULT_THEME = "Material Lighter";
     private static final String KEY_THEME = SettingsKeys.THEME_NAME;
 
     private final SettingsRepo settingsRepo;

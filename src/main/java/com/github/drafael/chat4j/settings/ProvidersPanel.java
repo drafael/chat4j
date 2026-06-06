@@ -116,7 +116,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         PROVIDERS.put("Perplexity", ProviderInfo.envVar("PERPLEXITY_API_KEY", "https://api.perplexity.ai"));
         PROVIDERS.put("OpenAI Codex", ProviderInfo.codexOAuth("https://api.openai.com/v1"));
         PROVIDERS.put("GitHub Copilot", ProviderInfo.copilotOAuth("https://api.githubcopilot.com"));
-        PROVIDERS.put("Google AI", ProviderInfo.envVar("GEMINI_API_KEY|GOOGLEAI_API_KEY|GOOGLE_AI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai"));
+        PROVIDERS.put("Google AI", ProviderInfo.envVar("GEMINI_API_KEY|GOOGLEAI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai"));
         PROVIDERS.put("OpenRouter", ProviderInfo.envVar("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"));
         PROVIDERS.put("Groq", ProviderInfo.envVar("GROQ_API_KEY", "https://api.groq.com/openai/v1"));
         PROVIDERS.put("DeepSeek", ProviderInfo.envVar("DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"));

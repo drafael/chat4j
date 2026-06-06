@@ -40,6 +40,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SidebarPanelTest {
 
     @Test
+    @DisplayName("Sidebar starts wider and trims rows at the viewport edge")
+    void constructor_whenCreated_usesWiderDefaultWidthAndViewportWidthTracking() throws Exception {
+        var repo = new DelayedConversationRepo(0, emptyMap());
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+
+        SidebarPanel subject = panelRef.get();
+        assertThat(subject.getPreferredSize()).isEqualTo(new Dimension(300, 0));
+        assertThat(readConversationList(subject).getScrollableTracksViewportWidth()).isTrue();
+    }
+
+    @Test
     @DisplayName("Sidebar refresh does not block EDT while repository call is in flight")
     void refresh_whenRepositoryIsSlow_doesNotBlockEdt() throws Exception {
         SwingUtilities.invokeAndWait(JPanel::new);

@@ -13,7 +13,7 @@ class MainFrameSidebarStateTest {
         var subject = new MainFrameSidebarState();
 
         assertThat(subject.sidebarVisible()).isTrue();
-        assertThat(subject.lastDividerLocation()).isEqualTo(250);
+        assertThat(subject.lastDividerLocation()).isEqualTo(300);
     }
 
     @Test

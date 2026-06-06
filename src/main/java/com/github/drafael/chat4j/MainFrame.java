@@ -539,7 +539,7 @@ public class MainFrame extends JFrame {
 
         splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
         splitPane.setBorder(null);
-        splitPane.setDividerLocation(250);
+        splitPane.setDividerLocation(300);
         splitPane.setDividerSize(1);
         splitPane.setContinuousLayout(true);
 

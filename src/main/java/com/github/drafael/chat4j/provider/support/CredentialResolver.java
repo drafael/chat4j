@@ -25,8 +25,7 @@ public final class CredentialResolver {
         "XAI_API_KEY",
         "PERPLEXITY_API_KEY",
         "GEMINI_API_KEY",
-        "GOOGLEAI_API_KEY",
-        "GOOGLE_AI_API_KEY"
+        "GOOGLEAI_API_KEY"
     );
 
     private static volatile Map<String, String> shellEnv = emptyMap();

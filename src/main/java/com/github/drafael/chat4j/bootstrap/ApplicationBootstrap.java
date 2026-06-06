@@ -15,7 +15,7 @@ import com.github.drafael.chat4j.storage.SettingsDbToPropertiesMigrationCoordina
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.storage.StoragePaths;
-import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTGitHubIJTheme;
+import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTMaterialLighterIJTheme;
 import com.formdev.flatlaf.util.SystemInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -83,7 +83,7 @@ public final class ApplicationBootstrap {
     private void configureEarlyLookAndFeel() {
         System.setProperty("flatlaf.useNativeLibrary", "true");
         AppearancePanel.installAccentColorGetter();
-        FlatMTGitHubIJTheme.setup();
+        FlatMTMaterialLighterIJTheme.setup();
     }
 
     private AppServices initializeStorage() {

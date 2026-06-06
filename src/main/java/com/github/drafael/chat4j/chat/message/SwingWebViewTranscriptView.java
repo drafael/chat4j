@@ -723,20 +723,6 @@ public final class SwingWebViewTranscriptView {
         return html.toString();
     }
 
-    private String renderEntriesHtml(Palette palette, String bubbleBackground, String borderColor) {
-        TranscriptRenderSnapshot snapshot = new TranscriptRenderSnapshot(
-                entries,
-                renderMode,
-                dark,
-                jumpButtonVisible,
-                palette,
-                documentChrome(dark, palette),
-                CodeFontResolver.resolveCodeFontSize(),
-                Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY
-        );
-        return renderEntriesHtml(snapshot);
-    }
-
     private String renderEntrySafely(Entry entry, TranscriptRenderSnapshot snapshot) {
         try {
             return renderEntry(entry, snapshot);
