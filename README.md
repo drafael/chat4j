@@ -1,5 +1,13 @@
 # Chat4J
 
+[![CI](https://github.com/drafael/chat4j/actions/workflows/ci.yml/badge.svg)](https://github.com/drafael/chat4j/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/drafael/chat4j/actions/workflows/security.yml/badge.svg)](https://github.com/drafael/chat4j/actions/workflows/security.yml)
+![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk)
+![Maven](https://img.shields.io/badge/build-Maven-C71A36?logo=apachemaven)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/github/license/drafael/chat4j)
+![Dependabot](https://img.shields.io/badge/Dependabot-enabled-025E8C?logo=dependabot)
+
 Lightweight desktop AI chat client built with **Java 21**, **Swing**, and **Maven**.
 
 ## Quick start
@@ -38,7 +46,7 @@ mvn -Pdependency-audit verify
 mvn versions:display-dependency-updates versions:display-plugin-updates
 ```
 
-Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Actions updates.
+Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Actions updates. The scheduled Security Audit workflow runs OWASP Dependency-Check weekly and uploads HTML/JSON reports.
 
 ## What it does
 
@@ -162,6 +170,17 @@ mvn -Pjpackage-linux verify
 ```
 
 Output artifacts are written to `target/dist/`.
+
+## Release automation
+
+GitHub Actions builds unsigned release artifacts for version tags and manual reruns:
+
+```bash
+git tag v26.6.13
+git push origin v26.6.13
+```
+
+The release workflow publishes the shaded jar, macOS `.dmg`, Windows `.msi`, Linux `.deb`, SBOM files, and SHA-256 checksums.
 
 ## License
 

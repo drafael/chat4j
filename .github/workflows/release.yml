@@ -1,0 +1,210 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to build, e.g. v26.6.13'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark the GitHub Release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Validate tag and project version
+        id: release
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            prerelease="false"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]{2}\.[1-9][0-9]?\.[0-9]+$ ]]; then
+            echo "Release tag must match vYY.M.N, got: $tag" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          pom_version="$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)"
+          if [[ "$pom_version" != "$version" ]]; then
+            echo "Tag version ($version) does not match pom.xml version ($pom_version)." >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  jar:
+    name: Build jar and SBOM
+    runs-on: ubuntu-latest
+    needs: metadata
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install Linux WebView runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-0
+          sudo apt-get install -y libwebkit2gtk-4.1-0 || sudo apt-get install -y libwebkit2gtk-4.0-37
+
+      - name: Build shaded jar and SBOM
+        run: mvn -B -ntp -DskipTests -Psbom verify
+
+      - name: Collect jar artifacts
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp "target/chat4j-${{ needs.metadata.outputs.version }}.jar" "release-assets/chat4j-${{ needs.metadata.outputs.version }}.jar"
+          cp target/bom.json "release-assets/chat4j-${{ needs.metadata.outputs.version }}-sbom.json"
+          cp target/bom.xml "release-assets/chat4j-${{ needs.metadata.outputs.version }}-sbom.xml"
+
+      - name: Upload jar artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar
+          path: release-assets/*
+          if-no-files-found: error
+
+  native:
+    name: Build native package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS DMG
+            os: macos-latest
+            profiles: jpackage-mac,jpackage-on-mac
+            artifact-name: macos-dmg
+            glob: target/dist/*.dmg
+          - name: Windows MSI
+            os: windows-latest
+            profiles: jpackage-win,jpackage-on-windows
+            artifact-name: windows-msi
+            glob: target/dist/*.msi
+          - name: Linux DEB
+            os: ubuntu-latest
+            profiles: jpackage-linux,jpackage-on-linux
+            artifact-name: linux-deb
+            glob: target/dist/*.deb
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.metadata.outputs.tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg-dev libgtk-3-0
+          sudo apt-get install -y libwebkit2gtk-4.1-0 || sudo apt-get install -y libwebkit2gtk-4.0-37
+
+      - name: Install WiX Toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          $wixBin = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          if (Test-Path $wixBin) {
+            Add-Content $env:GITHUB_PATH $wixBin
+          }
+
+      - name: Build native package
+        run: mvn -B -ntp -DskipTests -P${{ matrix.profiles }} verify
+
+      - name: Upload native package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.glob }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - jar
+      - native
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          find release-assets -type f -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS.txt
+          cp SHA256SUMS.txt release-assets/SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: Chat4J ${{ needs.metadata.outputs.version }}
+          prerelease: ${{ needs.metadata.outputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            release-assets/**/*
+          fail_on_unmatched_files: true
