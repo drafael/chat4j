@@ -8,22 +8,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AppTest {
 
-    private final String originalOsName = System.getProperty("os.name");
     private final String originalMetalProperty = System.getProperty("sun.java2d.metal");
 
     @AfterEach
     void restoreSystemProperties() {
-        restoreProperty("os.name", originalOsName);
         restoreProperty("sun.java2d.metal", originalMetalProperty);
     }
 
     @Test
     @DisplayName("macOS startup disables Java2D Metal when no override is provided")
     void configureNativeGraphicsPipeline_macOsWithoutOverride_disablesMetal() {
-        System.setProperty("os.name", "Mac OS X");
         System.clearProperty("sun.java2d.metal");
 
-        App.configureNativeGraphicsPipeline();
+        App.configureNativeGraphicsPipeline(() -> true);
 
         assertThat(System.getProperty("sun.java2d.metal")).isEqualTo("false");
     }
@@ -31,10 +28,9 @@ class AppTest {
     @Test
     @DisplayName("macOS startup preserves an explicit Java2D Metal override")
     void configureNativeGraphicsPipeline_macOsWithOverride_preservesOverride() {
-        System.setProperty("os.name", "Mac OS X");
         System.setProperty("sun.java2d.metal", "true");
 
-        App.configureNativeGraphicsPipeline();
+        App.configureNativeGraphicsPipeline(() -> true);
 
         assertThat(System.getProperty("sun.java2d.metal")).isEqualTo("true");
     }
@@ -42,10 +38,9 @@ class AppTest {
     @Test
     @DisplayName("non-macOS startup leaves Java2D Metal unset")
     void configureNativeGraphicsPipeline_nonMacOs_leavesMetalUnset() {
-        System.setProperty("os.name", "Linux");
         System.clearProperty("sun.java2d.metal");
 
-        App.configureNativeGraphicsPipeline();
+        App.configureNativeGraphicsPipeline(() -> false);
 
         assertThat(System.getProperty("sun.java2d.metal")).isNull();
     }

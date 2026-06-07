@@ -6,8 +6,9 @@ import com.github.drafael.chat4j.chat.CodeFontResolver;
 import com.github.drafael.chat4j.chat.MarkdownPaletteResolver;
 import com.github.drafael.chat4j.chat.Palette;
 import com.github.drafael.chat4j.chat.RenderMode;
-import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.util.Fonts;
+import com.formdev.flatlaf.util.SystemInfo;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
@@ -521,11 +522,8 @@ public final class JcefTranscriptView {
             documentUrl.deleteFile();
             return;
         }
-        if (!browserPanel.isDisplayable()) {
-            deletePendingDocumentUrl();
-            pendingDocumentUrl = documentUrl;
-            pendingDocumentRequestId = requestId;
-            pendingDocumentScrollToBottom = scrollToBottom;
+        if (!isBrowserPanelReadyForDocumentLoad()) {
+            storePendingDocumentUrl(requestId, documentUrl, scrollToBottom);
             return;
         }
 
@@ -540,10 +538,21 @@ public final class JcefTranscriptView {
     }
 
     private void applyPendingDocumentUrl() {
-        if (disposed || pendingDocumentUrl == null || !browserPanel.isDisplayable()) {
+        if (disposed || pendingDocumentUrl == null || !isBrowserPanelReadyForDocumentLoad()) {
             return;
         }
         applyDocumentUrl(pendingDocumentRequestId, pendingDocumentUrl, pendingDocumentScrollToBottom);
+    }
+
+    private boolean isBrowserPanelReadyForDocumentLoad() {
+        return browserPanel.isShowing() && browserPanel.getWidth() > 0 && browserPanel.getHeight() > 0;
+    }
+
+    private void storePendingDocumentUrl(long requestId, DocumentUrl documentUrl, boolean scrollToBottom) {
+        deletePendingDocumentUrl();
+        pendingDocumentUrl = documentUrl;
+        pendingDocumentRequestId = requestId;
+        pendingDocumentScrollToBottom = scrollToBottom;
     }
 
     private void deletePendingDocumentUrl() {
@@ -1830,6 +1839,7 @@ public final class JcefTranscriptView {
         browserPanel.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
+                applyPendingDocumentUrl();
                 repairTimer.restart();
             }
 
@@ -1849,7 +1859,7 @@ public final class JcefTranscriptView {
         uiComponent.invalidate();
         browserPanel.revalidate();
         browserPanel.repaint();
-        if (JcefRuntime.isMacOS()) {
+        if (SystemInfo.isMacOS) {
             SwingUtilities.invokeLater(() -> {
                 uiComponent.setBounds(0, 0, Math.max(0, browserPanel.getWidth()), Math.max(0, browserPanel.getHeight()));
                 browserPanel.revalidate();

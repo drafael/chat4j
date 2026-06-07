@@ -1,8 +1,11 @@
 package com.github.drafael.chat4j;
 
+import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.bootstrap.ApplicationBootstrap;
 import com.github.drafael.chat4j.logging.LoggingBootstrap;
+import com.github.drafael.chat4j.startup.NativeStderrNoiseFilter;
 import com.github.drafael.chat4j.startup.StartupFallbackLogger;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
@@ -10,8 +13,9 @@ import javax.swing.*;
 import java.awt.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
+import java.util.function.BooleanSupplier;
 
+@Slf4j
 public class App {
 
     private static final String APP_PATH_PROPERTY = "jpackage.app-path";
@@ -20,10 +24,12 @@ public class App {
 
     public static void main(String[] args) {
         configureNativeGraphicsPipeline();
+        installMacOsAppKitStderrNoiseFilter();
         StartupFallbackLogger.info("Chat4J startup entrypoint invoked");
 
         try {
             LoggingBootstrap.initialize();
+            installUncaughtExceptionLogger();
             StartupFallbackLogger.info("Primary logging bootstrap initialized");
         } catch (Throwable t) {
             StartupFallbackLogger.error("Primary logging bootstrap initialization failed", t);
@@ -39,13 +45,27 @@ public class App {
     }
 
     static void configureNativeGraphicsPipeline() {
-        if (isMacOs() && System.getProperty(JAVA2D_METAL_PROPERTY) == null) {
+        configureNativeGraphicsPipeline(() -> SystemInfo.isMacOS);
+    }
+
+    static void configureNativeGraphicsPipeline(BooleanSupplier macOsSupplier) {
+        if (macOsSupplier.getAsBoolean() && System.getProperty(JAVA2D_METAL_PROPERTY) == null) {
             System.setProperty(JAVA2D_METAL_PROPERTY, "false");
         }
     }
 
-    private static boolean isMacOs() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+    private static void installMacOsAppKitStderrNoiseFilter() {
+        if (SystemInfo.isMacOS) {
+            NativeStderrNoiseFilter.installMacOsAppKitThreadFilter();
+        }
+    }
+
+    private static void installUncaughtExceptionLogger() {
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            String message = "Uncaught exception on thread %s".formatted(thread.getName());
+            StartupFallbackLogger.error(message, throwable);
+            log.error(message, throwable);
+        });
     }
 
     private static void showStartupFailureDialog(Throwable throwable) {

@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.message;
 
+import com.github.drafael.chat4j.storage.StoragePaths;
+import com.formdev.flatlaf.util.SystemInfo;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import me.friwi.jcefmaven.CefAppBuilder;
@@ -13,7 +15,9 @@ import org.cef.CefSettings;
 import java.awt.GraphicsEnvironment;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
+import java.util.Comparator;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 @Slf4j
 public final class JcefRuntime {
@@ -27,7 +31,7 @@ public final class JcefRuntime {
     private Availability availability;
 
     private JcefRuntime(Path installDir) {
-        this.installDir = installDir;
+        this.installDir = installDir.toAbsolutePath().normalize();
     }
 
     public static JcefRuntime getInstance() {
@@ -35,11 +39,19 @@ public final class JcefRuntime {
     }
 
     public synchronized Availability availability() {
+        return availability(JcefProgressListener.NO_OP);
+    }
+
+    public synchronized Availability availability(@NonNull JcefProgressListener progressListener) {
         if (availability != null) {
             return availability;
         }
-        availability = initialize();
+        availability = initialize(progressListener);
         return availability;
+    }
+
+    public synchronized Optional<Availability> cachedAvailability() {
+        return Optional.ofNullable(availability);
     }
 
     public synchronized CefClient createClient() {
@@ -50,7 +62,7 @@ public final class JcefRuntime {
         return cefApp.createClient();
     }
 
-    private Availability initialize() {
+    private Availability initialize(@NonNull JcefProgressListener progressListener) {
         if (GraphicsEnvironment.isHeadless()) {
             return new Availability(false, "Headless", "headless environment");
         }
@@ -59,15 +71,20 @@ public final class JcefRuntime {
         }
 
         try {
+            deleteLegacyProfileRootInsideInstallDir();
             Files.createDirectories(installDir);
             CefAppBuilder builder = new CefAppBuilder();
             builder.setInstallDir(installDir.toFile());
+            builder.setProgressHandler((stage, progress) ->
+                    progressListener.onProgress(JcefInitializationProgress.from(stage, progress)));
             CefSettings cefSettings = builder.getCefSettings();
             cefSettings.windowless_rendering_enabled = false;
-            cefSettings.root_cache_path = installDir.resolve("profile-root").toString();
-            cefSettings.cache_path = installDir.resolve("profile").toString();
+            Path rootCachePath = installDir.resolveSibling("jcef-profile-root");
+            Files.createDirectories(rootCachePath);
+            cefSettings.root_cache_path = rootCachePath.toString();
+            cefSettings.cache_path = rootCachePath.resolve("profile").toString();
             cefSettings.log_file = installDir.resolve("jcef.log").toString();
-            cefSettings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_ERROR;
+            cefSettings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_FATAL;
             if (Boolean.getBoolean(DEVTOOLS_PROPERTY)) {
                 cefSettings.remote_debugging_port = DEVTOOLS_PORT;
             }
@@ -89,16 +106,39 @@ public final class JcefRuntime {
         }
     }
 
+    private void deleteLegacyProfileRootInsideInstallDir() {
+        Path legacyProfileRoot = installDir.resolve("profile-root");
+        if (!Files.exists(legacyProfileRoot) && !Files.isSymbolicLink(legacyProfileRoot)) {
+            return;
+        }
+
+        try (Stream<Path> paths = Files.walk(legacyProfileRoot)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (Exception e) {
+                    log.debug("Failed to delete legacy JCEF profile path {}: {}", path, ExceptionUtils.getMessage(e));
+                }
+            });
+        } catch (Exception e) {
+            log.debug("Failed to delete legacy JCEF profile root {}: {}", legacyProfileRoot, ExceptionUtils.getMessage(e));
+        }
+    }
+
     private static void addProductionJcefArgs(@NonNull CefAppBuilder builder) {
         builder.addJcefArgs("--disable-gpu");
         builder.addJcefArgs("--disable-background-networking");
+        builder.addJcefArgs("--disable-breakpad");
         builder.addJcefArgs("--disable-component-update");
         builder.addJcefArgs("--disable-sync");
         builder.addJcefArgs("--disable-extensions");
         builder.addJcefArgs("--disable-notifications");
         builder.addJcefArgs("--disable-default-apps");
+        builder.addJcefArgs("--disable-gpu-shader-disk-cache");
         builder.addJcefArgs("--disable-in-process-stack-traces");
         builder.addJcefArgs("--disable-logging");
+        builder.addJcefArgs("--disable-machine-learning-model-loader");
+        builder.addJcefArgs("--gcm-channel-status=2");
         builder.addJcefArgs("--log-level=3");
         builder.addJcefArgs("--use-mock-keychain");
         builder.addJcefArgs("--no-first-run");
@@ -106,11 +146,11 @@ public final class JcefRuntime {
         builder.addJcefArgs("--disable-client-side-phishing-detection");
         builder.addJcefArgs("--disable-component-extensions-with-background-pages");
         builder.addJcefArgs("--disable-domain-reliability");
-        builder.addJcefArgs("--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,PushMessaging,SpareRendererForSitePerProcess");
+        builder.addJcefArgs("--disable-features=AutofillServerCommunication,GatherProcessRequirementMetrics,GCM,MediaRouter,OnDeviceModelService,Optimization,OptimizationHints,PushMessaging,SpareRendererForSitePerProcess,TranslateUI");
     }
 
     static boolean hasRequiredAwtModuleAccess() {
-        if (!isMacOS()) {
+        if (!SystemInfo.isMacOS) {
             return true;
         }
 
@@ -129,16 +169,12 @@ public final class JcefRuntime {
         return sourceModule.isExported(packageName, targetModule) || sourceModule.isOpen(packageName, targetModule);
     }
 
-    static boolean isMacOS() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
-    }
-
     private static Path defaultInstallDir() {
         String configured = System.getProperty(INSTALL_DIR_PROPERTY);
         if (StringUtils.isNotBlank(configured)) {
-            return Path.of(configured);
+            return Path.of(configured).toAbsolutePath().normalize();
         }
-        return Path.of(System.getProperty("user.home", "."), ".chat4j", "jcef-bundle");
+        return StoragePaths.defaultPaths().jcefBundleDirectory();
     }
 
     public record Availability(boolean available, String mode, String reason) {

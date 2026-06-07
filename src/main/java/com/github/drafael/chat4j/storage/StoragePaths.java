@@ -61,6 +61,10 @@ public final class StoragePaths {
         return appConfigDirectory().resolve("attachments");
     }
 
+    public Path jcefBundleDirectory() {
+        return appConfigDirectory().resolve("jcef-bundle");
+    }
+
     public Path settingsFile() {
         return appConfigDirectory().resolve("chat4j.properties");
     }

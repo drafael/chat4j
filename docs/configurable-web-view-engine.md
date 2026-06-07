@@ -40,7 +40,16 @@ Platform fallback chains are:
 
 JCEF support uses native/windowed rendering. `JcefRuntime` initializes CEF once, applies reduced-background-networking flags, and keeps DevTools behind `-Dchat4j.jcef.devtools=true`. `JcefTranscriptView` serves generated HTML from a controlled in-memory `https://chat4j.local/...` resource and blocks in-browser navigation.
 
-Known risks remain native-platform issues, especially macOS packaged shutdown and native component behavior during resize/move. See [jcef-intellij-findings.md](jcef-intellij-findings.md) for the research notes that informed the implementation.
+At startup, `JcefStartupInitializer` initializes JCEF only when the configured/default fallback chain may need Chromium. A non-cancelable `Preparing Chromium` dialog displays `jcefmaven` download, extraction, install, and initialization progress. If availability was already resolved in the JVM, startup skips the dialog.
+
+JCEF bundle files and Chromium profile data are intentionally separate:
+
+- bundle/install dir: `StoragePaths.defaultPaths().jcefBundleDirectory()` (`jcef-bundle`)
+- profile/cache root: sibling `jcef-profile-root`
+
+Keeping profile data outside the bundle avoids reinstall failures when CEF leaves macOS singleton symlinks in the profile directory during native shutdown.
+
+Known risks remain native-platform issues, especially macOS packaged shutdown, native stderr noise, and native component behavior during resize/move. See [jcef-intellij-findings.md](jcef-intellij-findings.md) for the research notes that informed the implementation.
 
 ## Verification
 

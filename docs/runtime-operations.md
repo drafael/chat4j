@@ -13,13 +13,15 @@ Startup order:
 3. Run `EnvironmentBootstrapper.initialize()`.
 4. Initialize storage, data source, Flyway, and repositories.
 5. Apply saved appearance.
-6. Create and show `MainFrame` on the EDT.
-7. Show non-blocking environment warning if needed.
+6. Initialize JCEF with a modal progress dialog when the configured/fallback web-view path may need Chromium.
+7. Create and show `MainFrame` on the EDT.
+8. Show non-blocking environment warning if needed.
 
 Key classes:
 
 - `ApplicationBootstrap` — high-level startup coordinator.
 - `EnvironmentBootstrapper` — macOS jpackage environment loading and warning decision.
+- `JcefStartupInitializer` — optional startup JCEF initialization with progress reporting.
 - `AppServices` — startup-created services passed into `MainFrame`.
 - `EnvironmentInitResult` — loaded shell env and warning flag.
 
@@ -104,6 +106,12 @@ Noise dampening in `logback.xml`:
 - `org.flywaydb` → `WARN`
 - `org.h2` → `WARN`
 - `okhttp3` → `WARN`
+
+JCEF native stderr notes:
+
+- JCEF/Chromium may write directly to native stderr before Java logging can intercept it.
+- On macOS, `NativeStderrNoiseFilter` removes the known bare `Exception in thread "AppKit Thread"` fragment from fd `2`; other stderr output is preserved.
+- JCEF logs are configured at `LOGSEVERITY_FATAL` for normal runs.
 
 Enable DEBUG locally:
 

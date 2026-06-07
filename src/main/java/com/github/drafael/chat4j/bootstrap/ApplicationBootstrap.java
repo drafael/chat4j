@@ -32,13 +32,19 @@ import java.util.function.Supplier;
 public final class ApplicationBootstrap {
 
     private final EnvironmentBootstrapper environmentBootstrapper;
+    private final JcefStartupInitializer jcefStartupInitializer;
 
     public ApplicationBootstrap() {
-        this(new EnvironmentBootstrapper());
+        this(new EnvironmentBootstrapper(), new JcefStartupInitializer());
     }
 
     ApplicationBootstrap(EnvironmentBootstrapper environmentBootstrapper) {
+        this(environmentBootstrapper, new JcefStartupInitializer());
+    }
+
+    ApplicationBootstrap(EnvironmentBootstrapper environmentBootstrapper, JcefStartupInitializer jcefStartupInitializer) {
         this.environmentBootstrapper = environmentBootstrapper;
+        this.jcefStartupInitializer = jcefStartupInitializer;
     }
 
     /**
@@ -66,6 +72,7 @@ public final class ApplicationBootstrap {
                 environment.shellEnv().size(), environment.shouldWarnUser());
 
         runStage("appearance_apply", () -> applySavedAppearance(services.settingsRepo()));
+        runStage("jcef_startup_init", () -> jcefStartupInitializer.initializeIfNeeded(services.settingsRepo()));
         runStage("main_window_show", () -> showMainWindow(services));
         runStage("environment_warning", () -> showEnvironmentWarningIfNeeded(environment));
         log.info("Chat4J bootstrap finished");

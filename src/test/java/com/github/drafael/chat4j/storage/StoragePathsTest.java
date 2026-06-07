@@ -38,4 +38,13 @@ class StoragePathsTest {
         assertThat(withXdg.appConfigDirectory()).isEqualTo(Path.of("/tmp/xdg").resolve("chat4j"));
         assertThat(fallback.appConfigDirectory()).isEqualTo(Path.of("/home/me", ".config").resolve("chat4j"));
     }
+
+    @Test
+    @DisplayName("JCEF bundle path is rooted under the application config directory")
+    void jcefBundleDirectory_whenResolved_usesApplicationConfigDirectory() {
+        var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.jcefBundleDirectory())
+                .isEqualTo(Path.of("/tmp/xdg").resolve("chat4j").resolve("jcef-bundle"));
+    }
 }
