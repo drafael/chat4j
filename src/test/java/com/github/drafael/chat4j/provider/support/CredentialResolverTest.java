@@ -59,7 +59,7 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Provider credential presence check returns true when a known API key exists in loaded shell environment")
     void hasAnyProviderCredentials_whenKnownProviderKeyExistsInShellEnv_returnsTrue() {
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "sk-test"));
+        CredentialResolver.init(Map.of("OPENAI_API_KEY", "DUMMY_OPENAI_KEY_FOR_TESTS"));
 
         var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
 

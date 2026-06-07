@@ -29,6 +29,8 @@ class CopilotAuthResolverTest {
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.copilot.oauthClientId";
     private static final String OAUTH_SCOPES_PROPERTY = "chat4j.copilot.oauthScopes";
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+    private static final String DUMMY_GITHUB_ACCESS_TOKEN = "DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS";
+    private static final String DUMMY_COPILOT_SESSION_TOKEN = "tid=dummy-copilot-session-token-for-tests;exp=4070908800";
 
     @TempDir
     Path tempDir;
@@ -89,14 +91,14 @@ class CopilotAuthResolverTest {
             exchange.close();
         });
         server.createContext("/token", exchange -> {
-            byte[] body = "{\"access_token\":\"ghu_chat4j_123456789012345678901234567890\"}".getBytes();
+            byte[] body = "{\"access_token\":\"DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS\"}".getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });
         server.createContext("/session", exchange -> {
-            byte[] body = "{\"token\":\"tid=chat4j-session-token-12345678901234567890;exp=4070908800\",\"expires_at\":4070908800}".getBytes();
+            byte[] body = "{\"token\":\"tid=dummy-copilot-session-token-for-tests;exp=4070908800\",\"expires_at\":4070908800}".getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -122,7 +124,7 @@ class CopilotAuthResolverTest {
 
             assertThat(result.success()).isTrue();
             assertThat(subject.resolveBearerTokenOrNull())
-                    .isEqualTo("tid=chat4j-session-token-12345678901234567890;exp=4070908800");
+                    .isEqualTo(DUMMY_COPILOT_SESSION_TOKEN);
             assertThat(subject.resolveStatus().authorized()).isTrue();
             assertThat(subject.resolveStatus().source()).isEqualTo("Chat4J OAuth");
             assertThat(deviceRequestBody.get())
@@ -151,7 +153,7 @@ class CopilotAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "tid=chat4j-session-token-12345678901234567890;exp=4070908800",
+                  "accessToken": "tid=dummy-copilot-session-token-for-tests;exp=4070908800",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }
@@ -173,7 +175,7 @@ class CopilotAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "tid=chat4j-session-token-12345678901234567890;exp=4070908800",
+                  "accessToken": "tid=dummy-copilot-session-token-for-tests;exp=4070908800",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }

@@ -14,7 +14,7 @@ class AgentToolActivityFormatterTest {
                 "1",
                 "bash",
                 """
-                {"command":"echo OPENAI_API_KEY=secret --token abc123"}
+                {"command":"echo OPENAI_API_KEY=REDACTION_SENTINEL_VALUE --token REDACTION_FLAG_VALUE"}
                 """
         );
 
@@ -23,8 +23,8 @@ class AgentToolActivityFormatterTest {
         assertThat(activity.argumentsSummary())
                 .contains("OPENAI_API_KEY=<redacted>")
                 .contains("--token <redacted>")
-                .doesNotContain("secret")
-                .doesNotContain("abc123");
+                .doesNotContain("REDACTION_SENTINEL_VALUE")
+                .doesNotContain("REDACTION_FLAG_VALUE");
     }
 
     @Test
@@ -33,14 +33,14 @@ class AgentToolActivityFormatterTest {
         var request = new ToolInvocationRequest(
                 "1",
                 "custom",
-                "{\"apiKey\":\"secret\"}"
+                "{\"apiKey\":\"REDACTION_SENTINEL_VALUE\"}"
         );
 
         AgentToolActivity activity = AgentToolActivityFormatter.started(request);
 
         assertThat(activity.argumentsSummary())
                 .isEqualTo("arguments omitted")
-                .doesNotContain("secret");
+                .doesNotContain("REDACTION_SENTINEL_VALUE");
     }
 
     @Test

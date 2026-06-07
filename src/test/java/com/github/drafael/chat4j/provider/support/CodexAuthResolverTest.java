@@ -33,6 +33,7 @@ class CodexAuthResolverTest {
     private static final String OAUTH_REDIRECT_URI_PROPERTY = "chat4j.codex.oauthRedirectUri";
     private static final String OAUTH_CALLBACK_HOST_PROPERTY = "chat4j.codex.oauthCallbackHost";
     private static final String OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY = "chat4j.codex.oauthLoginTimeoutSeconds";
+    private static final String DUMMY_CODEX_ACCESS_TOKEN = "DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS";
 
     @TempDir
     Path tempDir;
@@ -150,7 +151,7 @@ class CodexAuthResolverTest {
 
             byte[] payload = """
                     {
-                      "access_token": "sk-proj-chat4j-codex-123456789012345678901234567890",
+                      "access_token": "DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS",
                       "refresh_token": "refresh-token-123",
                       "expires_in": 3600
                     }
@@ -198,7 +199,7 @@ class CodexAuthResolverTest {
 
             assertThat(result.success()).isTrue();
             assertThat(subject.resolveBearerTokenOrNull())
-                    .isEqualTo("sk-proj-chat4j-codex-123456789012345678901234567890");
+                    .isEqualTo(DUMMY_CODEX_ACCESS_TOKEN);
             assertThat(subject.resolveStatus().authorized()).isTrue();
             assertThat(tokenRequestBody.get())
                     .contains("grant_type=authorization_code")
@@ -230,7 +231,7 @@ class CodexAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "sk-proj-chat4j-codex-123456789012345678901234567890",
+                  "accessToken": "DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }
@@ -252,7 +253,7 @@ class CodexAuthResolverTest {
         Files.createDirectories(tokenFile.getParent());
         Files.writeString(tokenFile, """
                 {
-                  "accessToken": "sk-proj-chat4j-codex-123456789012345678901234567890",
+                  "accessToken": "DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS",
                   "updatedAtEpochMs": 1776600000000,
                   "source": "Chat4J OAuth"
                 }

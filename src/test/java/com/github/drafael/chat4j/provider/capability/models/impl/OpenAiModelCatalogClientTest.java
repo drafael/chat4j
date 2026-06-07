@@ -488,27 +488,41 @@ class OpenAiModelCatalogClientTest {
                 }
                 """);
 
-        ProviderDescriptor descriptor = new ProviderDescriptor(
-                "OpenAI Codex",
-                AuthType.CODEX_OAUTH,
-                null,
-                null,
-                "http://127.0.0.1:9",
-                emptyList(),
-                ProviderCapabilities.chatAndModels(),
-                UnaryOperator.identity());
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(500, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
 
-        ProviderRuntime runtime = new ProviderRuntime(
-                descriptor,
-                null,
-                "http://127.0.0.1:9",
-                "test-token",
-                null
-        );
+        try {
+            String endpoint = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "OpenAI Codex",
+                    AuthType.CODEX_OAUTH,
+                    null,
+                    null,
+                    endpoint,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity());
 
-        List<String> models = subject.fetchModels(runtime);
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    endpoint,
+                    "DUMMY_CODEX_BEARER_TOKEN_FOR_TESTS",
+                    null
+            );
 
-        assertThat(models).contains("gpt-5-codex", "gpt-5-codex-mini");
-        assertThat(models).doesNotHaveDuplicates();
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).contains("gpt-5-codex", "gpt-5-codex-mini");
+            assertThat(models).doesNotHaveDuplicates();
+        } finally {
+            server.stop(0);
+        }
     }
 }

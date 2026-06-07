@@ -8,6 +8,7 @@ import com.google.common.jimfs.Configuration;
 import com.google.common.jimfs.Jimfs;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,9 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalToolRuntimeTest {
+
+    @TempDir
+    private Path tempDir;
 
     private final LocalToolRuntime subject = new LocalToolRuntime();
 
@@ -246,19 +250,19 @@ class LocalToolRuntimeTest {
     @Test
     @DisplayName("Bash tool executes shell command from selected project root")
     void execute_whenBashToolInvoked_runsWithinProjectRoot() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-bash");
+        Path projectRoot = Files.createDirectory(tempDir.resolve("chat4j-agent-bash"));
         Files.writeString(projectRoot.resolve("note.txt"), "hello", StandardCharsets.UTF_8);
 
         ToolInvocationResult result = subject.execute(
-                new ToolInvocationRequest("1", "bash", "{\"command\":\"pwd && ls\"}"),
+                new ToolInvocationRequest("1", "bash", "{\"command\":\"printf cwd-ok > cwd.txt && pwd && ls\"}"),
                 projectRoot,
                 () -> false
         );
 
         assertThat(result.success()).isTrue();
         assertThat(result.output()).contains("exit=0");
-        assertThat(result.output()).contains(projectRoot.toAbsolutePath().normalize().toString());
         assertThat(result.output()).contains("note.txt");
+        assertThat(Files.readString(projectRoot.resolve("cwd.txt"), StandardCharsets.UTF_8)).isEqualTo("cwd-ok");
     }
 
     @Test
@@ -267,7 +271,7 @@ class LocalToolRuntimeTest {
         Logger logger = (Logger) LoggerFactory.getLogger(LocalToolRuntime.class);
         ListAppender<ILoggingEvent> appender = attachListAppender(logger);
         try {
-            Path projectRoot = Files.createTempDirectory("chat4j-agent-bash-logging");
+            Path projectRoot = Files.createDirectory(tempDir.resolve("chat4j-agent-bash-logging"));
 
             subject.execute(
                     new ToolInvocationRequest("1", "bash", "{\"command\":\"echo log-test\"}"),
@@ -292,10 +296,10 @@ class LocalToolRuntimeTest {
         Logger logger = (Logger) LoggerFactory.getLogger(LocalToolRuntime.class);
         ListAppender<ILoggingEvent> appender = attachListAppender(logger);
         try {
-            Path projectRoot = Files.createTempDirectory("chat4j-agent-bash-redaction");
+            Path projectRoot = Files.createDirectory(tempDir.resolve("chat4j-agent-bash-redaction"));
 
             subject.execute(
-                    new ToolInvocationRequest("1", "bash", "{\"command\":\"echo OPENAI_API_KEY=secret-value --token secret-flag\"}"),
+                    new ToolInvocationRequest("1", "bash", "{\"command\":\"echo OPENAI_API_KEY=REDACTION_SENTINEL_VALUE --token REDACTION_FLAG_VALUE\"}"),
                     projectRoot,
                     () -> false
             );
@@ -305,8 +309,8 @@ class LocalToolRuntimeTest {
                         assertThat(event.getLevel()).isEqualTo(Level.INFO);
                         assertThat(event.getFormattedMessage()).contains("OPENAI_API_KEY=<redacted>");
                         assertThat(event.getFormattedMessage()).contains("--token <redacted>");
-                        assertThat(event.getFormattedMessage()).doesNotContain("secret-value");
-                        assertThat(event.getFormattedMessage()).doesNotContain("secret-flag");
+                        assertThat(event.getFormattedMessage()).doesNotContain("REDACTION_SENTINEL_VALUE");
+                        assertThat(event.getFormattedMessage()).doesNotContain("REDACTION_FLAG_VALUE");
                     });
         } finally {
             logger.detachAppender(appender);
@@ -316,7 +320,7 @@ class LocalToolRuntimeTest {
     @Test
     @DisplayName("Bash tool supports shell features")
     void execute_whenBashToolUsesShellFeatures_runsThroughBash() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-bash-shell");
+        Path projectRoot = Files.createDirectory(tempDir.resolve("chat4j-agent-bash-shell"));
 
         ToolInvocationResult result = subject.execute(
                 new ToolInvocationRequest("1", "bash", "{\"command\":\"printf 'hello' > generated.txt && cat generated.txt\"}"),
@@ -333,7 +337,7 @@ class LocalToolRuntimeTest {
     @Test
     @DisplayName("Bash tool truncates large command output")
     void execute_whenBashToolOutputIsLarge_returnsTruncatedOutput() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-bash-large-output");
+        Path projectRoot = Files.createDirectory(tempDir.resolve("chat4j-agent-bash-large-output"));
 
         ToolInvocationResult result = subject.execute(
                 new ToolInvocationRequest("1", "bash", "{\"command\":\"yes a | head -c 70000\"}"),

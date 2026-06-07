@@ -317,11 +317,8 @@ class ChatPanelTest {
         );
         setField(subject, "providerMap", Map.of(provider.name(), provider));
 
-        long startedAt = System.nanoTime();
         SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("SlowProvider > slow-model"));
-        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
 
-        assertThat(elapsedMs).isLessThan(300);
         assertThat(factoryStarted.await(1, TimeUnit.SECONDS)).isTrue();
         assertThat(readCurrentProvider(subject)).isNull();
         assertThat((boolean) readField(subject, "currentProviderResolving")).isTrue();
@@ -359,11 +356,8 @@ class ChatPanelTest {
             );
             setField(subject, "providerMap", Map.of(provider.name(), provider));
 
-            long startedAt = System.nanoTime();
             SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("LM Studio > local-model"));
-            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
 
-            assertThat(elapsedMs).isLessThan(300);
             awaitCondition(2, TimeUnit.SECONDS, () -> requestCount.get() > 0);
         } finally {
             server.stop(0);

@@ -21,7 +21,7 @@ class EnvironmentBootstrapperTest {
     @Test
     @DisplayName("Environment warning is not shown when shell environment is loaded")
     void shouldWarnUser_whenShellEnvironmentIsLoaded_returnsFalse() {
-        boolean shouldWarn = EnvironmentBootstrapper.shouldWarnUser(true, Map.of("OPENAI_API_KEY", "sk-test"), false);
+        boolean shouldWarn = EnvironmentBootstrapper.shouldWarnUser(true, Map.of("OPENAI_API_KEY", "DUMMY_OPENAI_KEY_FOR_TESTS"), false);
 
         assertThat(shouldWarn).isFalse();
     }

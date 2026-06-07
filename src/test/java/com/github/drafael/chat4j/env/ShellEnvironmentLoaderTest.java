@@ -41,13 +41,13 @@ class ShellEnvironmentLoaderTest {
     @Test
     @DisplayName("Environment parser ignores malformed lines and blank keys")
     void parseEnvOutput_whenLinesAreMalformed_ignoresInvalidEntries() {
-        var output = "NO_EQUALS_LINE\n=blankKey\nOPENAI_API_KEY=sk-test";
+        var output = "NO_EQUALS_LINE\n=blankKey\nOPENAI_API_KEY=DUMMY_OPENAI_KEY_FOR_TESTS";
 
         var parsed = ShellEnvironmentLoader.parseEnvOutput(output);
 
         assertThat(parsed)
                 .containsOnlyKeys("OPENAI_API_KEY")
-                .containsEntry("OPENAI_API_KEY", "sk-test");
+                .containsEntry("OPENAI_API_KEY", "DUMMY_OPENAI_KEY_FOR_TESTS");
     }
 
     @Test
@@ -66,8 +66,8 @@ class ShellEnvironmentLoaderTest {
     @DisplayName("Provider credential summary lists present key names without exposing values")
     void summarizeProviderCredentialNames_whenKnownKeysPresent_returnsSortedKeyNames() {
         var env = Map.of(
-                "OPENAI_API_KEY", "sk-openai",
-                "ANTHROPIC_API_KEY", "sk-anthropic",
+                "OPENAI_API_KEY", "DUMMY_OPENAI_KEY_FOR_TESTS",
+                "ANTHROPIC_API_KEY", "DUMMY_ANTHROPIC_KEY_FOR_TESTS",
                 "UNRELATED", "value"
         );
 

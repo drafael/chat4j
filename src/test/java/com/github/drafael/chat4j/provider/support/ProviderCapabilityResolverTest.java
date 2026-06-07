@@ -129,15 +129,20 @@ class ProviderCapabilityResolverTest {
 
     @Test
     @DisplayName("Hint-based image support is used when dynamic probing is unavailable")
-    void supportsImageInput_whenOllamaShowEndpointIsUnavailable_returnsTrueFromModelHints() {
-        boolean supported = ProviderCapabilityResolver.supportsImageInput(
-                ProviderCapabilities.chatAndModels(),
-                "Ollama",
-                "gemma4:e4b",
-                "http://127.0.0.1:9/v1"
-        );
+    void supportsImageInput_whenOllamaShowEndpointIsUnavailable_returnsTrueFromModelHints() throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(),
+                    "Ollama",
+                    "gemma4:e4b",
+                    endpoint(server)
+            );
 
-        assertThat(supported).isTrue();
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -960,54 +965,74 @@ class ProviderCapabilityResolverTest {
 
     @Test
     @DisplayName("Ollama chat models default to tool invocation support")
-    void supportsToolInvocation_whenOllamaModelHasNoMetadata_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
-                "Ollama",
-                "llama3.2:3b",
-                "http://127.0.0.1:9/v1"
-        );
+    void supportsToolInvocation_whenOllamaModelHasNoMetadata_returnsTrue() throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "Ollama",
+                    "llama3.2:3b",
+                    endpoint(server)
+            );
 
-        assertThat(supported).isTrue();
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
     @DisplayName("Ollama non-chat deny hints still disable tool invocation support")
-    void supportsToolInvocation_whenOllamaModelMatchesDenyHints_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
-                "Ollama",
-                "whisper:latest",
-                "http://127.0.0.1:9/v1"
-        );
+    void supportsToolInvocation_whenOllamaModelMatchesDenyHints_returnsFalse() throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "Ollama",
+                    "whisper:latest",
+                    endpoint(server)
+            );
 
-        assertThat(supported).isFalse();
+            assertThat(supported).isFalse();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
     @DisplayName("LM Studio chat models default to tool invocation support")
-    void supportsToolInvocation_whenLmStudioModelHasNoMetadata_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
-                "LM Studio",
-                "openai/gpt-oss-20b",
-                "http://127.0.0.1:9/v1"
-        );
+    void supportsToolInvocation_whenLmStudioModelHasNoMetadata_returnsTrue() throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "LM Studio",
+                    "openai/gpt-oss-20b",
+                    endpoint(server)
+            );
 
-        assertThat(supported).isTrue();
+            assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
     @DisplayName("LM Studio deny hints still disable tool invocation support")
-    void supportsToolInvocation_whenLmStudioModelMatchesDenyHints_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
-                ProviderCapabilities.chatAndModels(),
-                "LM Studio",
-                "whisper:latest",
-                "http://127.0.0.1:9/v1"
-        );
+    void supportsToolInvocation_whenLmStudioModelMatchesDenyHints_returnsFalse() throws Exception {
+        HttpServer server = createUnavailableCapabilityServer();
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsToolInvocation(
+                    ProviderCapabilities.chatAndModels(),
+                    "LM Studio",
+                    "whisper:latest",
+                    endpoint(server)
+            );
 
-        assertThat(supported).isFalse();
+            assertThat(supported).isFalse();
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -1377,6 +1402,23 @@ class ProviderCapabilityResolverTest {
         );
 
         assertThat(supported).isFalse();
+    }
+
+    private HttpServer createUnavailableCapabilityServer() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(500, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private String endpoint(HttpServer server) {
+        return "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
     }
 
     private HttpServer createOllamaShowServer(String responseJson) throws Exception {
