@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.agent;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.formdev.flatlaf.util.SystemInfo;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -312,7 +313,7 @@ public final class LocalToolRuntime {
         warnIfBashMayAccessOutsideRoot(command, commandLogValue, workspaceRoot);
         BoundedOutputStream output = new BoundedOutputStream(MAX_TOOL_OUTPUT_BYTES);
         StartedProcess startedProcess = new ProcessExecutor()
-                .command("bash", "-lc", command)
+                .command(bashCommand(command))
                 .directory(workspaceRoot.lexical().toFile())
                 .redirectErrorStream(true)
                 .redirectOutput(output)
@@ -327,6 +328,46 @@ public final class LocalToolRuntime {
         }
         return result;
     }
+
+    private List<String> bashCommand(String command) {
+        return List.of(resolveBashExecutable(), "-lc", command);
+    }
+
+    private String resolveBashExecutable() {
+        String configured = firstExecutable(
+                System.getProperty("chat4j.bash.path"),
+                System.getenv("CHAT4J_BASH_PATH")
+        );
+        if (StringUtils.isNotBlank(configured)) {
+            return configured;
+        }
+
+        if (SystemInfo.isWindows) {
+            String gitBash = firstExecutable(
+                    "C:\\Program Files\\Git\\bin\\bash.exe",
+                    "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+                    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+                    "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe"
+            );
+            if (StringUtils.isNotBlank(gitBash)) {
+                return gitBash;
+            }
+        }
+
+        return "bash";
+    }
+
+    private String firstExecutable(String... candidates) {
+        return Stream.of(candidates)
+                .filter(StringUtils::isNotBlank)
+                .map(Path::of)
+                .filter(Files::isRegularFile)
+                .filter(Files::isExecutable)
+                .map(Path::toString)
+                .findFirst()
+                .orElse(null);
+    }
+
 
     private ProcessResult awaitProcess(
             StartedProcess startedProcess,
