@@ -487,15 +487,21 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private String activeEngineIconPath() {
-        return engineIconPath(runtimeStatus.activeEngine());
+        return activeEngineIconPath(runtimeStatus.activeEngine());
     }
 
-    private static String engineIconPath(ChatWebViewEngine engine) {
+    private static String activeEngineIconPath(ChatWebViewEngine engine) {
         return switch (engine) {
             case JEDITOR_PANE -> "/icons/settings/java-original.svg";
             case JCEF -> "/icons/settings/chromium-logo.svg";
             case NATIVE_WEBVIEW -> nativeWebViewIconPath();
         };
+    }
+
+    private static String selectorEngineIconPath(ChatWebViewEngine engine) {
+        return engine == ChatWebViewEngine.NATIVE_WEBVIEW
+                ? nativeWebViewSelectorIconPath()
+                : activeEngineIconPath(engine);
     }
 
     private static String nativeWebViewIconPath() {
@@ -504,6 +510,22 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
         if (SystemInfo.isWindows) {
             return "/icons/settings/microsoft-edge-logo.svg";
+        }
+        if (SystemInfo.isLinux) {
+            return "/icons/settings/webkit-logo.svg";
+        }
+        return "/icons/settings/cpu.svg";
+    }
+
+    private static String nativeWebViewSelectorIconPath() {
+        if (SystemInfo.isMacOS) {
+            return "/icons/settings/apple-original.svg";
+        }
+        if (SystemInfo.isWindows) {
+            return "/icons/settings/windows11-original.svg";
+        }
+        if (SystemInfo.isLinux) {
+            return "/icons/settings/linux-original.svg";
         }
         return "/icons/settings/cpu.svg";
     }
@@ -825,7 +847,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
 
         private Icon loadEngineIcon(ChatWebViewEngine engine) {
-            URL url = AppearancePanel.class.getResource(engineIconPath(engine));
+            URL url = AppearancePanel.class.getResource(selectorEngineIconPath(engine));
             return url == null ? null : new FlatSVGIcon(url).derive(18, 18);
         }
     }

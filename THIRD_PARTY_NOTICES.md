@@ -47,7 +47,11 @@ src/main/resources/web/highlight/LICENSE
 - Project: https://devicon.dev/
 - Source: https://github.com/devicons/devicon
 - License: MIT
-- Bundled asset: `src/main/resources/icons/settings/java-original.svg`
+- Bundled assets:
+  - `src/main/resources/icons/settings/java-original.svg`
+  - `src/main/resources/icons/settings/apple-original.svg`
+  - `src/main/resources/icons/settings/windows11-original.svg`
+  - `src/main/resources/icons/settings/linux-original.svg`
 
 The Devicon license text is included at:
 
@@ -55,7 +59,7 @@ The Devicon license text is included at:
 src/main/resources/icons/settings/devicon-LICENSE
 ```
 
-Java is a trademark of Oracle and/or its affiliates. The bundled icon is used only to identify the Java/Swing fallback renderer and does not imply endorsement.
+Java, Apple, Windows, and Linux marks are trademarks of their respective owners. The bundled icons identify renderer/platform choices and do not imply endorsement.
 
 ## Browser Logos
 
@@ -73,6 +77,14 @@ src/main/resources/icons/settings/browser-logos-LICENSE
 ```
 
 Chromium, Microsoft Edge, and Safari are trademarks of their respective owners. The bundled icons identify the selected rendering engine and do not imply endorsement.
+
+## WebKit Logo
+
+- Project: https://webkit.org/
+- Source: https://commons.wikimedia.org/wiki/File:WebKit_logo.svg
+- Bundled asset: `src/main/resources/icons/settings/webkit-logo.svg`
+
+WebKit is open source software with portions licensed under LGPL and BSD licenses. The WebKit name and logo may be protected as trademarks. Chat4J uses the icon only to identify the Linux Native OS WebView backend, which is WebKitGTK, and does not imply endorsement by Apple, WebKit, or the WebKitGTK project.
 
 ## GraalJS Community / GraalVM Polyglot 24.2.1
 
