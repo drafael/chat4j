@@ -16,13 +16,25 @@ class ChatWebViewEngineTest {
     @Test
     @DisplayName("Setting value resolves to SwingWebView")
     void fromSettingValue_whenSwingWebViewSettingValue_returnsSwingWebView() {
-        assertThat(ChatWebViewEngine.fromSettingValue("swing-webview")).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(ChatWebViewEngine.fromSettingValue("native-webview")).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
     }
 
     @Test
     @DisplayName("Enum name resolves to SwingWebView")
     void fromSettingValue_whenEnumName_returnsSwingWebView() {
-        assertThat(ChatWebViewEngine.fromSettingValue("SWING_WEBVIEW")).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(ChatWebViewEngine.fromSettingValue("NATIVE_WEBVIEW")).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+    }
+
+    @Test
+    @DisplayName("Setting value resolves to JCEF")
+    void fromSettingValue_whenJcefSettingValue_returnsJcef() {
+        assertThat(ChatWebViewEngine.fromSettingValue("jcef")).isEqualTo(ChatWebViewEngine.JCEF);
+    }
+
+    @Test
+    @DisplayName("Enum name resolves to JCEF")
+    void fromSettingValue_whenJcefEnumName_returnsJcef() {
+        assertThat(ChatWebViewEngine.fromSettingValue("JCEF")).isEqualTo(ChatWebViewEngine.JCEF);
     }
 
     @Test

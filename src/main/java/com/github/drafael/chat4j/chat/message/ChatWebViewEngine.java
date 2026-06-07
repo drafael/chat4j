@@ -7,8 +7,9 @@ import java.util.Arrays;
 
 public enum ChatWebViewEngine {
 
-    JEDITOR_PANE("jeditor-pane", "JEditorPane"),
-    SWING_WEBVIEW("swing-webview", "SwingWebView");
+    JEDITOR_PANE("jeditor-pane", "Swing HTML Renderer"),
+    NATIVE_WEBVIEW("native-webview", "Native OS WebView"),
+    JCEF("jcef", "Chromium Embedded Framework");
 
     private final String settingValue;
     private final String displayName;

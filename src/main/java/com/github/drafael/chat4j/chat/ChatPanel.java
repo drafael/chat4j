@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.message.ChatMessageView;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
+import com.github.drafael.chat4j.chat.message.JcefTranscriptView;
 import com.github.drafael.chat4j.chat.message.SwingWebViewTranscriptView;
 import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
 import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
@@ -142,6 +143,7 @@ public class ChatPanel extends JPanel {
     private final ChatMessageViewFactory messageViewFactory;
     private final ChatWebViewEngine chatWebViewEngine;
     private final SwingWebViewTranscriptView webTranscriptView;
+    private final JcefTranscriptView jcefTranscriptView;
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
@@ -249,9 +251,13 @@ public class ChatPanel extends JPanel {
         this.modelFavoritesService = modelFavoritesService;
         this.messageViewFactory = messageViewFactory;
         this.chatWebViewEngine = chatWebViewEngine;
-        this.webTranscriptView = chatWebViewEngine == ChatWebViewEngine.SWING_WEBVIEW ? new SwingWebViewTranscriptView() : null;
+        this.webTranscriptView = chatWebViewEngine == ChatWebViewEngine.NATIVE_WEBVIEW ? new SwingWebViewTranscriptView() : null;
+        this.jcefTranscriptView = chatWebViewEngine == ChatWebViewEngine.JCEF ? new JcefTranscriptView() : null;
         if (this.webTranscriptView != null) {
             this.webTranscriptView.setActionListener(this::handleWebTranscriptAction);
+        }
+        if (this.jcefTranscriptView != null) {
+            this.jcefTranscriptView.setActionListener(this::handleWebTranscriptAction);
         }
         this.agentOrchestrator = AgentOrchestrator.createDefault();
         setLayout(new BorderLayout());
@@ -416,11 +422,22 @@ public class ChatPanel extends JPanel {
     }
 
     private JComponent chatTranscriptComponent() {
-        return isSwingWebViewTranscriptEnabled() ? webTranscriptView.component() : scrollPane;
+        if (isSwingWebViewTranscriptEnabled()) {
+            return webTranscriptView.component();
+        }
+        return isJcefTranscriptEnabled() ? jcefTranscriptView.component() : scrollPane;
     }
 
     private boolean isSwingWebViewTranscriptEnabled() {
-        return chatWebViewEngine == ChatWebViewEngine.SWING_WEBVIEW && webTranscriptView != null;
+        return chatWebViewEngine == ChatWebViewEngine.NATIVE_WEBVIEW && webTranscriptView != null;
+    }
+
+    private boolean isJcefTranscriptEnabled() {
+        return chatWebViewEngine == ChatWebViewEngine.JCEF && jcefTranscriptView != null;
+    }
+
+    private boolean isBrowserTranscriptEnabled() {
+        return isSwingWebViewTranscriptEnabled() || isJcefTranscriptEnabled();
     }
 
     @Override
@@ -437,6 +454,9 @@ public class ChatPanel extends JPanel {
         }
         if (webTranscriptView != null && !webTranscriptView.isDisposed()) {
             webTranscriptView.dispose();
+        }
+        if (jcefTranscriptView != null && !jcefTranscriptView.isDisposed()) {
+            jcefTranscriptView.dispose();
         }
         super.removeNotify();
     }
@@ -2330,7 +2350,13 @@ public class ChatPanel extends JPanel {
     }
 
     private void refreshWebTranscript(boolean scrollToBottom, boolean forceReload) {
-        if (!isSwingWebViewTranscriptEnabled() || webTranscriptView.isDisposed() || messagesPanel == null) {
+        if (!isBrowserTranscriptEnabled() || messagesPanel == null) {
+            return;
+        }
+        if (isSwingWebViewTranscriptEnabled() && webTranscriptView.isDisposed()) {
+            return;
+        }
+        if (isJcefTranscriptEnabled() && jcefTranscriptView.isDisposed()) {
             return;
         }
 
@@ -2342,10 +2368,39 @@ public class ChatPanel extends JPanel {
                 .toList();
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
         boolean showJumpButton = streaming;
-        webTranscriptView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
-        if (forceReload) {
-            webTranscriptView.reload(shouldScrollToBottom);
+        if (isSwingWebViewTranscriptEnabled()) {
+            webTranscriptView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+            if (forceReload) {
+                webTranscriptView.reload(shouldScrollToBottom);
+            }
+            return;
         }
+        jcefTranscriptView.setTranscript(toJcefTranscriptEntries(entries), renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+        if (forceReload) {
+            jcefTranscriptView.reload(shouldScrollToBottom);
+        }
+    }
+
+    private List<JcefTranscriptView.Entry> toJcefTranscriptEntries(List<SwingWebViewTranscriptView.Entry> entries) {
+        return entries.stream()
+                .map(entry -> new JcefTranscriptView.Entry(
+                        JcefTranscriptView.EntryKind.valueOf(entry.kind().name()),
+                        entry.role(),
+                        entry.title(),
+                        entry.text(),
+                        entry.collapsed(),
+                        entry.messageIndex(),
+                        entry.attachments().stream()
+                                .map(attachment -> new JcefTranscriptView.TranscriptAttachment(
+                                        attachment.storagePath(),
+                                        attachment.originalName(),
+                                        attachment.mimeType(),
+                                        attachment.sizeBytes(),
+                                        attachment.image()
+                                ))
+                                .toList()
+                ))
+                .toList();
     }
 
     private SwingWebViewTranscriptView.Entry toTranscriptEntry(Component component, int[] messageIndex) {
@@ -2817,6 +2872,10 @@ public class ChatPanel extends JPanel {
     private void scrollToBottomNow() {
         if (isSwingWebViewTranscriptEnabled()) {
             webTranscriptView.scrollToBottom();
+            return;
+        }
+        if (isJcefTranscriptEnabled()) {
+            jcefTranscriptView.scrollToBottom();
             return;
         }
 

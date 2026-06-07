@@ -57,6 +57,23 @@ src/main/resources/icons/settings/devicon-LICENSE
 
 Java is a trademark of Oracle and/or its affiliates. The bundled icon is used only to identify the Java/Swing fallback renderer and does not imply endorsement.
 
+## Browser Logos
+
+- Project: https://github.com/alrra/browser-logos
+- License: MIT
+- Bundled assets:
+  - `src/main/resources/icons/settings/chromium-logo.svg`
+  - `src/main/resources/icons/settings/microsoft-edge-logo.svg`
+  - `src/main/resources/icons/settings/safari-logo.svg`
+
+The Browser Logos license text is included at:
+
+```text
+src/main/resources/icons/settings/browser-logos-LICENSE
+```
+
+Chromium, Microsoft Edge, and Safari are trademarks of their respective owners. The bundled icons identify the selected rendering engine and do not imply endorsement.
+
 ## GraalJS Community / GraalVM Polyglot 24.2.1
 
 - Project: https://www.graalvm.org/javascript/

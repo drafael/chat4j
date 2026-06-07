@@ -1,6 +1,10 @@
 package com.github.drafael.chat4j;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
+import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
+import com.github.drafael.chat4j.storage.SettingsKeys;
+import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -59,7 +63,11 @@ public final class AboutDialog {
     }
 
     public static void show(Window owner) {
-        Info info = loadInfo();
+        show(owner, null, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+    }
+
+    public static void show(Window owner, SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
+        Info info = loadInfo(settingsRepo, webViewRuntimeStatus);
 
         JDialog dialog = new JDialog(owner, "About %s".formatted(info.appName), Dialog.ModalityType.APPLICATION_MODAL);
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -191,7 +199,7 @@ public final class AboutDialog {
         return icon;
     }
 
-    private static Info loadInfo() {
+    private static Info loadInfo(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
         Properties build = loadProperties("/build.properties");
         Properties git = loadProperties("/git.properties");
 
@@ -213,6 +221,8 @@ public final class AboutDialog {
             rows.put("Commit date", commitTime);
         }
 
+        rows.put("WebView engine", formatWebViewEngine(settingsRepo, webViewRuntimeStatus));
+
         Runtime.Version rtv = Runtime.version();
         String vendor = System.getProperty("java.vendor", "");
         rows.put("Java", "%s%s".formatted(rtv, vendor.isBlank() ? "" : " (%s)".formatted(vendor)));
@@ -224,6 +234,34 @@ public final class AboutDialog {
         ));
 
         return new Info(appName, rows);
+    }
+
+    private static String formatWebViewEngine(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
+        ChatWebViewRuntimeStatus status = webViewRuntimeStatus != null
+                ? webViewRuntimeStatus
+                : ChatWebViewRuntimeStatus.jEditorPaneDefault();
+        ChatWebViewEngine selectedEngine = selectedWebViewEngine(settingsRepo, status);
+        ChatWebViewEngine activeEngine = status.activeEngine();
+
+        if (selectedEngine == activeEngine && !status.hasFallback()) {
+            return activeEngine.displayName();
+        }
+        if (status.hasFallback()) {
+            return "%s selected, %s active (fallback)".formatted(selectedEngine.displayName(), activeEngine.displayName());
+        }
+        return "%s selected, %s active until restart".formatted(selectedEngine.displayName(), activeEngine.displayName());
+    }
+
+    private static ChatWebViewEngine selectedWebViewEngine(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus status) {
+        if (settingsRepo == null) {
+            return status.configuredEngine();
+        }
+        try {
+            String value = settingsRepo.get(SettingsKeys.CHAT_WEB_VIEW_ENGINE, status.configuredEngine().settingValue());
+            return ChatWebViewEngine.fromSettingValue(value);
+        } catch (Exception e) {
+            return status.configuredEngine();
+        }
     }
 
     private static String formatBuildDate(String raw) {

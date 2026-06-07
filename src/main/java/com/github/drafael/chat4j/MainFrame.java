@@ -390,7 +390,9 @@ public class MainFrame extends JFrame {
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
         this.chatWebViewRuntimeStatus = new ChatWebViewRuntimeStatusResolver(settingsRepo).resolve();
-        if (chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.SWING_WEBVIEW) {
+        if (chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.NATIVE_WEBVIEW
+                || chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.JCEF
+        ) {
             PopupMenuSupport.preferHeavyweightPopups();
         }
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
@@ -606,8 +608,12 @@ public class MainFrame extends JFrame {
 
         SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
                 this,
-                "SwingWebView could not start, so Chat4J is using JEditorPane for this session.\n\n%s"
-                        .formatted(chatWebViewRuntimeStatus.fallbackReason()),
+                "%s could not start, so Chat4J is using %s for this session.\n\n%s"
+                        .formatted(
+                                chatWebViewRuntimeStatus.configuredEngine().displayName(),
+                                chatWebViewRuntimeStatus.activeEngine().displayName(),
+                                chatWebViewRuntimeStatus.fallbackReason()
+                        ),
                 "Chat WebView Fallback",
                 JOptionPane.WARNING_MESSAGE
         ));
@@ -635,7 +641,7 @@ public class MainFrame extends JFrame {
         Desktop desktop = Desktop.getDesktop();
         desktop.setPreferencesHandler(e -> openSettings());
         if (desktop.isSupported(Desktop.Action.APP_ABOUT)) {
-            desktop.setAboutHandler(e -> AboutDialog.show(this));
+            desktop.setAboutHandler(e -> AboutDialog.show(this, settingsRepo, chatWebViewRuntimeStatus));
         }
         desktop.setQuitHandler((e, response) -> {
             response.cancelQuit();
@@ -1510,7 +1516,7 @@ public class MainFrame extends JFrame {
                         this::ensureThemesMenuReady,
                         this::ensureFontMenuReady,
                         this::ensureModelsMenuReady,
-                        () -> AboutDialog.show(this)
+                        () -> AboutDialog.show(this, settingsRepo, chatWebViewRuntimeStatus)
                 ),
                 this::syncTogglePreviewMenuSelection,
                 new MainMenuBarEnsureStateResolver.CurrentState(

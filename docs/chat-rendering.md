@@ -1,8 +1,8 @@
-# Chat Rendering
+# Chat Rendering and WebView Engines
 
-Chat4J has two chat transcript engines behind the same message model.
+Chat4J has one message model and three transcript engines. The browser-backed engines replace only the transcript area; the sidebar, composer, model selector, settings, and Swing source message views stay Swing.
 
-## Engines
+## Engine setting
 
 Setting key:
 
@@ -12,98 +12,128 @@ chat4j.chat.webView.engine
 
 Values:
 
-- `jeditor-pane` — Swing `JEditorPane`; fallback everywhere and default when native WebView is not selected.
-- `swing-webview` — one full-transcript SwingWebView; default on macOS, and default on Windows only when the startup capability check passes.
+- `jeditor-pane` — Swing HTML Renderer; final fallback everywhere.
+- `native-webview` — Native OS WebView backed by SwingWebView.
+- `jcef` — Chromium Embedded Framework (JCEF).
 
-Engine changes require restart because startup resolves the active renderer once. If SwingWebView is explicitly configured but unavailable, Chat4J keeps the setting for diagnostics, warns non-fatally, and uses `JEditorPane` for the session. On Windows with no saved engine setting, Chat4J only defaults to SwingWebView after the startup capability check passes; otherwise it starts with `JEditorPane` without treating that as a fallback.
+Engine changes require restart. Startup resolves one configured engine and one active engine. Chat4J keeps the requested setting for diagnostics even if the active engine falls back.
+
+Fallback chains:
+
+- macOS/Windows: `native-webview` → `jcef` → `jeditor-pane`
+- Linux/other: `jcef` → `jeditor-pane`
+
+With no saved setting, the first engine in the platform chain is treated as the configured/default engine for that session.
 
 ## Architecture
 
-The production WebView path replaces only the transcript area. Sidebar, composer, model selector, settings, and source Swing message views remain Swing.
-
 Key classes:
 
-- `ChatWebViewEngine` — persisted engine values.
-- `ChatWebViewRuntimeStatus` / `ChatWebViewRuntimeStatusResolver` — startup resolution, defaulting, and fallback reason.
-- `AppearancePanel` — appearance settings plus WebView engine and diagnostics UI.
-- `ChatMessageViewFactory`, `MessageBubble`, `MessageContentView` — renderer-neutral message boundary.
-- `JEditorPaneMessageContentView` — Swing fallback/default renderer.
-- `SwingWebViewTranscriptView` — production full-transcript WebView renderer.
-- `SwingWebViewMessageContentView` — retained per-message spike implementation; not used for production transcript rendering.
+- `ChatWebViewEngine` — persisted engine values and display labels.
+- `ChatWebViewRuntimeStatus` / `ChatWebViewRuntimeStatusResolver` — startup resolution, availability checks, active-engine selection, and fallback reason.
+- `AppearancePanel` — engine selector and diagnostics UI.
+- `ChatMessageViewFactory`, `MessageBubble`, `MessageContentView`, `JEditorPaneMessageContentView` — Swing source message model and final fallback renderer.
+- `SwingWebViewTranscriptView` — full-transcript Native OS WebView renderer.
+- `JcefRuntime` / `JcefTranscriptView` — JCEF startup and full-transcript Chromium renderer.
 - `MessageHtmlRenderer` — message-to-HTML conversion.
-- `ExternalLinkSupport` — shared safe link opener.
+- `ExternalLinkSupport` — shared external-link allowlist and opener.
 
-`ChatPanel` maintains Swing message views as the source model. In SwingWebView mode it mirrors those messages into `SwingWebViewTranscriptView`. This avoids native clipping/scroll issues seen with per-message WebViews inside a Swing scroll pane.
+Data flow:
 
-## SwingWebView behavior
+1. `ChatPanel` creates and maintains Swing `ChatMessageView` instances as the source model.
+2. In `jeditor-pane` mode, those views are displayed directly.
+3. In `native-webview` or `jcef` mode, `ChatPanel` mirrors the source views into one full-transcript browser component.
+4. Full-transcript browser views are disposed from `ChatPanel.removeNotify()`.
 
-The transcript WebView owns:
+The full-transcript design avoids per-message native browser churn and the clipping/scrolling problems seen with native components inside Swing scroll panes.
 
-- Markdown, table, code, activity-bubble, and source-preview HTML.
-- Theme-aware syntax highlighting for labelled fenced code blocks and raw Markdown/source mode.
-- Theme-aware CSS matching FlatLaf colors.
-- Safe external-link routing for `http`, `https`, and `mailto`; `javascript:`, `file:`, and `data:` links are rejected.
-- Selected-text copy, context-menu actions, code/activity copy buttons, hover actions, custom scrollbar, fades, and jump-to-latest control.
-- Session-scoped streaming updates; stale callbacks are ignored when they do not belong to the visible session.
+## Browser transcript behavior
 
-When conversation history loads or a visible stream completes, the transcript is refreshed to avoid stale DOM state. Native WebView resources are disposed from `ChatPanel.removeNotify()`.
+Both browser engines own the rendered transcript chrome:
+
+- markdown, tables, code blocks, activity bubbles, attachments, and source previews
+- light/dark theme CSS derived from FlatLaf colors
+- custom scrollbar, fades, and jump-to-latest control
+- selected-text copy, context-menu actions, code/activity copy buttons, and regenerate actions
+- safe external-link routing for `http`, `https`, and `mailto`
+- rejection of `javascript:`, `file:`, and `data:` links
+- stale-update protection during streaming and conversation switches
+
+When conversation history loads or a visible stream completes, the browser transcript is refreshed to avoid stale DOM state.
 
 ## Syntax highlighting
 
-SwingWebView uses bundled Highlight.js through GraalJS Community before the document is handed to the native WebView.
+Browser transcripts use bundled Highlight.js through GraalJS Community before HTML is loaded into the browser.
 
-Behavior:
+Rules:
 
-- Preview mode highlights fenced code blocks only when they declare a supported language.
-- Unlabelled code fences are not auto-detected and remain plain.
-- Unsupported languages remain plain while keeping the language header.
-- Inline code is not highlighted.
-- Math fallback blocks are excluded from syntax highlighting.
-- Markdown/raw mode renders the whole user or assistant message as highlighted `markdown` source.
+- labelled fenced code blocks are highlighted when the language is supported
+- unlabelled fences are not auto-detected
+- unsupported languages remain plain but keep the language header
+- inline code is not highlighted
+- math fallback blocks are excluded from highlighting
+- raw Markdown mode renders the whole message as highlighted `markdown` source
 
-Chat4J owns the `.hljs-*` CSS colors so highlighting follows the active light/dark FlatLaf theme. Highlight.js assets are bundled at `src/main/resources/web/highlight/` and listed in `THIRD_PARTY_NOTICES.md`.
+Bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScript, JSON, XML/HTML, CSS, Bash/Shell, YAML, SQL, Python, diff, and plaintext. Common aliases are normalized (`js` → `javascript`, `ts` → `typescript`, `sh`/`shell` → `bash`, `md` → `markdown`, `html` → `xml`).
 
-Initial bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScript, JSON, XML/HTML, CSS, Bash/Shell, YAML, SQL, Python, diff, and plaintext. Common aliases are normalized before rendering, for example `js` → `javascript`, `ts` → `typescript`, `sh`/`shell` → `bash`, `md` → `markdown`, and `html` → `xml`.
+## Math and chemistry
 
-Color normalization is intentionally conservative rather than fully semantic:
+Browser transcripts progressively enhance explicit math fallback nodes. Swing HTML Renderer keeps the readable fallback markup.
 
-- keywords, control-flow words, modifiers, and TypeScript/JavaScript built-in primitive types use the keyword color;
-- Java/Kotlin primitive types are post-processed with `chat4j-primitive` so `int`, `long`, `boolean`, `void`, etc. use the keyword color while class names remain neutral;
-- class names, method names, variables, fields/properties, attributes, operators, params, and punctuation use a neutral code color;
-- strings, comments, numbers/literals, tags/selectors, metadata, Markdown sections, and diff additions/deletions keep distinct colors.
+Supported input forms:
 
-## Math and chemistry rendering
-
-SwingWebView progressively enhances explicit math fallback nodes. `JEditorPane` keeps readable fallback markup.
-
-Supported input forms include:
-
-- Inline: `$...$`, `\(...\)`
-- Display: `$$...$$`, `\[...\]`
-- Common bare display-LaTeX lines emitted by providers, e.g. lines starting with `\text`, `\frac`, `\ce`, `\xrightarrow`, etc. when they also contain math operators.
-- Chemistry via KaTeX `mhchem`, e.g. `\ce{CO2 + H2O <=> H2CO3}` and `\pu{5 mol}`.
+- inline: `$...$`, `\(...\)`
+- display: `$$...$$`, `\[...\]`
+- common bare display-LaTeX lines, such as `\frac`, `\ce`, and `\xrightarrow`, when they contain math operators
+- KaTeX `mhchem`, such as `\ce{CO2 + H2O <=> H2CO3}` and `\pu{5 mol}`
 
 Implementation:
 
 1. Markdown emits explicit fallback nodes only:
    - inline: `code.md-latex-inline`
    - display: `table.md-code-block.md-latex-block`
-2. `KatexMathRenderer` runs bundled KaTeX/mhchem through GraalJS Community before the document is handed to SwingWebView.
-3. Successfully rendered formulas replace fallback nodes with KaTeX HTML.
-4. Invalid or unsupported formulas leave the original fallback visible.
-5. A WebView-side helper remains as best-effort progressive enhancement, but runtime correctness does not depend on native WebView JavaScript execution.
+2. `KatexMathRenderer` runs bundled KaTeX/mhchem through GraalJS before browser load.
+3. Valid formulas are replaced with KaTeX HTML.
+4. Invalid or unsupported formulas keep the fallback visible.
+5. A browser-side helper remains as best-effort progressive enhancement.
 
-Why explicit nodes only: avoid false positives such as currency, source links, ordinary code, and prose.
+Assets:
 
-Assets and notices:
+- Highlight.js: `src/main/resources/web/highlight/`
+- KaTeX/mhchem: `src/main/resources/web/katex/`
+- Notices: `THIRD_PARTY_NOTICES.md`
 
-- KaTeX resources: `src/main/resources/web/katex/`
-- Third-party notices: `THIRD_PARTY_NOTICES.md`
-- GraalJS dependency: `org.graalvm.polyglot:js-community` to avoid the enterprise/GFTC artifact.
+## JCEF notes
+
+JCEF is production-selectable but still has native-platform risk. It is intentionally isolated behind `JcefRuntime` and `JcefTranscriptView`.
+
+Runtime behavior:
+
+- `JcefRuntime` initializes CEF once per process.
+- Native/windowed rendering is the supported path; OSR/windowless remains experimental.
+- Transcript HTML is served through an in-memory `https://chat4j.local/...` resource handler.
+- The response declares UTF-8 and supplementary Unicode code points are encoded as numeric entities before loading.
+- In-browser navigation is blocked; safe links open externally through `ExternalLinkSupport`.
+- DevTools/remote debugging is opt-in with `-Dchat4j.jcef.devtools=true`.
+- Native runtime files are extracted through `me.friwi:jcefmaven` into `~/.chat4j/jcef-bundle` by default, or `-Dchat4j.jcef.installDir=...`.
+
+Known risks from the spike and local testing:
+
+- native/windowed JCEF can overpaint adjacent Swing components during resize/move
+- OSR/windowless hung during macOS spike testing
+- rapid browser dispose/recreate crashed native CEF during spike testing
+- explicit `CefApp.dispose()` trapped in local unsigned macOS runs
+- packaged macOS shutdown needs validation with the signed/notarized app layout
+
+See [jcef-intellij-findings.md](jcef-intellij-findings.md) for the source-backed IntelliJ/JCEF research notes.
 
 ## Packaging
 
-SwingWebView and GraalJS Community are normal Maven runtime dependencies. The shaded jar must merge `META-INF/services` entries; otherwise GraalJS can load `js` but not its dependent `regex` language, causing packaged-app math rendering to fall back to raw LaTeX.
+SwingWebView, JCEF, and GraalJS Community are normal Maven runtime dependencies. The shaded jar must merge `META-INF/services`; otherwise GraalJS can load `js` but not its dependent `regex` language, which makes packaged math rendering fall back to raw LaTeX.
+
+On macOS, JCEF requires AWT internal package exports/opens when attaching native browser components. Local Maven runs get these from `.mvn/jvm.config`; jpackage macOS builds pass equivalent `--java-options`.
+
+Package checks:
 
 ```bash
 mvn -q package
@@ -118,7 +148,7 @@ For the macOS custom runtime image, current modules are:
 java.se,jdk.crypto.ec,jdk.unsupported
 ```
 
-If SwingWebView reports missing modules at runtime, test adding likely candidates such as `jdk.jsobject`.
+If Native OS WebView reports missing modules at runtime, test adding likely candidates such as `jdk.jsobject`.
 
 ## Verification
 
@@ -142,6 +172,7 @@ Targeted tests:
 
 Manual checks:
 
-1. Confirm platform default (`SwingWebView` on macOS, capability-gated `SwingWebView` on Windows, `JEditorPane` elsewhere).
-2. Switch engine in **Settings → Appearance**, restart, and confirm diagnostics.
-3. Verify existing chats, streaming, conversation switching, markdown/raw mode, tables, code copy, source chips/previews, links, blocked unsafe links, scrolling, shutdown, and math/chem examples.
+1. Confirm fallback chains: Native OS WebView → JCEF → Swing HTML Renderer on macOS/Windows; JCEF → Swing HTML Renderer on Linux/other.
+2. Switch engine in **Settings → Appearance**, restart, and confirm diagnostics for all three engines.
+3. Verify existing chats, streaming, conversation switching, clearing chat, markdown/raw mode, tables, code copy, source chips/previews, safe links, blocked unsafe links, scrolling, shutdown, and math/chem examples.
+4. For JCEF, resize/move the window repeatedly and validate packaged shutdown on macOS, Windows, and Linux.

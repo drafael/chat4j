@@ -16,54 +16,86 @@ class ChatWebViewRuntimeStatusResolverTest {
     private Path tempDir;
 
     @Test
-    @DisplayName("Default settings use JEditorPane outside macOS and Windows")
-    void resolve_whenNoSettingConfiguredOutsideMacOsAndWindows_usesJEditorPane() {
-        var subject = resolver(false, false, available());
+    @DisplayName("Default settings use Native WebView on macOS when available")
+    void resolve_whenNoSettingConfiguredOnMacOsAndNativeWebViewAvailable_usesNativeWebView() {
+        var subject = resolver(true, false, nativeAvailable(), jcefAvailable());
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
-        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.jcefMode()).isEqualTo("Not checked");
         assertThat(result.hasFallback()).isFalse();
     }
 
     @Test
-    @DisplayName("Default settings use SwingWebView on macOS")
-    void resolve_whenNoSettingConfiguredOnMacOs_usesSwingWebView() {
-        var subject = resolver(true, false, available());
+    @DisplayName("Default settings use JCEF on macOS when Native WebView is unavailable")
+    void resolve_whenNoSettingConfiguredOnMacOsAndNativeWebViewUnavailable_usesJcefFallback() {
+        var subject = resolver(true, false, nativeUnavailable(), jcefAvailable());
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
-        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
-        assertThat(result.hasFallback()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Default settings use SwingWebView on Windows only when the startup capability check passes")
-    void resolve_whenNoSettingConfiguredOnWindowsAndSwingWebViewAvailable_usesSwingWebView() {
-        var subject = resolver(false, true, available());
-
-        ChatWebViewRuntimeStatus result = subject.resolve();
-
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
-        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
-        assertThat(result.swingWebViewAvailable()).isTrue();
-        assertThat(result.hasFallback()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Default settings keep JEditorPane on Windows when the startup capability check fails")
-    void resolve_whenNoSettingConfiguredOnWindowsAndSwingWebViewUnavailable_usesJEditorPaneWithoutFallback() {
-        var subject = resolver(false, true, unavailable());
-
-        ChatWebViewRuntimeStatus result = subject.resolve();
-
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
-        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JCEF);
         assertThat(result.swingWebViewAvailable()).isFalse();
-        assertThat(result.fallbackReason()).isEmpty();
+        assertThat(result.jcefAvailable()).isTrue();
+        assertThat(result.fallbackReason()).contains("Native OS WebView unavailable: missing runtime");
+        assertThat(result.hasFallback()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Default settings use JEditorPane on macOS when Native WebView and JCEF are unavailable")
+    void resolve_whenNoSettingConfiguredOnMacOsAndNativeWebViewAndJcefUnavailable_usesJEditorPaneFallback() {
+        var subject = resolver(true, false, nativeUnavailable(), jcefUnavailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
+        assertThat(result.fallbackReason())
+                .contains("Native OS WebView unavailable: missing runtime")
+                .contains("Chromium Embedded Framework unavailable: native bundle missing");
+        assertThat(result.hasFallback()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Default settings use Native WebView on Windows when available")
+    void resolve_whenNoSettingConfiguredOnWindowsAndNativeWebViewAvailable_usesNativeWebView() {
+        var subject = resolver(false, true, nativeAvailable(), jcefAvailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.swingWebViewAvailable()).isTrue();
+        assertThat(result.jcefMode()).isEqualTo("Not checked");
         assertThat(result.hasFallback()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Default settings use JCEF outside macOS and Windows when available")
+    void resolve_whenNoSettingConfiguredOutsideMacOsAndWindowsAndJcefAvailable_usesJcef() {
+        var subject = resolver(false, false, nativeAvailable(), jcefAvailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.jcefAvailable()).isTrue();
+        assertThat(result.hasFallback()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Default settings use JEditorPane outside macOS and Windows when JCEF is unavailable")
+    void resolve_whenNoSettingConfiguredOutsideMacOsAndWindowsAndJcefUnavailable_usesJEditorPaneFallback() {
+        var subject = resolver(false, false, nativeAvailable(), jcefUnavailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
+        assertThat(result.fallbackReason()).contains("Chromium Embedded Framework unavailable: native bundle missing");
+        assertThat(result.hasFallback()).isTrue();
     }
 
     @Test
@@ -71,7 +103,7 @@ class ChatWebViewRuntimeStatusResolverTest {
     void resolve_whenInvalidEngineConfigured_usesJEditorPane() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, "invalid");
-        var subject = resolver(settingsRepo, true, false, available());
+        var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefAvailable());
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
@@ -81,60 +113,119 @@ class ChatWebViewRuntimeStatusResolverTest {
     }
 
     @Test
-    @DisplayName("SwingWebView setting uses SwingWebView when dependency is available")
-    void resolve_whenSwingWebViewConfigured_usesSwingWebViewWhenAvailable() throws Exception {
+    @DisplayName("Native WebView setting uses Native WebView when available")
+    void resolve_whenNativeWebViewConfigured_usesNativeWebViewWhenAvailable() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.SWING_WEBVIEW.settingValue());
-        var subject = resolver(settingsRepo, false, false, available());
+        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.NATIVE_WEBVIEW.settingValue());
+        var subject = resolver(settingsRepo, false, false, nativeAvailable(), jcefAvailable());
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
-        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
         assertThat(result.swingWebViewAvailable()).isTrue();
-        assertThat(result.swingWebViewMode()).isNotBlank();
         assertThat(result.hasFallback()).isFalse();
     }
 
     @Test
-    @DisplayName("SwingWebView setting falls back to JEditorPane when dependency is unavailable")
-    void resolve_whenSwingWebViewConfiguredAndUnavailable_usesJEditorPaneFallback() throws Exception {
+    @DisplayName("Native WebView setting falls back through platform chain when unavailable")
+    void resolve_whenNativeWebViewConfiguredAndUnavailable_usesPlatformFallbackChain() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.SWING_WEBVIEW.settingValue());
-        var subject = resolver(settingsRepo, false, true, unavailable());
+        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.NATIVE_WEBVIEW.settingValue());
+        var subject = resolver(settingsRepo, true, false, nativeUnavailable(), jcefAvailable());
 
         ChatWebViewRuntimeStatus result = subject.resolve();
 
-        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.SWING_WEBVIEW);
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.fallbackReason()).contains("Native OS WebView unavailable: missing runtime");
+        assertThat(result.hasFallback()).isTrue();
+    }
+
+    @Test
+    @DisplayName("JCEF setting uses JCEF when runtime is available")
+    void resolve_whenJcefConfiguredAndAvailable_usesJcef() throws Exception {
+        SettingsRepo settingsRepo = settingsRepo();
+        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.JCEF.settingValue());
+        var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefAvailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.jcefAvailable()).isTrue();
+        assertThat(result.jcefMode()).isEqualTo("Windowed/native");
+        assertThat(result.hasFallback()).isFalse();
+    }
+
+    @Test
+    @DisplayName("JCEF setting falls back to Native WebView on macOS when JCEF is unavailable")
+    void resolve_whenJcefConfiguredAndUnavailableOnMacOs_usesPlatformFallbackChain() throws Exception {
+        SettingsRepo settingsRepo = settingsRepo();
+        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.JCEF.settingValue());
+        var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefUnavailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JCEF);
+        assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.NATIVE_WEBVIEW);
+        assertThat(result.fallbackReason()).contains("Chromium Embedded Framework unavailable: native bundle missing");
+        assertThat(result.hasFallback()).isTrue();
+    }
+
+    @Test
+    @DisplayName("JCEF setting falls back to JEditorPane on Linux when JCEF is unavailable")
+    void resolve_whenJcefConfiguredAndUnavailableOutsideMacOsAndWindows_usesJEditorPaneFallback() throws Exception {
+        SettingsRepo settingsRepo = settingsRepo();
+        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.JCEF.settingValue());
+        var subject = resolver(settingsRepo, false, false, nativeAvailable(), jcefUnavailable());
+
+        ChatWebViewRuntimeStatus result = subject.resolve();
+
+        assertThat(result.configuredEngine()).isEqualTo(ChatWebViewEngine.JCEF);
         assertThat(result.activeEngine()).isEqualTo(ChatWebViewEngine.JEDITOR_PANE);
-        assertThat(result.swingWebViewAvailable()).isFalse();
-        assertThat(result.fallbackReason()).isEqualTo("missing runtime");
         assertThat(result.hasFallback()).isTrue();
     }
 
     private ChatWebViewRuntimeStatusResolver resolver(
             boolean macOs,
             boolean windows,
-            ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability availability
+            ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability availability,
+            ChatWebViewRuntimeStatusResolver.JcefAvailability jcefAvailability
     ) {
-        return resolver(settingsRepo(), macOs, windows, availability);
+        return resolver(settingsRepo(), macOs, windows, availability, jcefAvailability);
     }
 
     private ChatWebViewRuntimeStatusResolver resolver(
             SettingsRepo settingsRepo,
             boolean macOs,
             boolean windows,
-            ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability availability
+            ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability availability,
+            ChatWebViewRuntimeStatusResolver.JcefAvailability jcefAvailability
     ) {
-        return new ChatWebViewRuntimeStatusResolver(settingsRepo, () -> macOs, () -> windows, () -> availability);
+        return new ChatWebViewRuntimeStatusResolver(
+                settingsRepo,
+                () -> macOs,
+                () -> windows,
+                () -> availability,
+                () -> jcefAvailability
+        );
     }
 
-    private ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability available() {
+    private ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability nativeAvailable() {
         return new ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability(true, "HEAVYWEIGHT", "");
     }
 
-    private ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability unavailable() {
+    private ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability nativeUnavailable() {
         return new ChatWebViewRuntimeStatusResolver.SwingWebViewAvailability(false, "Unavailable", "missing runtime");
+    }
+
+    private ChatWebViewRuntimeStatusResolver.JcefAvailability jcefAvailable() {
+        return new ChatWebViewRuntimeStatusResolver.JcefAvailability(true, "Windowed/native", "");
+    }
+
+    private ChatWebViewRuntimeStatusResolver.JcefAvailability jcefUnavailable() {
+        return new ChatWebViewRuntimeStatusResolver.JcefAvailability(false, "Unavailable", "native bundle missing");
     }
 
     private SettingsRepo settingsRepo() {

@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.6.11</version>
+    <version>26.6.12</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -26,6 +26,7 @@
         <jsoup.version>1.21.2</jsoup.version>
         <pdfbox.version>3.0.5</pdfbox.version>
         <swingwebview.version>1.0.7</swingwebview.version>
+        <jcefmaven.version>143.0.14</jcefmaven.version>
         <graaljs.version>24.2.1</graaljs.version>
         <h2.version>2.3.232</h2.version>
         <jimfs.version>1.3.1</jimfs.version>
@@ -148,6 +149,11 @@
             <groupId>ca.weblite</groupId>
             <artifactId>webview</artifactId>
             <version>${swingwebview.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>me.friwi</groupId>
+            <artifactId>jcefmaven</artifactId>
+            <version>${jcefmaven.version}</version>
         </dependency>
         <dependency>
             <groupId>org.graalvm.polyglot</groupId>
@@ -614,6 +620,18 @@
                                         <argument>-Dapple.awt.application.name=Chat4J</argument>
                                         <argument>--java-options</argument>
                                         <argument>-Dsun.java2d.metal=false</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.lwawt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-exports=java.desktop/sun.lwawt.macosx=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.awt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED</argument>
+                                        <argument>--java-options</argument>
+                                        <argument>--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED</argument>
                                         <argument>--icon</argument>
                                         <argument>${project.basedir}/src/main/resources/icons/icon.icns</argument>
                                         <argument>--resource-dir</argument>

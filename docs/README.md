@@ -14,7 +14,10 @@ Use this page as the canonical entry point for implementation and operational de
   - Agent Mode behavior, adapter selection, and fallback/runtime rules.
 
 - [chat-rendering.md](chat-rendering.md)
-  - `JEditorPane` / SwingWebView rendering, settings, fallback behavior, math/chem rendering, packaging, and validation.
+  - Swing HTML Renderer, Native OS WebView, JCEF, fallback behavior, math/chem rendering, packaging, and validation.
+
+- [configurable-web-view-engine.md](configurable-web-view-engine.md)
+  - Short architecture note for the configurable WebView boundary.
 
 ## Operations and packaging
 

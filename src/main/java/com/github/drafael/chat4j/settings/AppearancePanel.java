@@ -12,6 +12,7 @@ import com.formdev.flatlaf.intellijthemes.materialthemeuilite.*;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.formdev.flatlaf.themes.FlatMacLightLaf;
 import com.formdev.flatlaf.util.ColorFunctions;
+import com.formdev.flatlaf.util.SystemInfo;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -74,7 +75,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
     // Current accent color — shared with the system color getter
     private static Color accentColor;
 
-    private static final int WEB_VIEW_HEALTH_ICON_SIZE = 26;
+    private static final int WEB_VIEW_HEALTH_ICON_SIZE = 28;
+    private static final int WEB_VIEW_ENGINE_SELECTOR_WIDTH = 340;
 
     private final ChatWebViewRuntimeStatus runtimeStatus;
     private final JLabel webViewHealthIcon = new JLabel();
@@ -367,7 +369,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private int addChatWebViewSettings(JPanel form, GridBagConstraints gbc, int row) {
-        JComboBox<String> engineComboBox = withPreferredWidth(new JComboBox<>(engineSettingValues()), 220);
+        JComboBox<String> engineComboBox = withPreferredWidth(new JComboBox<>(engineSettingValues()), WEB_VIEW_ENGINE_SELECTOR_WIDTH);
         engineComboBox.setName("chatWebViewEngineComboBox");
         engineComboBox.setRenderer(new EngineRenderer());
         addRow(form, gbc, row++, "Engine", engineComboBox);
@@ -438,28 +440,37 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private WebViewHealth webViewHealth() {
         if (runtimeStatus.hasFallback()) {
             return new WebViewHealth(
-                    "/icons/settings/triangle-alert.svg",
-                    warningColor(),
-                    "%s fallback active".formatted(runtimeStatus.activeEngine().displayName()),
-                    "%s unavailable: %s".formatted(
+                    activeEngineIconPath(),
+                    null,
+                    "%s active (fallback)".formatted(runtimeStatus.activeEngine().displayName()),
+                    "Fallback from %s: %s".formatted(
                             runtimeStatus.configuredEngine().displayName(),
                             StringUtils.defaultIfBlank(runtimeStatus.fallbackReason(), "unknown error"))
             );
         }
-        if (runtimeStatus.activeEngine() == ChatWebViewEngine.SWING_WEBVIEW) {
+        if (runtimeStatus.activeEngine() == ChatWebViewEngine.NATIVE_WEBVIEW) {
             String mode = StringUtils.defaultIfBlank(runtimeStatus.swingWebViewMode(), "unknown mode");
             return new WebViewHealth(
-                    "/icons/settings/circle-check.svg",
-                    successColor(),
+                    activeEngineIconPath(),
+                    null,
                     "%s active".formatted(runtimeStatus.activeEngine().displayName()),
-                    "Native WebView · %s component".formatted(mode)
+                    "Mode: %s component".formatted(mode)
+            );
+        }
+        if (runtimeStatus.activeEngine() == ChatWebViewEngine.JCEF) {
+            String mode = StringUtils.defaultIfBlank(runtimeStatus.jcefMode(), "windowed/native");
+            return new WebViewHealth(
+                    activeEngineIconPath(),
+                    null,
+                    "%s active".formatted(runtimeStatus.activeEngine().displayName()),
+                    "Mode: %s".formatted(mode)
             );
         }
         return new WebViewHealth(
-                "/icons/settings/java-original.svg",
+                activeEngineIconPath(),
                 null,
                 "%s active".formatted(runtimeStatus.activeEngine().displayName()),
-                "Swing HTML renderer · Native WebView disabled"
+                "Final Swing fallback"
         );
     }
 
@@ -475,16 +486,27 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return icon;
     }
 
-    private Color successColor() {
-        Color color = UIManager.getColor("Actions.Green");
-        return color != null ? color : new Color(34, 139, 34);
+    private String activeEngineIconPath() {
+        return engineIconPath(runtimeStatus.activeEngine());
     }
 
-    private Color warningColor() {
-        Color color = UIManager.getColor("Actions.Yellow");
-        return color != null ? color : new Color(180, 120, 0);
+    private static String engineIconPath(ChatWebViewEngine engine) {
+        return switch (engine) {
+            case JEDITOR_PANE -> "/icons/settings/java-original.svg";
+            case JCEF -> "/icons/settings/chromium-logo.svg";
+            case NATIVE_WEBVIEW -> nativeWebViewIconPath();
+        };
     }
 
+    private static String nativeWebViewIconPath() {
+        if (SystemInfo.isMacOS) {
+            return "/icons/settings/safari-logo.svg";
+        }
+        if (SystemInfo.isWindows) {
+            return "/icons/settings/microsoft-edge-logo.svg";
+        }
+        return "/icons/settings/cpu.svg";
+    }
 
     private void refreshRestartHint(String configuredValue) {
         ChatWebViewEngine configuredEngine = ChatWebViewEngine.fromSettingValue(configuredValue);
@@ -794,9 +816,17 @@ public class AppearancePanel extends AbstractSettingsPanel {
         ) {
             JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             if (value instanceof String settingValue) {
-                label.setText(ChatWebViewEngine.fromSettingValue(settingValue).displayName());
+                ChatWebViewEngine engine = ChatWebViewEngine.fromSettingValue(settingValue);
+                label.setText(engine.displayName());
+                label.setIcon(loadEngineIcon(engine));
+                label.setIconTextGap(8);
             }
             return label;
+        }
+
+        private Icon loadEngineIcon(ChatWebViewEngine engine) {
+            URL url = AppearancePanel.class.getResource(engineIconPath(engine));
+            return url == null ? null : new FlatSVGIcon(url).derive(18, 18);
         }
     }
 
