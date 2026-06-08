@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
-import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
@@ -78,7 +78,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static final int WEB_VIEW_HEALTH_ICON_SIZE = 28;
     private static final int WEB_VIEW_ENGINE_SELECTOR_WIDTH = 340;
 
-    private final ChatWebViewRuntimeStatus runtimeStatus;
+    private final WebViewRuntimeStatus runtimeStatus;
     private final JLabel webViewHealthIcon = new JLabel();
     private final JLabel webViewHealthTitle = new JLabel();
     private final JLabel webViewHealthDetails = new JLabel();
@@ -282,10 +282,10 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     public AppearancePanel(SettingsRepo settingsRepo) {
-        this(settingsRepo, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+        this(settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault());
     }
 
-    public AppearancePanel(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus runtimeStatus) {
+    public AppearancePanel(SettingsRepo settingsRepo, WebViewRuntimeStatus runtimeStatus) {
         super(settingsRepo);
         this.runtimeStatus = runtimeStatus;
 
@@ -375,7 +375,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         addRow(form, gbc, row++, "Engine", engineComboBox);
         bindComboBox(
                 engineComboBox,
-                SettingsKeys.CHAT_WEB_VIEW_ENGINE,
+                SettingsKeys.WEBVIEW_ENGINE,
                 runtimeStatus.configuredEngine().settingValue(),
                 engineValidator(),
                 value -> {
@@ -390,22 +390,22 @@ public class AppearancePanel extends AbstractSettingsPanel {
         row = addFullWidthRow(form, gbc, row, createWebViewHealthPanel());
 
         refreshDiagnostics(readString(
-                SettingsKeys.CHAT_WEB_VIEW_ENGINE,
+                SettingsKeys.WEBVIEW_ENGINE,
                 runtimeStatus.configuredEngine().settingValue()
         ));
         return row;
     }
 
     private SettingsValidator<String> engineValidator() {
-        Set<String> values = Arrays.stream(ChatWebViewEngine.values())
-                .map(ChatWebViewEngine::settingValue)
+        Set<String> values = Arrays.stream(WebViewEngine.values())
+                .map(WebViewEngine::settingValue)
                 .collect(toSet());
         return Validators.oneOf(values, "Invalid chat WebView engine");
     }
 
     private String[] engineSettingValues() {
-        return Arrays.stream(ChatWebViewEngine.values())
-                .map(ChatWebViewEngine::settingValue)
+        return Arrays.stream(WebViewEngine.values())
+                .map(WebViewEngine::settingValue)
                 .toArray(String[]::new);
     }
 
@@ -448,7 +448,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                             StringUtils.defaultIfBlank(runtimeStatus.fallbackReason(), "unknown error"))
             );
         }
-        if (runtimeStatus.activeEngine() == ChatWebViewEngine.NATIVE_WEBVIEW) {
+        if (runtimeStatus.activeEngine() == WebViewEngine.SYSTEM) {
             String mode = StringUtils.defaultIfBlank(runtimeStatus.swingWebViewMode(), "unknown mode");
             return new WebViewHealth(
                     activeEngineIconPath(),
@@ -457,7 +457,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                     "Mode: %s component".formatted(mode)
             );
         }
-        if (runtimeStatus.activeEngine() == ChatWebViewEngine.JCEF) {
+        if (runtimeStatus.activeEngine() == WebViewEngine.JCEF) {
             String mode = StringUtils.defaultIfBlank(runtimeStatus.jcefMode(), "windowed/native");
             return new WebViewHealth(
                     activeEngineIconPath(),
@@ -490,16 +490,16 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return activeEngineIconPath(runtimeStatus.activeEngine());
     }
 
-    private static String activeEngineIconPath(ChatWebViewEngine engine) {
+    private static String activeEngineIconPath(WebViewEngine engine) {
         return switch (engine) {
             case JEDITOR_PANE -> "/icons/settings/java-original.svg";
             case JCEF -> "/icons/settings/chromium-logo.svg";
-            case NATIVE_WEBVIEW -> nativeWebViewIconPath();
+            case SYSTEM -> nativeWebViewIconPath();
         };
     }
 
-    private static String selectorEngineIconPath(ChatWebViewEngine engine) {
-        return engine == ChatWebViewEngine.NATIVE_WEBVIEW
+    private static String selectorEngineIconPath(WebViewEngine engine) {
+        return engine == WebViewEngine.SYSTEM
                 ? nativeWebViewSelectorIconPath()
                 : activeEngineIconPath(engine);
     }
@@ -531,7 +531,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private void refreshRestartHint(String configuredValue) {
-        ChatWebViewEngine configuredEngine = ChatWebViewEngine.fromSettingValue(configuredValue);
+        WebViewEngine configuredEngine = WebViewEngine.fromSettingValue(configuredValue);
         if (runtimeStatus.hasFallback()) {
             restartHint.setText("Chat4J is using %s for this session. See diagnostics below."
                     .formatted(runtimeStatus.activeEngine().displayName()));
@@ -838,7 +838,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         ) {
             JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             if (value instanceof String settingValue) {
-                ChatWebViewEngine engine = ChatWebViewEngine.fromSettingValue(settingValue);
+                WebViewEngine engine = WebViewEngine.fromSettingValue(settingValue);
                 label.setText(engine.displayName());
                 label.setIcon(loadEngineIcon(engine));
                 label.setIconTextGap(8);
@@ -846,7 +846,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
             return label;
         }
 
-        private Icon loadEngineIcon(ChatWebViewEngine engine) {
+        private Icon loadEngineIcon(WebViewEngine engine) {
             URL url = AppearancePanel.class.getResource(selectorEngineIconPath(engine));
             return url == null ? null : new FlatSVGIcon(url).derive(18, 18);
         }

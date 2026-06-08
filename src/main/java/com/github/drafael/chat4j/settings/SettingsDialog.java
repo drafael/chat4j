@@ -2,7 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
-import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
 
@@ -30,13 +30,13 @@ public class SettingsDialog extends JDialog {
     private final PropertyChangeListener lafChangeListener;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepo settingsRepo) {
-        this(owner, settingsRepo, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+        this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault());
     }
 
     public SettingsDialog(
             @NonNull Frame owner,
             @NonNull SettingsRepo settingsRepo,
-            @NonNull ChatWebViewRuntimeStatus chatWebViewRuntimeStatus
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus
     ) {
         super(owner, "Settings", true);
 
@@ -81,7 +81,7 @@ public class SettingsDialog extends JDialog {
         add(titleBarSpacer, BorderLayout.NORTH);
     }
 
-    private JComponent createSettingsShell(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus chatWebViewRuntimeStatus) {
+    private JComponent createSettingsShell(SettingsRepo settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         sections = createSections(settingsRepo, chatWebViewRuntimeStatus);
 
         DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
@@ -138,7 +138,7 @@ public class SettingsDialog extends JDialog {
         return splitPane;
     }
 
-    private List<SettingsSection> createSections(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus chatWebViewRuntimeStatus) {
+    private List<SettingsSection> createSections(SettingsRepo settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         return List.of(
                 new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo)),
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus)),

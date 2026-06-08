@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.bootstrap;
 
-import com.github.drafael.chat4j.chat.message.JcefInitializationProgress;
+import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefInitializationProgress;
 import com.github.drafael.chat4j.util.Fonts;
 
 import javax.swing.*;

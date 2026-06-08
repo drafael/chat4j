@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.bootstrap;
 
-import com.github.drafael.chat4j.chat.message.JcefRuntime;
+import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefRuntime;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;

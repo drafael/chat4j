@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.storage;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Locale;
@@ -26,7 +26,7 @@ public final class SettingsKeys {
     public static final String CHAT_RENDER_MODE = "chat4j.chat.render.mode";
     public static final String CHAT_RENDER_MODE_PREVIEW = RenderMode.PREVIEW.settingValue();
     public static final String CHAT_RENDER_MODE_MARKDOWN = RenderMode.MARKDOWN.settingValue();
-    public static final String CHAT_WEB_VIEW_ENGINE = "chat4j.chat.webView.engine";
+    public static final String WEBVIEW_ENGINE = "chat4j.chat.webView.engine";
 
     public static final String PROVIDER_PREFIX = "chat4j.provider.";
     public static final String PROVIDER_ENABLED_SUFFIX = ".enabled";

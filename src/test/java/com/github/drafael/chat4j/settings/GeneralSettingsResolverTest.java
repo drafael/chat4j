@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.junit.jupiter.api.DisplayName;

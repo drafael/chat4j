@@ -1,9 +1,8 @@
 package com.github.drafael.chat4j.chat;
 
-import org.apache.commons.lang3.StringUtils;
-
+import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
 import java.util.List;
-
+import org.apache.commons.lang3.StringUtils;
 import static java.util.Collections.emptyList;
 
 public record ComposerState(String text, List<ComposerAttachment> attachments, List<String> activeSkills) {

@@ -1,6 +1,6 @@
 # Chat Rendering and WebView Engines
 
-Chat4J has one message model and three transcript engines. The browser-backed engines replace only the transcript area; the sidebar, composer, model selector, settings, and Swing source message views stay Swing.
+Chat4J has one message model and three conversation engines. The browser-backed engines replace only the conversation area; the sidebar, composer, model selector, settings, and Swing source message views stay Swing.
 
 ## Engine setting
 
@@ -13,28 +13,28 @@ chat4j.chat.webView.engine
 Values:
 
 - `jeditor-pane` — Swing HTML Renderer; final fallback everywhere.
-- `native-webview` — Native OS WebView backed by SwingWebView.
+- `system` — System WebView backed by SwingWebView.
 - `jcef` — Chromium Embedded Framework (JCEF).
 
 Engine changes require restart. Startup resolves one configured engine and one active engine. Chat4J keeps the requested setting for diagnostics even if the active engine falls back.
 
 Fallback chains:
 
-- macOS/Windows: `native-webview` → `jcef` → `jeditor-pane`
+- macOS/Windows: `system` → `jcef` → `jeditor-pane`
 - Linux/other: `jcef` → `jeditor-pane`
 
-With no saved setting, the first engine in the platform chain is treated as the configured/default engine for that session.
+With no saved setting, the first engine in the platform chain is treated as the configured/default engine for that session. Unknown or obsolete saved values are treated the same way.
 
 ## Architecture
 
 Key classes:
 
-- `ChatWebViewEngine` — persisted engine values and display labels.
-- `ChatWebViewRuntimeStatus` / `ChatWebViewRuntimeStatusResolver` — startup resolution, availability checks, active-engine selection, and fallback reason.
+- `WebViewEngine` — persisted engine values and display labels.
+- `WebViewRuntimeStatus` / `WebViewRuntimeStatusResolver` — startup resolution, availability checks, active-engine selection, and fallback reason.
 - `AppearancePanel` — engine selector and diagnostics UI.
 - `ChatMessageViewFactory`, `MessageBubble`, `MessageContentView`, `JEditorPaneMessageContentView` — Swing source message model and final fallback renderer.
-- `SwingWebViewTranscriptView` — full-transcript Native OS WebView renderer.
-- `JcefRuntime` / `JcefTranscriptView` — JCEF startup and full-transcript Chromium renderer.
+- `SystemWebView` — full-conversation System WebView renderer.
+- `JcefRuntime` / `JcefBrowserView` — JCEF startup and full-conversation Chromium renderer.
 - `MessageHtmlRenderer` — message-to-HTML conversion.
 - `ExternalLinkSupport` — shared external-link allowlist and opener.
 
@@ -42,14 +42,14 @@ Data flow:
 
 1. `ChatPanel` creates and maintains Swing `ChatMessageView` instances as the source model.
 2. In `jeditor-pane` mode, those views are displayed directly.
-3. In `native-webview` or `jcef` mode, `ChatPanel` mirrors the source views into one full-transcript browser component.
-4. Full-transcript browser views are disposed from `ChatPanel.removeNotify()`.
+3. In `system` or `jcef` mode, `ChatPanel` mirrors the source views into one full-conversation browser component.
+4. Full-conversation browser views are disposed from `ChatPanel.removeNotify()`.
 
-The full-transcript design avoids per-message native browser churn and the clipping/scrolling problems seen with native components inside Swing scroll panes.
+The full-conversation design avoids per-message native browser churn and the clipping/scrolling problems seen with native components inside Swing scroll panes.
 
-## Browser transcript behavior
+## Browser conversation behavior
 
-Both browser engines own the rendered transcript chrome:
+Both browser engines own the rendered conversation chrome:
 
 - markdown, tables, code blocks, activity bubbles, attachments, and source previews
 - light/dark theme CSS derived from FlatLaf colors
@@ -59,11 +59,11 @@ Both browser engines own the rendered transcript chrome:
 - rejection of `javascript:`, `file:`, and `data:` links
 - stale-update protection during streaming and conversation switches
 
-When conversation history loads or a visible stream completes, the browser transcript is refreshed to avoid stale DOM state.
+When conversation history loads or a visible stream completes, the browser conversation view is refreshed to avoid stale DOM state.
 
 ## Syntax highlighting
 
-Browser transcripts use bundled Highlight.js through GraalJS Community before HTML is loaded into the browser.
+Browser conversation views use bundled Highlight.js through GraalJS Community before HTML is loaded into the browser.
 
 Rules:
 
@@ -78,7 +78,7 @@ Bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScrip
 
 ## Math and chemistry
 
-Browser transcripts progressively enhance explicit math fallback nodes. Swing HTML Renderer keeps the readable fallback markup.
+Browser conversation views progressively enhance explicit math fallback nodes. Swing HTML Renderer keeps the readable fallback markup.
 
 Supported input forms:
 
@@ -105,13 +105,13 @@ Assets:
 
 ## JCEF notes
 
-JCEF is production-selectable but still has native-platform risk. It is intentionally isolated behind `JcefRuntime` and `JcefTranscriptView`.
+JCEF is production-selectable but still has native-platform risk. It is intentionally isolated behind `JcefRuntime` and `JcefBrowserView`.
 
 Runtime behavior:
 
 - `JcefRuntime` initializes CEF once per process.
 - Native/windowed rendering is the supported path; OSR/windowless remains experimental.
-- Transcript HTML is served through an in-memory `https://chat4j.local/...` resource handler.
+- Conversation HTML is served through an in-memory `https://chat4j.local/...` resource handler.
 - The response declares UTF-8 and supplementary Unicode code points are encoded as numeric entities before loading.
 - In-browser navigation is blocked; safe links open externally through `ExternalLinkSupport`.
 - DevTools/remote debugging is opt-in with `-Dchat4j.jcef.devtools=true`.
@@ -148,7 +148,7 @@ For the macOS custom runtime image, current modules are:
 java.se,jdk.crypto.ec,jdk.unsupported
 ```
 
-If Native OS WebView reports missing modules at runtime, test adding likely candidates such as `jdk.jsobject`.
+If System WebView reports missing modules at runtime, test adding likely candidates such as `jdk.jsobject`.
 
 ## Verification
 
@@ -162,17 +162,17 @@ git diff --check
 
 Targeted tests:
 
-- `ChatWebViewEngineTest`
-- `ChatWebViewRuntimeStatusResolverTest`
+- `WebViewEngineTest`
+- `WebViewRuntimeStatusResolverTest`
 - `ChatPanelTest` streaming/conversation-switching cases
 - `MarkdownRendererTest`
 - `MessageHtmlRendererTest`
 - `KatexMathRendererTest`
-- `SwingWebViewTranscriptViewTest`
+- `SystemWebViewTest`
 
 Manual checks:
 
-1. Confirm fallback chains: Native OS WebView → JCEF → Swing HTML Renderer on macOS/Windows; JCEF → Swing HTML Renderer on Linux/other.
+1. Confirm fallback chains: System WebView → JCEF → Swing HTML Renderer on macOS/Windows; JCEF → Swing HTML Renderer on Linux/other.
 2. Switch engine in **Settings → Appearance**, restart, and confirm diagnostics for all three engines.
 3. Verify existing chats, streaming, conversation switching, clearing chat, markdown/raw mode, tables, code copy, source chips/previews, safe links, blocked unsafe links, scrolling, shutdown, and math/chem examples.
 4. For JCEF, resize/move the window repeatedly and validate packaged shutdown on macOS, Windows, and Linux.

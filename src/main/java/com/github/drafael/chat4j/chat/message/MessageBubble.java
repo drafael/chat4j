@@ -1,11 +1,14 @@
 package com.github.drafael.chat4j.chat.message;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.content.JEditorPaneMessageContentView;
+import com.github.drafael.chat4j.chat.content.MessageContentView;
+import com.github.drafael.chat4j.chat.content.MessageContentViewProvider;
+import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
-
-import javax.swing.*;
 import java.awt.*;
 import java.awt.geom.RoundRectangle2D;
+import javax.swing.*;
 
 public class MessageBubble extends JPanel implements ChatMessageView {
 

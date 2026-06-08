@@ -1,15 +1,38 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
+import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
+import com.github.drafael.chat4j.chat.ui.ScrollablePanel;
+import com.github.drafael.chat4j.chat.ui.EmptyStateActions;
+import com.github.drafael.chat4j.chat.ui.ChatEmptyStatePanel;
+import com.github.drafael.chat4j.chat.render.WebSearchActivityNormalizer;
+import com.github.drafael.chat4j.chat.render.ThinkTagSplit;
+import com.github.drafael.chat4j.chat.model.ProviderModelSelection;
+import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
+import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
+import com.github.drafael.chat4j.chat.composer.EditComposerPanel;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
-import com.github.drafael.chat4j.chat.message.ChatMessageView;
-import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
-import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
-import com.github.drafael.chat4j.chat.message.JcefTranscriptView;
-import com.github.drafael.chat4j.chat.message.SwingWebViewTranscriptView;
 import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
 import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
+import com.github.drafael.chat4j.chat.composer.AttachmentStager;
+import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
+import com.github.drafael.chat4j.chat.composer.ComposerPanel;
+import com.github.drafael.chat4j.chat.composer.InputBar;
+import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefBrowserView;
+import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
+import com.github.drafael.chat4j.chat.message.ChatMessageView;
+import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
+import com.github.drafael.chat4j.chat.model.ModelSelectorButton;
+import com.github.drafael.chat4j.chat.model.ModelSelectorPopup;
+import com.github.drafael.chat4j.chat.model.ProviderSelectionSnapshot;
+import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.chat.ui.ActivityBubble;
+import com.github.drafael.chat4j.chat.ui.ChatFadeOverlay;
+import com.github.drafael.chat4j.chat.ui.JumpToLatestButton;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
@@ -25,9 +48,9 @@ import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
-import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
@@ -43,16 +66,6 @@ import com.github.drafael.chat4j.web.WebSearchContext;
 import com.github.drafael.chat4j.web.WebSearchCoordinator;
 import com.github.drafael.chat4j.web.WebSearchResponse;
 import com.github.drafael.chat4j.web.WebSearchResult;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import javax.swing.*;
-import javax.swing.event.PopupMenuEvent;
-import javax.swing.event.PopupMenuListener;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
@@ -84,10 +97,18 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.IntStream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
+import java.util.stream.IntStream;
+import javax.swing.*;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.joining;
@@ -141,9 +162,9 @@ public class ChatPanel extends JPanel {
     private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
     private final WebSearchCoordinator webSearchCoordinator = new WebSearchCoordinator(List.of(new PerplexityWebSearchProvider()));
     private final ChatMessageViewFactory messageViewFactory;
-    private final ChatWebViewEngine chatWebViewEngine;
-    private final SwingWebViewTranscriptView webTranscriptView;
-    private final JcefTranscriptView jcefTranscriptView;
+    private final WebViewEngine webViewEngine;
+    private final SystemWebView systemWebView;
+    private final JcefBrowserView jcefBrowserView;
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
@@ -230,7 +251,7 @@ public class ChatPanel extends JPanel {
     }
 
     public ChatPanel(ProviderModelCacheService modelCacheService, ModelFavoritesService modelFavoritesService) {
-        this(modelCacheService, modelFavoritesService, new ChatMessageViewFactory(), ChatWebViewEngine.JEDITOR_PANE);
+        this(modelCacheService, modelFavoritesService, new ChatMessageViewFactory(), WebViewEngine.JEDITOR_PANE);
     }
 
     public ChatPanel(
@@ -238,26 +259,26 @@ public class ChatPanel extends JPanel {
             @NonNull ModelFavoritesService modelFavoritesService,
             @NonNull ChatMessageViewFactory messageViewFactory
     ) {
-        this(modelCacheService, modelFavoritesService, messageViewFactory, ChatWebViewEngine.JEDITOR_PANE);
+        this(modelCacheService, modelFavoritesService, messageViewFactory, WebViewEngine.JEDITOR_PANE);
     }
 
     public ChatPanel(
             @NonNull ProviderModelCacheService modelCacheService,
             @NonNull ModelFavoritesService modelFavoritesService,
             @NonNull ChatMessageViewFactory messageViewFactory,
-            @NonNull ChatWebViewEngine chatWebViewEngine
+            @NonNull WebViewEngine webViewEngine
     ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.messageViewFactory = messageViewFactory;
-        this.chatWebViewEngine = chatWebViewEngine;
-        this.webTranscriptView = chatWebViewEngine == ChatWebViewEngine.NATIVE_WEBVIEW ? new SwingWebViewTranscriptView() : null;
-        this.jcefTranscriptView = chatWebViewEngine == ChatWebViewEngine.JCEF ? new JcefTranscriptView() : null;
-        if (this.webTranscriptView != null) {
-            this.webTranscriptView.setActionListener(this::handleWebTranscriptAction);
+        this.webViewEngine = webViewEngine;
+        this.systemWebView = webViewEngine == WebViewEngine.SYSTEM ? new SystemWebView() : null;
+        this.jcefBrowserView = webViewEngine == WebViewEngine.JCEF ? new JcefBrowserView() : null;
+        if (this.systemWebView != null) {
+            this.systemWebView.setActionListener(this::handleWebTranscriptAction);
         }
-        if (this.jcefTranscriptView != null) {
-            this.jcefTranscriptView.setActionListener(this::handleWebTranscriptAction);
+        if (this.jcefBrowserView != null) {
+            this.jcefBrowserView.setActionListener(this::handleWebTranscriptAction);
         }
         this.agentOrchestrator = AgentOrchestrator.createDefault();
         setLayout(new BorderLayout());
@@ -422,22 +443,22 @@ public class ChatPanel extends JPanel {
     }
 
     private JComponent chatTranscriptComponent() {
-        if (isSwingWebViewTranscriptEnabled()) {
-            return webTranscriptView.component();
+        if (isSystemWebViewEnabled()) {
+            return systemWebView.component();
         }
-        return isJcefTranscriptEnabled() ? jcefTranscriptView.component() : scrollPane;
+        return isJcefBrowserViewEnabled() ? jcefBrowserView.component() : scrollPane;
     }
 
-    private boolean isSwingWebViewTranscriptEnabled() {
-        return chatWebViewEngine == ChatWebViewEngine.NATIVE_WEBVIEW && webTranscriptView != null;
+    private boolean isSystemWebViewEnabled() {
+        return webViewEngine == WebViewEngine.SYSTEM && systemWebView != null;
     }
 
-    private boolean isJcefTranscriptEnabled() {
-        return chatWebViewEngine == ChatWebViewEngine.JCEF && jcefTranscriptView != null;
+    private boolean isJcefBrowserViewEnabled() {
+        return webViewEngine == WebViewEngine.JCEF && jcefBrowserView != null;
     }
 
-    private boolean isBrowserTranscriptEnabled() {
-        return isSwingWebViewTranscriptEnabled() || isJcefTranscriptEnabled();
+    private boolean isBrowserConversationEnabled() {
+        return isSystemWebViewEnabled() || isJcefBrowserViewEnabled();
     }
 
     @Override
@@ -452,11 +473,11 @@ public class ChatPanel extends JPanel {
             modelPopup.dispose();
             modelPopup = null;
         }
-        if (webTranscriptView != null && !webTranscriptView.isDisposed()) {
-            webTranscriptView.dispose();
+        if (systemWebView != null && !systemWebView.isDisposed()) {
+            systemWebView.dispose();
         }
-        if (jcefTranscriptView != null && !jcefTranscriptView.isDisposed()) {
-            jcefTranscriptView.dispose();
+        if (jcefBrowserView != null && !jcefBrowserView.isDisposed()) {
+            jcefBrowserView.dispose();
         }
         super.removeNotify();
     }
@@ -2350,63 +2371,41 @@ public class ChatPanel extends JPanel {
     }
 
     private void refreshWebTranscript(boolean scrollToBottom, boolean forceReload) {
-        if (!isBrowserTranscriptEnabled() || messagesPanel == null) {
+        if (!isBrowserConversationEnabled() || messagesPanel == null) {
             return;
         }
-        if (isSwingWebViewTranscriptEnabled() && webTranscriptView.isDisposed()) {
+        if (isSystemWebViewEnabled() && systemWebView.isDisposed()) {
             return;
         }
-        if (isJcefTranscriptEnabled() && jcefTranscriptView.isDisposed()) {
+        if (isJcefBrowserViewEnabled() && jcefBrowserView.isDisposed()) {
             return;
         }
 
         int[] messageIndex = {0};
-        List<SwingWebViewTranscriptView.Entry> entries = Arrays.stream(messagesPanel.getComponents())
+        List<ConversationEntry> entries = Arrays.stream(messagesPanel.getComponents())
                 .filter(component -> !"filler".equals(component.getName()))
-                .map(component -> toTranscriptEntry(component, messageIndex))
+                .map(component -> toConversationEntry(component, messageIndex))
                 .filter(Objects::nonNull)
                 .toList();
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
         boolean showJumpButton = streaming;
-        if (isSwingWebViewTranscriptEnabled()) {
-            webTranscriptView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+        if (isSystemWebViewEnabled()) {
+            systemWebView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
             if (forceReload) {
-                webTranscriptView.reload(shouldScrollToBottom);
+                systemWebView.reload(shouldScrollToBottom);
             }
             return;
         }
-        jcefTranscriptView.setTranscript(toJcefTranscriptEntries(entries), renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+        jcefBrowserView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
         if (forceReload) {
-            jcefTranscriptView.reload(shouldScrollToBottom);
+            jcefBrowserView.reload(shouldScrollToBottom);
         }
     }
 
-    private List<JcefTranscriptView.Entry> toJcefTranscriptEntries(List<SwingWebViewTranscriptView.Entry> entries) {
-        return entries.stream()
-                .map(entry -> new JcefTranscriptView.Entry(
-                        JcefTranscriptView.EntryKind.valueOf(entry.kind().name()),
-                        entry.role(),
-                        entry.title(),
-                        entry.text(),
-                        entry.collapsed(),
-                        entry.messageIndex(),
-                        entry.attachments().stream()
-                                .map(attachment -> new JcefTranscriptView.TranscriptAttachment(
-                                        attachment.storagePath(),
-                                        attachment.originalName(),
-                                        attachment.mimeType(),
-                                        attachment.sizeBytes(),
-                                        attachment.image()
-                                ))
-                                .toList()
-                ))
-                .toList();
-    }
-
-    private SwingWebViewTranscriptView.Entry toTranscriptEntry(Component component, int[] messageIndex) {
+    private ConversationEntry toConversationEntry(Component component, int[] messageIndex) {
         ActivityBubble activityBubble = findActivityBubble(component);
         if (activityBubble != null) {
-            return SwingWebViewTranscriptView.Entry.activity(
+            return ConversationEntry.activity(
                     activityBubble.getTitleText(),
                     activityBubble.getFullText(),
                     activityBubble.isCollapsed()
@@ -2418,10 +2417,10 @@ public class ChatPanel extends JPanel {
             return null;
         }
         int actionMessageIndex = messageIndex[0]++;
-        List<SwingWebViewTranscriptView.TranscriptAttachment> attachments = messageView.getRole() == Role.USER
-                ? transcriptAttachments(component)
+        List<ConversationAttachment> attachments = messageView.getRole() == Role.USER
+                ? conversationAttachments(component)
                 : emptyList();
-        return SwingWebViewTranscriptView.Entry.message(
+        return ConversationEntry.message(
                 messageView.getRole(),
                 messageView.getFullText(),
                 actionMessageIndex,
@@ -2429,7 +2428,7 @@ public class ChatPanel extends JPanel {
         );
     }
 
-    private List<SwingWebViewTranscriptView.TranscriptAttachment> transcriptAttachments(Component component) {
+    private List<ConversationAttachment> conversationAttachments(Component component) {
         int historyMessageIndex = findHistoryMessageIndex(component);
         if (historyMessageIndex < 0 || historyMessageIndex >= history.size()) {
             return emptyList();
@@ -2441,7 +2440,7 @@ public class ChatPanel extends JPanel {
         }
 
         return userAttachmentRefs(message).stream()
-                .map(ref -> new SwingWebViewTranscriptView.TranscriptAttachment(
+                .map(ref -> new ConversationAttachment(
                         ref.storagePath(),
                         ref.originalName(),
                         ref.mimeType(),
@@ -2770,7 +2769,7 @@ public class ChatPanel extends JPanel {
                 return;
             }
             if (Strings.CS.equals(action, "open-attachment")) {
-                openTranscriptAttachment(text);
+                openConversationAttachment(text);
                 return;
             }
 
@@ -2790,8 +2789,8 @@ public class ChatPanel extends JPanel {
         });
     }
 
-    private void openTranscriptAttachment(String storagePath) {
-        if (StringUtils.isBlank(storagePath) || !isKnownTranscriptAttachment(storagePath)) {
+    private void openConversationAttachment(String storagePath) {
+        if (StringUtils.isBlank(storagePath) || !isKnownConversationAttachment(storagePath)) {
             showOpenAttachmentError("Attachment file is not available on disk.");
             return;
         }
@@ -2821,7 +2820,7 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private boolean isKnownTranscriptAttachment(String storagePath) {
+    private boolean isKnownConversationAttachment(String storagePath) {
         return history.stream()
                 .flatMap(message -> message.parts().stream())
                 .map(this::attachmentRef)
@@ -2870,12 +2869,12 @@ public class ChatPanel extends JPanel {
     }
 
     private void scrollToBottomNow() {
-        if (isSwingWebViewTranscriptEnabled()) {
-            webTranscriptView.scrollToBottom();
+        if (isSystemWebViewEnabled()) {
+            systemWebView.scrollToBottom();
             return;
         }
-        if (isJcefTranscriptEnabled()) {
-            jcefTranscriptView.scrollToBottom();
+        if (isJcefBrowserViewEnabled()) {
+            jcefBrowserView.scrollToBottom();
             return;
         }
 

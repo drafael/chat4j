@@ -9,36 +9,38 @@ Chat4J keeps chat orchestration Swing-first. `ChatPanel` owns the message model,
 The production engines are:
 
 - Swing HTML Renderer (`jeditor-pane`) — per-message Swing fallback.
-- Native OS WebView (`native-webview`) — one full-transcript SwingWebView component.
-- Chromium Embedded Framework (`jcef`) — one full-transcript JCEF browser.
+- System WebView (`system`) — one full-conversation SwingWebView component.
+- Chromium Embedded Framework (`jcef`) — one full-conversation JCEF browser.
 
 Platform fallback chains are:
 
-- macOS/Windows: `native-webview` → `jcef` → `jeditor-pane`
+- macOS/Windows: `system` → `jcef` → `jeditor-pane`
 - Linux/other: `jcef` → `jeditor-pane`
+
+Missing, unknown, or obsolete saved values are treated as the platform default rather than forcing the Swing fallback.
 
 ## Key classes
 
-- `ChatWebViewEngine` — persisted engine values.
-- `ChatWebViewRuntimeStatusResolver` — default and fallback resolution.
-- `ChatWebViewRuntimeStatus` — configured engine, active engine, availability flags, and fallback reason.
+- `WebViewEngine` — persisted engine values.
+- `WebViewRuntimeStatusResolver` — default and fallback resolution.
+- `WebViewRuntimeStatus` — configured engine, active engine, availability flags, and fallback reason.
 - `AppearancePanel` — engine selection and diagnostics.
 - `ChatMessageView`, `MessageBubble`, `MessageContentView`, `JEditorPaneMessageContentView` — Swing source/fallback message view boundary.
-- `SwingWebViewTranscriptView` — full-transcript Native OS WebView.
-- `JcefRuntime`, `JcefTranscriptView` — JCEF runtime and full-transcript browser view.
+- `SystemWebView` — full-conversation System WebView.
+- `JcefRuntime`, `JcefBrowserView` — JCEF runtime and full-conversation browser view.
 - `ExternalLinkSupport` — central external-link policy.
 
 ## Data flow
 
 1. `ChatPanel` creates Swing source message views.
 2. Swing HTML Renderer displays those views directly.
-3. Native OS WebView and JCEF mirror the same message data into a single transcript document.
-4. Browser transcript views own browser-specific DOM, CSS, scrolling, actions, and navigation blocking.
+3. System WebView and JCEF mirror the same message data into a single conversation document.
+4. Browser conversation views own browser-specific DOM, CSS, scrolling, actions, and navigation blocking.
 5. Native browser resources are disposed when the chat panel is removed.
 
 ## JCEF implementation notes
 
-JCEF support uses native/windowed rendering. `JcefRuntime` initializes CEF once, applies reduced-background-networking flags, and keeps DevTools behind `-Dchat4j.jcef.devtools=true`. `JcefTranscriptView` serves generated HTML from a controlled in-memory `https://chat4j.local/...` resource and blocks in-browser navigation.
+JCEF support uses native/windowed rendering. `JcefRuntime` initializes CEF once, applies reduced-background-networking flags, and keeps DevTools behind `-Dchat4j.jcef.devtools=true`. `JcefBrowserView` serves generated HTML from a controlled in-memory `https://chat4j.local/...` resource and blocks in-browser navigation.
 
 At startup, `JcefStartupInitializer` initializes JCEF only when the configured/default fallback chain may need Chromium. A non-cancelable `Preparing Chromium` dialog displays `jcefmaven` download, extraction, install, and initialization progress. If availability was already resolved in the JVM, startup skips the dialog.
 

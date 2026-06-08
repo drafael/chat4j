@@ -1,6 +1,6 @@
 # IntelliJ JCEF/JBCEF Findings
 
-This note records the IntelliJ/JBCEF research used to guide Chat4J's configurable JCEF web-view engine work. It is not a production design by itself; it captures evidence, observed JCEF behavior, and implications for the full-transcript `JcefTranscriptView` integration.
+This note records the IntelliJ/JBCEF research used to guide Chat4J's configurable JCEF web-view engine work. It is not a production design by itself; it captures evidence, observed JCEF behavior, and implications for the full-conversation `JcefBrowserView` integration.
 
 ## Executive Summary
 
@@ -14,7 +14,7 @@ IntelliJ does not generally expose raw JCEF directly to UI code. It wraps JCEF b
 - isolate heavyweight browser behavior from normal Swing overlays
 - keep resize/move and shutdown workarounds inside the JCEF implementation
 
-Chat4J production support follows this shape with `JcefRuntime` and one full-transcript `JcefTranscriptView`.
+Chat4J production support follows this shape with `JcefRuntime` and one full-conversation `JcefBrowserView`.
 
 ## Official Plugin API Model
 
@@ -176,7 +176,7 @@ Chat4J spike result:
 
 Implication for Chat4J:
 
-- Keep resize/move repair inside `JcefTranscriptView` or a JCEF engine helper.
+- Keep resize/move repair inside `JcefBrowserView` or a JCEF engine helper.
 - Do not leak native resize repair calls into `ChatPanel`.
 - Include resize/move tests in manual release validation for JCEF builds.
 
@@ -250,7 +250,7 @@ Evidence: [`JBCefBrowser.java`](https://github.com/JetBrains/intellij-community/
 
 Implication for Chat4J:
 
-- `JcefTranscriptView` should define a sane preferred/minimum size.
+- `JcefBrowserView` should define a sane preferred/minimum size.
 - Keyboard shortcuts should remain tested on macOS, especially copy/select-all behavior inside the browser.
 - Avoid browser stealing focus during message updates unless the user explicitly focuses it.
 
@@ -263,7 +263,7 @@ Evidence: [`JBCefScrollbarsHelper.java`](https://github.com/JetBrains/intellij-c
 Implication for Chat4J:
 
 - First JCEF integration can rely on CSS from `MessageHtmlRenderer`.
-- If browser-native scrollbars look wrong, add engine-specific scrollbar CSS in `JcefTranscriptView`, not in message orchestration code.
+- If browser-native scrollbars look wrong, add engine-specific scrollbar CSS in `JcefBrowserView`, not in message orchestration code.
 
 ## DevTools and Debugging
 
@@ -377,10 +377,10 @@ Known risks from the spike:
 
 Chat4J's production JCEF integration uses these pieces:
 
-1. `ChatWebViewEngine.JCEF` with persisted setting value `jcef`.
+1. `WebViewEngine.JCEF` with persisted setting value `jcef`.
 2. Settings UI engine selection and diagnostics.
 3. `JcefRuntime` as the JCEF availability/init service with clear fallback to Swing.
-4. `JcefTranscriptView` as one full-transcript browser view, not per-message browser churn.
+4. `JcefBrowserView` as one full-conversation browser view, not per-message browser churn.
 5. `ChatPanel`, `ActivityBubble`, and message orchestration remain engine-neutral.
 6. User links open externally and in-browser navigation is blocked by default.
 7. Resize/move repair and native lifecycle logic stay inside the JCEF implementation.

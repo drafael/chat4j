@@ -84,7 +84,7 @@ Chromium, Microsoft Edge, and Safari are trademarks of their respective owners. 
 - Source: https://commons.wikimedia.org/wiki/File:WebKit_logo.svg
 - Bundled asset: `src/main/resources/icons/settings/webkit-logo.svg`
 
-WebKit is open source software with portions licensed under LGPL and BSD licenses. The WebKit name and logo may be protected as trademarks. Chat4J uses the icon only to identify the Linux Native OS WebView backend, which is WebKitGTK, and does not imply endorsement by Apple, WebKit, or the WebKitGTK project.
+WebKit is open source software with portions licensed under LGPL and BSD licenses. The WebKit name and logo may be protected as trademarks. Chat4J uses the icon only to identify the Linux System WebView backend, which is WebKitGTK, and does not imply endorsement by Apple, WebKit, or the WebKitGTK project.
 
 ## GraalJS Community / GraalVM Polyglot 24.2.1
 

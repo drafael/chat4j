@@ -1,8 +1,8 @@
 package com.github.drafael.chat4j;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
-import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
@@ -63,10 +63,10 @@ public final class AboutDialog {
     }
 
     public static void show(Window owner) {
-        show(owner, null, ChatWebViewRuntimeStatus.jEditorPaneDefault());
+        show(owner, null, WebViewRuntimeStatus.jEditorPaneDefault());
     }
 
-    public static void show(Window owner, SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
+    public static void show(Window owner, SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
         Info info = loadInfo(settingsRepo, webViewRuntimeStatus);
 
         JDialog dialog = new JDialog(owner, "About %s".formatted(info.appName), Dialog.ModalityType.APPLICATION_MODAL);
@@ -199,7 +199,7 @@ public final class AboutDialog {
         return icon;
     }
 
-    private static Info loadInfo(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
+    private static Info loadInfo(SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
         Properties build = loadProperties("/build.properties");
         Properties git = loadProperties("/git.properties");
 
@@ -236,12 +236,12 @@ public final class AboutDialog {
         return new Info(appName, rows);
     }
 
-    private static String formatWebViewEngine(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus webViewRuntimeStatus) {
-        ChatWebViewRuntimeStatus status = webViewRuntimeStatus != null
+    private static String formatWebViewEngine(SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
+        WebViewRuntimeStatus status = webViewRuntimeStatus != null
                 ? webViewRuntimeStatus
-                : ChatWebViewRuntimeStatus.jEditorPaneDefault();
-        ChatWebViewEngine selectedEngine = selectedWebViewEngine(settingsRepo, status);
-        ChatWebViewEngine activeEngine = status.activeEngine();
+                : WebViewRuntimeStatus.jEditorPaneDefault();
+        WebViewEngine selectedEngine = selectedWebViewEngine(settingsRepo, status);
+        WebViewEngine activeEngine = status.activeEngine();
 
         if (selectedEngine == activeEngine && !status.hasFallback()) {
             return activeEngine.displayName();
@@ -252,13 +252,13 @@ public final class AboutDialog {
         return "%s selected, %s active until restart".formatted(selectedEngine.displayName(), activeEngine.displayName());
     }
 
-    private static ChatWebViewEngine selectedWebViewEngine(SettingsRepo settingsRepo, ChatWebViewRuntimeStatus status) {
+    private static WebViewEngine selectedWebViewEngine(SettingsRepo settingsRepo, WebViewRuntimeStatus status) {
         if (settingsRepo == null) {
             return status.configuredEngine();
         }
         try {
-            String value = settingsRepo.get(SettingsKeys.CHAT_WEB_VIEW_ENGINE, status.configuredEngine().settingValue());
-            return ChatWebViewEngine.fromSettingValue(value);
+            String value = settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE, status.configuredEngine().settingValue());
+            return WebViewEngine.fromSettingValue(value);
         } catch (Exception e) {
             return status.configuredEngine();
         }

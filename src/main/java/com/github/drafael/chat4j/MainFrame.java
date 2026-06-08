@@ -1,13 +1,13 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
-import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
-import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatus;
-import com.github.drafael.chat4j.chat.message.ChatWebViewRuntimeStatusResolver;
-import com.github.drafael.chat4j.chat.ChatSearchPopup;
-import com.github.drafael.chat4j.chat.ChatSearchPopupCoordinator;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatusResolver;
+import com.github.drafael.chat4j.chat.search.ChatSearchPopup;
+import com.github.drafael.chat4j.chat.search.ChatSearchPopupCoordinator;
 import com.github.drafael.chat4j.chat.NewChatCoordinator;
 import com.github.drafael.chat4j.menu.BoundMenuFactory;
 import com.github.drafael.chat4j.menu.FileMenuFactory;
@@ -213,7 +213,7 @@ public class MainFrame extends JFrame {
     private final JSplitPane splitPane;
     private final ConversationRepo conversationRepo;
     private final SettingsRepo settingsRepo;
-    private final ChatWebViewRuntimeStatus chatWebViewRuntimeStatus;
+    private final WebViewRuntimeStatus chatWebViewRuntimeStatus;
     private final PromptCatalogRepo promptCatalogRepo;
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
     private final PromptVariablesDialog promptVariablesDialog = new PromptVariablesDialog();
@@ -389,9 +389,9 @@ public class MainFrame extends JFrame {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
-        this.chatWebViewRuntimeStatus = new ChatWebViewRuntimeStatusResolver(settingsRepo).resolve();
-        if (chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.NATIVE_WEBVIEW
-                || chatWebViewRuntimeStatus.activeEngine() == ChatWebViewEngine.JCEF
+        this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
+        if (chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.SYSTEM
+                || chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.JCEF
         ) {
             PopupMenuSupport.preferHeavyweightPopups();
         }

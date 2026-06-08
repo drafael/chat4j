@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.bootstrap;
 
-import com.github.drafael.chat4j.chat.message.ChatWebViewEngine;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import org.junit.jupiter.api.DisplayName;
@@ -27,8 +27,8 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("macOS default skips JCEF when Native WebView is available")
-    void shouldInitialize_whenDefaultMacOsNativeWebViewAvailable_returnsFalse() {
+    @DisplayName("macOS default skips JCEF when System WebView is available")
+    void shouldInitialize_whenDefaultMacOsSystemWebViewAvailable_returnsFalse() {
         var subject = decider(true, false, true);
 
         boolean result = subject.shouldInitialize(settingsRepo());
@@ -37,8 +37,8 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("macOS default initializes JCEF when Native WebView is unavailable")
-    void shouldInitialize_whenDefaultMacOsNativeWebViewUnavailable_returnsTrue() {
+    @DisplayName("macOS default initializes JCEF when System WebView is unavailable")
+    void shouldInitialize_whenDefaultMacOsSystemWebViewUnavailable_returnsTrue() {
         var subject = decider(true, false, false);
 
         boolean result = subject.shouldInitialize(settingsRepo());
@@ -47,10 +47,10 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("Configured JCEF initializes even when Native WebView is available")
+    @DisplayName("Configured JCEF initializes even when System WebView is available")
     void shouldInitialize_whenJcefConfigured_returnsTrue() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.JCEF.settingValue());
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JCEF.settingValue());
         var subject = decider(true, false, true);
 
         boolean result = subject.shouldInitialize(settingsRepo);
@@ -59,10 +59,10 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("Configured Native WebView skips JCEF when native engine is available")
-    void shouldInitialize_whenNativeWebViewConfiguredAndAvailable_returnsFalse() throws Exception {
+    @DisplayName("Configured System WebView skips JCEF when system engine is available")
+    void shouldInitialize_whenSystemWebViewConfiguredAndAvailable_returnsFalse() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.NATIVE_WEBVIEW.settingValue());
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
         var subject = decider(false, false, true);
 
         boolean result = subject.shouldInitialize(settingsRepo);
@@ -71,10 +71,10 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("Configured Native WebView initializes JCEF when native engine is unavailable")
-    void shouldInitialize_whenNativeWebViewConfiguredAndUnavailable_returnsTrue() throws Exception {
+    @DisplayName("Configured System WebView initializes JCEF when system engine is unavailable")
+    void shouldInitialize_whenSystemWebViewConfiguredAndUnavailable_returnsTrue() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.NATIVE_WEBVIEW.settingValue());
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
         var subject = decider(false, false, false);
 
         boolean result = subject.shouldInitialize(settingsRepo);
@@ -86,7 +86,7 @@ class JcefStartupInitializationDeciderTest {
     @DisplayName("Configured JEditorPane skips JCEF startup initialization")
     void shouldInitialize_whenJEditorPaneConfigured_returnsFalse() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, ChatWebViewEngine.JEDITOR_PANE.settingValue());
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JEDITOR_PANE.settingValue());
         var subject = decider(false, false, false);
 
         boolean result = subject.shouldInitialize(settingsRepo);
@@ -95,22 +95,34 @@ class JcefStartupInitializationDeciderTest {
     }
 
     @Test
-    @DisplayName("Invalid engine setting skips JCEF startup initialization")
-    void shouldInitialize_whenInvalidEngineConfigured_returnsFalse() throws Exception {
+    @DisplayName("Invalid engine setting uses the non-system platform default")
+    void shouldInitialize_whenInvalidEngineConfiguredOutsideMacOsAndWindows_returnsTrue() throws Exception {
         SettingsRepo settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.CHAT_WEB_VIEW_ENGINE, "invalid");
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "invalid");
         var subject = decider(false, false, false);
+
+        boolean result = subject.shouldInitialize(settingsRepo);
+
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("Obsolete engine setting uses the macOS platform default")
+    void shouldInitialize_whenObsoleteEngineConfiguredOnMacOsAndSystemWebViewAvailable_returnsFalse() throws Exception {
+        SettingsRepo settingsRepo = settingsRepo();
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "obsolete-webview");
+        var subject = decider(true, false, true);
 
         boolean result = subject.shouldInitialize(settingsRepo);
 
         assertThat(result).isFalse();
     }
 
-    private JcefStartupInitializationDecider decider(boolean macOs, boolean windows, boolean nativeWebViewAvailable) {
+    private JcefStartupInitializationDecider decider(boolean macOs, boolean windows, boolean systemWebViewAvailable) {
         return new JcefStartupInitializationDecider(
                 () -> macOs,
                 () -> windows,
-                () -> nativeWebViewAvailable
+                () -> systemWebViewAvailable
         );
     }
 

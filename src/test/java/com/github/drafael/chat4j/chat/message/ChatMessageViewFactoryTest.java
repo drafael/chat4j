@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.message;
 
+import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
+import com.github.drafael.chat4j.chat.content.MessageContentView;
 import com.github.drafael.chat4j.provider.api.Role;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

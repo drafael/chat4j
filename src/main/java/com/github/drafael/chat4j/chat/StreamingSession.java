@@ -1,14 +1,13 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
+import com.github.drafael.chat4j.chat.render.ThinkTagStreamParser;
 import com.github.drafael.chat4j.provider.api.ProviderService;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-
 import static java.util.Collections.synchronizedList;
 
 final class StreamingSession {

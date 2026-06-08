@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 
 public class MainFrameRenderModeState {
 

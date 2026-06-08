@@ -1,8 +1,15 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
+import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
+import com.github.drafael.chat4j.chat.ui.JumpToLatestButton;
+import com.github.drafael.chat4j.chat.composer.InputBar;
+import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.chat.ui.ActivityBubble;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
-import com.github.drafael.chat4j.chat.message.SwingWebViewTranscriptView;
+import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
@@ -1165,7 +1172,7 @@ class ChatPanelTest {
 
     @Test
     @DisplayName("Transcript attachment metadata is populated from the backing user message")
-    void transcriptAttachments_whenUserMessageHasAttachments_returnsWebViewMetadata() throws Exception {
+    void conversationAttachments_whenUserMessageHasAttachments_returnsWebViewMetadata() throws Exception {
         AttachmentRef fileRef = new AttachmentRef(UUID.randomUUID(), "/tmp/demo.txt", "demo.txt", "text/plain", 128, "");
         AttachmentRef imageRef = new AttachmentRef(UUID.randomUUID(), "/tmp/image.png", "image.png", "image/png", 256, "");
         Message message = new Message(
@@ -1185,14 +1192,14 @@ class ChatPanelTest {
                 .findFirst()
                 .orElseThrow();
 
-        List<SwingWebViewTranscriptView.TranscriptAttachment> attachments = invokeTranscriptAttachments(subject, wrapper);
+        List<ConversationAttachment> attachments = invokeConversationAttachments(subject, wrapper);
 
         assertThat(attachments)
                 .extracting(
-                        SwingWebViewTranscriptView.TranscriptAttachment::originalName,
-                        SwingWebViewTranscriptView.TranscriptAttachment::mimeType,
-                        SwingWebViewTranscriptView.TranscriptAttachment::sizeBytes,
-                        SwingWebViewTranscriptView.TranscriptAttachment::image
+                        ConversationAttachment::originalName,
+                        ConversationAttachment::mimeType,
+                        ConversationAttachment::sizeBytes,
+                        ConversationAttachment::image
                 )
                 .containsExactly(
                         tuple("demo.txt", "text/plain", 128L, false),
@@ -2603,13 +2610,13 @@ class ChatPanelTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<SwingWebViewTranscriptView.TranscriptAttachment> invokeTranscriptAttachments(
+    private static List<ConversationAttachment> invokeConversationAttachments(
             ChatPanel chatPanel,
             Component component
     ) throws Exception {
-        Method method = ChatPanel.class.getDeclaredMethod("transcriptAttachments", Component.class);
+        Method method = ChatPanel.class.getDeclaredMethod("conversationAttachments", Component.class);
         method.setAccessible(true);
-        return (List<SwingWebViewTranscriptView.TranscriptAttachment>) method.invoke(chatPanel, component);
+        return (List<ConversationAttachment>) method.invoke(chatPanel, component);
     }
 
     private static RenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {

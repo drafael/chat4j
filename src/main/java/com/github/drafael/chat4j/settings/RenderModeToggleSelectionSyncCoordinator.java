@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.RenderMode;
+import com.github.drafael.chat4j.chat.render.RenderMode;
 import lombok.NonNull;
 
 import javax.swing.JCheckBoxMenuItem;

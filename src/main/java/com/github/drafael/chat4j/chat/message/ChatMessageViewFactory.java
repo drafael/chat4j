@@ -1,5 +1,8 @@
 package com.github.drafael.chat4j.chat.message;
 
+import com.github.drafael.chat4j.chat.content.JEditorPaneMessageContentView;
+import com.github.drafael.chat4j.chat.content.MessageContentViewProvider;
+import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.provider.api.Role;
 
 public final class ChatMessageViewFactory {
