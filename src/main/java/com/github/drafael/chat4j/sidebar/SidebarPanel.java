@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.sidebar;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.ui.FlatLineBorder;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
@@ -346,6 +347,7 @@ public class SidebarPanel extends JPanel {
         };
         field.putClientProperty("JTextField.placeholderText", "Filter conversations");
         field.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        field.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
         Fonts.apply(field, Font.PLAIN, Fonts.SIZE_BODY);
         field.getDocument().addDocumentListener(new DocumentListener() {
             @Override

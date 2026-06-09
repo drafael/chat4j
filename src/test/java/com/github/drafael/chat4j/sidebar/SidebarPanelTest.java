@@ -193,7 +193,7 @@ class SidebarPanelTest {
         assertThat(filterField).isNotNull();
         assertThat(filterField.getClientProperty("JTextField.leadingIcon")).isNotNull();
         assertThat(filterField.getClientProperty("JComponent.roundRect")).isNull();
-        assertThat(filterField.getClientProperty("JTextField.showClearButton")).isNull();
+        assertThat(filterField.getClientProperty("JTextField.showClearButton")).isEqualTo(true);
         assertThat(filterField.getBackground()).isEqualTo(UIManager.getColor("TextField.background"));
         assertThat(filterField.getForeground()).isEqualTo(UIManager.getColor("TextField.foreground"));
         assertThat(filterField.getBorder()).isInstanceOf(FlatLineBorder.class);

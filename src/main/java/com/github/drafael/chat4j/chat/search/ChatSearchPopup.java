@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.search;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.github.drafael.chat4j.storage.ConversationRepo;
@@ -89,6 +90,7 @@ public class ChatSearchPopup extends JDialog {
         };
         searchField.putClientProperty("JTextField.placeholderText", "Search chats...");
         searchField.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        searchField.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
         Fonts.apply(searchField, Font.PLAIN, Fonts.SIZE_BODY);
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { scheduleSearch(); }

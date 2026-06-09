@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.prompts;
 
+import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.github.drafael.chat4j.util.Fonts;
 import lombok.NonNull;
@@ -119,6 +120,7 @@ public class PromptCommandCenter extends JDialog {
 
         searchField.putClientProperty("JTextField.placeholderText", "Type a command or search...");
         searchField.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        searchField.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
         Fonts.apply(searchField, Font.PLAIN, Fonts.SIZE_BODY);
         searchField.getInputMap(JComponent.WHEN_FOCUSED)
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "selectPrompt");

@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.storage.ModelFavoritesService;
 import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.util.Fonts;
+import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import lombok.extern.slf4j.Slf4j;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
@@ -311,6 +312,7 @@ public class ModelSelectorPopup extends JDialog {
         JTextField field = new JTextField();
         field.putClientProperty("JTextField.placeholderText", "Search models");
         field.putClientProperty("JTextField.leadingIcon", new FlatSearchIcon());
+        field.putClientProperty(FlatClientProperties.TEXT_FIELD_SHOW_CLEAR_BUTTON, true);
         Fonts.apply(field, Font.PLAIN, Fonts.SIZE_BODY);
         field.setBorder(BorderFactory.createEmptyBorder(6, 4, 6, 4));
         field.getDocument().addDocumentListener(new DocumentListener() {
