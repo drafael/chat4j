@@ -12,7 +12,7 @@ import javax.swing.*;
 
 public class MessageBubble extends JPanel implements ChatMessageView {
 
-    private static final int ARC = 16;
+    private static final int ARC = 14;
 
     private final Role role;
     private RenderMode renderMode = RenderMode.PREVIEW;

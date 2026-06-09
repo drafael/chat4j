@@ -244,7 +244,7 @@ public final class SystemWebView {
                     .row.user { justify-content: flex-end; }
                     .row.assistant, .row.activity { justify-content: flex-start; }
                     .message { box-sizing: border-box; overflow-wrap: anywhere; word-break: break-word; }
-                    .message.user { max-width: 72%%; background: %s; border-radius: 12px; padding: 8px 14px; }
+                    .message.user { max-width: 72%%; background: %s; border-radius: 10px; padding: 8px 14px; }
                     .row.user .message.user { margin-left: auto; }
                     %s
                     .message.assistant { width: 100%%; padding: 0; line-height: 1.72; }

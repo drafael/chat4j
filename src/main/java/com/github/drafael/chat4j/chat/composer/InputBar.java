@@ -55,7 +55,7 @@ import static java.util.Collections.emptyList;
 
 public class InputBar extends JPanel {
 
-    private static final int SHELL_ARC = 28;
+    private static final int SHELL_ARC = 24;
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int COMMAND_CENTER_ICON_SIZE = ATTACH_ICON_SIZE;
