@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.util;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import lombok.NonNull;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.Validate;
 
 import javax.swing.Icon;
@@ -45,13 +46,11 @@ public final class TitleBarUiSupport {
 
         FlatSVGIcon icon = new FlatSVGIcon(url).derive(TITLE_BAR_ICON_SIZE, TITLE_BAR_ICON_SIZE);
         icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-            Color foreground = component != null ? component.getForeground() : null;
-            if (foreground == null) {
-                foreground = UIManager.getColor("Label.foreground");
-            }
-            if (foreground == null) {
-                foreground = new Color(90, 90, 90);
-            }
+            Color foreground = ObjectUtils.firstNonNull(
+                    component != null ? component.getForeground() : null,
+                    UIManager.getColor("Label.foreground"),
+                    new Color(90, 90, 90)
+            );
             return new Color(
                     foreground.getRed(),
                     foreground.getGreen(),

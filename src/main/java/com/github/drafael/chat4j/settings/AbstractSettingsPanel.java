@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.components.FlatSeparator;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -343,10 +344,10 @@ public abstract class AbstractSettingsPanel extends JPanel {
 
     protected void setStatusError(String message) {
         statusClearTimer.stop();
-        Color error = UIManager.getColor("Component.error.focusedBorderColor");
-        if (error == null) {
-            error = new Color(200, 50, 50);
-        }
+        Color error = ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.error.focusedBorderColor"),
+                new Color(200, 50, 50)
+        );
         statusLabel.setForeground(error);
         statusLabel.setText(StringUtils.defaultIfBlank(message, "Error"));
         statusLabel.setVisible(true);

@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -1311,13 +1312,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             FlatSVGIcon icon = new FlatSVGIcon(url).derive(PROVIDER_ICON_GLYPH_SIZE, PROVIDER_ICON_GLYPH_SIZE);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                Color foreground = component != null ? component.getForeground() : null;
-                if (foreground == null) {
-                    foreground = UIManager.getColor("Label.foreground");
-                }
-                if (foreground == null) {
-                    foreground = new Color(80, 80, 80);
-                }
+                Color foreground = ObjectUtils.firstNonNull(
+                        component != null ? component.getForeground() : null,
+                        UIManager.getColor("Label.foreground"),
+                        new Color(80, 80, 80)
+                );
                 return new Color(
                         foreground.getRed(),
                         foreground.getGreen(),

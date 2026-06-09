@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -777,11 +778,9 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     static Duration refreshTtl(String providerName) {
-        if (LOCAL_HEALTH_GATED_PROVIDERS.contains(providerName)) {
-            return LOCAL_PROVIDER_REFRESH_TTL;
-        }
-
-        return MODEL_REFRESH_TTL;
+        return LOCAL_HEALTH_GATED_PROVIDERS.contains(providerName)
+                ? LOCAL_PROVIDER_REFRESH_TTL
+                : MODEL_REFRESH_TTL;
     }
 
     private void refreshProvider(String providerName, List<String> models) {
@@ -1031,13 +1030,11 @@ public class ModelSelectorPopup extends JDialog {
 
             FlatSVGIcon icon = new FlatSVGIcon(url).derive(size, size);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                Color foreground = component != null ? component.getForeground() : null;
-                if (foreground == null) {
-                    foreground = UIManager.getColor("Label.foreground");
-                }
-                if (foreground == null) {
-                    foreground = new Color(90, 90, 90);
-                }
+                Color foreground = ObjectUtils.firstNonNull(
+                        component != null ? component.getForeground() : null,
+                        UIManager.getColor("Label.foreground"),
+                        new Color(90, 90, 90)
+                );
                 return new Color(
                         foreground.getRed(),
                         foreground.getGreen(),

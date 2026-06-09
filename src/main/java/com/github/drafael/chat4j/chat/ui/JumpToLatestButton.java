@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat.ui;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 
 import javax.swing.*;
+import org.apache.commons.lang3.ObjectUtils;
 import java.awt.*;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Ellipse2D;
@@ -115,34 +116,34 @@ public class JumpToLatestButton extends JButton {
     }
 
     private Color resolveFillColor() {
-        Color color = UIManager.getColor("Button.background");
-        if (color == null) {
-            color = UIManager.getColor("Panel.background");
-        }
+        Color color = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.background"),
+                UIManager.getColor("Panel.background")
+        );
         return color != null ? color : new Color(235, 235, 235);
     }
 
     private Color resolveBorderColor() {
-        Color color = UIManager.getColor("Button.borderColor");
-        if (color == null) {
-            color = UIManager.getColor("Component.borderColor");
-        }
+        Color color = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.borderColor"),
+                UIManager.getColor("Component.borderColor")
+        );
         return color != null ? color : new Color(200, 200, 200);
     }
 
     private Color resolveRingColor() {
-        Color color = UIManager.getColor("ProgressBar.foreground");
-        if (color == null) {
-            color = UIManager.getColor("Component.accentColor");
-        }
+        Color color = ObjectUtils.firstNonNull(
+                UIManager.getColor("ProgressBar.foreground"),
+                UIManager.getColor("Component.accentColor")
+        );
         return color != null ? color : new Color(70, 130, 230);
     }
 
     private Color resolveRingTrackColor() {
-        Color base = UIManager.getColor("ProgressBar.background");
-        if (base == null) {
-            base = UIManager.getColor("Component.borderColor");
-        }
+        Color base = ObjectUtils.firstNonNull(
+                UIManager.getColor("ProgressBar.background"),
+                UIManager.getColor("Component.borderColor")
+        );
         if (base == null) {
             return null;
         }
@@ -157,10 +158,7 @@ public class JumpToLatestButton extends JButton {
 
         FlatSVGIcon icon = new FlatSVGIcon(url).derive(ICON_SIZE, ICON_SIZE);
         icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-            Color tint = UIManager.getColor("Label.foreground");
-            if (tint == null) {
-                tint = new Color(60, 60, 60);
-            }
+            Color tint = ObjectUtils.firstNonNull(UIManager.getColor("Label.foreground"), new Color(60, 60, 60));
             return new Color(tint.getRed(), tint.getGreen(), tint.getBlue(), color.getAlpha());
         }));
         return icon.hasFound() ? icon : UIManager.getIcon("Tree.collapsedIcon");

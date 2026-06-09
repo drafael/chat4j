@@ -48,6 +48,7 @@ import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.JTextComponent;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import static java.util.Collections.emptyList;
@@ -2180,13 +2181,11 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveToolbarButtonHoverBackground() {
-        Color background = UIManager.getColor("Button.toolbar.hoverBackground");
-        if (background == null) {
-            background = UIManager.getColor("Button.hoverBackground");
-        }
-        if (background == null) {
-            background = UIManager.getColor("Component.hoverColor");
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.toolbar.hoverBackground"),
+                UIManager.getColor("Button.hoverBackground"),
+                UIManager.getColor("Component.hoverColor")
+        );
 
         Color base = resolveChipBackground();
         if (background == null || colorDistance(background, base) < 18) {
@@ -2289,13 +2288,11 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveListBackground() {
-        Color background = UIManager.getColor("List.background");
-        if (background == null) {
-            background = UIManager.getColor("PopupMenu.background");
-        }
-        if (background == null) {
-            background = UIManager.getColor("Panel.background");
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("List.background"),
+                UIManager.getColor("PopupMenu.background"),
+                UIManager.getColor("Panel.background")
+        );
         return background == null ? Color.WHITE : background;
     }
 
@@ -2326,27 +2323,21 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveChipBackground() {
-        Color background = UIManager.getColor("TextField.background");
-        if (background == null) {
-            background = UIManager.getColor("Panel.background");
-        }
-        if (background == null) {
-            background = getBackground();
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("TextField.background"),
+                UIManager.getColor("Panel.background"),
+                getBackground()
+        );
         return background == null ? new Color(90, 90, 90) : background;
     }
 
     private Color resolveChipBorderColor(Color background) {
-        Color border = UIManager.getColor("TextField.borderColor");
-        if (border == null) {
-            border = UIManager.getColor("Component.borderColor");
-        }
-        if (border == null) {
-            border = UIManager.getColor("Separator.foreground");
-        }
-        if (border == null) {
-            border = new Color(150, 150, 150);
-        }
+        Color border = ObjectUtils.firstNonNull(
+                UIManager.getColor("TextField.borderColor"),
+                UIManager.getColor("Component.borderColor"),
+                UIManager.getColor("Separator.foreground"),
+                new Color(150, 150, 150)
+        );
 
         if (colorDistance(background, border) < 24) {
             border = adjustBrightness(background, 0.22f);
@@ -2428,19 +2419,13 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveThinkingActiveTint(Color inactiveTint) {
-        Color preferred = UIManager.getColor("Button.toolbar.selectedForeground");
-        if (preferred == null) {
-            preferred = UIManager.getColor("ToggleButton.selectedForeground");
-        }
-        if (preferred == null) {
-            preferred = UIManager.getColor("Button.selectedForeground");
-        }
-        if (preferred == null) {
-            preferred = UIManager.getColor("Component.accentColor");
-        }
-        if (preferred == null) {
-            preferred = new Color(84, 142, 255);
-        }
+        Color preferred = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.toolbar.selectedForeground"),
+                UIManager.getColor("ToggleButton.selectedForeground"),
+                UIManager.getColor("Button.selectedForeground"),
+                UIManager.getColor("Component.accentColor"),
+                new Color(84, 142, 255)
+        );
 
         Color selectedBackground = resolveThinkingSelectedBackground();
         if (selectedBackground == null) {
@@ -2471,16 +2456,12 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveThinkingSelectedBackground() {
-        Color background = UIManager.getColor("Button.toolbar.selectedBackground");
-        if (background == null) {
-            background = UIManager.getColor("ToggleButton.selectedBackground");
-        }
-        if (background == null) {
-            background = UIManager.getColor("Button.selectedBackground");
-        }
-        if (background == null) {
-            background = UIManager.getColor("Component.accentColor");
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.toolbar.selectedBackground"),
+                UIManager.getColor("ToggleButton.selectedBackground"),
+                UIManager.getColor("Button.selectedBackground"),
+                UIManager.getColor("Component.accentColor")
+        );
         return background;
     }
 

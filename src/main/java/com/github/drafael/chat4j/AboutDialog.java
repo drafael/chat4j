@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.ObjectUtils;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -162,10 +163,7 @@ public final class AboutDialog {
         label.setHorizontalAlignment(SwingConstants.CENTER);
         label.setHorizontalTextPosition(SwingConstants.RIGHT);
         label.setIconTextGap(6);
-        Color linkColor = UIManager.getColor("Component.linkColor");
-        if (linkColor == null) {
-            linkColor = new Color(0x2A7AE2);
-        }
+        Color linkColor = ObjectUtils.firstNonNull(UIManager.getColor("Component.linkColor"), new Color(0x2A7AE2));
         label.setForeground(linkColor);
         Fonts.apply(label, Font.PLAIN, Fonts.SIZE_BODY);
         Icon icon = loadGitHubIcon(14, linkColor);
@@ -306,10 +304,7 @@ public final class AboutDialog {
             return null;
         }
 
-        Color base = UIManager.getColor("Label.foreground");
-        if (base == null) {
-            base = new Color(60, 60, 60);
-        }
+        Color base = ObjectUtils.firstNonNull(UIManager.getColor("Label.foreground"), new Color(60, 60, 60));
         int fgRgb = base.getRGB() & 0xFFFFFF;
         int w = source.getWidth();
         int h = source.getHeight();

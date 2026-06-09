@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 public class ChatSearchPopup extends JDialog {
@@ -260,13 +261,11 @@ public class ChatSearchPopup extends JDialog {
 
             FlatSVGIcon icon = new FlatSVGIcon(url).derive(PROVIDER_ICON_SIZE, PROVIDER_ICON_SIZE);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                Color foreground = component != null ? component.getForeground() : null;
-                if (foreground == null) {
-                    foreground = UIManager.getColor("Label.foreground");
-                }
-                if (foreground == null) {
-                    foreground = new Color(90, 90, 90);
-                }
+                Color foreground = ObjectUtils.firstNonNull(
+                        component != null ? component.getForeground() : null,
+                        UIManager.getColor("Label.foreground"),
+                        new Color(90, 90, 90)
+                );
                 return new Color(
                         foreground.getRed(),
                         foreground.getGreen(),

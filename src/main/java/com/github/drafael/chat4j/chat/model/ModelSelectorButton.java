@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.model;
 
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.util.Fonts;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -241,13 +242,11 @@ public class ModelSelectorButton extends JButton {
 
             FlatSVGIcon icon = new FlatSVGIcon(url).derive(size, size);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                Color secondaryColor = UIManager.getColor("Label.disabledForeground");
-                if (secondaryColor == null) {
-                    secondaryColor = component != null ? component.getForeground() : null;
-                }
-                if (secondaryColor == null) {
-                    secondaryColor = new Color(120, 120, 120);
-                }
+                Color secondaryColor = ObjectUtils.firstNonNull(
+                        UIManager.getColor("Label.disabledForeground"),
+                        component != null ? component.getForeground() : null,
+                        new Color(120, 120, 120)
+                );
                 return new Color(
                         secondaryColor.getRed(),
                         secondaryColor.getGreen(),

@@ -14,6 +14,7 @@ import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.util.regex.Pattern;
 import javax.swing.*;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 public class ActivityBubble extends JPanel {
@@ -428,31 +429,23 @@ public class ActivityBubble extends JPanel {
     }
 
     private void updateColors() {
-        Color panelBackground = UIManager.getColor("Panel.background");
-        if (panelBackground == null) {
-            panelBackground = new Color(35, 37, 43);
-        }
+        Color panelBackground = ObjectUtils.firstNonNull(UIManager.getColor("Panel.background"), new Color(35, 37, 43));
 
         boolean dark = detectDark(panelBackground);
         setBackground(resolveSecondaryBackground(panelBackground));
 
-        Color muted = UIManager.getColor("Label.disabledForeground");
-        if (muted == null) {
-            muted = new Color(130, 130, 130);
-        }
+        Color muted = ObjectUtils.firstNonNull(UIManager.getColor("Label.disabledForeground"), new Color(130, 130, 130));
         Color titleColor = streaming ? resolveStreamingTitleColor(muted) : resolveTitleColor(muted);
 
         titleLabel.setForeground(titleColor);
         foldButton.setForeground(titleColor);
 
         Color iconColor = blend(muted, panelBackground, 0.25f);
-        Color accent = UIManager.getColor("Component.accentColor");
-        if (accent == null) {
-            accent = UIManager.getColor("Button.focusedBorderColor");
-        }
-        if (accent == null) {
-            accent = muted;
-        }
+        Color accent = ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.accentColor"),
+                UIManager.getColor("Button.focusedBorderColor"),
+                muted
+        );
 
         copyButtonBaseColor = streaming ? titleColor : iconColor;
         float hoverBlend = dark ? 0.86f : 0.80f;
@@ -475,10 +468,10 @@ public class ActivityBubble extends JPanel {
     }
 
     private Color resolveStreamingTitleColor(Color fallback) {
-        Color accent = UIManager.getColor("Component.accentColor");
-        if (accent == null) {
-            accent = UIManager.getColor("ProgressBar.foreground");
-        }
+        Color accent = ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.accentColor"),
+                UIManager.getColor("ProgressBar.foreground")
+        );
         return accent != null ? accent : fallback;
     }
 
@@ -611,19 +604,16 @@ public class ActivityBubble extends JPanel {
     }
 
     private Color resolveSecondaryBackground(Color panelBackground) {
-        Color foreground = UIManager.getColor("Label.foreground");
-        if (foreground == null) {
-            foreground = detectDark(panelBackground) ? Color.WHITE : Color.BLACK;
-        }
+        Color foreground = ObjectUtils.firstNonNull(
+                UIManager.getColor("Label.foreground"),
+                detectDark(panelBackground) ? Color.WHITE : Color.BLACK
+        );
 
         return blend(panelBackground, foreground, detectDark(panelBackground) ? 0.06f : 0.03f);
     }
 
     private Color resolveBorderColor() {
-        Color foreground = UIManager.getColor("Label.disabledForeground");
-        if (foreground == null) {
-            foreground = Color.GRAY;
-        }
+        Color foreground = ObjectUtils.firstNonNull(UIManager.getColor("Label.disabledForeground"), Color.GRAY);
 
         return new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 85);
     }

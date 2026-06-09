@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.prompts.PromptVariableType;
 import com.github.drafael.chat4j.util.Fonts;
 import lombok.NonNull;
+import org.apache.commons.lang3.ObjectUtils;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -84,10 +85,7 @@ public class PromptVariablesDialog {
             @NonNull CollectedValuesHandler insertAction
     ) {
         JPanel content = new JPanel(new GridBagLayout());
-        Color borderColor = UIManager.getColor("Component.borderColor");
-        if (borderColor == null) {
-            borderColor = Color.GRAY;
-        }
+        Color borderColor = ObjectUtils.firstNonNull(UIManager.getColor("Component.borderColor"), Color.GRAY);
         content.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(borderColor, 1),
                 BorderFactory.createEmptyBorder(14, 14, 12, 14)

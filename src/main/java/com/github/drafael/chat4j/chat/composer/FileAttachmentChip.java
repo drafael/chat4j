@@ -10,6 +10,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 public final class FileAttachmentChip extends JPanel {
@@ -81,13 +82,11 @@ public final class FileAttachmentChip extends JPanel {
     }
 
     private static Color resolveBorderColor() {
-        Color border = UIManager.getColor("TextField.borderColor");
-        if (border == null) {
-            border = UIManager.getColor("Component.borderColor");
-        }
-        if (border == null) {
-            border = UIManager.getColor("Separator.foreground");
-        }
+        Color border = ObjectUtils.firstNonNull(
+                UIManager.getColor("TextField.borderColor"),
+                UIManager.getColor("Component.borderColor"),
+                UIManager.getColor("Separator.foreground")
+        );
         return border != null ? border : new Color(150, 150, 150);
     }
 

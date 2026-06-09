@@ -6,6 +6,7 @@ import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import org.apache.commons.lang3.ObjectUtils;
 
 public final class InputComposerShellPanel extends JPanel {
     private final int arc;
@@ -19,13 +20,11 @@ public final class InputComposerShellPanel extends JPanel {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        Color background = UIManager.getColor("TextArea.background");
-        if (background == null) {
-            background = UIManager.getColor("Panel.background");
-        }
-        if (background == null) {
-            background = getBackground();
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("TextArea.background"),
+                UIManager.getColor("Panel.background"),
+                getBackground()
+        );
 
         g2.setColor(background);
         g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);
@@ -39,13 +38,11 @@ public final class InputComposerShellPanel extends JPanel {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        Color border = UIManager.getColor("Component.borderColor");
-        if (border == null) {
-            border = UIManager.getColor("Separator.foreground");
-        }
-        if (border == null) {
-            border = new Color(180, 180, 180);
-        }
+        Color border = ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.borderColor"),
+                UIManager.getColor("Separator.foreground"),
+                new Color(180, 180, 180)
+        );
 
         g2.setColor(border);
         g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, arc, arc);

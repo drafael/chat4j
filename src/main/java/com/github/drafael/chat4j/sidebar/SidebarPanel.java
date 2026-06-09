@@ -1261,13 +1261,11 @@ public class SidebarPanel extends JPanel {
     }
 
     private static Color resolveToolbarButtonHoverBackground() {
-        Color background = UIManager.getColor("Button.toolbar.hoverBackground");
-        if (background == null) {
-            background = UIManager.getColor("Button.hoverBackground");
-        }
-        if (background == null) {
-            background = UIManager.getColor("Component.hoverColor");
-        }
+        Color background = ObjectUtils.firstNonNull(
+                UIManager.getColor("Button.toolbar.hoverBackground"),
+                UIManager.getColor("Button.hoverBackground"),
+                UIManager.getColor("Component.hoverColor")
+        );
 
         Color base = resolveSidebarBackground();
         if (background == null || colorDistance(background, base) < 18) {
@@ -1399,13 +1397,11 @@ public class SidebarPanel extends JPanel {
 
             var icon = new FlatSVGIcon(url).derive(PROVIDER_ICON_SIZE, PROVIDER_ICON_SIZE);
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, color) -> {
-                Color foreground = component != null ? component.getForeground() : null;
-                if (foreground == null) {
-                    foreground = UIManager.getColor("Label.foreground");
-                }
-                if (foreground == null) {
-                    foreground = new Color(90, 90, 90);
-                }
+                Color foreground = ObjectUtils.firstNonNull(
+                        component != null ? component.getForeground() : null,
+                        UIManager.getColor("Label.foreground"),
+                        new Color(90, 90, 90)
+                );
 
                 return new Color(
                     foreground.getRed(),

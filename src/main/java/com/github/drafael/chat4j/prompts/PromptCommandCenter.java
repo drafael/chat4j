@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.prompts;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.github.drafael.chat4j.util.Fonts;
 import lombok.NonNull;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.swing.*;
@@ -325,10 +326,10 @@ public class PromptCommandCenter extends JDialog {
     }
 
     private Color resolveBorderColor() {
-        Color color = UIManager.getColor("Component.borderColor");
-        if (color == null) {
-            color = UIManager.getColor("Separator.foreground");
-        }
+        Color color = ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.borderColor"),
+                UIManager.getColor("Separator.foreground")
+        );
         return color != null ? color : Color.GRAY;
     }
 
