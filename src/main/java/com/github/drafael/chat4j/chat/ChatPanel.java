@@ -3605,7 +3605,7 @@ public class ChatPanel extends JPanel {
         }
 
         boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
-        if (persistedByListener && conversationId != null && !isVisibleConversation(conversationId)) {
+        if (conversationId != null && !isVisibleConversation(conversationId) && hasContent) {
             pendingCompletedAssistantRecoveries.put(conversationId, assistantMessage);
         }
 

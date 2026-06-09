@@ -2113,8 +2113,8 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Failed non-visible assistant persistence does not queue stale recovery")
-    void persistAssistantResponse_whenPersistenceFails_doesNotQueuePendingRecovery() throws Exception {
+    @DisplayName("Failed hidden assistant persistence queues recovery for the original conversation")
+    void persistAssistantResponse_whenHiddenPersistenceFails_queuesPendingRecovery() throws Exception {
         UUID originalConversationId = UUID.randomUUID();
         UUID visibleConversationId = UUID.randomUUID();
         AtomicInteger persistCalls = new AtomicInteger();
@@ -2124,15 +2124,24 @@ class ChatPanelTest {
             return false;
         });
         StreamingSession session = new StreamingSession(1L, originalConversationId, null);
-        session.response.append("deleted sonar result");
+        session.response.append("background sonar result");
 
         invokePersistAssistantResponse(subject, session, null, true);
 
         @SuppressWarnings("unchecked")
         Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
         assertThat(persistCalls).hasValue(1);
-        assertThat(pendingRecoveries).doesNotContainKey(originalConversationId);
+        assertThat(pendingRecoveries).containsKey(originalConversationId);
         assertThat(subject.getHistory()).isEmpty();
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.loadConversationHistory(originalConversationId, List.of(Message.user("question")));
+        });
+
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .containsExactly("question", "background sonar result");
+        assertThat(pendingRecoveries).doesNotContainKey(originalConversationId);
     }
 
     @Test
