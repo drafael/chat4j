@@ -486,19 +486,13 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private String toResponsesInputLine(Message message) {
         String content = StringUtils.trimToEmpty(toResponsesMessageContent(message));
-        if (content.isBlank()) {
-            return "";
-        }
-
-        return "%s: %s".formatted(responseRoleLabel(message), content);
+        return content.isBlank() ? "" : "%s: %s".formatted(responseRoleLabel(message), content);
     }
 
     private String toResponsesMessageContent(Message message) {
-        if (message.parts().isEmpty()) {
-            return message.content();
-        }
-
-        return ProviderAttachmentSupport.textProjection(message.parts());
+        return message.parts().isEmpty()
+            ? message.content()
+            : ProviderAttachmentSupport.textProjection(message.parts());
     }
 
     private String responseRoleLabel(Message message) {
@@ -528,7 +522,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         Throwable current = throwable;
         while (current != null) {
             if (StringUtils.isNotBlank(current.getMessage())) {
-                if (builder.length() > 0) {
+                if (!builder.isEmpty()) {
                     builder.append(" | ");
                 }
                 builder.append(current.getMessage());

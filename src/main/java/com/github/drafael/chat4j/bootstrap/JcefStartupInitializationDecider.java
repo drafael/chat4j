@@ -62,10 +62,9 @@ final class JcefStartupInitializationDecider {
     }
 
     private List<WebViewEngine> platformFallbackChain() {
-        if (macOsSupplier.getAsBoolean() || windowsSupplier.getAsBoolean()) {
-            return List.of(WebViewEngine.SYSTEM, WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
-        }
-        return List.of(WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
+        return macOsSupplier.getAsBoolean() || windowsSupplier.getAsBoolean()
+            ? List.of(WebViewEngine.SYSTEM, WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE)
+            : List.of(WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
     }
 
     private boolean systemWebViewAvailable() {

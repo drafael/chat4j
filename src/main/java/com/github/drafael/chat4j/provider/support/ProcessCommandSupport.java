@@ -1,15 +1,16 @@
 package com.github.drafael.chat4j.provider.support;
 
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
+import static java.util.Collections.emptyList;
 
+import com.formdev.flatlaf.util.SystemInfo;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import static java.util.Collections.emptyList;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 
 public final class ProcessCommandSupport {
 
@@ -65,7 +66,7 @@ public final class ProcessCommandSupport {
                 return candidate.toString();
             }
 
-            if (isWindows()) {
+            if (SystemInfo.isWindows) {
                 String fromPathext = resolveWindowsExecutable(candidate, environment);
                 if (fromPathext != null) {
                     return fromPathext;
@@ -96,10 +97,5 @@ public final class ProcessCommandSupport {
         }
 
         return null;
-    }
-
-    private static boolean isWindows() {
-        String osName = System.getProperty("os.name", "");
-        return osName.toLowerCase().contains("win");
     }
 }

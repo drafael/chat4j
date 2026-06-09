@@ -1,15 +1,10 @@
 package com.github.drafael.chat4j.provider.support;
 
+import static java.util.Collections.emptyMap;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import javax.swing.JOptionPane;
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
 import java.awt.Toolkit;
@@ -39,7 +34,12 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import static java.util.Collections.emptyMap;
+import javax.swing.JOptionPane;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
 public class CodexAuthResolver {
@@ -83,15 +83,6 @@ public class CodexAuthResolver {
     public CodexAuthResolver() {
         this(
                 Path.of(System.getProperty("user.home")),
-                System.getenv(),
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
-                new DesktopUserPromptActions()
-        );
-    }
-
-    CodexAuthResolver(Path userHome) {
-        this(
-                userHome,
                 System.getenv(),
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
                 new DesktopUserPromptActions()
@@ -533,11 +524,9 @@ public class CodexAuthResolver {
     }
 
     private String exchangeIdTokenForApiKey(String clientId, String idToken) {
-        if (StringUtils.isBlank(idToken)) {
-            return null;
-        }
-
-        return exchangeSubjectTokenForApiKey(clientId, idToken, "urn:ietf:params:oauth:token-type:id_token");
+        return StringUtils.isBlank(idToken)
+            ? null
+            : exchangeSubjectTokenForApiKey(clientId, idToken, "urn:ietf:params:oauth:token-type:id_token");
     }
 
     private String exchangeSubjectTokenForApiKey(String clientId, String subjectToken) {
@@ -546,11 +535,9 @@ public class CodexAuthResolver {
                 subjectToken,
                 "urn:ietf:params:oauth:token-type:access_token"
         );
-        if (StringUtils.isNotBlank(exchanged)) {
-            return exchanged;
-        }
-
-        return exchangeSubjectTokenForApiKey(clientId, subjectToken, "urn:ietf:params:oauth:token-type:id_token");
+        return StringUtils.isNotBlank(exchanged)
+            ? exchanged
+            : exchangeSubjectTokenForApiKey(clientId, subjectToken, "urn:ietf:params:oauth:token-type:id_token");
     }
 
     private String exchangeSubjectTokenForApiKey(String clientId, String subjectToken, String subjectTokenType) {
@@ -817,20 +804,16 @@ public class CodexAuthResolver {
 
     private String oauthAuthorizeEndpoint() {
         String configured = StringUtils.trimToNull(System.getProperty(OAUTH_AUTHORIZE_ENDPOINT_PROPERTY));
-        if (StringUtils.isNotBlank(configured)) {
-            return configured;
-        }
-
-        return "%s/oauth/authorize".formatted(issuer());
+        return StringUtils.isNotBlank(configured)
+            ? configured
+            : "%s/oauth/authorize".formatted(issuer());
     }
 
     private String oauthTokenEndpoint() {
         String configured = StringUtils.trimToNull(System.getProperty(OAUTH_TOKEN_ENDPOINT_PROPERTY));
-        if (StringUtils.isNotBlank(configured)) {
-            return configured;
-        }
-
-        return "%s/oauth/token".formatted(issuer());
+        return StringUtils.isNotBlank(configured)
+            ? configured
+            : "%s/oauth/token".formatted(issuer());
     }
 
     private Path chat4jAuthFile() {
@@ -839,11 +822,9 @@ public class CodexAuthResolver {
 
     private Path xdgConfigHome() {
         String xdgConfigHome = StringUtils.trimToNull(environment.get("XDG_CONFIG_HOME"));
-        if (StringUtils.isNotBlank(xdgConfigHome)) {
-            return Path.of(xdgConfigHome);
-        }
-
-        return userHome.resolve(".config");
+        return StringUtils.isNotBlank(xdgConfigHome)
+            ? Path.of(xdgConfigHome)
+            : userHome.resolve(".config");
     }
 
     private String urlEncode(String value) {
@@ -1206,13 +1187,6 @@ public class CodexAuthResolver {
 
         private static String normalizeSource(String source) {
             return StringUtils.trimToNull(source);
-        }
-
-        @Override
-        public String toString() {
-            String sourceLabel = source == null ? "n/a" : source;
-            return "CodexAuthStatus[authorized=%s, source=%s, message=%s]"
-                    .formatted(authorized, sourceLabel, message);
         }
     }
 }

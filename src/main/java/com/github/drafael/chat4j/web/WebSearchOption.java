@@ -7,11 +7,4 @@ public record WebSearchOption(
         boolean available
 ) {
 
-    public boolean nativeMode() {
-        return mode == WebSearchMode.NATIVE;
-    }
-
-    public boolean externalMode() {
-        return mode == WebSearchMode.EXTERNAL;
-    }
 }

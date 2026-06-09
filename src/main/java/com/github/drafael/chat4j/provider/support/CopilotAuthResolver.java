@@ -75,18 +75,6 @@ public class CopilotAuthResolver {
                 .build(), new DesktopUserPromptActions());
     }
 
-    CopilotAuthResolver(Path userHome) {
-        this(userHome, System.getenv(), HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(3))
-                .build(), new DesktopUserPromptActions());
-    }
-
-    CopilotAuthResolver(Path userHome, Map<String, String> environment) {
-        this(userHome, environment, HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(3))
-                .build(), new DesktopUserPromptActions());
-    }
-
     CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient) {
         this(userHome, environment, httpClient, new DesktopUserPromptActions());
     }
@@ -175,11 +163,9 @@ public class CopilotAuthResolver {
 
     public CopilotAuthStatus resolveStatus() {
         String token = resolveBearerTokenOrNull();
-        if (StringUtils.isBlank(token)) {
-            return CopilotAuthStatus.unauthorized("Not authorized. Click Login to authorize Chat4J.");
-        }
-
-        return CopilotAuthStatus.authorized("Authorized via %s".formatted(CHAT4J_TOKEN_SOURCE), CHAT4J_TOKEN_SOURCE);
+        return StringUtils.isBlank(token)
+            ? CopilotAuthStatus.unauthorized("Not authorized. Click Login to authorize Chat4J.")
+            : CopilotAuthStatus.authorized("Authorized via %s".formatted(CHAT4J_TOKEN_SOURCE), CHAT4J_TOKEN_SOURCE);
     }
 
     public CopilotAuthActionResult login() {
@@ -799,13 +785,6 @@ public class CopilotAuthResolver {
 
         private static String normalizeSource(String source) {
             return StringUtils.trimToNull(source);
-        }
-
-        @Override
-        public String toString() {
-            String sourceLabel = source == null ? "n/a" : source;
-            return "CopilotAuthStatus[authorized=%s, source=%s, message=%s]"
-                    .formatted(authorized, sourceLabel, message);
         }
     }
 }

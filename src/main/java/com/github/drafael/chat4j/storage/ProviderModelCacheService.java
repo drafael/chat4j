@@ -63,11 +63,9 @@ public class ProviderModelCacheService {
     }
 
     public List<String> getModels(String providerName) {
-        if (StringUtils.isBlank(providerName)) {
-            return emptyList();
-        }
-
-        return getOrLoadEntry(providerName).models();
+        return StringUtils.isBlank(providerName)
+            ? emptyList()
+            : getOrLoadEntry(providerName).models();
     }
 
     public boolean shouldRefresh(String providerName) {
@@ -162,10 +160,6 @@ public class ProviderModelCacheService {
             metrics.primeRequests.get());
     }
 
-    public void resetMetrics() {
-        metrics.reset();
-    }
-
     public void logMetricsSnapshot(String reason) {
         if (!metricsLoggingEnabled) {
             return;
@@ -212,12 +206,9 @@ public class ProviderModelCacheService {
         if ("OpenAI Codex".equals(providerName)) {
             return List.copyOf(CodexLocalModelCache.mergeIfCodexProvider(providerName, models));
         }
-
-        if (ObjectUtils.isEmpty(models)) {
-            return emptyList();
-        }
-
-        return List.copyOf(ModelOrdering.sanitizeAndSortByProvider(providerName, models));
+        return ObjectUtils.isEmpty(models)
+            ? emptyList()
+            : List.copyOf(ModelOrdering.sanitizeAndSortByProvider(providerName, models));
     }
 
     public record MetricsSnapshot(

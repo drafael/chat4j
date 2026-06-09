@@ -204,8 +204,7 @@ public class ConversationRepo {
             try {
                 try (PreparedStatement ps = connection.prepareStatement(
                         "INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json) VALUES (?, ?, ?, ?, ?, ?)"
-                )
-                ) {
+                )) {
                     ps.setObject(1, messageId);
                     ps.setObject(2, conversationId);
                     ps.setString(3, message.role().name());
@@ -219,17 +218,13 @@ public class ConversationRepo {
 
                 try (PreparedStatement ps = connection.prepareStatement(
                         "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-                )
-                ) {
+                )) {
                     ps.setObject(1, conversationId);
                     ps.executeUpdate();
                 }
 
                 connection.commit();
-            } catch (SQLException e) {
-                rollbackSafely(connection, e);
-                throw e;
-            } catch (RuntimeException e) {
+            } catch (SQLException | RuntimeException e) {
                 rollbackSafely(connection, e);
                 throw e;
             }

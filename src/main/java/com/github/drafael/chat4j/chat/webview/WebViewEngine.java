@@ -1,12 +1,14 @@
 package com.github.drafael.chat4j.chat.webview;
 
 import com.formdev.flatlaf.util.SystemInfo;
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import java.util.Arrays;
 import java.util.Optional;
 
+@RequiredArgsConstructor
 public enum WebViewEngine {
 
     JEDITOR_PANE("jeditor-pane", "Swing HTML Renderer"),
@@ -15,11 +17,6 @@ public enum WebViewEngine {
 
     private final String settingValue;
     private final String displayName;
-
-    WebViewEngine(String settingValue, String displayName) {
-        this.settingValue = settingValue;
-        this.displayName = displayName;
-    }
 
     public String settingValue() {
         return settingValue;

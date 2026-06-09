@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
+import lombok.Setter;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -142,8 +143,11 @@ public class SidebarPanel extends JPanel {
     private final Icon loadingIcon = new LoadingIcon(() -> loadingIconFrame);
 
     private Consumer<UUID> onConversationSelected;
+    @Setter
     private Consumer<List<UUID>> onConversationsDeleted;
+    @Setter
     private Runnable onNewChat;
+    @Setter
     private Runnable onSettings;
     private boolean suppressSelection;
     private int hoveredIndex = -1;
@@ -254,18 +258,6 @@ public class SidebarPanel extends JPanel {
             notifiedSelectionConversationId = id;
             handler.accept(id);
         });
-    }
-
-    public void setOnNewChat(Runnable handler) {
-        onNewChat = handler;
-    }
-
-    public void setOnConversationsDeleted(Consumer<List<UUID>> handler) {
-        onConversationsDeleted = handler;
-    }
-
-    public void setOnSettings(Runnable handler) {
-        onSettings = handler;
     }
 
     private void configurePanel() {

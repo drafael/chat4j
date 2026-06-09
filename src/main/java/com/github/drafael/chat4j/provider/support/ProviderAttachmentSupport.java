@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -63,11 +64,9 @@ public final class ProviderAttachmentSupport {
     }
 
     public static String textProjection(List<ContentPart> parts) {
-        if (parts == null || parts.isEmpty()) {
-            return "";
-        }
-
-        return parts.stream()
+        return ObjectUtils.isEmpty(parts)
+            ? ""
+            : parts.stream()
                 .map(ProviderAttachmentSupport::textProjection)
                 .map(StringUtils::trimToEmpty)
                 .filter(StringUtils::isNotBlank)

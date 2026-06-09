@@ -39,10 +39,4 @@ public record JcefInitializationProgress(String stage, String message, int perce
             case INITIALIZED -> "Chromium ready";
         };
     }
-
-    @Override
-    public String toString() {
-        return "JcefInitializationProgress[stage=%s, message=%s, percent=%d, determinate=%s]"
-                .formatted(stage, message, percent, determinate);
-    }
 }

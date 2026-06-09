@@ -36,15 +36,6 @@ public final class WebViewRuntimeStatusResolver {
             @NonNull SettingsRepo settingsRepo,
             @NonNull BooleanSupplier macOsSupplier,
             @NonNull BooleanSupplier windowsSupplier,
-            @NonNull Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier
-    ) {
-        this(settingsRepo, macOsSupplier, windowsSupplier, swingWebViewAvailabilitySupplier, () -> new JcefAvailability(false, "Not checked", "Not checked"));
-    }
-
-    WebViewRuntimeStatusResolver(
-            @NonNull SettingsRepo settingsRepo,
-            @NonNull BooleanSupplier macOsSupplier,
-            @NonNull BooleanSupplier windowsSupplier,
             @NonNull Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier,
             @NonNull Supplier<JcefAvailability> jcefAvailabilitySupplier
     ) {
@@ -138,10 +129,9 @@ public final class WebViewRuntimeStatusResolver {
     }
 
     private List<WebViewEngine> platformFallbackChain() {
-        if (macOsSupplier.getAsBoolean() || windowsSupplier.getAsBoolean()) {
-            return List.of(WebViewEngine.SYSTEM, WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
-        }
-        return List.of(WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
+        return macOsSupplier.getAsBoolean() || windowsSupplier.getAsBoolean()
+            ? List.of(WebViewEngine.SYSTEM, WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE)
+            : List.of(WebViewEngine.JCEF, WebViewEngine.JEDITOR_PANE);
     }
 
     private static SwingWebViewAvailability resolveSwingWebViewAvailability() {

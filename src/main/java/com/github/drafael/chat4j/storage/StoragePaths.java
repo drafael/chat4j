@@ -33,12 +33,9 @@ public final class StoragePaths {
                     : Path.of(userHome, "AppData", "Roaming");
             return new StoragePaths(windowsConfigHome);
         }
-
-        if (StringUtils.isNotBlank(xdgConfigHome)) {
-            return new StoragePaths(Path.of(xdgConfigHome));
-        }
-
-        return new StoragePaths(Path.of(userHome, ".config"));
+        return StringUtils.isNotBlank(xdgConfigHome)
+            ? new StoragePaths(Path.of(xdgConfigHome))
+            : new StoragePaths(Path.of(userHome, ".config"));
     }
 
     public Path appConfigDirectory() {

@@ -70,10 +70,9 @@ public final class CredentialResolver {
 
     public static String resolveApiKey(String envVar, String fallbackApiKey) {
         String configuredEnvVar = firstConfiguredEnvVar(envVar);
-        if (configuredEnvVar != null) {
-            return getenv(configuredEnvVar);
-        }
-        return fallbackApiKey;
+        return configuredEnvVar != null
+            ? getenv(configuredEnvVar)
+            : fallbackApiKey;
     }
 
     public static String firstConfiguredEnvVar(String envVar) {
@@ -90,11 +89,9 @@ public final class CredentialResolver {
     }
 
     public static List<String> envVarCandidates(String envVar) {
-        if (StringUtils.isBlank(envVar)) {
-            return emptyList();
-        }
-
-        return Arrays.stream(envVar.split(Pattern.quote(ENV_VAR_SEPARATOR)))
+        return StringUtils.isBlank(envVar)
+            ? emptyList()
+            : Arrays.stream(envVar.split(Pattern.quote(ENV_VAR_SEPARATOR)))
                 .map(String::trim)
                 .filter(StringUtils::isNotBlank)
                 .distinct()

@@ -43,10 +43,6 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private static final AtomicReference<DiagnosticsSnapshot> LAST_DIAGNOSTICS =
             new AtomicReference<>(DiagnosticsSnapshot.empty());
 
-    public static DiagnosticsSnapshot diagnosticsSnapshot() {
-        return LAST_DIAGNOSTICS.get();
-    }
-
     public record DiagnosticsSnapshot(String transport,
                                       boolean sawStreamingDelta,
                                       boolean fallbackUsed,
@@ -129,7 +125,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         ProcessCommandSupport.applyShellEnvironment(processBuilder);
 
         Process process = processBuilder.start();
-        registerActiveStream.accept(() -> process.destroyForcibly());
+        registerActiveStream.accept(process::destroyForcibly);
 
         try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
              BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
@@ -182,7 +178,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
         Process process = processBuilder.start();
         process.getOutputStream().close();
-        registerActiveStream.accept(() -> process.destroyForcibly());
+        registerActiveStream.accept(process::destroyForcibly);
 
         try {
             CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> readAll(process));
@@ -412,7 +408,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private String buildPrompt(List<Message> history) {
         String transcript = history.stream()
                 .map(message -> "%s:\n%s".formatted(roleLabel(message.role()), messageText(message)))
-                .reduce((left, right) -> "%s\n\n%s".formatted(left, right))
+                .reduce("%s\n\n%s"::formatted)
                 .orElse("");
 
         Path executionDirectory = ExecutionDirectoryContext.currentDirectory().orElse(null);

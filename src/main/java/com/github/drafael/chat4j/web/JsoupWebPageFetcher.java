@@ -280,7 +280,9 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
 
     private String requestTarget(URI uri) {
         String path = StringUtils.defaultIfBlank(uri.getRawPath(), "/");
-        return StringUtils.isBlank(uri.getRawQuery()) ? path : "%s?%s".formatted(path, uri.getRawQuery());
+        return StringUtils.isBlank(uri.getRawQuery())
+            ? path
+            : "%s?%s".formatted(path, uri.getRawQuery());
     }
 
     private String hostHeader(FetchTarget target) {

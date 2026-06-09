@@ -83,11 +83,9 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     .map(Model::id)
                     .toList();
 
-            if (isCodexProvider(runtime)) {
-                return mergeCodexModelsWithLocalCache(models);
-            }
-
-            return models;
+            return isCodexProvider(runtime)
+                ? mergeCodexModelsWithLocalCache(models)
+                : models;
         } catch (Exception e) {
             log.debug("Primary model listing failed for {}: {}",
                     runtime.descriptor().name(), ExceptionUtils.getMessage(e));
@@ -310,8 +308,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     }
 
     private boolean isSupportedCopilotEndpoint(String endpoint) {
-        return "/chat/completions".equals(endpoint)
-                || "/responses".equals(endpoint);
+        return "/chat/completions".equals(endpoint) || "/responses".equals(endpoint);
     }
 
     private void persistCopilotMetadata(ProviderRuntime runtime, CatalogFetchResult catalog) {

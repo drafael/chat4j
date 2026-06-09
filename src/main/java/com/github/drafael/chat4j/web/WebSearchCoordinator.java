@@ -98,11 +98,9 @@ public class WebSearchCoordinator {
             int resultCount,
             BooleanSupplier isCancelled
     ) {
-        if (ObjectUtils.isEmpty(responses) || shouldStop(isCancelled)) {
-            return emptyList();
-        }
-
-        return responses.stream()
+        return ObjectUtils.isEmpty(responses) || shouldStop(isCancelled)
+            ? emptyList()
+            : responses.stream()
                 .flatMap(response -> response.results().stream())
                 .map(WebSearchResult::url)
                 .filter(StringUtils::isNotBlank)

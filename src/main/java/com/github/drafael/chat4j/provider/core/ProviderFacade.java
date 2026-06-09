@@ -41,18 +41,6 @@ public class ProviderFacade {
 
     ProviderFacade(
             CredentialStrategy credentialStrategy,
-            CopilotAuthResolver copilotAuthResolver
-    ) {
-        this(
-                credentialStrategy,
-                copilotAuthResolver,
-                new CodexAuthResolver(),
-                new CopilotModelMetadataStore()
-        );
-    }
-
-    ProviderFacade(
-            CredentialStrategy credentialStrategy,
             CopilotAuthResolver copilotAuthResolver,
             CopilotModelMetadataStore copilotModelMetadataStore
     ) {
@@ -121,11 +109,9 @@ public class ProviderFacade {
             String baseUrl,
             String selectedModel
     ) {
-        if (descriptor.authType() != AuthType.COPILOT_OAUTH || StringUtils.isBlank(selectedModel)) {
-            return emptyList();
-        }
-
-        return copilotModelMetadataStore.supportedEndpoints(baseUrl, selectedModel);
+        return descriptor.authType() != AuthType.COPILOT_OAUTH || StringUtils.isBlank(selectedModel)
+            ? emptyList()
+            : copilotModelMetadataStore.supportedEndpoints(baseUrl, selectedModel);
     }
 
     private String resolveCopilotAuthApiKey(String selectedModel) {

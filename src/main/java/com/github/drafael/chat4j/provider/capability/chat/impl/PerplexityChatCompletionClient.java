@@ -271,7 +271,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
     private String sourceReferences(List<Source> sources) {
         StringBuilder references = new StringBuilder();
         for (int i = 0; i < sources.size(); i++) {
-            if (references.length() > 0) {
+            if (!references.isEmpty()) {
                 references.append(" ");
             }
             references.append("[%d](%s)".formatted(i + 1, markdownLinkDestination(sources.get(i).url())));

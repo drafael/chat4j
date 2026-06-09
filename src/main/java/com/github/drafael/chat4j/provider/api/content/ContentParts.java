@@ -17,11 +17,7 @@ public final class ContentParts {
     }
 
     public static String toText(List<ContentPart> parts) {
-        if (ObjectUtils.isEmpty(parts)) {
-            return "";
-        }
-
-        return parts.stream()
+        return ObjectUtils.isEmpty(parts) ? "" : parts.stream()
                 .filter(Objects::nonNull)
                 .map(ContentPart::asTextProjection)
                 .filter(value -> !value.isBlank())

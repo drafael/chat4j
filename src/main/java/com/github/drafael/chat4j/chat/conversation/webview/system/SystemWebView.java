@@ -38,6 +38,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import javax.swing.*;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
@@ -79,7 +81,9 @@ public final class SystemWebView {
     private long pendingDocumentRequestId;
     private boolean pendingDocumentScrollToBottom;
     private Path currentDocumentPath;
+    @Getter
     private boolean disposed;
+    @Setter
     private ConversationActionListener actionListener;
 
     public SystemWebView() {
@@ -108,10 +112,6 @@ public final class SystemWebView {
 
     public JComponent component() {
         return webView;
-    }
-
-    public void setActionListener(ConversationActionListener actionListener) {
-        this.actionListener = actionListener;
     }
 
     public void setTranscript(
@@ -184,10 +184,6 @@ public final class SystemWebView {
         deletePendingDocumentUrl();
         replaceCurrentDocumentPath(null);
         webView.dispose();
-    }
-
-    public boolean isDisposed() {
-        return disposed;
     }
 
     private String renderDocument(boolean scrollToBottom, TranscriptRenderSnapshot snapshot) {

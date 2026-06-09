@@ -32,7 +32,5 @@ public class MenuBarSettingCoordinator {
             @NonNull Runnable refreshWindow
     ) {
 
-        public MenuBarActions {
-        }
     }
 }

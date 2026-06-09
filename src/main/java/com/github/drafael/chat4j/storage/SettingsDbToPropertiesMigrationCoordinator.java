@@ -140,13 +140,7 @@ public class SettingsDbToPropertiesMigrationCoordinator {
         if (providerKey.isPresent()) {
             return providerKey;
         }
-
-        Optional<String> favoriteKey = mapLegacyFavoriteKey(key);
-        if (favoriteKey.isPresent()) {
-            return favoriteKey;
-        }
-
-        return Optional.empty();
+        return mapLegacyFavoriteKey(key);
     }
 
     private Optional<String> mapLegacyProviderKey(String legacyKey) {

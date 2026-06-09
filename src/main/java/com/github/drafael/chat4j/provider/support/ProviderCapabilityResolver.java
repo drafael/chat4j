@@ -221,11 +221,7 @@ public final class ProviderCapabilityResolver {
     }
 
     public static boolean supportsFileInput(ProviderCapabilities capabilities, String providerName, String modelId) {
-        if (capabilities != null && capabilities.supportsFileInput()) {
-            return true;
-        }
-
-        return false;
+        return capabilities != null && capabilities.supportsFileInput();
     }
 
 }

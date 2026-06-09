@@ -161,9 +161,8 @@ public final class ShellEnvironmentLoader {
 
     private static String summarizeStderr(String stderr) {
         String normalized = StringUtils.normalizeSpace(StringUtils.defaultString(stderr));
-        if (StringUtils.isBlank(normalized)) {
-            return "none";
-        }
-        return StringUtils.abbreviate(normalized, STDERR_PREVIEW_MAX_LENGTH);
+        return StringUtils.isBlank(normalized)
+            ? "none"
+            : StringUtils.abbreviate(normalized, STDERR_PREVIEW_MAX_LENGTH);
     }
 }

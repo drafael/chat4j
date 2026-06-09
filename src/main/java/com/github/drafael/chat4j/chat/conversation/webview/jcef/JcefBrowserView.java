@@ -41,6 +41,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import javax.swing.*;
+import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.cef.CefClient;
@@ -103,6 +104,7 @@ public final class JcefBrowserView {
     private boolean pendingDocumentScrollToBottom;
     private Path currentDocumentPath;
     private boolean disposed;
+    @Setter
     private ConversationActionListener actionListener;
 
     public JcefBrowserView() {
@@ -115,10 +117,6 @@ public final class JcefBrowserView {
 
     public JComponent component() {
         return browserPanel;
-    }
-
-    public void setActionListener(ConversationActionListener actionListener) {
-        this.actionListener = actionListener;
     }
 
     public void setTranscript(
