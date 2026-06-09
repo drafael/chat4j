@@ -1,12 +1,11 @@
 # Chat4J
 
-[![CI](https://github.com/drafael/chat4j/actions/workflows/ci.yml/badge.svg)](https://github.com/drafael/chat4j/actions/workflows/ci.yml)
-[![Security Audit](https://github.com/drafael/chat4j/actions/workflows/security.yml/badge.svg)](https://github.com/drafael/chat4j/actions/workflows/security.yml)
+[![CI](https://github.com/drafael/chat4j/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/drafael/chat4j/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/drafael/chat4j/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/drafael/chat4j/actions/workflows/security.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Java](https://img.shields.io/badge/Java-21-orange?logo=openjdk)
 ![Maven](https://img.shields.io/badge/build-Maven-C71A36?logo=apachemaven)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-![License](https://img.shields.io/github/license/drafael/chat4j)
-![Dependabot](https://img.shields.io/badge/Dependabot-enabled-025E8C?logo=dependabot)
 
 Lightweight desktop AI chat client built with **Java 21**, **Swing**, and **Maven**.
 
