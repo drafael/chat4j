@@ -8,6 +8,12 @@
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 
 Lightweight desktop AI chat client built with **Java 21**, **Swing**, and **Maven**.
+Polished with [FlatLaf](https://github.com/JFormDesigner/FlatLaf) and bundled [IntelliJ themes](https://github.com/JFormDesigner/FlatLaf/tree/main/flatlaf-intellij-themes).
+Chat transcripts can use native system WebViews via [SwingWebView](https://github.com/webliteca/swingwebview), Chromium through [jcefmaven](https://github.com/jcefmaven/jcefmaven) / [JCEF](https://github.com/chromiumembedded/java-cef), or a Swing fallback.
+
+<p align="center">
+  <img src="docs/assets/chat4j-themes-preview.png" alt="Chat4J desktop UI with light, dark, and teal themes" width="900">
+</p>
 
 ## Quick start
 
