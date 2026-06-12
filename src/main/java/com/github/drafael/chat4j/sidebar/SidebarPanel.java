@@ -1036,6 +1036,7 @@ public class SidebarPanel extends JPanel {
     private void restoreSelection(int index) {
         if (index >= 0) {
             conversationList.setSelectedIndex(index);
+            conversationList.ensureIndexIsVisible(index);
         } else {
             conversationList.clearSelection();
         }

@@ -11,6 +11,7 @@ import javax.swing.JButton;
 import javax.swing.JList;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -19,6 +20,8 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -320,6 +323,53 @@ class SidebarPanelTest {
     }
 
     @Test
+    @DisplayName("Refresh keeps the restored selected row visible after sidebar reordering")
+    void refresh_whenSelectedConversationMoves_keepsSelectedRowVisible() throws Exception {
+        UUID selectedId = UUID.randomUUID();
+        List<ConversationRepo.ConversationRecord> initialRecords = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            initialRecords.add(conversation(UUID.randomUUID(), "Chat " + i));
+        }
+        initialRecords.add(conversation(selectedId, "Streaming LM Studio chat"));
+
+        List<ConversationRepo.ConversationRecord> reorderedRecords = new ArrayList<>();
+        reorderedRecords.add(conversation(selectedId, "Streaming LM Studio chat"));
+        reorderedRecords.addAll(initialRecords.stream()
+                .filter(record -> !record.id().equals(selectedId))
+                .toList());
+
+        var repo = new MutableConversationRepo(grouped("Today", initialRecords.toArray(ConversationRepo.ConversationRecord[]::new)));
+        var panelRef = new AtomicReference<SidebarPanel>();
+
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Streaming LM Studio chat"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.setSize(300, 140);
+            subject.doLayout();
+            JList<?> list = readConversationList(subject);
+            list.setFixedCellHeight(24);
+            list.setSize(300, list.getPreferredSize().height);
+            JScrollPane scrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(
+                    JScrollPane.class,
+                    list
+            );
+            scrollPane.setSize(300, 140);
+            scrollPane.getViewport().setExtentSize(new Dimension(300, 140));
+            scrollPane.getViewport().setViewPosition(new Point(0, Math.max(0, list.getHeight() - 140)));
+            scrollPane.doLayout();
+            subject.selectConversation(selectedId);
+        });
+        assertThat(selectedConversationIsVisible(subject)).isTrue();
+
+        repo.grouped = grouped("Today", reorderedRecords.toArray(ConversationRepo.ConversationRecord[]::new));
+        SwingUtilities.invokeAndWait(subject::refresh);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> selectedConversationIsVisible(subject));
+    }
+
+    @Test
     @DisplayName("Streaming state swaps the provider icon for a loading icon and restores it afterwards")
     void setConversationStreaming_whenStateChanges_swapsConversationIcon() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -411,11 +461,7 @@ class SidebarPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             DefaultListModel<?> model = readListModel(panel);
             JList<?> list = readConversationList(panel);
-            int conversationIndex = IntStream.range(0, model.size())
-                    .filter(index -> model.get(index) instanceof ConversationItem conversation
-                            && conversation.id().equals(conversationId))
-                    .findFirst()
-                    .orElseThrow();
+            int conversationIndex = findConversationIndex(model, conversationId);
             Object value = model.get(conversationIndex);
             @SuppressWarnings({"rawtypes", "unchecked"})
             JLabel label = (JLabel) ((JList) list).getCellRenderer().getListCellRendererComponent(
@@ -428,6 +474,27 @@ class SidebarPanelTest {
             iconRef.set(label.getIcon());
         });
         return iconRef.get();
+    }
+
+    private boolean selectedConversationIsVisible(SidebarPanel panel) throws Exception {
+        var visibleRef = new AtomicReference<Boolean>();
+        SwingUtilities.invokeAndWait(() -> {
+            JList<?> list = readConversationList(panel);
+            int selectedIndex = list.getSelectedIndex();
+            Rectangle selectedBounds = selectedIndex < 0 ? null : list.getCellBounds(selectedIndex, selectedIndex);
+            JScrollPane scrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, list);
+            Rectangle visibleRect = scrollPane.getViewport().getViewRect();
+            visibleRef.set(selectedBounds != null && visibleRect.intersects(selectedBounds));
+        });
+        return visibleRef.get();
+    }
+
+    private int findConversationIndex(DefaultListModel<?> model, UUID conversationId) {
+        return IntStream.range(0, model.size())
+                .filter(index -> model.get(index) instanceof ConversationItem conversation
+                        && conversation.id().equals(conversationId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private void invokeDeleteConversation(SidebarPanel panel, ConversationItem conversation) {
@@ -527,6 +594,21 @@ class SidebarPanelTest {
         @Override
         public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
             sleep(delayMillis);
+            return grouped;
+        }
+    }
+
+    private static class MutableConversationRepo extends ConversationRepo {
+
+        private Map<String, List<ConversationRepo.ConversationRecord>> grouped;
+
+        private MutableConversationRepo(Map<String, List<ConversationRepo.ConversationRecord>> grouped) {
+            super(null);
+            this.grouped = grouped;
+        }
+
+        @Override
+        public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
             return grouped;
         }
     }
