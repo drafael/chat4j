@@ -226,7 +226,7 @@ final class ModelRowComponent {
 
         favoriteLabel.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent e) {
+            public void mousePressed(MouseEvent e) {
                 e.consume();
                 listener.onToggleFavorite(providerName, modelId);
             }
@@ -267,14 +267,8 @@ final class ModelRowComponent {
             }
 
             @Override
-            public void mouseClicked(MouseEvent e) {
+            public void mousePressed(MouseEvent e) {
                 if (!selectable) {
-                    return;
-                }
-
-                Point panelPoint = SwingUtilities.convertPoint(e.getComponent(), e.getPoint(), panel);
-                if (isClickInside(panel, favoriteLabel, panelPoint)) {
-                    listener.onToggleFavorite(providerName, modelId);
                     return;
                 }
 
@@ -379,11 +373,6 @@ final class ModelRowComponent {
             }));
             return icon.hasFound() ? icon : null;
         });
-    }
-
-    private static boolean isClickInside(Component container, Component target, Point containerPoint) {
-        Point targetPoint = SwingUtilities.convertPoint(container, containerPoint, target);
-        return target.contains(targetPoint);
     }
 
     private static Color colorOrDefault(Color candidate, Color fallback) {

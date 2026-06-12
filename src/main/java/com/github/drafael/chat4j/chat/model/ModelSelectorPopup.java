@@ -571,11 +571,18 @@ public class ModelSelectorPopup extends JDialog {
 
     private AWTEventListener createOutsideClickListener() {
         return event -> {
-            if (!(event instanceof MouseEvent mouseEvent) || mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) {
+            if (!isVisible()) {
                 return;
             }
 
-            if (!isVisible()) {
+            if (event instanceof WindowEvent windowEvent && windowEvent.getID() == WindowEvent.WINDOW_DEACTIVATED) {
+                if (shouldHideForWindowDeactivation(windowEvent)) {
+                    hidePopup();
+                }
+                return;
+            }
+
+            if (!(event instanceof MouseEvent mouseEvent) || mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) {
                 return;
             }
 
@@ -597,12 +604,19 @@ public class ModelSelectorPopup extends JDialog {
         };
     }
 
+    private boolean shouldHideForWindowDeactivation(WindowEvent event) {
+        return event.getOppositeWindow() != this;
+    }
+
     private void installOutsideClickListener() {
         if (outsideClickListenerInstalled) {
             return;
         }
 
-        Toolkit.getDefaultToolkit().addAWTEventListener(outsideClickListener, AWTEvent.MOUSE_EVENT_MASK);
+        Toolkit.getDefaultToolkit().addAWTEventListener(
+                outsideClickListener,
+                AWTEvent.MOUSE_EVENT_MASK | AWTEvent.WINDOW_EVENT_MASK
+        );
         outsideClickListenerInstalled = true;
     }
 
