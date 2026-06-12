@@ -9,9 +9,7 @@ final class MarkdownInlineRenderer {
 
     private static final Pattern INLINE_CODE_PATTERN = Pattern.compile("`([^`]+?)`");
     private static final Pattern INLINE_CODE_TOKEN_PATTERN = Pattern.compile("@@INLINE_CODE_(\\d+)@@");
-    private static final Pattern DISPLAY_DOLLAR_MATH_PATTERN = Pattern.compile("(?s)(?<!\\\\)\\$\\$(.+?)(?<!\\\\)\\$\\$");
     private static final Pattern DISPLAY_BRACKET_MATH_PATTERN = Pattern.compile("(?s)\\\\\\[(.+?)\\\\\\]");
-    private static final Pattern INLINE_DOLLAR_MATH_PATTERN = Pattern.compile("(?<!\\\\)\\$(?![\\$\\d.,])(.+?)(?<!\\\\)\\$(?!\\$)");
     private static final Pattern INLINE_PAREN_MATH_PATTERN = Pattern.compile("\\\\\\((.+?)\\\\\\)");
     private static final Pattern MATH_TOKEN_PATTERN = Pattern.compile("@@MATH_(\\d+)@@");
     private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile(
@@ -107,27 +105,107 @@ final class MarkdownInlineRenderer {
     private static MathExtraction extractMathSegments(String text) {
         List<String> mathSegments = new ArrayList<>();
 
-        String withDisplayDollarMathTokens = DISPLAY_DOLLAR_MATH_PATTERN.matcher(text).replaceAll(matchResult -> {
+        String withDollarMathTokens = extractDollarMathSegments(text, mathSegments);
+
+        String withDisplayBracketMathTokens = DISPLAY_BRACKET_MATH_PATTERN.matcher(withDollarMathTokens).replaceAll(matchResult -> {
             mathSegments.add(matchResult.group());
             return mathToken(mathSegments.size() - 1);
         });
 
-        String withDisplayBracketMathTokens = DISPLAY_BRACKET_MATH_PATTERN.matcher(withDisplayDollarMathTokens).replaceAll(matchResult -> {
-            mathSegments.add(matchResult.group());
-            return mathToken(mathSegments.size() - 1);
-        });
-
-        String withInlineDollarMathTokens = INLINE_DOLLAR_MATH_PATTERN.matcher(withDisplayBracketMathTokens).replaceAll(matchResult -> {
-            mathSegments.add(matchResult.group());
-            return mathToken(mathSegments.size() - 1);
-        });
-
-        String withAllMathTokens = INLINE_PAREN_MATH_PATTERN.matcher(withInlineDollarMathTokens).replaceAll(matchResult -> {
+        String withAllMathTokens = INLINE_PAREN_MATH_PATTERN.matcher(withDisplayBracketMathTokens).replaceAll(matchResult -> {
             mathSegments.add(matchResult.group());
             return mathToken(mathSegments.size() - 1);
         });
 
         return new MathExtraction(withAllMathTokens, List.copyOf(mathSegments));
+    }
+
+    private static String extractDollarMathSegments(String text, List<String> mathSegments) {
+        StringBuilder rendered = new StringBuilder(text.length());
+        int index = 0;
+        while (index < text.length()) {
+            int open = nextUnescapedDollar(text, index);
+            if (open < 0) {
+                rendered.append(text, index, text.length());
+                break;
+            }
+
+            rendered.append(text, index, open);
+            boolean display = open + 1 < text.length() && text.charAt(open + 1) == '$';
+            if (!display && isLikelyCurrencyOrPunctuationMath(text, open)) {
+                rendered.append(text.charAt(open));
+                index = open + 1;
+                continue;
+            }
+
+            String delimiter = display ? "$$" : "$";
+            int contentStart = open + delimiter.length();
+            int close = findDollarMathClose(text, contentStart, display);
+            if (close < 0) {
+                rendered.append(text.charAt(open));
+                index = open + 1;
+                continue;
+            }
+
+            String math = text.substring(open, close + delimiter.length());
+            mathSegments.add(math);
+            rendered.append(mathToken(mathSegments.size() - 1));
+            index = close + delimiter.length();
+        }
+        return rendered.toString();
+    }
+
+    private static int nextUnescapedDollar(String text, int start) {
+        for (int index = start; index < text.length(); index++) {
+            if (text.charAt(index) == '$' && !isEscaped(text, index)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static int findDollarMathClose(String text, int start, boolean display) {
+        int braceDepth = 0;
+        for (int index = start; index < text.length(); index++) {
+            char current = text.charAt(index);
+            if (current == '\\') {
+                index++;
+                continue;
+            }
+            if (current == '{') {
+                braceDepth++;
+                continue;
+            }
+            if (current == '}') {
+                braceDepth = Math.max(0, braceDepth - 1);
+                continue;
+            }
+            if (braceDepth == 0 && current == '$' && !isEscaped(text, index)) {
+                if (display && index + 1 < text.length() && text.charAt(index + 1) == '$') {
+                    return index;
+                }
+                if (!display && (index + 1 >= text.length() || text.charAt(index + 1) != '$')) {
+                    return index;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isEscaped(String text, int index) {
+        int slashCount = 0;
+        for (int cursor = index - 1; cursor >= 0 && text.charAt(cursor) == '\\'; cursor--) {
+            slashCount++;
+        }
+        return slashCount % 2 == 1;
+    }
+
+    private static boolean isLikelyCurrencyOrPunctuationMath(String text, int dollarIndex) {
+        if (dollarIndex + 1 >= text.length()) {
+            return true;
+        }
+        char next = text.charAt(dollarIndex + 1);
+        return next == '$' || Character.isDigit(next) || next == '.' || next == ',';
     }
 
     private static String restoreMathSegments(String text, List<String> mathSegments, Palette palette) {

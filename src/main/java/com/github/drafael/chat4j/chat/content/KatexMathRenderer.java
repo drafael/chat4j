@@ -145,7 +145,7 @@ public final class KatexMathRenderer {
                         displayMode: displayMode === true,
                         throwOnError: false,
                         trust: false,
-                        strict: 'warn'
+                        strict: false
                     });
                 })
                 """);

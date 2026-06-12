@@ -76,31 +76,53 @@ Rules:
 
 Bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScript, JSON, XML/HTML, CSS, Bash/Shell, YAML, SQL, Python, diff, and plaintext. Common aliases are normalized (`js` → `javascript`, `ts` → `typescript`, `sh`/`shell` → `bash`, `md` → `markdown`, `html` → `xml`).
 
-## Math and chemistry
+## Math, diagrams, and chemistry
 
-Browser conversation views progressively enhance explicit math fallback nodes. Swing HTML Renderer keeps the readable fallback markup.
+Browser conversation views progressively enhance explicit math fallback nodes and explicit diagram/chemistry fences. Swing HTML Renderer keeps the readable fallback markup/source blocks.
 
-Supported input forms:
+Supported math input forms:
 
 - inline: `$...$`, `\(...\)`
 - display: `$$...$$`, `\[...\]`
 - common bare display-LaTeX lines, such as `\frac`, `\ce`, and `\xrightarrow`, when they contain math operators
 - KaTeX `mhchem`, such as `\ce{CO2 + H2O <=> H2CO3}` and `\pu{5 mol}`
 
+Supported diagram and chemistry fences:
+
+- `mermaid`: renders flowcharts, sequence diagrams, state diagrams, class diagrams, ER diagrams, and process diagrams with bundled Mermaid.
+- `smiles`: renders generated chemical structures with bundled SmilesDrawer.
+- `mol`: renders complete V2000 MOL records with the built-in browser-side SVG renderer.
+- `sdf`: renders one or more complete V2000 MOL records separated by `$$$$`; browser views show the first 12 records and display a truncation note when more are present.
+
+Rendering rules:
+
+- Only explicit fenced blocks are rendered; prose is not auto-detected.
+- Successful diagrams replace the source block.
+- Failed diagrams keep the source visible and show a friendly error label.
+- Mermaid/SMILES assets are bundled locally; no CDN or runtime network access is required.
+- MOL/SDF rendering is limited to complete V2000 source records.
+
+Normal chat requests include a lightweight system hint that advertises renderable fence formats to the selected model. The hint distinguishes general diagrams from chemistry: models are told to use `mermaid` only for flow/process-style diagrams and to use `smiles` for generated molecule drawings. MOL/SDF rendering remains available for exact user-supplied V2000 source blocks, but normal model guidance avoids advertising MOL/SDF as generated output because models frequently fabricate invalid coordinate files from names, formulas, or descriptions.
+
+Rendered Mermaid diagrams can be opened outside Chat4J from the hover button or the `Open Diagram` context-menu item. Chat4J serializes the rendered SVG, validates it in `DiagramHtmlExporter`, writes a temporary standalone HTML wrapper with a strict CSP, and opens it through Desktop integration. The exporter rejects scripts, event-handler attributes, oversized payloads, and external `href`/`src` references; internal fragment references such as `#id` are allowed.
+
 Implementation:
 
 1. Markdown emits explicit fallback nodes only:
-   - inline: `code.md-latex-inline`
-   - display: `table.md-code-block.md-latex-block`
+   - inline math: `code.md-latex-inline`
+   - display math: `table.md-code-block.md-latex-block`
+   - diagrams: `table.md-code-block.md-diagram-block` plus format-specific marker classes
 2. `KatexMathRenderer` runs bundled KaTeX/mhchem through GraalJS before browser load.
 3. Valid formulas are replaced with KaTeX HTML.
 4. Invalid or unsupported formulas keep the fallback visible.
-5. A browser-side helper remains as best-effort progressive enhancement.
+5. Browser helpers render Mermaid, SMILES, MOL, and SDF blocks after document load and transcript refresh.
 
 Assets:
 
 - Highlight.js: `src/main/resources/web/highlight/`
 - KaTeX/mhchem: `src/main/resources/web/katex/`
+- Mermaid: `src/main/resources/web/mermaid/`
+- SmilesDrawer: `src/main/resources/web/smilesdrawer/`
 - Notices: `THIRD_PARTY_NOTICES.md`
 
 ## JCEF notes

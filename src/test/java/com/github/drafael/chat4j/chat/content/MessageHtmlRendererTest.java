@@ -108,6 +108,59 @@ class MessageHtmlRendererTest {
     }
 
     @Test
+    @DisplayName("Preview mode keeps model math with nested text dollars as one formula")
+    void render_whenInlineMathContainsNestedTextDollars_preservesSingleLatexFallback() {
+        String html = subject.render(
+                Role.ASSISTANT,
+                RenderMode.PREVIEW,
+                "A hexagon with a circle drawn inside it ($\\text{Drawings often use $\\pi$ notation}$).",
+                false
+        );
+
+        var document = Jsoup.parse(html);
+        var inlineMath = document.select("code.md-latex-inline");
+
+        assertThat(inlineMath).hasSize(1);
+        assertThat(inlineMath.text()).isEqualTo("$\\text{Drawings often use $\\pi$ notation}$");
+        assertThat(document.text()).contains("A hexagon with a circle drawn inside it", ").");
+    }
+
+    @Test
+    @DisplayName("Preview mode keeps display arrays in table cells detectable for math rendering")
+    void render_whenTableCellContainsDisplayArray_preservesLatexFallbackClass() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Example | Visual |
+                | --- | --- |
+                | Methane | $$\\begin{array}{c} \\text{H} & \\text{H} \\\\ \\text{H} & \\text{C} & \\text{H} \\end{array}$$ |
+                """, false);
+
+        var document = Jsoup.parse(html);
+        var formulaCell = document.select("table.md-table tr").get(1).select("td").get(1);
+
+        assertThat(formulaCell.select("code.md-latex-inline")).hasSize(1);
+        assertThat(formulaCell.text()).contains("$$\\begin{array}");
+    }
+
+    @Test
+    @DisplayName("Preview mode does not split table cells on pipes inside LaTeX formulas")
+    void render_whenTableCellFormulaContainsVerticalBondPipes_keepsTableColumnsStable() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Convention | What it shows | Example Molecule | Visual Representation | Best Used For... |
+                | :--- | :--- | :--- | :--- | :--- |
+                | **Lewis Structure** | Shows *every* atom and *every* bond. | $\\text{CH}_4$ | $$\\begin{array}{c} \\text{H} & \\text{H} \\\\ | & | \\\\ \\text{H} - \\text{C} - \\text{H} \\\\ | & | \\\\ \\text{H} & \\text{H} \\end{array}$$ | Teaching fundamentals; showing lone pairs. |
+                """, false);
+
+        var document = Jsoup.parse(html);
+        var dataRowCells = document.select("table.md-table tr").get(1).select("td");
+        var visualCell = dataRowCells.get(3);
+
+        assertThat(dataRowCells).hasSize(5);
+        assertThat(visualCell.select("code.md-latex-inline")).hasSize(1);
+        assertThat(visualCell.text()).contains("$$\\begin{array}", "\\text{C}");
+        assertThat(dataRowCells.get(4).text()).contains("Teaching fundamentals");
+    }
+
+    @Test
     @DisplayName("Markdown mode renders escaped source text with original formatting")
     void render_whenMarkdownModeSelected_escapesTextAndPreservesFormatting() {
         String markdown = "<b>x</b>\n  **second**\n```java\nString x;\n```";

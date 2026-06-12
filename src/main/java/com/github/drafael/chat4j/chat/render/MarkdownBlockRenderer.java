@@ -6,6 +6,7 @@ import org.apache.commons.lang3.Strings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 final class MarkdownBlockRenderer {
@@ -267,20 +268,46 @@ final class MarkdownBlockRenderer {
         List<String> cells = new ArrayList<>();
         StringBuilder cell = new StringBuilder();
         boolean inInlineCode = false;
+        int dollarMathDelimiterLength = 0;
+        int mathBraceDepth = 0;
         for (int index = 0; index < line.length(); index++) {
             char current = line.charAt(index);
             if (current == '\\' && index + 1 < line.length()) {
                 char next = line.charAt(index + 1);
-                if (next == '|') {
+                if (next == '|' && dollarMathDelimiterLength == 0) {
                     cell.append(next);
                     index++;
                     continue;
                 }
                 cell.append(current);
+                cell.append(next);
+                index++;
                 continue;
             }
-            if (current == '`') {
+            if (current == '`' && dollarMathDelimiterLength == 0) {
                 inInlineCode = !inInlineCode;
+                cell.append(current);
+                continue;
+            }
+            if (!inInlineCode && current == '$') {
+                int delimiterLength = dollarDelimiterLength(line, index, dollarMathDelimiterLength, mathBraceDepth);
+                if (delimiterLength > 0) {
+                    cell.append(current);
+                    if (delimiterLength == 2) {
+                        cell.append(line.charAt(index + 1));
+                        index++;
+                    }
+                    dollarMathDelimiterLength = dollarMathDelimiterLength == 0 ? delimiterLength : 0;
+                    mathBraceDepth = 0;
+                    continue;
+                }
+            }
+            if (dollarMathDelimiterLength > 0) {
+                if (current == '{') {
+                    mathBraceDepth++;
+                } else if (current == '}') {
+                    mathBraceDepth = Math.max(0, mathBraceDepth - 1);
+                }
                 cell.append(current);
                 continue;
             }
@@ -293,6 +320,64 @@ final class MarkdownBlockRenderer {
         }
         cells.add(cell.toString());
         return cells;
+    }
+
+    private static int dollarDelimiterLength(String text, int index, int activeDelimiterLength, int braceDepth) {
+        if (isEscaped(text, index)) {
+            return 0;
+        }
+        if (activeDelimiterLength > 0) {
+            if (braceDepth > 0) {
+                return 0;
+            }
+            if (activeDelimiterLength == 2 && index + 1 < text.length() && text.charAt(index + 1) == '$') {
+                return 2;
+            }
+            return activeDelimiterLength == 1 && (index + 1 >= text.length() || text.charAt(index + 1) != '$') ? 1 : 0;
+        }
+        if (index + 1 < text.length() && text.charAt(index + 1) == '$') {
+            return findDollarMathClose(text, index + 2, true) >= 0 ? 2 : 0;
+        }
+        if (index + 1 >= text.length() || Character.isDigit(text.charAt(index + 1)) || text.charAt(index + 1) == '.' || text.charAt(index + 1) == ',') {
+            return 0;
+        }
+        return findDollarMathClose(text, index + 1, false) >= 0 ? 1 : 0;
+    }
+
+    private static int findDollarMathClose(String text, int start, boolean display) {
+        int braceDepth = 0;
+        for (int index = start; index < text.length(); index++) {
+            char current = text.charAt(index);
+            if (current == '\\') {
+                index++;
+                continue;
+            }
+            if (current == '{') {
+                braceDepth++;
+                continue;
+            }
+            if (current == '}') {
+                braceDepth = Math.max(0, braceDepth - 1);
+                continue;
+            }
+            if (braceDepth == 0 && current == '$' && !isEscaped(text, index)) {
+                if (display && index + 1 < text.length() && text.charAt(index + 1) == '$') {
+                    return index;
+                }
+                if (!display && (index + 1 >= text.length() || text.charAt(index + 1) != '$')) {
+                    return index;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isEscaped(String text, int index) {
+        int slashCount = 0;
+        for (int cursor = index - 1; cursor >= 0 && text.charAt(cursor) == '\\'; cursor--) {
+            slashCount++;
+        }
+        return slashCount % 2 == 1;
     }
 
     private static boolean isTableLine(String line) {
@@ -358,9 +443,10 @@ final class MarkdownBlockRenderer {
         int languageFontSize = Math.max(9, Fonts.scale(Fonts.SIZE_MICRO) - 1);
         int codeFontSize = CodeFontResolver.resolveCodeFontSize();
         String blockBorder = palette.hrColor();
-        boolean latexFallback = Strings.CI.equals(StringUtils.trimToEmpty(lang), "latex");
+        String normalizedLang = StringUtils.trimToEmpty(lang);
+        boolean latexFallback = Strings.CI.equals(normalizedLang, "latex");
         String borderStyle = latexFallback ? "dashed" : "solid";
-        String tableClass = latexFallback ? "md-code-block md-latex-block" : "md-code-block";
+        String tableClass = codeBlockClass(normalizedLang, latexFallback);
         String headerBackground = latexFallback ? palette.inlineCodeBg() : palette.codeHeaderBg();
         String languageAttribute = StringUtils.isNotEmpty(lang)
                 ? " data-code-language=\"%s\"".formatted(lang)
@@ -392,6 +478,19 @@ final class MarkdownBlockRenderer {
                 .append("</font></pre>");
         html.append("</td></tr>");
         html.append("</table>");
+    }
+
+    private static String codeBlockClass(String normalizedLang, boolean latexFallback) {
+        if (latexFallback) {
+            return "md-code-block md-latex-block";
+        }
+        if (Strings.CI.equals(normalizedLang, "mermaid")) {
+            return "md-code-block md-diagram-block md-mermaid-block";
+        }
+        if (Strings.CI.equalsAny(normalizedLang, "smiles", "mol", "sdf")) {
+            return "md-code-block md-diagram-block md-chem-block md-%s-block".formatted(normalizedLang.toLowerCase(Locale.ROOT));
+        }
+        return "md-code-block";
     }
 
     private static int orderedListNumber(String line) {

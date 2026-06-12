@@ -78,6 +78,10 @@ public final class JcefBrowserView {
     private static final String KATEX_CSS = inlineStylesheetFonts(resourceText("/web/katex/katex.min.css"));
     private static final String KATEX_SCRIPT = resourceText("/web/katex/katex.min.js");
     private static final String MHCHEM_SCRIPT = resourceText("/web/katex/contrib/mhchem.min.js");
+    private static final String MERMAID_SCRIPT = resourceText("/web/mermaid/mermaid.min.js");
+    private static final String SMILES_DRAWER_SCRIPT = resourceText("/web/smilesdrawer/smiles-drawer.min.js");
+    private static final String MERMAID_SCRIPT_URL = "https://chat4j.local/assets/mermaid/mermaid.min.js";
+    private static final String SMILES_DRAWER_SCRIPT_URL = "https://chat4j.local/assets/smilesdrawer/smiles-drawer.min.js";
     private static final int ATTACHMENT_IMAGE_MAX_WIDTH = 420;
     private static final int ATTACHMENT_IMAGE_MAX_HEIGHT = 360;
     private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
@@ -311,6 +315,19 @@ public final class JcefBrowserView {
                     .message .chat4j-math-display::-webkit-scrollbar-track { background-color: %s !important; border-radius: 999px !important; }
                     .message .chat4j-math-display::-webkit-scrollbar-thumb { background-color: %s !important; border-radius: 999px !important; border: 2px solid %s !important; }
                     .message .chat4j-math-display::-webkit-scrollbar-thumb:hover { background-color: %s !important; }
+                    .chat4j-diagram { box-sizing: border-box; width: 100%%; margin: 10px 0 20px 0; border: 1px solid %s; border-radius: 8px; background: %s; color: %s; padding: 14px; overflow-x: auto; scrollbar-color: %s %s; }
+                    .chat4j-diagram { position: relative; }
+                    .chat4j-diagram svg { max-width: 100%%; height: auto; display: block; margin: 0 auto; }
+                    .chat4j-chem-display { text-align: center; padding: 10px; }
+                    .chat4j-chem-display svg { width: auto !important; height: auto !important; max-width: 620px !important; max-height: 340px !important; }
+                    .chat4j-chem-display svg text { font-family: %s, sans-serif; }
+                    .chat4j-chem-record-summary { margin-top: 8px; color: %s; font-size: %dpx; font-weight: 600; }
+                    .diagram-open-button { position: absolute; top: 8px; right: 8px; min-width: 30px; height: 26px; border: 1px solid %s; border-radius: 7px; background: %s; color: %s; font-size: 12px; font-weight: 700; cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.94); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease; }
+                    .chat4j-mermaid-display:hover .diagram-open-button { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .diagram-open-button:hover { background: %s; color: %s; transform: translateY(0) scale(1.04); }
+                    .code-block-shell[data-chat4j-diagram-rendered="error"]::before { content: attr(data-chat4j-diagram-error); display: inline-block; margin: 0 0 6px 0; padding: 2px 7px; border-radius: 999px; background: %s; color: %s; font-size: %dpx; font-weight: 700; }
+                    .message table.md-code-block tr.chat4j-diagram-error td { background: transparent !important; border: 0 !important; padding: 0 0 6px 0 !important; }
+                    .chat4j-diagram-error-badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: %s; color: %s; font-size: %dpx; font-weight: 700; }
                     .activity-box { box-sizing: border-box; position: relative; width: 100%%; border: 1px solid %s; border-radius: 10px; padding: 0; color: %s; background: transparent; }
                     .activity-box summary { cursor: pointer; list-style: none; padding: 7px 40px 7px 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
                     .activity-copy-button { top: 4px; right: 6px; }
@@ -365,7 +382,7 @@ public final class JcefBrowserView {
                     @keyframes chat4j-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
                   </style>
                 </head>
-                <body onload="if(window.chat4jRenderMath){window.chat4jRenderMath(document.querySelector('.transcript')||document.body);}">
+                <body onload="if(window.chat4jRenderEnhancements){window.chat4jRenderEnhancements(document.querySelector('.transcript')||document.body);}">
                   <main class="transcript">%s</main>
                   <div id="chat4j-top-fade" class="chat4j-fade top"></div>
                   <div id="chat4j-bottom-fade" class="chat4j-fade bottom"></div>
@@ -376,7 +393,7 @@ public final class JcefBrowserView {
                   </div>
                   <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
                   <button id="chat4j-jump-bottom" class="jump-button%s" data-streaming="%s" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); if(window.chat4jUpdateJumpButton){setTimeout(window.chat4jUpdateJumpButton, 0);}"></button>
-                  <script>if(window.chat4jRenderMath){window.chat4jRenderMath(document.querySelector('.transcript')||document.body);}</script>
+                  <script>if(window.chat4jRenderEnhancements){window.chat4jRenderEnhancements(document.querySelector('.transcript')||document.body);}</script>
                   %s
                 </body>
                 </html>
@@ -441,6 +458,25 @@ public final class JcefBrowserView {
                 scrollbarThumb,
                 scrollbarTrack,
                 scrollbarHoverThumb,
+                borderColor,
+                bubbleBackground,
+                palette.textColor(),
+                scrollbarThumb,
+                scrollbarTrack,
+                palette.baseFontFamily(),
+                palette.mutedTextColor(),
+                Math.max(10, baseBodyFontSize - 2),
+                buttonBorder,
+                buttonBackground,
+                palette.textColor(),
+                hoverBackground,
+                hoverForeground,
+                palette.inlineCodeBg(),
+                palette.mutedTextColor(),
+                Math.max(10, baseBodyFontSize - 2),
+                palette.inlineCodeBg(),
+                palette.mutedTextColor(),
+                Math.max(10, baseBodyFontSize - 2),
                 borderColor,
                 palette.mutedTextColor(),
                 palette.mutedTextColor(),
@@ -690,8 +726,8 @@ public final class JcefBrowserView {
                   if (transcript) {
                     transcript.innerHTML = %s;
                   }
-                  if (window.chat4jRenderMath) {
-                    window.chat4jRenderMath(transcript);
+                  if (window.chat4jRenderEnhancements) {
+                    window.chat4jRenderEnhancements(transcript);
                   }
                   if (window.chat4jInstallTranscriptActions) {
                     window.chat4jInstallTranscriptActions();
@@ -1021,7 +1057,7 @@ public final class JcefBrowserView {
     }
 
     static void renderCodeHighlights(Document document) {
-        document.select("table.md-code-block:not(.md-latex-block)").forEach(table -> {
+        document.select("table.md-code-block:not(.md-latex-block):not(.md-diagram-block)").forEach(table -> {
             String language = StringUtils.defaultIfBlank(table.attr("data-code-language"), codeBlockHeaderText(table));
             Element pre = table.selectFirst("pre");
             if (pre == null) {
@@ -1243,7 +1279,7 @@ public final class JcefBrowserView {
         }
     }
 
-    private String bridgeScript() {
+    static String bridgeScript() {
         return """
                 (function () {
                     function closest(node, selector) {
@@ -1275,6 +1311,7 @@ public final class JcefBrowserView {
                             window.chat4jTranscriptAction(action, String(messageIndex), payloadText);
                         }
                     }
+                    window.chat4jDispatchTranscriptAction = dispatchTranscriptAction;
                     function animateCopyButton(button) {
                         if (!button) {
                             return;
@@ -1343,19 +1380,32 @@ public final class JcefBrowserView {
                         }
                         var regenerateLabel = row.classList.contains('user') ? 'Regenerate Response' : 'Regenerate This Response';
                         var selection = selectedText().trim();
+                        var diagram = closest(event.target, '.chat4j-mermaid-display');
                         var selectedCopy = selection.length > 0
                                 ? '<button data-action="copy-selected"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Selected Text</span><span class="shortcut">⌘C</span></button><div class="transcript-menu-separator"></div>'
                                 : '';
+                        var diagramOpen = diagram
+                                ? '<button data-action="open-diagram"><span class="icon regenerate" aria-hidden="true"></span><span class="label">Open Diagram</span><span class="shortcut"></span></button><div class="transcript-menu-separator"></div>'
+                                : '';
                         menu.setAttribute('data-selected-text', selection);
                         menu.innerHTML = selectedCopy
+                                + diagramOpen
                                 + '<button data-action="copy"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Message</span><span class="shortcut"></span></button>'
                                 + '<div class="transcript-menu-separator"></div>'
                                 + '<button data-action="regenerate"><span class="icon regenerate" aria-hidden="true"></span><span class="label">' + regenerateLabel + '</span><span class="shortcut"></span></button>';
+                        menu._chat4jDiagram = diagram || null;
                         Array.prototype.forEach.call(menu.querySelectorAll('button[data-action]'), function(button) {
                             button.onclick = function(clickEvent) {
                                 clickEvent.preventDefault();
                                 clickEvent.stopPropagation();
                                 var action = button.getAttribute('data-action');
+                                if (action === 'open-diagram') {
+                                    if (window.chat4jOpenMermaidDiagram) {
+                                        window.chat4jOpenMermaidDiagram(menu._chat4jDiagram);
+                                    }
+                                    hideTranscriptMenu();
+                                    return;
+                                }
                                 var text = action === 'copy-selected' ? menu.getAttribute('data-selected-text') : '';
                                 dispatchTranscriptAction(action, messageIndex, text);
                                 hideTranscriptMenu();
@@ -1499,15 +1549,15 @@ public final class JcefBrowserView {
                     }
                     window.chat4jInstallTranscriptActions = function() {
                         hideTranscriptMenu();
-                        if (window.chat4jRenderMath) {
-                            window.chat4jRenderMath(document.querySelector('.transcript') || document.body);
+                        if (window.chat4jRenderEnhancements) {
+                            window.chat4jRenderEnhancements(document.querySelector('.transcript') || document.body);
                         }
                         installCodeCopyButtons();
                         installCustomScrollbar();
                     };
                     window.addEventListener('load', function() {
-                        if (window.chat4jRenderMath) {
-                            window.chat4jRenderMath(document.querySelector('.transcript') || document.body);
+                        if (window.chat4jRenderEnhancements) {
+                            window.chat4jRenderEnhancements(document.querySelector('.transcript') || document.body);
                         }
                         installCodeCopyButtons();
                         installCustomScrollbar();
@@ -1728,6 +1778,16 @@ public final class JcefBrowserView {
         return htmlByUrl.get(url);
     }
 
+    private static String scriptForUrl(String url) {
+        if (Strings.CS.equals(url, MERMAID_SCRIPT_URL)) {
+            return MERMAID_SCRIPT;
+        }
+        if (Strings.CS.equals(url, SMILES_DRAWER_SCRIPT_URL)) {
+            return SMILES_DRAWER_SCRIPT;
+        }
+        return null;
+    }
+
     private boolean isInternalUrl(String url) {
         try {
             URI uri = new URI(StringUtils.defaultString(url));
@@ -1904,7 +1964,10 @@ public final class JcefBrowserView {
     }
 
     static String mathHeadAssets() {
-        if (StringUtils.isBlank(KATEX_CSS) && StringUtils.isBlank(KATEX_SCRIPT)) {
+        if (StringUtils.isBlank(KATEX_CSS)
+                && StringUtils.isBlank(KATEX_SCRIPT)
+                && StringUtils.isBlank(MERMAID_SCRIPT)
+                && StringUtils.isBlank(SMILES_DRAWER_SCRIPT)) {
             return "";
         }
 
@@ -1913,11 +1976,17 @@ public final class JcefBrowserView {
                 <script id="chat4j-katex-script">%s</script>
                 <script id="chat4j-mhchem-script">%s</script>
                 <script id="chat4j-math-render-script">%s</script>
+                <script id="chat4j-mermaid-script" src="%s"></script>
+                <script id="chat4j-smiles-drawer-script" src="%s"></script>
+                <script id="chat4j-diagram-render-script">%s</script>
                 """.formatted(
                 KATEX_CSS,
                 safeScriptContent(KATEX_SCRIPT),
                 safeScriptContent(MHCHEM_SCRIPT),
-                safeScriptContent(mathRenderScript())
+                safeScriptContent(mathRenderScript()),
+                MERMAID_SCRIPT_URL,
+                SMILES_DRAWER_SCRIPT_URL,
+                safeScriptContent(diagramRenderScript())
         );
     }
 
@@ -1930,11 +1999,14 @@ public final class JcefBrowserView {
     }
 
     static String mathBridgeScript() {
-        if (StringUtils.isBlank(KATEX_SCRIPT)) {
-            return mathRenderScript();
-        }
-
-        return "%s\n%s\n%s".formatted(KATEX_SCRIPT, MHCHEM_SCRIPT, mathRenderScript());
+        return "%s\n%s\n%s\n%s\n%s\n%s".formatted(
+                KATEX_SCRIPT,
+                MHCHEM_SCRIPT,
+                mathRenderScript(),
+                MERMAID_SCRIPT,
+                SMILES_DRAWER_SCRIPT,
+                diagramRenderScript()
+        );
     }
 
     private static String mathRenderScript() {
@@ -1968,7 +2040,7 @@ public final class JcefBrowserView {
                             displayMode: displayMode,
                             throwOnError: false,
                             trust: false,
-                            strict: 'warn'
+                            strict: false
                         };
                     }
                     function renderIntoReplacement(sourceNode, parsed) {
@@ -2010,6 +2082,578 @@ public final class JcefBrowserView {
                         var targetRoot = root || document;
                         renderDisplayMath(targetRoot);
                         renderInlineMath(targetRoot);
+                    };
+                })();
+                """;
+    }
+
+    static String diagramRenderScript() {
+        return """
+                (function() {
+                    var MERMAID_MAX_CHARS = 20000;
+                    var SMILES_MAX_CHARS = 4000;
+                    var MOL_MAX_CHARS = 50000;
+                    var SDF_MAX_CHARS = 200000;
+                    var SDF_MAX_RECORDS = 12;
+                    var renderCounter = 0;
+                    var mermaidInitialized = false;
+
+                    function closestCodeBlockShell(table) {
+                        var parent = table ? table.parentNode : null;
+                        return parent && parent.classList && parent.classList.contains('code-block-shell') ? parent : null;
+                    }
+                    function sourceFromBlock(table) {
+                        var pre = table ? (table.querySelector('tr.code-body pre') || table.querySelector('pre')) : null;
+                        return pre ? String(pre.textContent || '').trim() : '';
+                    }
+                    function sourceNode(table) {
+                        return closestCodeBlockShell(table) || table;
+                    }
+                    function compactErrorMessage(error, fallback) {
+                        var message = String(error && (error.str || error.message || error) || fallback || 'Diagram render failed');
+                        return message.replace(/\s+/g, ' ').trim().slice(0, 220);
+                    }
+                    function friendlyDiagramError(message) {
+                        var detail = String(message || 'Diagram render failed');
+                        if (/parse error|expecting|syntax error/i.test(detail)) {
+                            return 'Mermaid syntax error — source shown below';
+                        }
+                        if (/timed out/i.test(detail)) {
+                            return 'Mermaid render timed out — source shown below';
+                        }
+                        if (/unavailable/i.test(detail)) {
+                            return detail;
+                        }
+                        if (/^MOL/i.test(detail)) {
+                            return 'MOL must be complete V2000 source — source shown below';
+                        }
+                        if (/^SDF/i.test(detail)) {
+                            return 'SDF must be complete V2000 source — source shown below';
+                        }
+                        return 'Diagram render failed — source shown below';
+                    }
+                    function markError(table, message) {
+                        var detail = message || 'Diagram render failed';
+                        var label = friendlyDiagramError(detail);
+                        var node = sourceNode(table);
+                        if (!node) {
+                            return;
+                        }
+                        node.setAttribute('data-chat4j-diagram-rendered', 'error');
+                        node.setAttribute('data-chat4j-diagram-error', label);
+                        node.setAttribute('title', detail);
+                        if (node === table && table && !table.querySelector('tr.chat4j-diagram-error')) {
+                            var row = table.insertRow(0);
+                            row.className = 'chat4j-diagram-error';
+                            var cell = row.insertCell(0);
+                            cell.colSpan = 2;
+                            var badge = document.createElement('span');
+                            badge.className = 'chat4j-diagram-error-badge';
+                            badge.textContent = label;
+                            badge.title = detail;
+                            cell.appendChild(badge);
+                        }
+                    }
+                    function replaceSource(table, replacement) {
+                        var node = sourceNode(table);
+                        if (node && node.parentNode) {
+                            node.parentNode.replaceChild(replacement, node);
+                        }
+                    }
+                    function cssColor(property, fallback) {
+                        var value = '';
+                        try {
+                            value = window.getComputedStyle(document.body).getPropertyValue(property);
+                        } catch (error) {
+                            value = '';
+                        }
+                        return value && value.trim() ? value.trim() : fallback;
+                    }
+                    function bodyColor(fallback) {
+                        try {
+                            return window.getComputedStyle(document.body).color || fallback;
+                        } catch (error) {
+                            return fallback;
+                        }
+                    }
+                    function bodyBackground(fallback) {
+                        try {
+                            return window.getComputedStyle(document.body).backgroundColor || fallback;
+                        } catch (error) {
+                            return fallback;
+                        }
+                    }
+                    function isDarkColor(color) {
+                        var match = String(color || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/i);
+                        if (!match) {
+                            return false;
+                        }
+                        var r = Number(match[1]);
+                        var g = Number(match[2]);
+                        var b = Number(match[3]);
+                        return ((r * 299 + g * 587 + b * 114) / 1000) < 128;
+                    }
+                    function diagramContainer(className) {
+                        var div = document.createElement('div');
+                        div.className = 'chat4j-diagram ' + className;
+                        div.setAttribute('data-chat4j-diagram-rendered', 'true');
+                        return div;
+                    }
+                    function mermaidPayload(container) {
+                        var svg = container ? container.querySelector('svg') : null;
+                        if (!svg || typeof XMLSerializer === 'undefined') {
+                            return null;
+                        }
+                        return JSON.stringify({
+                            type: 'mermaid',
+                            title: container.getAttribute('data-chat4j-diagram-title') || 'Mermaid Diagram',
+                            source: container.getAttribute('data-chat4j-diagram-source') || '',
+                            svg: new XMLSerializer().serializeToString(svg)
+                        });
+                    }
+                    function openMermaidDiagram(container) {
+                        var payload = mermaidPayload(container);
+                        if (payload && window.chat4jDispatchTranscriptAction) {
+                            window.chat4jDispatchTranscriptAction('open-diagram-html', -1, payload);
+                        }
+                    }
+                    window.chat4jOpenMermaidDiagram = openMermaidDiagram;
+                    function installMermaidOpenButton(container, source) {
+                        container.setAttribute('data-chat4j-diagram-type', 'mermaid');
+                        container.setAttribute('data-chat4j-diagram-title', 'Mermaid Diagram');
+                        container.setAttribute('data-chat4j-diagram-source', source || '');
+                        var button = document.createElement('button');
+                        button.className = 'diagram-open-button';
+                        button.type = 'button';
+                        button.title = 'Open diagram';
+                        button.textContent = '↗';
+                        button.onclick = function(event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openMermaidDiagram(container);
+                        };
+                        container.appendChild(button);
+                    }
+                    function mermaidTheme() {
+                        var text = bodyColor('#222222');
+                        var background = bodyBackground('#ffffff');
+                        var border = cssColor('--chat4j-diagram-border', text);
+                        return {
+                            theme: 'base',
+                            securityLevel: 'strict',
+                            startOnLoad: false,
+                            themeVariables: {
+                                background: background,
+                                mainBkg: background,
+                                primaryColor: background,
+                                primaryTextColor: text,
+                                primaryBorderColor: border,
+                                lineColor: text,
+                                textColor: text,
+                                nodeTextColor: text,
+                                clusterBkg: background,
+                                clusterBorder: border
+                            }
+                        };
+                    }
+                    function ensureMermaid() {
+                        if (typeof window.mermaid === 'undefined') {
+                            return false;
+                        }
+                        if (!mermaidInitialized) {
+                            window.mermaid.initialize(mermaidTheme());
+                            mermaidInitialized = true;
+                        }
+                        return true;
+                    }
+                    function mermaidErrorSvg(svg) {
+                        var text = String(svg || '');
+                        return text.indexOf('Syntax error in text') >= 0
+                            || text.indexOf('mermaid version') >= 0
+                            || text.indexOf('Syntax error') >= 0;
+                    }
+                    function sanitizeMermaidLabel(label) {
+                        return String(label || '')
+                            .replace(/\\$\\\\text\\{([^}]+)}\\s*_\\{?([^}\\s$]+)}?\\$/g, '$1$2')
+                            .replace(/\\$\\\\text\\{([^}]+)}\\s*_([^\\s$]+)\\$/g, '$1$2')
+                            .replace(/\\$\\\\text\\{([^}]+)}\\$/g, '$1')
+                            .replace(/\\$([^$]+)\\$/g, '$1')
+                            .replace(/\\\\text\\{([^}]+)}/g, '$1')
+                            .replace(/\\\\rightarrow/g, '→')
+                            .replace(/\\|/g, '/')
+                            .replace(/&/g, 'and')
+                            .replace(/"/g, '&quot;')
+                            .trim();
+                    }
+                    function repairMermaidSource(source) {
+                        var lines = String(source || '').split(/\\r?\\n/);
+                        return lines.map(function(line) {
+                            var repaired = line.replace(/;\\s*$/, '');
+                            repaired = repaired.replace(/^(\\s*subgraph\\s+)([^"\\[].*[\\s()&].*)$/i, function(match, prefix, title) {
+                                return prefix + '"' + sanitizeMermaidLabel(title) + '"';
+                            });
+                            repaired = repaired.replace(/--\\s+(.+?)\\s+-->/g, function(match, label) {
+                                return '-->|' + sanitizeMermaidLabel(label) + '|';
+                            });
+                            repaired = repaired.replace(/(\\b[A-Za-z][A-Za-z0-9_]*)(\\[)([^\\]]+)(\\])/g, function(match, id, open, label, close) {
+                                return id + '["' + sanitizeMermaidLabel(label) + '"]';
+                            });
+                            repaired = repaired.replace(/(\\b[A-Za-z][A-Za-z0-9_]*)(\\{)([^}]+)(\\})/g, function(match, id, open, label, close) {
+                                return id + '{"' + sanitizeMermaidLabel(label) + '"}';
+                            });
+                            repaired = repaired.replace(/(\\b[A-Za-z][A-Za-z0-9_]*)(\\()([^)]*)(\\))/g, function(match, id, open, label, close) {
+                                return id + '("' + sanitizeMermaidLabel(label) + '")';
+                            });
+                            return repaired;
+                        }).join('\\n');
+                    }
+                    function renderMermaidBlock(table, index) {
+                        if (!ensureMermaid()) {
+                            markError(table, 'Mermaid renderer unavailable');
+                            return;
+                        }
+                        if (table.getAttribute('data-chat4j-diagram-rendered')) {
+                            return;
+                        }
+                        var source = sourceFromBlock(table);
+                        if (!source) {
+                            return;
+                        }
+                        if (source.length > MERMAID_MAX_CHARS) {
+                            markError(table, 'Mermaid diagram is too large');
+                            return;
+                        }
+                        table.setAttribute('data-chat4j-diagram-rendered', 'pending');
+                        var id = 'chat4j-mermaid-' + Date.now() + '-' + index + '-' + (++renderCounter);
+                        var completed = false;
+                        var timeoutId = window.setTimeout(function() {
+                            if (!completed && table.parentNode) {
+                                completed = true;
+                                markError(table, 'Mermaid render timed out');
+                            }
+                        }, 3000);
+                        function fail(message) {
+                            if (completed) {
+                                return;
+                            }
+                            completed = true;
+                            window.clearTimeout(timeoutId);
+                            markError(table, message || 'Mermaid render failed');
+                        }
+                        function renderSource(candidate, suffix) {
+                            return Promise.resolve(window.mermaid.parse(candidate)).then(function() {
+                                return Promise.resolve(window.mermaid.render(id + suffix, candidate));
+                            });
+                        }
+                        try {
+                            renderSource(source, '-original').catch(function(originalError) {
+                                var repaired = repairMermaidSource(source);
+                                if (repaired === source) {
+                                    throw originalError;
+                                }
+                                return renderSource(repaired, '-repaired');
+                            }).then(function(result) {
+                                if (completed) {
+                                    return;
+                                }
+                                completed = true;
+                                window.clearTimeout(timeoutId);
+                                var svg = result && result.svg ? result.svg : '';
+                                if (!svg || mermaidErrorSvg(svg)) {
+                                    markError(table, 'Mermaid render failed');
+                                    return;
+                                }
+                                var target = diagramContainer('chat4j-mermaid-display');
+                                target.innerHTML = svg;
+                                if (!target.querySelector('svg')) {
+                                    markError(table, 'Mermaid render failed');
+                                    return;
+                                }
+                                installMermaidOpenButton(target, source);
+                                replaceSource(table, target);
+                            }).catch(function(error) {
+                                fail(compactErrorMessage(error, 'Mermaid render failed'));
+                            });
+                        } catch (error) {
+                            fail(compactErrorMessage(error, 'Mermaid render failed'));
+                        }
+                    }
+                    function chemistryTheme() {
+                        var text = bodyColor('#222222');
+                        var background = bodyBackground('#ffffff');
+                        var dark = isDarkColor(background);
+                        return {
+                            C: text,
+                            O: dark ? '#ff6b6b' : '#e53935',
+                            N: dark ? '#60a5fa' : '#2563eb',
+                            F: dark ? '#34d399' : '#059669',
+                            CL: dark ? '#34d399' : '#059669',
+                            BR: dark ? '#fb923c' : '#c2410c',
+                            I: dark ? '#c084fc' : '#7e22ce',
+                            P: dark ? '#fb923c' : '#c2410c',
+                            S: dark ? '#facc15' : '#ca8a04',
+                            B: dark ? '#fb923c' : '#c2410c',
+                            SI: dark ? '#fb923c' : '#c2410c',
+                            H: dark ? '#a3a3a3' : '#737373',
+                            BACKGROUND: background
+                        };
+                    }
+                    function svgElement(name) {
+                        return document.createElementNS('http://www.w3.org/2000/svg', name);
+                    }
+                    function parseMolV2000(source) {
+                        var lines = String(source || '').replace(/\\r\\n?/g, '\\n').split('\\n');
+                        var countsIndex = -1;
+                        for (var index = 0; index < Math.min(lines.length, 12); index++) {
+                            if (/^\\s*\\d+\\s+\\d+\\b.*(?:V2000)?\\s*$/.test(lines[index])) {
+                                countsIndex = index;
+                                break;
+                            }
+                        }
+                        if (countsIndex < 0) {
+                            throw new Error('MOL counts line not found');
+                        }
+                        var countParts = lines[countsIndex].trim().split(/\\s+/);
+                        var atomCount = Number(countParts[0]);
+                        var bondCount = Number(countParts[1]);
+                        if (!Number.isFinite(atomCount) || !Number.isFinite(bondCount) || atomCount <= 0) {
+                            throw new Error('MOL counts are invalid');
+                        }
+                        var atoms = [];
+                        var bonds = [];
+                        for (var atomIndex = 0; atomIndex < atomCount; atomIndex++) {
+                            var atomLine = lines[countsIndex + 1 + atomIndex] || '';
+                            var atomParts = atomLine.trim().split(/\\s+/);
+                            if (atomParts.length < 4) {
+                                throw new Error('MOL atom line is invalid');
+                            }
+                            atoms.push({
+                                x: Number(atomParts[0]),
+                                y: Number(atomParts[1]),
+                                symbol: atomParts[3]
+                            });
+                        }
+                        for (var bondIndex = 0; bondIndex < bondCount; bondIndex++) {
+                            var bondLine = lines[countsIndex + 1 + atomCount + bondIndex] || '';
+                            var bondParts = bondLine.trim().split(/\\s+/);
+                            if (bondParts.length < 3) {
+                                throw new Error('MOL bond line is invalid');
+                            }
+                            var from = Number(bondParts[0]) - 1;
+                            var to = Number(bondParts[1]) - 1;
+                            var order = Number(bondParts[2]);
+                            if (from < 0 || to < 0 || from >= atoms.length || to >= atoms.length) {
+                                throw new Error('MOL bond references an unknown atom');
+                            }
+                            bonds.push({ from: from, to: to, order: order });
+                        }
+                        return { title: String(lines[0] || 'Molecule').trim(), atoms: atoms, bonds: bonds };
+                    }
+                    function sdfRecords(source) {
+                        return String(source || '').replace(/\\r\\n?/g, '\\n').split(/^\\$\\$\\$\\$/m)
+                            .map(function(record) { return record.trim(); })
+                            .filter(function(record) { return record.length > 0; });
+                    }
+                    function atomColor(symbol) {
+                        var theme = chemistryTheme();
+                        return theme[String(symbol || '').toUpperCase()] || theme.C;
+                    }
+                    function line(svg, x1, y1, x2, y2, color, width, dash) {
+                        var element = svgElement('line');
+                        element.setAttribute('x1', x1.toFixed(2));
+                        element.setAttribute('y1', y1.toFixed(2));
+                        element.setAttribute('x2', x2.toFixed(2));
+                        element.setAttribute('y2', y2.toFixed(2));
+                        element.setAttribute('stroke', color);
+                        element.setAttribute('stroke-width', width || '2');
+                        element.setAttribute('stroke-linecap', 'round');
+                        if (dash) {
+                            element.setAttribute('stroke-dasharray', dash);
+                        }
+                        svg.appendChild(element);
+                    }
+                    function renderBond(svg, a, b, order, color) {
+                        var dx = b.px - a.px;
+                        var dy = b.py - a.py;
+                        var length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+                        var nx = -dy / length;
+                        var ny = dx / length;
+                        if (order === 2) {
+                            line(svg, a.px + nx * 4, a.py + ny * 4, b.px + nx * 4, b.py + ny * 4, color, 2);
+                            line(svg, a.px - nx * 4, a.py - ny * 4, b.px - nx * 4, b.py - ny * 4, color, 2);
+                            return;
+                        }
+                        if (order === 3) {
+                            line(svg, a.px, a.py, b.px, b.py, color, 2);
+                            line(svg, a.px + nx * 6, a.py + ny * 6, b.px + nx * 6, b.py + ny * 6, color, 2);
+                            line(svg, a.px - nx * 6, a.py - ny * 6, b.px - nx * 6, b.py - ny * 6, color, 2);
+                            return;
+                        }
+                        line(svg, a.px, a.py, b.px, b.py, color, 2, order === 4 ? '4 4' : null);
+                    }
+                    function molSvg(molecule) {
+                        var atoms = molecule.atoms;
+                        if (!atoms || atoms.length === 0) {
+                            throw new Error('MOL has no atoms');
+                        }
+                        var minX = Math.min.apply(null, atoms.map(function(atom) { return atom.x; }));
+                        var maxX = Math.max.apply(null, atoms.map(function(atom) { return atom.x; }));
+                        var minY = Math.min.apply(null, atoms.map(function(atom) { return atom.y; }));
+                        var maxY = Math.max.apply(null, atoms.map(function(atom) { return atom.y; }));
+                        var padding = 26;
+                        var rawWidth = Math.max(1, maxX - minX);
+                        var rawHeight = Math.max(1, maxY - minY);
+                        var width = Math.max(260, Math.min(760, Math.round(rawWidth * 90 + padding * 2)));
+                        var height = Math.max(180, Math.min(520, Math.round(rawHeight * 90 + padding * 2)));
+                        var scale = Math.min((width - padding * 2) / rawWidth, (height - padding * 2) / rawHeight);
+                        atoms.forEach(function(atom) {
+                            atom.px = padding + (atom.x - minX) * scale;
+                            atom.py = padding + (maxY - atom.y) * scale;
+                        });
+                        var svg = svgElement('svg');
+                        svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+                        svg.setAttribute('width', String(width));
+                        svg.setAttribute('height', String(height));
+                        svg.setAttribute('role', 'img');
+                        svg.setAttribute('aria-label', molecule.title || 'Molecule');
+                        var textColor = bodyColor('#222222');
+                        var bg = bodyBackground('#ffffff');
+                        molecule.bonds.forEach(function(bond) {
+                            renderBond(svg, atoms[bond.from], atoms[bond.to], bond.order, textColor);
+                        });
+                        atoms.forEach(function(atom) {
+                            var group = svgElement('g');
+                            var labelBg = svgElement('rect');
+                            labelBg.setAttribute('x', (atom.px - 10).toFixed(2));
+                            labelBg.setAttribute('y', (atom.py - 10).toFixed(2));
+                            labelBg.setAttribute('width', '20');
+                            labelBg.setAttribute('height', '20');
+                            labelBg.setAttribute('rx', '5');
+                            labelBg.setAttribute('fill', bg);
+                            labelBg.setAttribute('opacity', '0.88');
+                            var label = svgElement('text');
+                            label.setAttribute('x', atom.px.toFixed(2));
+                            label.setAttribute('y', (atom.py + 5).toFixed(2));
+                            label.setAttribute('text-anchor', 'middle');
+                            label.setAttribute('font-family', 'Inter, -apple-system, BlinkMacSystemFont, sans-serif');
+                            label.setAttribute('font-size', '15');
+                            label.setAttribute('font-weight', '700');
+                            label.setAttribute('fill', atomColor(atom.symbol));
+                            label.textContent = atom.symbol || 'C';
+                            group.appendChild(labelBg);
+                            group.appendChild(label);
+                            svg.appendChild(group);
+                        });
+                        return svg;
+                    }
+                    function renderMolLikeBlock(table, index, kind) {
+                        if (table.getAttribute('data-chat4j-diagram-rendered')) {
+                            return;
+                        }
+                        var source = sourceFromBlock(table);
+                        var maxChars = kind === 'sdf' ? SDF_MAX_CHARS : MOL_MAX_CHARS;
+                        if (!source) {
+                            return;
+                        }
+                        if (source.length > maxChars) {
+                            markError(table, kind.toUpperCase() + ' source is too large');
+                            return;
+                        }
+                        try {
+                            table.setAttribute('data-chat4j-diagram-rendered', 'pending');
+                            var target = diagramContainer('chat4j-chem-display chat4j-' + kind + '-display');
+                            var records = kind === 'sdf' ? sdfRecords(source) : [source];
+                            if (records.length === 0) {
+                                throw new Error(kind.toUpperCase() + ' contains no molecule records');
+                            }
+                            var visibleRecords = records.slice(0, SDF_MAX_RECORDS);
+                            visibleRecords.forEach(function(record) {
+                                var molecule = parseMolV2000(record);
+                                target.appendChild(molSvg(molecule));
+                            });
+                            if (kind === 'sdf' && records.length > visibleRecords.length) {
+                                var summary = document.createElement('div');
+                                summary.className = 'chat4j-chem-record-summary';
+                                summary.textContent = 'Showing first ' + visibleRecords.length + ' of ' + records.length + ' SDF records.';
+                                target.appendChild(summary);
+                            }
+                            replaceSource(table, target);
+                        } catch (error) {
+                            markError(table, kind.toUpperCase() + ' render failed');
+                        }
+                    }
+                    function renderSmilesBlock(table, index) {
+                        if (typeof window.SmilesDrawer === 'undefined') {
+                            markError(table, 'SMILES renderer unavailable');
+                            return;
+                        }
+                        if (table.getAttribute('data-chat4j-diagram-rendered')) {
+                            return;
+                        }
+                        var source = sourceFromBlock(table);
+                        if (!source) {
+                            return;
+                        }
+                        if (source.length > SMILES_MAX_CHARS) {
+                            markError(table, 'SMILES string is too large');
+                            return;
+                        }
+                        table.setAttribute('data-chat4j-diagram-rendered', 'pending');
+                        try {
+                            window.SmilesDrawer.parse(source, function(tree) {
+                                var target = diagramContainer('chat4j-chem-display');
+                                var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                                svg.setAttribute('id', 'chat4j-smiles-' + Date.now() + '-' + index + '-' + (++renderCounter));
+                                target.appendChild(svg);
+                                var options = {
+                                    width: 500,
+                                    height: 360,
+                                    scale: 1.35,
+                                    padding: 12,
+                                    compactDrawing: true,
+                                    themes: { chat4j: chemistryTheme() }
+                                };
+                                var drawer = new window.SmilesDrawer.SvgDrawer(options);
+                                var originalNode = sourceNode(table);
+                                replaceSource(table, target);
+                                try {
+                                    drawer.draw(tree, svg, 'chat4j', false);
+                                } catch (error) {
+                                    if (target.parentNode && originalNode) {
+                                        target.parentNode.replaceChild(originalNode, target);
+                                    }
+                                    markError(table, 'SMILES render failed');
+                                }
+                            }, function() {
+                                markError(table, 'SMILES render failed');
+                            });
+                        } catch (error) {
+                            markError(table, 'SMILES render failed');
+                        }
+                    }
+                    window.chat4jRenderMermaid = function(root) {
+                        var targetRoot = root || document;
+                        Array.prototype.forEach.call(targetRoot.querySelectorAll('table.md-mermaid-block:not([data-chat4j-diagram-rendered])'), renderMermaidBlock);
+                    };
+                    window.chat4jRenderChemistry = function(root) {
+                        var targetRoot = root || document;
+                        Array.prototype.forEach.call(targetRoot.querySelectorAll('table.md-smiles-block:not([data-chat4j-diagram-rendered])'), renderSmilesBlock);
+                        Array.prototype.forEach.call(targetRoot.querySelectorAll('table.md-mol-block:not([data-chat4j-diagram-rendered])'), function(table, index) {
+                            renderMolLikeBlock(table, index, 'mol');
+                        });
+                        Array.prototype.forEach.call(targetRoot.querySelectorAll('table.md-sdf-block:not([data-chat4j-diagram-rendered])'), function(table, index) {
+                            renderMolLikeBlock(table, index, 'sdf');
+                        });
+                    };
+                    window.chat4jRenderDiagrams = function(root) {
+                        window.chat4jRenderMermaid(root || document);
+                        window.chat4jRenderChemistry(root || document);
+                    };
+                    window.chat4jRenderEnhancements = function(root) {
+                        if (window.chat4jRenderMath) {
+                            window.chat4jRenderMath(root || document);
+                        }
+                        window.chat4jRenderDiagrams(root || document);
                     };
                 })();
                 """;
@@ -2181,30 +2825,45 @@ public final class JcefBrowserView {
                 String requestInitiator,
                 BoolRef disableDefaultHandling
         ) {
-            String html = request == null ? null : htmlForUrl(request.getURL());
-            return html == null ? null : new DirectHtmlResourceRequestHandler(html);
+            String url = request == null ? "" : request.getURL();
+            String html = htmlForUrl(url);
+            if (html != null) {
+                return new DirectResourceRequestHandler(html, "text/html", "text/html; charset=utf-8");
+            }
+            String script = scriptForUrl(url);
+            return script == null
+                    ? null
+                    : new DirectResourceRequestHandler(script, "application/javascript", "application/javascript; charset=utf-8");
         }
     }
 
-    private static final class DirectHtmlResourceRequestHandler extends CefResourceRequestHandlerAdapter {
-        private final String html;
+    private static final class DirectResourceRequestHandler extends CefResourceRequestHandlerAdapter {
+        private final String content;
+        private final String mimeType;
+        private final String contentType;
 
-        private DirectHtmlResourceRequestHandler(String html) {
-            this.html = html;
+        private DirectResourceRequestHandler(String content, String mimeType, String contentType) {
+            this.content = content;
+            this.mimeType = mimeType;
+            this.contentType = contentType;
         }
 
         @Override
-        public DirectHtmlResourceHandler getResourceHandler(CefBrowser browser, CefFrame frame, CefRequest request) {
-            return new DirectHtmlResourceHandler(html);
+        public DirectResourceHandler getResourceHandler(CefBrowser browser, CefFrame frame, CefRequest request) {
+            return new DirectResourceHandler(content, mimeType, contentType);
         }
     }
 
-    private static final class DirectHtmlResourceHandler extends CefResourceHandlerAdapter {
+    private static final class DirectResourceHandler extends CefResourceHandlerAdapter {
         private final byte[] bytes;
+        private final String mimeType;
+        private final String contentType;
         private int offset;
 
-        private DirectHtmlResourceHandler(String html) {
-            bytes = html.getBytes(StandardCharsets.UTF_8);
+        private DirectResourceHandler(String content, String mimeType, String contentType) {
+            bytes = content.getBytes(StandardCharsets.UTF_8);
+            this.mimeType = mimeType;
+            this.contentType = contentType;
         }
 
         @Override
@@ -2217,10 +2876,12 @@ public final class JcefBrowserView {
         public void getResponseHeaders(CefResponse response, IntRef responseLength, StringRef redirectUrl) {
             response.setStatus(200);
             response.setStatusText("OK");
-            response.setMimeType("text/html");
-            response.setHeaderByName("Content-Type", "text/html; charset=utf-8", true);
+            response.setMimeType(mimeType);
+            response.setHeaderByName("Content-Type", contentType, true);
             response.setHeaderByName("Cache-Control", "no-store", true);
-            response.setHeaderByName("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src data:;", true);
+            if (Strings.CS.equals(mimeType, "text/html")) {
+                response.setHeaderByName("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src data:; font-src data:;", true);
+            }
             responseLength.set(bytes.length);
         }
 

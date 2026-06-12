@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.chat.conversation.webview.system;
 
+import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.provider.api.Role;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -89,16 +92,90 @@ class SystemWebViewTest {
     }
 
     @Test
-    @DisplayName("Math bridge script bundles KaTeX mhchem and the renderer")
-    void mathBridgeScript_whenRendered_containsBundledKatexAndRenderer() {
+    @DisplayName("Math and diagram assets are bundled into the WebView document head")
+    void mathHeadAssets_whenRendered_containsBundledDiagramScripts() {
+        String assets = SystemWebView.mathHeadAssets();
+
+        assertThat(assets)
+                .contains("chat4j-mermaid-script")
+                .contains("chat4j-smiles-drawer-script")
+                .contains("chat4j-diagram-render-script")
+                .contains("chat4jRenderEnhancements")
+                .doesNotContain("cdn.jsdelivr")
+                .doesNotContain("unpkg.com");
+    }
+
+    @Test
+    @DisplayName("Math bridge script bundles KaTeX mhchem diagrams and the renderers")
+    void mathBridgeScript_whenRendered_containsBundledKatexDiagramsAndRenderers() {
         String script = SystemWebView.mathBridgeScript();
 
         assertThat(script)
                 .contains("katex")
                 .contains("mhchem")
+                .contains("mermaid")
+                .contains("SmilesDrawer")
+                .contains("scale: 1.35")
+                .contains("parseMolV2000")
+                .contains("renderMolLikeBlock")
+                .contains("SDF_MAX_RECORDS = 12")
+                .contains("Showing first ")
                 .contains("chat4jRenderMath")
+                .contains("chat4jRenderDiagrams")
+                .contains("chat4jRenderEnhancements")
                 .doesNotContain("cdn.jsdelivr")
                 .doesNotContain("unpkg.com");
+    }
+
+    @Test
+    @DisplayName("Diagram bridge can open rendered Mermaid diagrams externally")
+    void mathBridgeScript_whenRendered_containsOpenMermaidDiagramAction() {
+        String script = SystemWebView.mathBridgeScript();
+
+        assertThat(script)
+                .contains("open-diagram-html")
+                .contains("XMLSerializer")
+                .contains("chat4j-mermaid-display")
+                .contains("diagram-open-button")
+                .contains("window.chat4jDispatchTranscriptAction('open-diagram-html', -1, payload)")
+                .contains("window.chat4jOpenMermaidDiagram = openMermaidDiagram")
+                .contains("Open diagram");
+    }
+
+    @Test
+    @DisplayName("Transcript bridge exposes the shared action dispatcher for rendered diagrams")
+    void bridgeScript_whenRendered_exposesDiagramActionDispatcher() {
+        String script = SystemWebView.bridgeScript();
+
+        assertThat(script)
+                .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
+                .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
+                .contains("data-action=\"open-diagram\"")
+                .contains("Open Diagram");
+    }
+
+    @Test
+    @DisplayName("Diagram bridge preserves source blocks on rendering errors")
+    void mathBridgeScript_whenRendered_preservesDiagramSourceOnError() {
+        String script = SystemWebView.mathBridgeScript();
+
+        assertThat(script)
+                .contains("table.insertRow(0)")
+                .contains("chat4j-diagram-error-badge")
+                .contains("target.parentNode.replaceChild(originalNode, target)")
+                .contains("window.mermaid.parse(candidate)")
+                .contains("repairMermaidSource(source)")
+                .contains("renderSource(repaired, '-repaired')")
+                .contains("mermaidErrorSvg(svg)")
+                .contains("friendlyDiagramError")
+                .contains("Mermaid syntax error — source shown below")
+                .contains("Mermaid renderer unavailable")
+                .contains("Mermaid render timed out")
+                .contains("SMILES renderer unavailable")
+                .contains("SMILES render failed")
+                .contains("MOL must be complete V2000 source — source shown below")
+                .contains("SDF must be complete V2000 source — source shown below")
+                .contains("chat4j-chem-record-summary");
     }
 
     @Test
@@ -129,6 +206,57 @@ class SystemWebViewTest {
         assertThat(document.select("table.md-latex-block")).isEmpty();
         assertThat(document.select(".chat4j-math-inline .katex")).hasSize(1);
         assertThat(document.select(".chat4j-math-display .katex-display")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Math fallback rendering handles nested-dollar text formulas")
+    void renderMathFallbacks_whenInlineMathContainsNestedTextDollars_replacesFallbackNode() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <p>Use <code class=\"md-latex-inline\">$\\text{Drawings often use $\\pi$ notation}$</code>.</p>
+                </body></html>
+                """);
+
+        SystemWebView.renderMathFallbacks(document);
+
+        assertThat(document.select("code.md-latex-inline")).isEmpty();
+        assertThat(document.select(".chat4j-math-inline .katex")).hasSize(1);
+        assertThat(document.text()).contains("Drawings often use", "π", "notation");
+    }
+
+    @Test
+    @DisplayName("Math fallback rendering handles display arrays with lenient KaTeX strict mode")
+    void renderMathFallbacks_whenDisplayArrayHasLooseColumnSpec_replacesFallbackNode() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block md-latex-block\"><tr><td><pre>\\begin{array}{c} \\text{H} &amp; \\text{H} \\\\ \\text{H} &amp; \\text{C} &amp; \\text{H} \\end{array}</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SystemWebView.renderMathFallbacks(document);
+
+        assertThat(document.select("table.md-latex-block")).isEmpty();
+        assertThat(document.select(".chat4j-math-display .katex-display")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Math fallback rendering handles table formulas with vertical bond pipes")
+    void renderMathFallbacks_whenTableFormulaContainsVerticalBondPipes_replacesFallbackNode() {
+        String html = new MessageHtmlRenderer().render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Convention | What it shows | Example Molecule | Visual Representation | Best Used For... |
+                | :--- | :--- | :--- | :--- | :--- |
+                | **Lewis Structure** | Shows *every* atom and *every* bond. | $\\text{CH}_4$ | $$\\begin{array}{c} \\text{H} & \\text{H} \\\\ | & | \\\\ \\text{H} - \\text{C} - \\text{H} \\\\ | & | \\\\ \\text{H} & \\text{H} \\end{array}$$ | Teaching fundamentals; showing lone pairs. |
+                """, false);
+        var document = Jsoup.parse(html);
+
+        SystemWebView.renderMathFallbacks(document);
+
+        var dataRowCells = document.select("table.md-table tr").get(1).select("td");
+        var visualCell = dataRowCells.get(3);
+        assertThat(dataRowCells).hasSize(5);
+        assertThat(visualCell.select("code.md-latex-inline")).isEmpty();
+        assertThat(visualCell.select(".chat4j-math-inline .katex-display")).hasSize(1);
+        assertThat(dataRowCells.get(4).text()).contains("Teaching fundamentals");
     }
 
     @Test
@@ -192,6 +320,21 @@ class SystemWebViewTest {
 
         assertThat(document.select("pre.hljs")).isEmpty();
         assertThat(document.select("pre").text()).contains("graph TD");
+    }
+
+    @Test
+    @DisplayName("Diagram blocks are not syntax-highlighted before browser rendering")
+    void renderCodeHighlights_whenDocumentContainsDiagramBlock_keepsDiagramBlockForBrowserRenderer() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <table class=\"md-code-block md-diagram-block md-mermaid-block\" data-code-language=\"mermaid\"><tr><td>mermaid</td></tr><tr><td><pre>flowchart TD\nA --> B</pre></td></tr></table>
+                </body></html>
+                """);
+
+        SystemWebView.renderCodeHighlights(document);
+
+        assertThat(document.select("pre.hljs")).isEmpty();
+        assertThat(document.select("table.md-diagram-block")).hasSize(1);
     }
 
     @Test

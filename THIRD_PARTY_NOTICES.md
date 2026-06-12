@@ -42,6 +42,31 @@ The Highlight.js license text is included at:
 src/main/resources/web/highlight/LICENSE
 ```
 
+## Mermaid 11.12.0
+
+- Project: https://mermaid.js.org/
+- Source: https://github.com/mermaid-js/mermaid
+- License: MIT
+- Bundled asset: `src/main/resources/web/mermaid/mermaid.min.js`
+
+The Mermaid license text is included at:
+
+```text
+src/main/resources/web/mermaid/LICENSE
+```
+
+## SmilesDrawer 2.2.1
+
+- Project: https://github.com/reymond-group/smilesDrawer
+- License: MIT
+- Bundled asset: `src/main/resources/web/smilesdrawer/smiles-drawer.min.js`
+
+The SmilesDrawer license text is included at:
+
+```text
+src/main/resources/web/smilesdrawer/LICENSE
+```
+
 ## Devicon 2.16.0
 
 - Project: https://devicon.dev/

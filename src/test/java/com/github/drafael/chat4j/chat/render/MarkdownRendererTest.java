@@ -97,6 +97,53 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Mermaid fenced blocks render with diagram marker classes")
+    void toHtml_whenMarkdownContainsMermaidFence_marksDiagramBlock() {
+        String body = renderBody("```mermaid\nflowchart TD\n  A --> B\n```");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-diagram-block md-mermaid-block\"")
+                .contains("data-code-language=\"mermaid\"")
+                .contains("flowchart TD")
+                .contains("A --&gt; B");
+    }
+
+    @Test
+    @DisplayName("SMILES fenced blocks render with chemistry marker classes")
+    void toHtml_whenMarkdownContainsSmilesFence_marksChemistryDiagramBlock() {
+        String body = renderBody("```smiles\nCn1cnc2c1c(=O)n(C)c(=O)n2C\n```");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-diagram-block md-chem-block md-smiles-block\"")
+                .contains("data-code-language=\"smiles\"")
+                .contains("Cn1cnc2c1c(=O)n(C)c(=O)n2C");
+    }
+
+    @Test
+    @DisplayName("MOL fenced blocks render with chemistry marker classes")
+    void toHtml_whenMarkdownContainsMolFence_marksChemistryDiagramBlock() {
+        String body = renderBody("```mol\nEthanol\n  Chat4J\n\n  3  2  0  0  0  0            999 V2000\n    0.0 0.0 0.0 C 0 0 0 0 0 0 0 0 0 0 0 0\n    1.0 0.0 0.0 C 0 0 0 0 0 0 0 0 0 0 0 0\n    2.0 0.0 0.0 O 0 0 0 0 0 0 0 0 0 0 0 0\n  1  2  1  0\n  2  3  1  0\nM  END\n```");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-diagram-block md-chem-block md-mol-block\"")
+                .contains("data-code-language=\"mol\"")
+                .contains("Ethanol")
+                .contains("V2000");
+    }
+
+    @Test
+    @DisplayName("SDF fenced blocks render with chemistry marker classes")
+    void toHtml_whenMarkdownContainsSdfFence_marksChemistryDiagramBlock() {
+        String body = renderBody("```sdf\nBenzene\n  Chat4J\n\n  6  6  0  0  0  0            999 V2000\nM  END\n$$$$\n```");
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-diagram-block md-chem-block md-sdf-block\"")
+                .contains("data-code-language=\"sdf\"")
+                .contains("Benzene")
+                .contains("$$$$");
+    }
+
+    @Test
     @DisplayName("Pipe table syntax renders table headers and rows")
     void toHtml_whenMarkdownContainsTable_rendersTableRowsAndCells() {
         String body = renderBody("| Name | Age |\n| --- | --- |\n| Ana | 30 |");

@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
+import com.github.drafael.chat4j.chat.diagram.DiagramHtmlExporter;
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.chat.ui.ScrollablePanel;
 import com.github.drafael.chat4j.chat.ui.EmptyStateActions;
@@ -2772,6 +2773,10 @@ public class ChatPanel extends JPanel {
                 openConversationAttachment(text);
                 return;
             }
+            if (Strings.CS.equals(action, "open-diagram-html")) {
+                openDiagramHtml(text);
+                return;
+            }
 
             List<ChatMessageView> bubbles = collectBubbles();
             if (messageIndex < 0 || messageIndex >= bubbles.size()) {
@@ -2787,6 +2792,32 @@ public class ChatPanel extends JPanel {
                 regenerateFromBubble(bubble);
             }
         });
+    }
+
+    private void openDiagramHtml(String payload) {
+        try {
+            Path path = DiagramHtmlExporter.exportMermaidHtml(payload);
+            openHtmlFile(path);
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, e.getMessage(), "Open Diagram", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    private void openHtmlFile(Path path) throws IOException {
+        if (!Desktop.isDesktopSupported()) {
+            throw new IOException("Opening diagrams is not supported on this system.");
+        }
+
+        Desktop desktop = Desktop.getDesktop();
+        if (desktop.isSupported(Desktop.Action.OPEN)) {
+            desktop.open(path.toFile());
+            return;
+        }
+        if (desktop.isSupported(Desktop.Action.BROWSE)) {
+            desktop.browse(path.toUri());
+            return;
+        }
+        throw new IOException("Opening diagrams is not supported on this system.");
     }
 
     private void openConversationAttachment(String storagePath) {

@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.core;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
@@ -10,6 +11,7 @@ import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -18,6 +20,15 @@ import static java.util.Collections.emptyList;
 
 @Slf4j
 public class CapabilityProviderService implements ProviderService {
+
+    private static final String CHAT4J_RENDERING_HINT = """
+            Chat4J can render explicit fenced Markdown blocks in the chat transcript.
+            - Use `mermaid` only for flowcharts, sequence diagrams, state diagrams, class diagrams, ER diagrams, or process diagrams.
+            - For generated chemical structures and molecules, output only a valid `smiles` fenced block, for example: ```smiles\nCCO\n```.
+            - Do not output chemical coordinate-file fences from molecule names, formulas, or descriptions. Coordinate-file rendering requires exact user-supplied file content and should not be invented.
+            - Do not use Mermaid for chemistry.
+            Keep explanatory text brief and put renderable source inside the fence.
+            """.strip();
 
     private final ProviderRuntime runtime;
     private final ChatCompletionClient chatCompletionClient;
@@ -47,7 +58,7 @@ public class CapabilityProviderService implements ProviderService {
         try {
             chatCompletionClient.streamCompletion(
                 runtime,
-                history,
+                withChat4jRenderingHint(history),
                 reasoningLevel,
                 onToken,
                 onThinkingToken,
@@ -107,7 +118,7 @@ public class CapabilityProviderService implements ProviderService {
         try {
             chatCompletionClient.streamCompletion(
                 runtime,
-                history,
+                withChat4jRenderingHint(history),
                 reasoningLevel,
                 webSearchOptions == null ? WebSearchRequestOptions.disabled() : webSearchOptions,
                 onToken,
@@ -162,6 +173,17 @@ public class CapabilityProviderService implements ProviderService {
     @Override
     public String envVarName() {
         return runtime.descriptor().credentialEnvVar();
+    }
+
+    static List<Message> withChat4jRenderingHint(List<Message> history) {
+        List<Message> safeHistory = history == null ? emptyList() : history;
+        if (safeHistory.stream().anyMatch(message -> message.role() == Role.SYSTEM)) {
+            return safeHistory;
+        }
+        List<Message> hintedHistory = new ArrayList<>(safeHistory.size() + 1);
+        hintedHistory.add(Message.system(CHAT4J_RENDERING_HINT));
+        hintedHistory.addAll(safeHistory);
+        return List.copyOf(hintedHistory);
     }
 
     private void registerActiveStream(AutoCloseable stream) {
