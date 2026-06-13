@@ -1,0 +1,16 @@
+                    html, body { margin: 0; min-height: 100%; background: var(--chat4j-bg); color: var(--chat4j-text); font-family: var(--chat4j-base-font-family); font-size: var(--chat4j-body-font-size); line-height: 1.62; scrollbar-color: transparent transparent; scrollbar-width: none; }
+                    body { box-sizing: border-box; padding: 24px 36px 96px 28px; overflow-y: auto; -ms-overflow-style: none; }
+                    html::-webkit-scrollbar, body::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; background: transparent !important; }
+                    .chat4j-scrollbar { position: fixed; top: 5px; right: 3px; bottom: 5px; width: 10px; border-radius: 999px; background: transparent; z-index: 95; opacity: 0; transition: opacity 120ms ease; }
+                    body:hover .chat4j-scrollbar, .chat4j-scrollbar.visible, .chat4j-scrollbar.dragging { opacity: 1; }
+                    .chat4j-scrollbar-thumb { position: absolute; top: 0; right: 1px; width: 8px; min-height: 32px; border-radius: 999px; background: var(--chat4j-scrollbar-thumb); }
+                    .chat4j-scrollbar-thumb:hover, .chat4j-scrollbar.dragging .chat4j-scrollbar-thumb { background: var(--chat4j-scrollbar-hover-thumb); }
+                    .chat4j-scrollbar.hidden { display: none; }
+                    .chat4j-fade { position: fixed; left: 0; right: 0; pointer-events: none; z-index: 90; opacity: 0; transition: opacity 140ms ease; }
+                    .chat4j-fade.visible { opacity: 1; }
+                    .chat4j-fade.top { top: 0; height: 34px; background: linear-gradient(to bottom, var(--chat4j-bg) 0%, var(--chat4j-panel-bg-alpha) 38%, rgba(var(--chat4j-panel-bg-red),var(--chat4j-panel-bg-green),var(--chat4j-panel-bg-blue),0) 100%); }
+                    .chat4j-fade.bottom { bottom: 0; height: 42px; background: linear-gradient(to top, var(--chat4j-bg) 0%, var(--chat4j-panel-bg-alpha) 34%, rgba(var(--chat4j-panel-bg-red),var(--chat4j-panel-bg-green),var(--chat4j-panel-bg-blue),0) 100%); }
+                    .transcript { max-width: none; margin: 0; }
+                    .row { display: flex; margin: 6px 0 26px 0; }
+                    .row.user { justify-content: flex-end; }
+                    .row.assistant, .row.activity { justify-content: flex-start; }

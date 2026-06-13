@@ -208,6 +208,9 @@
         var border = cssColor('--chat4j-mermaid-border', cssColor('--chat4j-scrollbar-thumb', cssColor('--chat4j-border', text)));
         var line = cssColor('--chat4j-mermaid-line', cssColor('--chat4j-muted-text', text));
         var edgeLabelBackground = cssColor('--chat4j-mermaid-edge-label-bg', diagramBackground);
+        var sequenceLine = readableColor(diagramBackground, line, text);
+        var sequenceSurface = readableColor(diagramBackground, secondarySurface, tertiarySurface);
+        var sequenceLabelSurface = readableColor(diagramBackground, primarySurface, secondarySurface);
         var branchLabelText = readableColor(line, text, diagramBackground);
         return {
             text: text,
@@ -219,6 +222,9 @@
             border: border,
             line: line,
             edgeLabelBackground: edgeLabelBackground,
+            sequenceLine: sequenceLine,
+            sequenceSurface: sequenceSurface,
+            sequenceLabelSurface: sequenceLabelSurface,
             branchLabelText: branchLabelText
         };
     }
@@ -273,6 +279,9 @@
         var tertiarySurface = colors.tertiarySurface;
         var border = colors.border;
         var line = colors.line;
+        var sequenceLine = colors.sequenceLine;
+        var sequenceSurface = colors.sequenceSurface;
+        var sequenceLabelSurface = colors.sequenceLabelSurface;
         var edgeLabelBackground = colors.edgeLabelBackground;
         var branchLabelText = colors.branchLabelText;
         var themeVariables = Object.assign({
@@ -293,24 +302,24 @@
                 lineColor: line,
                 textColor: text,
                 nodeTextColor: text,
-                actorBkg: secondarySurface,
+                actorBkg: sequenceSurface,
                 actorTextColor: text,
-                actorBorder: line,
-                actorLineColor: line,
-                actor0: line,
-                actor1: border,
-                actor2: line,
-                actor3: border,
-                actor4: line,
-                actor5: border,
-                signalColor: line,
+                actorBorder: sequenceLine,
+                actorLineColor: sequenceLine,
+                actor0: sequenceLine,
+                actor1: sequenceLine,
+                actor2: sequenceLine,
+                actor3: sequenceLine,
+                actor4: sequenceLine,
+                actor5: sequenceLine,
+                signalColor: sequenceLine,
                 signalTextColor: text,
-                labelBoxBkgColor: secondarySurface,
-                labelBoxBorderColor: border,
+                labelBoxBkgColor: sequenceLabelSurface,
+                labelBoxBorderColor: sequenceLine,
                 labelTextColor: text,
                 loopTextColor: text,
                 activationBkgColor: tertiarySurface,
-                activationBorderColor: border,
+                activationBorderColor: sequenceLine,
                 clusterBkg: diagramBackground,
                 clusterBorder: border,
                 edgeLabelBackground: edgeLabelBackground,
@@ -388,6 +397,9 @@
         var canvas = "var(--chat4j-mermaid-canvas-bg, " + colors.diagramBackground + ")";
         var edgeLabel = "var(--chat4j-mermaid-edge-label-bg, " + colors.edgeLabelBackground + ")";
         var line = "var(--chat4j-mermaid-line, " + colors.line + ")";
+        var sequenceLine = colors.sequenceLine;
+        var sequenceSurface = colors.sequenceSurface;
+        var sequenceLabelSurface = colors.sequenceLabelSurface;
         var rootFill = "var(--chat4j-mermaid-primary-bg, " + colors.primarySurface + ")";
         var branchLabelText = colors.branchLabelText;
         var style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
@@ -400,8 +412,14 @@
             "svg .mindmap-node.section-root rect, svg .mindmap-node.section-root path, svg .mindmap-node.section-root circle, svg .mindmap-node.section-root polygon { fill: " + rootFill + " !important; }" +
             "svg .branchLabel text, svg .branchLabel tspan { fill: " + branchLabelText + " !important; color: " + branchLabelText + " !important; }" +
             "svg .commit-merge, svg .commit-reverse, svg .commit-highlight-inner { stroke: " + line + " !important; fill: " + line + " !important; }" +
-            "svg path.flowchart-link, svg .edgePath path, svg .edge-pattern-solid, svg .edge-pattern-dashed, svg .edge-pattern-dotted, svg .transition, svg .relationshipLine, svg .messageLine0, svg .messageLine1, svg .actor-line, svg .mindmap-edge, svg [class*='section-edge-'], svg marker path { stroke: " + line + " !important; }" +
-            "svg marker path, svg .arrowheadPath, svg .marker { fill: " + line + " !important; stroke: " + line + " !important; }";
+            "svg path.flowchart-link, svg .edgePath path, svg .edge-pattern-solid, svg .edge-pattern-dashed, svg .edge-pattern-dotted, svg .transition, svg .relationshipLine, svg .mindmap-edge, svg [class*='section-edge-'], svg marker path { stroke: " + line + " !important; }" +
+            "svg marker path, svg .arrowheadPath, svg .marker { fill: " + line + " !important; stroke: " + line + " !important; }" +
+            "svg rect.actor, svg .actor-box { fill: " + sequenceSurface + " !important; stroke: " + sequenceLine + " !important; }" +
+            "svg text.actor, svg text.actor tspan, svg .messageText, svg .messageText tspan, svg .labelText, svg .labelText tspan, svg .loopText, svg .loopText tspan, svg .noteText, svg .noteText tspan { fill: " + text + " !important; color: " + text + " !important; stroke: none !important; }" +
+            "svg .actor-line, svg .messageLine0, svg .messageLine1, svg .loopLine, svg .actor-man line, svg .actor-man circle, svg #arrowhead path, svg #crosshead path { stroke: " + sequenceLine + " !important; }" +
+            "svg #arrowhead path, svg #crosshead path { fill: " + sequenceLine + " !important; }" +
+            "svg .labelBox, svg .note { fill: " + sequenceLabelSurface + " !important; stroke: " + sequenceLine + " !important; }" +
+            "svg .activation0, svg .activation1, svg .activation2 { fill: " + sequenceLabelSurface + " !important; stroke: " + sequenceLine + " !important; }";
         svg.appendChild(style);
     }
     function setImportantColor(element, color) {

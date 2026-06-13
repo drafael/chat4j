@@ -7,8 +7,8 @@ This note records the IntelliJ/JBCEF research used to guide Chat4J's configurabl
 IntelliJ does not generally expose raw JCEF directly to UI code. It wraps JCEF behind `JBCefApp`, `JBCefBrowser`, `JBCefBrowserBase`, `JBCefClient`, and `JBCefJSQuery`. Chat4J should not depend on those IntelliJ classes because they require IntelliJ Platform runtime services, but the same shape is useful:
 
 - centralize JCEF initialization and support checks
-- keep JCEF behind `MessageContentView`
-- fall back to Swing if JCEF is unavailable or fails to initialize
+- keep JCEF behind the full-conversation browser view boundary
+- fall back to the Swing HTML Renderer if JCEF is unavailable or fails to initialize
 - prefer browser reuse over rapid dispose/recreate churn
 - handle links through request/navigation handlers
 - isolate heavyweight browser behavior from normal Swing overlays
@@ -58,9 +58,9 @@ Evidence: [`JBCefApp.java`](https://github.com/JetBrains/intellij-community/blob
 Implication for Chat4J:
 
 - Production JCEF must be optional.
-- `ChatMessageViewFactory` should select JCEF only if the setting requests it and initialization succeeds.
-- Any failure should log the reason and fall back to `JEditorPaneMessageContentView`.
-- Default builds/tests should remain Swing-only unless an opt-in profile or setting enables JCEF.
+- `WebViewRuntimeStatusResolver` should select JCEF only if the configured/default fallback chain needs it and initialization succeeds.
+- Any failure should log the reason and fall back through the configured platform chain to the Swing HTML Renderer.
+- Default tests should not require a native JCEF runtime unless they explicitly exercise JCEF startup behavior.
 
 ## Browser Creation and Ownership
 
@@ -112,14 +112,14 @@ Evidence: [`JBCefApp.java`](https://github.com/JetBrains/intellij-community/blob
 
 Chat4J spike result:
 
-- Native/windowed rendering works better for the current macOS spike.
+- Native/windowed rendering worked better during the macOS spike.
 - OSR/windowless mode hung after initialization in local testing.
 
 Implication for Chat4J:
 
-- Native/windowed should be the first production target.
+- Native/windowed is the current production path.
 - OSR should remain experimental until validated on macOS, Linux, and Windows.
-- The engine abstraction should allow future OSR selection, but the default should not depend on it.
+- Any future OSR option should stay behind the engine boundary; the default should not depend on it.
 
 ## Heavyweight Component Behavior
 
@@ -149,7 +149,7 @@ Implication for Chat4J:
 
 - Do not layer normal Swing controls over a native JCEF browser.
 - Avoid lightweight popups inside the same visual area as the browser.
-- Keep per-message browser components in simple containers.
+- Keep the browser as one full-conversation component rather than per-message native browser components.
 - Prefer adjacent or separate Swing controls over overlays.
 
 ## Resize, Move, and Repaint Workarounds
@@ -195,8 +195,8 @@ Evidence:
 
 Implication for Chat4J:
 
-- Simple static message HTML can be loaded directly during early integration.
-- If messages later reference local assets, generated CSS, images, or scripts, use a controlled custom scheme/resource handler.
+- Serve JCEF transcript HTML and browser assets from a controlled in-memory `https://chat4j.local/...` resource handler.
+- Keep large bundled libraries such as Mermaid and SmilesDrawer behind internal asset URLs instead of inlining them into JCEF transcript HTML.
 - Do not allow arbitrary `file://` access from chat message HTML.
 
 ## Navigation and External Links
@@ -226,9 +226,9 @@ Evidence: [`JBCefJSQuery.java`](https://github.com/JetBrains/intellij-community/
 
 Implication for Chat4J:
 
-- Avoid JS bridge for first production JCEF integration unless needed.
-- Link handling can be done through request handlers.
-- If future features add copy buttons, code actions, or inline controls, create any JS bridge before browser creation or introduce a small query-pool equivalent.
+- Chat4J uses a small JavaScript-to-Java callback bridge for transcript actions such as copy/regenerate and opening exported diagrams.
+- Link navigation still goes through request handlers and `ExternalLinkSupport`.
+- Keep bridge setup centralized in `JcefBrowserView`; if more callback features are added, avoid scattered message-router registrations.
 
 ## Focus, Shortcuts, and Preferred Size Tweaks
 
@@ -262,8 +262,8 @@ Evidence: [`JBCefScrollbarsHelper.java`](https://github.com/JetBrains/intellij-c
 
 Implication for Chat4J:
 
-- First JCEF integration can rely on CSS from `MessageHtmlRenderer`.
-- If browser-native scrollbars look wrong, add engine-specific scrollbar CSS in `JcefBrowserView`, not in message orchestration code.
+- Browser transcript styling should stay in the shared `src/main/resources/web/chat/` resources and `TranscriptDocumentRenderer` theme variables.
+- Engine-specific scrollbar/native-component behavior should remain in `JcefBrowserView`, not in message orchestration code.
 
 ## DevTools and Debugging
 
@@ -304,7 +304,7 @@ Implication for Chat4J:
 - Do not assume dev-shell shutdown behavior is representative of packaged app behavior.
 - Production shutdown must be revisited under signed/jpackaged macOS builds.
 - Prefer browser reuse while the app is running.
-- Dispose individual message views carefully, but avoid lifecycle stress patterns that rapidly create and destroy native browsers.
+- Dispose the full-conversation browser view carefully, but avoid lifecycle stress patterns that rapidly create and destroy native browsers.
 
 ## macOS Startup and Packaging Details
 
@@ -336,11 +336,11 @@ Implication for Chat4J:
 
 - Production packaging must include native CEF assets correctly.
 - macOS signing/notarization and helper-app layout need explicit validation.
-- Continue using an opt-in Maven profile for the spike so normal `mvn test` remains unaffected.
+- Keep native JCEF startup isolated behind `JcefRuntime`/`JcefStartupInitializer` so normal tests and fallback resolution remain deterministic.
 
-## Current Chat4J Spike Findings
+## Historical Chat4J Spike Findings
 
-The dev-only spike is launched with:
+The dev-only spike was launched with:
 
 ```bash
 mvn -Pjcef-spike compile exec:exec
@@ -352,12 +352,12 @@ Optional OSR comparison:
 CHAT4J_JCEF_SPIKE_OSR=true mvn -Pjcef-spike compile exec:exec
 ```
 
-Validated areas so far:
+Areas validated during the spike:
 
 - JCEF startup through `me.friwi:jcefmaven`
 - native runtime download/extraction into the build tree
 - basic static HTML rendering
-- Chat4J `MessageHtmlRenderer` HTML rendering
+- Chat4J shared transcript HTML rendering
 - user/assistant samples, escaping, rich markdown, long responses, link edge cases
 - lifecycle reload stress using one browser by default
 - native/windowed resize/move behavior with repair workaround
@@ -381,11 +381,11 @@ Chat4J's production JCEF integration uses these pieces:
 2. Settings UI engine selection and diagnostics.
 3. `JcefRuntime` as the JCEF availability/init service with clear fallback to Swing.
 4. `JcefBrowserView` as one full-conversation browser view, not per-message browser churn.
-5. `ChatPanel`, `ActivityBubble`, and message orchestration remain engine-neutral.
-6. User links open externally and in-browser navigation is blocked by default.
-7. Resize/move repair and native lifecycle logic stay inside the JCEF implementation.
-8. DevTools/debug flags remain development-only.
-9. macOS signed/jpackaged shutdown must be validated before enabling JCEF by default.
+5. Shared transcript rendering lives in `webview/shared` and `src/main/resources/web/chat/`.
+6. `ChatPanel`, `ActivityBubble`, and message orchestration remain engine-neutral.
+7. User links open externally and in-browser navigation is blocked by default.
+8. Resize/move repair and native lifecycle logic stay inside the JCEF implementation.
+9. DevTools/debug flags remain development-only.
 
 ## Validation Checklist for JCEF Work
 
@@ -403,9 +403,9 @@ Manual validation should include:
 - clearing chat disposes message views without crashing
 - app shutdown succeeds on macOS, Linux, and Windows
 - packaged macOS app shutdown succeeds with signing/notarization layout
-- default `mvn test` remains unaffected by JCEF dependencies
+- default `mvn test` remains unaffected by native JCEF availability
 
 ## Related Documents
 
 - [Configurable Web View Engine Architecture](configurable-web-view-engine.md)
-- JCEF spike plan: `../2026-05-16-jcef-spike-plan.md`
+- [Chat Rendering and WebView Engines](chat-rendering.md)

@@ -11,11 +11,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
+import static java.util.Map.entry;
+
 public final class TranscriptDocumentRenderer {
 
     private static final String COPY_ICON = TranscriptResources.iconDataUri("/icons/input/copy.svg");
     private static final String REGENERATE_ICON = TranscriptResources.iconDataUri("/icons/chat/refresh-cw.svg");
     private static final String ARROW_DOWN_ICON = TranscriptResources.iconDataUri("/icons/chat/arrow-down.svg");
+    private static final String TRANSCRIPT_CSS_TEMPLATE = TranscriptResources.requiredResourceText("/web/chat/transcript.css");
+    private static final String TRANSCRIPT_LAYOUT_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-layout.css");
+    private static final String TRANSCRIPT_MESSAGE_BUBBLE_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-message-bubbles.css");
+    private static final String TRANSCRIPT_MESSAGE_CONTENT_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-message-content.css");
+    private static final String TRANSCRIPT_TABLE_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-tables.css");
+    private static final String TRANSCRIPT_CODE_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-code.css");
+    private static final String TRANSCRIPT_MATH_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-math.css");
+    private static final String TRANSCRIPT_DIAGRAM_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-diagrams.css");
+    private static final String TRANSCRIPT_ACTIVITY_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-activity.css");
+    private static final String TRANSCRIPT_MESSAGE_ACTION_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-actions.css");
+    private static final String TRANSCRIPT_SOURCE_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-sources.css");
+    private static final String TRANSCRIPT_JUMP_CSS = TranscriptResources.requiredResourceText("/web/chat/transcript-jump.css");
     private static final int ATTACHMENT_IMAGE_MAX_WIDTH = 420;
     private static final int ATTACHMENT_IMAGE_MAX_HEIGHT = 360;
 
@@ -37,11 +51,22 @@ public final class TranscriptDocumentRenderer {
         );
 
         String transcriptCss = TranscriptResources.resolveTemplate(
-                TranscriptResources.requiredResourceText("/web/chat/transcript.css"),
-                Map.of(
-                        "theme-css", themeCss(snapshot),
-                        "attachment-css", attachmentCss(chrome, palette),
-                        "syntax-highlight-css", chrome.syntaxHighlightCss()
+                TRANSCRIPT_CSS_TEMPLATE,
+                Map.ofEntries(
+                        entry("theme-css", themeCss(snapshot)),
+                        entry("layout-css", TRANSCRIPT_LAYOUT_CSS),
+                        entry("message-bubble-css", TRANSCRIPT_MESSAGE_BUBBLE_CSS),
+                        entry("attachment-css", attachmentCss(chrome, palette)),
+                        entry("message-content-css", TRANSCRIPT_MESSAGE_CONTENT_CSS),
+                        entry("table-css", TRANSCRIPT_TABLE_CSS),
+                        entry("syntax-highlight-css", chrome.syntaxHighlightCss()),
+                        entry("code-css", TRANSCRIPT_CODE_CSS),
+                        entry("math-css", TRANSCRIPT_MATH_CSS),
+                        entry("diagram-css", TRANSCRIPT_DIAGRAM_CSS),
+                        entry("activity-css", TRANSCRIPT_ACTIVITY_CSS),
+                        entry("message-action-css", TRANSCRIPT_MESSAGE_ACTION_CSS),
+                        entry("source-css", TRANSCRIPT_SOURCE_CSS),
+                        entry("jump-css", TRANSCRIPT_JUMP_CSS)
                 )
         );
         return TranscriptResources.resolveTemplate(

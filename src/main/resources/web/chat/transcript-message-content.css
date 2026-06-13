@@ -1,0 +1,13 @@
+                    .message.assistant { width: 100%; padding: 0; line-height: 1.72; }
+                    .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 { color: var(--chat4j-text); font-weight: 700; line-height: 1.24; }
+                    .message h1 { font-size: 22px; margin: 14px 0 8px 0; }
+                    .message h2 { font-size: 19px; margin: 13px 0 7px 0; }
+                    .message h3 { font-size: 17px; margin: 12px 0 6px 0; }
+                    .message h4, .message h5, .message h6 { font-size: 15px; margin: 10px 0 5px 0; }
+                    .message br + h1, .message br + h2, .message br + h3, .message br + h4, .message br + h5, .message br + h6 { margin-top: 6px; }
+                    .message p { margin: 8px 0 10px 0; }
+                    .message.user p { margin: 2px 0; }
+                    .message ul, .message ol { margin: 10px 0 16px 0; padding-left: 26px; }
+                    .message li { margin: 8px 0; }
+                    .message hr { border: none; border-top: 1px solid var(--chat4j-code-border); margin: 18px 0; height: 0; background: transparent; }
+                    .message blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid var(--chat4j-code-border); background: var(--chat4j-surface-bg); }

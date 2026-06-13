@@ -26,8 +26,9 @@ Missing, unknown, or obsolete saved values are treated as the platform default r
 - `WebViewRuntimeStatus` — configured engine, active engine, availability flags, and fallback reason.
 - `AppearancePanel` — engine selection and diagnostics.
 - `ChatMessageView`, `MessageBubble`, `MessageContentView`, `JEditorPaneMessageContentView` — Swing source/fallback message view boundary.
-- `SystemWebView` — full-conversation System WebView.
-- `JcefRuntime`, `JcefBrowserView` — JCEF runtime and full-conversation browser view.
+- `SystemWebView` — full-conversation System WebView lifecycle/loading/callback adapter.
+- `JcefRuntime`, `JcefBrowserView` — JCEF runtime and full-conversation browser lifecycle/loading/callback adapter.
+- `webview/shared` transcript classes — shared browser document rendering, entry rendering, assets, templates, CSS variables, update scripts, and callback payload parsing.
 - `ExternalLinkSupport` — central external-link policy.
 
 ## Data flow
@@ -35,8 +36,9 @@ Missing, unknown, or obsolete saved values are treated as the platform default r
 1. `ChatPanel` creates Swing source message views.
 2. Swing HTML Renderer displays those views directly.
 3. System WebView and JCEF mirror the same message data into a single conversation document.
-4. Browser conversation views own browser-specific DOM, CSS, scrolling, actions, and navigation blocking.
-5. Native browser resources are disposed when the chat panel is removed.
+4. Browser conversation views load a shared transcript document from `TranscriptDocumentRenderer` and packaged resources under `src/main/resources/web/chat/`.
+5. Browser conversation views own browser-specific DOM, CSS, scrolling, actions, and navigation blocking.
+6. Native browser resources are disposed when the chat panel is removed.
 
 ## JCEF implementation notes
 

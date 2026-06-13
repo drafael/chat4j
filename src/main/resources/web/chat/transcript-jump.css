@@ -1,0 +1,6 @@
+                    .jump-button { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--chat4j-button-border); background: var(--chat4j-button-bg); color: var(--chat4j-text); font-size: 0; line-height: 1; display: var(--chat4j-jump-button-display); align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.18); cursor: pointer; z-index: 20; }
+                    .jump-button:hover { background: var(--chat4j-hover-bg); color: var(--chat4j-hover-fg); }
+                    .jump-button::before { content: ''; position: absolute; inset: 1px; border-radius: 999px; border: 2px solid var(--chat4j-jump-ring-track); opacity: 0; animation: none; }
+                    .jump-button::after { content: ''; width: 16px; height: 16px; background: currentColor; -webkit-mask: var(--chat4j-arrow-down-icon-mask) center / contain no-repeat; mask: var(--chat4j-arrow-down-icon-mask) center / contain no-repeat; }
+                    .jump-button[data-streaming="true"].streaming::before { border-color: var(--chat4j-jump-ring-track); border-top-color: var(--chat4j-jump-ring); opacity: 1; animation: chat4j-spin 900ms linear infinite; }
+                    @keyframes chat4j-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

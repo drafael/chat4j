@@ -1,0 +1,14 @@
+                    .chat4j-diagram { box-sizing: border-box; width: 100%; margin: 10px 0 20px 0; border: 1px solid var(--chat4j-border); border-radius: 8px; background: var(--chat4j-user-bubble-bg); color: var(--chat4j-text); padding: 14px; overflow-x: auto; scrollbar-color: var(--chat4j-scrollbar-thumb) var(--chat4j-scrollbar-track); }
+                    .chat4j-diagram { position: relative; }
+                    .chat4j-mermaid-display { border-color: var(--chat4j-mermaid-border); background: var(--chat4j-mermaid-canvas-bg); color: var(--chat4j-mermaid-text); }
+                    .chat4j-diagram svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+                    .chat4j-chem-display { text-align: center; padding: 10px; }
+                    .chat4j-chem-display svg { width: auto !important; height: auto !important; max-width: 620px !important; max-height: 340px !important; }
+                    .chat4j-chem-display svg text { font-family: var(--chat4j-base-font-family), sans-serif; }
+                    .chat4j-chem-record-summary { margin-top: 8px; color: var(--chat4j-muted-text); font-size: var(--chat4j-small-font-size); font-weight: 600; }
+                    .diagram-open-button { position: absolute; top: 8px; right: 8px; min-width: 30px; height: 26px; border: 1px solid var(--chat4j-button-border); border-radius: 7px; background: var(--chat4j-button-bg); color: var(--chat4j-text); font-size: 12px; font-weight: 700; cursor: pointer; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.94); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease; }
+                    .chat4j-mermaid-display:hover .diagram-open-button { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .diagram-open-button:hover { background: var(--chat4j-hover-bg); color: var(--chat4j-hover-fg); transform: translateY(0) scale(1.04); }
+                    .code-block-shell[data-chat4j-diagram-rendered="error"]::before { content: attr(data-chat4j-diagram-error); display: inline-block; margin: 0 0 6px 0; padding: 2px 7px; border-radius: 999px; background: var(--chat4j-inline-code-bg); color: var(--chat4j-muted-text); font-size: var(--chat4j-small-font-size); font-weight: 700; }
+                    .message table.md-code-block tr.chat4j-diagram-error td { background: transparent !important; border: 0 !important; padding: 0 0 6px 0 !important; }
+                    .chat4j-diagram-error-badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--chat4j-inline-code-bg); color: var(--chat4j-muted-text); font-size: var(--chat4j-small-font-size); font-weight: 700; }

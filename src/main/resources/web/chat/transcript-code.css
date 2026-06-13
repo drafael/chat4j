@@ -1,0 +1,20 @@
+                    .code-block-shell { position: relative; margin: 10px 0 20px 0; border-radius: 3px; }
+                    .code-block-shell table.md-code-block { margin: 0 !important; }
+                    .code-copy-button, .activity-copy-button { position: absolute; width: 24px; height: 24px; border: 1px solid var(--chat4j-border); border-radius: 5px; background: var(--chat4j-menu-bg); color: var(--chat4j-icon-color); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.92); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease, color 120ms ease, border-color 120ms ease; }
+                    .code-copy-button { top: 6px; right: 6px; }
+                    .code-block-shell:hover .code-copy-button, .activity-box:hover .activity-copy-button { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .code-copy-button:hover, .activity-copy-button:hover { background: var(--chat4j-hover-bg); color: var(--chat4j-hover-fg); transform: translateY(0) scale(1.04); }
+                    .code-copy-button .icon, .activity-copy-button .icon { width: 14px; height: 14px; }
+                    .copy-flash .icon.copy, .message-action-button.copy-flash .icon.copy { animation: chat4j-copy-pop 420ms cubic-bezier(.2,.8,.2,1); }
+                    .copy-flash { animation: chat4j-copy-button-flash 420ms ease; }
+                    @keyframes chat4j-copy-pop { 0% { transform: scale(1); } 35% { transform: scale(0.78); } 70% { transform: scale(1.22); } 100% { transform: scale(1); } }
+                    @keyframes chat4j-copy-button-flash { 0% { filter: none; } 35% { filter: brightness(1.12); } 100% { filter: none; } }
+                    .message table.md-code-block { border-collapse: separate !important; border-spacing: 0 !important; margin: 10px 0 20px 0 !important; width: 100%; border: 0 !important; border-radius: 3px !important; }
+                    .message table.md-code-block tr.code-header td { background-color: var(--chat4j-inline-code-bg) !important; border: 1px solid var(--chat4j-code-border) !important; border-bottom: 0 !important; border-radius: 3px 3px 0 0 !important; padding: 3px 10px !important; color: var(--chat4j-muted-text) !important; }
+                    .message table.md-code-block tr.code-body td { background-color: var(--chat4j-code-bg) !important; border: 1px solid var(--chat4j-code-border) !important; border-radius: 0 0 3px 3px !important; padding: 10px 14px !important; }
+                    .message table.md-code-block.without-header tr.code-body td { border-radius: 3px !important; }
+                    .message table.md-code-block pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45 !important; }
+                    .message table.md-code-block[data-code-language="markdown"] pre { line-height: 1.7 !important; }
+                    .message table.md-code-block tr.code-header font { color: var(--chat4j-muted-text) !important; font-family: var(--chat4j-base-font-family) !important; font-size: var(--chat4j-language-font-size) !important; }
+                    .message code, .message pre, .message table.md-code-block tr.code-body font { font-family: var(--chat4j-mono-font-family) !important; font-size: var(--chat4j-code-font-size) !important; line-height: 1.45; }
+                    .message code.md-latex-inline, .message code:not(.md-latex-inline) { background-color: var(--chat4j-inline-code-bg); border: 1px solid var(--chat4j-code-border); border-radius: 4px; padding: 1px 4px; font-size: var(--chat4j-code-font-size) !important; }

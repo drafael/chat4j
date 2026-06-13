@@ -1,0 +1,11 @@
+                    .message .table-wrap { width: 100%; overflow-x: auto; margin: 10px 0 16px 0; scrollbar-color: var(--chat4j-scrollbar-thumb) var(--chat4j-scrollbar-track); }
+                    .message .table-wrap::-webkit-scrollbar { height: 10px !important; display: block !important; background-color: var(--chat4j-scrollbar-track) !important; }
+                    .message .table-wrap::-webkit-scrollbar-track { background-color: var(--chat4j-scrollbar-track) !important; border-radius: 999px !important; }
+                    .message .table-wrap::-webkit-scrollbar-thumb { background-color: var(--chat4j-scrollbar-thumb) !important; border-radius: 999px !important; border: 2px solid var(--chat4j-scrollbar-track) !important; }
+                    .message .table-wrap::-webkit-scrollbar-thumb:hover { background-color: var(--chat4j-scrollbar-hover-thumb) !important; }
+                    .message .table-wrap::-webkit-scrollbar-corner { background-color: var(--chat4j-scrollbar-track) !important; }
+                    .message table.md-table { border-collapse: collapse; margin: 0; width: 100%; min-width: 760px; table-layout: auto; font-size: var(--chat4j-table-font-size); }
+                    .message table.md-table th, .message table.md-table td { border-bottom: 1px solid var(--chat4j-code-border); padding: 8px 12px; vertical-align: top; word-break: normal; overflow-wrap: break-word; white-space: normal; }
+                    .message table.md-table th:first-child, .message table.md-table td:first-child { min-width: 150px; }
+                    .message table.md-table th:not(:first-child), .message table.md-table td:not(:first-child) { min-width: 220px; }
+                    .message table.md-table code { word-break: normal; overflow-wrap: normal; white-space: nowrap; font-size: var(--chat4j-code-font-size) !important; }

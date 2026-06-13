@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Chat4J bundles the following third-party browser assets for offline SwingWebView rendering.
+Chat4J bundles the following third-party browser assets for offline chat transcript rendering in System WebView and JCEF.
 
 ## KaTeX 0.17.0
 
@@ -120,4 +120,4 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 - Licenses declared by the community JavaScript artifacts: Universal Permissive License (UPL), Version 1.0 and MIT License
 - Notable transitive license: `org.graalvm.shadowed:icu4j` declares the Unicode/ICU License
 
-Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to SwingWebView. This avoids depending on native WebView script execution for math and syntax highlighting.
+Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.

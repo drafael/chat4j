@@ -35,6 +35,7 @@ Key classes:
 - `ChatMessageViewFactory`, `MessageBubble`, `MessageContentView`, `JEditorPaneMessageContentView` — Swing source message model and final fallback renderer.
 - `SystemWebView` — full-conversation System WebView renderer.
 - `JcefRuntime` / `JcefBrowserView` — JCEF startup and full-conversation Chromium renderer.
+- `TranscriptDocumentRenderer`, `TranscriptEntryRenderer`, `TranscriptBrowserAssets`, `TranscriptResources`, and related `webview/shared` classes — shared browser transcript document, entry, asset, template, and update rendering.
 - `MessageHtmlRenderer` — message-to-HTML conversion.
 - `ExternalLinkSupport` — shared external-link allowlist and opener.
 
@@ -46,6 +47,41 @@ Data flow:
 4. Full-conversation browser views are disposed from `ChatPanel.removeNotify()`.
 
 The full-conversation design avoids per-message native browser churn and the clipping/scrolling problems seen with native components inside Swing scroll panes.
+
+## Shared browser transcript implementation
+
+System WebView and JCEF use the same transcript renderer and packaged web resources. Engine classes keep lifecycle, loading, JavaScript evaluation, callback plumbing, disposal, and engine-specific URL handling. Shared classes own document assembly, entry rendering, attachments, source previews, template resolution, CSS variables, runtime scripts, and incremental update snippets.
+
+Shared Java package:
+
+```text
+src/main/java/com/github/drafael/chat4j/chat/conversation/webview/shared/
+```
+
+Important shared classes:
+
+- `TranscriptDocumentRequest` — immutable full-document render input: snapshot, scroll behavior, asset mode, and optional internal asset URLs.
+- `TranscriptRenderSnapshot` / `TranscriptRenderSupport` — stable render input and font-scope handling.
+- `TranscriptDocumentRenderer` — full transcript document assembly and theme CSS generation.
+- `TranscriptEntryRenderer` / `TranscriptAttachmentRenderer` — message, activity, attachment, source-link, code, and math fallback HTML.
+- `TranscriptBrowserAssets` / `TranscriptAssetMode` — browser asset tag generation. System WebView uses inline assets; JCEF serves large Mermaid and SmilesDrawer bundles from internal `chat4j.local` URLs.
+- `TranscriptResources` — required classpath resource loading, data URI generation, script escaping, font inlining, and fixed-token template resolution with unresolved-token validation.
+- `TranscriptUpdateScripts` — shared incremental transcript, jump-button, and scroll-to-bottom JavaScript snippets.
+- `TranscriptCallbackPayloads` — shared WebView callback and transcript action parsing.
+
+Reusable browser resources live under:
+
+```text
+src/main/resources/web/chat/
+  transcript-document.html
+  transcript.css
+  transcript-*.css
+  transcript-actions.js
+  math-render.js
+  diagram-render.js
+```
+
+`transcript.css` is a small fixed-token composition template. Focused partials (`transcript-layout.css`, `transcript-code.css`, `transcript-diagrams.css`, and so on) keep the generated browser CSS maintainable while `TranscriptDocumentRenderer` injects theme variables, attachment CSS, syntax highlighting CSS, and partial content. No template engine is used; `TranscriptResources.resolveTemplate(...)` replaces known tokens and fails fast for tokens left in the original template.
 
 ## Browser conversation behavior
 
@@ -119,6 +155,7 @@ Implementation:
 
 Assets:
 
+- Browser transcript templates/scripts/styles: `src/main/resources/web/chat/`
 - Highlight.js: `src/main/resources/web/highlight/`
 - KaTeX/mhchem: `src/main/resources/web/katex/`
 - Mermaid: `src/main/resources/web/mermaid/`
@@ -145,7 +182,7 @@ Known risks from the spike and local testing:
 - OSR/windowless hung during macOS spike testing
 - rapid browser dispose/recreate crashed native CEF during spike testing
 - explicit `CefApp.dispose()` trapped in local unsigned macOS runs
-- packaged macOS shutdown needs validation with the signed/notarized app layout
+- packaged macOS shutdown should remain in release validation for signed/notarized app layouts
 
 See [jcef-intellij-findings.md](jcef-intellij-findings.md) for the source-backed IntelliJ/JCEF research notes.
 
@@ -190,7 +227,9 @@ Targeted tests:
 - `MarkdownRendererTest`
 - `MessageHtmlRendererTest`
 - `KatexMathRendererTest`
-- `SystemWebViewTest`
+- `TranscriptBrowserAssetsTest`
+- `TranscriptDocumentRendererTest`
+- `JcefInitializationProgressTest`
 
 Manual checks:
 

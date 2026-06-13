@@ -70,6 +70,11 @@ class TranscriptBrowserAssetsTest {
                 .contains("--chat4j-mermaid-border: var(--chat4j-scrollbar-thumb)")
                 .contains("--chat4j-mermaid-line: var(--chat4j-muted-text)")
                 .contains("--chat4j-mermaid-text: var(--chat4j-text)")
+                .contains(".transcript")
+                .contains(".message.assistant")
+                .contains(".chat4j-diagram")
+                .contains(".source-preview")
+                .contains(".jump-button")
                 .contains("window.scrollTo")
                 .contains("hello");
     }
@@ -170,6 +175,9 @@ class TranscriptBrowserAssetsTest {
                 .contains("line = cssColor('--chat4j-mermaid-line', cssColor('--chat4j-muted-text', text))")
                 .contains("edgeLabelBackground = cssColor('--chat4j-mermaid-edge-label-bg', diagramBackground)")
                 .contains("readableColor(line, text, diagramBackground)")
+                .contains("sequenceLine = readableColor(diagramBackground, line, text)")
+                .contains("sequenceSurface = readableColor(diagramBackground, secondarySurface, tertiarySurface)")
+                .contains("sequenceLabelSurface = readableColor(diagramBackground, primarySurface, secondarySurface)")
                 .contains("MERMAID_CATEGORY_COLOR_COUNT = 12")
                 .contains("mermaidCategoricalThemeVariables(colors)")
                 .contains("colors.tertiarySurface\n        ];")
@@ -186,11 +194,13 @@ class TranscriptBrowserAssetsTest {
                 .contains("secondaryColor: secondarySurface")
                 .contains("tertiaryColor: tertiarySurface")
                 .contains("lineColor: line")
-                .contains("actorBkg: secondarySurface")
-                .contains("actorBorder: line")
-                .contains("actor0: line")
-                .contains("actor1: border")
-                .contains("signalColor: line")
+                .contains("actorBkg: sequenceSurface")
+                .contains("actorBorder: sequenceLine")
+                .contains("actor0: sequenceLine")
+                .contains("actor1: sequenceLine")
+                .contains("signalColor: sequenceLine")
+                .contains("labelBoxBkgColor: sequenceLabelSurface")
+                .contains("activationBorderColor: sequenceLine")
                 .contains("edgeLabelBackground: edgeLabelBackground")
                 .contains("attributeBackgroundColorOdd: secondarySurface")
                 .contains("taskBkgColor: primarySurface")
@@ -208,6 +218,11 @@ class TranscriptBrowserAssetsTest {
                 .contains("svg .edgeLabel, svg .edgeLabel p")
                 .contains("svg .edgeLabel text, svg .edgeLabel tspan")
                 .contains("svg .mindmap-node-label, svg .mindmap-node-label div, svg .mindmap-node-label span")
+                .contains("svg rect.actor, svg .actor-box")
+                .contains("svg .actor-line, svg .messageLine0, svg .messageLine1")
+                .contains("svg #arrowhead path, svg #crosshead path { fill: ")
+                .contains("svg .labelBox, svg .note")
+                .contains("svg .activation0, svg .activation1, svg .activation2")
                 .contains("svg .mindmap-node .nodeLabel, svg .mindmap-node .nodeLabel span")
                 .contains("svg .mindmap-node .text-inner-tspan, svg .mindmap-node .text-outer-tspan")
                 .contains("svg .mindmap-node.section-root rect")
@@ -324,6 +339,11 @@ class TranscriptBrowserAssetsTest {
     void transcriptTemplates_whenLoadedFromResources_containExpectedTokensAndStyles() {
         String documentTemplate = TranscriptResources.resourceText("/web/chat/transcript-document.html");
         String cssTemplate = TranscriptResources.resourceText("/web/chat/transcript.css");
+        String layoutCss = TranscriptResources.resourceText("/web/chat/transcript-layout.css");
+        String messageCss = TranscriptResources.resourceText("/web/chat/transcript-message-content.css");
+        String diagramCss = TranscriptResources.resourceText("/web/chat/transcript-diagrams.css");
+        String sourceCss = TranscriptResources.resourceText("/web/chat/transcript-sources.css");
+        String jumpCss = TranscriptResources.resourceText("/web/chat/transcript-jump.css");
 
         assertThat(documentTemplate)
                 .contains("{{asset-tags}}")
@@ -334,19 +354,24 @@ class TranscriptBrowserAssetsTest {
                 .contains("{{scroll-script}}");
         assertThat(cssTemplate)
                 .contains("{{theme-css}}")
+                .contains("{{layout-css}}")
                 .contains("{{attachment-css}}")
                 .contains("{{syntax-highlight-css}}")
+                .contains("{{diagram-css}}")
+                .contains("{{jump-css}}")
+                .doesNotContain("%s")
+                .doesNotContain("%d");
+        assertThat(layoutCss)
                 .contains(".transcript")
-                .contains(".message.assistant")
+                .contains("var(--chat4j-bg)");
+        assertThat(messageCss).contains(".message.assistant");
+        assertThat(diagramCss)
                 .contains(".chat4j-diagram")
                 .contains(".chat4j-mermaid-display")
                 .contains("var(--chat4j-mermaid-border)")
-                .contains("var(--chat4j-mermaid-canvas-bg)")
-                .contains(".source-preview")
-                .contains(".jump-button")
-                .contains("var(--chat4j-bg)")
-                .doesNotContain("%s")
-                .doesNotContain("%d");
+                .contains("var(--chat4j-mermaid-canvas-bg)");
+        assertThat(sourceCss).contains(".source-preview");
+        assertThat(jumpCss).contains(".jump-button");
     }
 
     @Test
