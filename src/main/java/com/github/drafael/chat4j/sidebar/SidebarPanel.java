@@ -9,6 +9,7 @@ import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
 import lombok.Setter;
 import org.apache.commons.lang3.ObjectUtils;
@@ -956,8 +957,7 @@ public class SidebarPanel extends JPanel {
                 dialog.setVisible(false);
             }
         });
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
+        ModalDialogSupport.prepareCompactModal(dialog, this);
         SwingUtilities.invokeLater(() -> {
             textField.requestFocusInWindow();
             textField.selectAll();
@@ -984,8 +984,7 @@ public class SidebarPanel extends JPanel {
                 dialog.setVisible(false);
             }
         });
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
+        ModalDialogSupport.prepareCompactModal(dialog, this);
         dialog.setVisible(true);
         dialog.dispose();
 

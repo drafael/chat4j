@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.storage.ChatStorageConfig;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.storage.StorageBackend;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import com.formdev.flatlaf.util.SystemInfo;
 import org.apache.commons.lang3.StringUtils;
 
@@ -184,7 +185,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
     private int showStorageBackendChangePrompt(StorageBackend activeBackend, StorageBackend selectedBackend) {
         Object[] options = {"Exit Now", "Later", "Cancel"};
         JOptionPane optionPane = new JOptionPane(
-                "Chat storage will switch from %s to %s after you reopen Chat4J. Existing chats will be migrated automatically."
+                "<html><div style='width:260px'>Chat storage will switch from %s to %s after you reopen Chat4J. Existing chats will be migrated automatically.</div></html>"
                         .formatted(activeBackend.displayName(), selectedBackend.displayName()),
                 JOptionPane.INFORMATION_MESSAGE,
                 JOptionPane.YES_NO_CANCEL_OPTION,
@@ -198,8 +199,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
         dialog.setUndecorated(true);
         dialog.setContentPane(optionPane);
         optionPane.addPropertyChangeListener(JOptionPane.VALUE_PROPERTY, event -> dialog.dispose());
-        dialog.pack();
-        dialog.setLocationRelativeTo(this);
+        ModalDialogSupport.prepareCompactModal(dialog, this);
         dialog.setVisible(true);
 
         Object selectedValue = optionPane.getValue();

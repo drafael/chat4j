@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import lombok.NonNull;
 
 import javax.swing.BorderFactory;
@@ -33,8 +34,7 @@ public class ClearChatConfirmationDialog {
                 dialog.setVisible(false);
             }
         });
-        dialog.pack();
-        dialog.setLocationRelativeTo(parent);
+        ModalDialogSupport.prepareCompactModal(dialog, parent);
         dialog.setVisible(true);
         dialog.dispose();
 

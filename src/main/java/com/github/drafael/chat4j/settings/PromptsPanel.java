@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.prompts.PromptVariableType;
 import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
@@ -326,20 +327,37 @@ public class PromptsPanel extends JPanel {
     }
 
     private void resetToBuiltIns() {
-        int result = JOptionPane.showConfirmDialog(
-                this,
-                "Replace all custom prompts with the built-in prompt list?",
-                "Reset Prompts",
-                JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.WARNING_MESSAGE
-        );
-        if (result != JOptionPane.OK_OPTION) {
+        if (!confirmResetToBuiltIns()) {
             return;
         }
         promptCatalogRepo.resetToBuiltIns();
         reloadPrompts();
         dirty = false;
         setStatus("Reset to built-ins", false);
+    }
+
+    private boolean confirmResetToBuiltIns() {
+        JOptionPane pane = new JOptionPane(
+                "<html><div style='width:260px'>Replace all custom prompts with the built-in prompt list?</div></html>",
+                JOptionPane.WARNING_MESSAGE,
+                JOptionPane.OK_CANCEL_OPTION
+        );
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setContentPane(pane);
+        pane.addPropertyChangeListener(event -> {
+            if (dialog.isVisible()
+                    && event.getSource() == pane
+                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
+                dialog.setVisible(false);
+            }
+        });
+        ModalDialogSupport.prepareCompactModal(dialog, this);
+        dialog.setVisible(true);
+        dialog.dispose();
+
+        Object value = pane.getValue();
+        return value instanceof Integer selectedValue && selectedValue == JOptionPane.OK_OPTION;
     }
 
     private void removeSelectedVariable() {
