@@ -1,0 +1,23 @@
+                <html>
+                <head>
+                  <meta charset="UTF-8">
+                  {{asset-tags}}
+                  <style>
+{{transcript-css}}
+                  </style>
+                </head>
+                <body onload="if(window.chat4jRenderEnhancements){window.chat4jRenderEnhancements(document.querySelector('.transcript')||document.body);}">
+                  <main class="transcript">{{entries-html}}</main>
+                  <div id="chat4j-top-fade" class="chat4j-fade top"></div>
+                  <div id="chat4j-bottom-fade" class="chat4j-fade bottom"></div>
+                  <div id="chat4j-transcript-menu" class="transcript-menu"></div>
+                  <div id="chat4j-source-preview" class="source-preview" aria-hidden="true">
+                    <div class="source-preview-header"><span class="source-preview-favicon"></span><span class="source-preview-domain"></span></div>
+                    <div class="source-preview-body"><div class="source-preview-title"></div><div class="source-preview-snippet"></div></div>
+                  </div>
+                  <div id="chat4j-scrollbar" class="chat4j-scrollbar"><div id="chat4j-scrollbar-thumb" class="chat4j-scrollbar-thumb"></div></div>
+                  <button id="chat4j-jump-bottom" class="jump-button{{jump-streaming-class}}" data-streaming="{{jump-streaming}}" title="Jump to latest" aria-label="Jump to latest" onclick="window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight || 0); if(window.chat4jUpdateJumpButton){setTimeout(window.chat4jUpdateJumpButton, 0);}"></button>
+                  <script>if(window.chat4jRenderEnhancements){window.chat4jRenderEnhancements(document.querySelector('.transcript')||document.body);}</script>
+                  {{scroll-script}}
+                </body>
+                </html>

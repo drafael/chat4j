@@ -1,4 +1,4 @@
-package com.github.drafael.chat4j.chat.conversation.webview.system;
+package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
 import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
@@ -19,7 +19,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class SystemWebViewTest {
+class TranscriptDocumentRendererTest {
 
     @TempDir
     Path tempDir;
@@ -32,7 +32,7 @@ class SystemWebViewTest {
         Path filePath = tempDir.resolve("demo.txt");
         Files.writeString(filePath, "attachment");
 
-        String html = SystemWebView.renderAttachmentStripHtml(List.of(
+        String html = TranscriptDocumentRenderer.renderAttachmentStripHtml(List.of(
                 new ConversationAttachment(
                         imagePath.toString(),
                         "photo \"quoted\".png",
@@ -63,7 +63,7 @@ class SystemWebViewTest {
     @Test
     @DisplayName("Missing image attachments render a fallback chip")
     void renderAttachmentStripHtml_whenImageMissing_rendersFallbackChip() {
-        String html = SystemWebView.renderAttachmentStripHtml(List.of(
+        String html = TranscriptDocumentRenderer.renderAttachmentStripHtml(List.of(
                 new ConversationAttachment(
                         tempDir.resolve("missing.png").toString(),
                         "missing.png",
@@ -80,117 +80,6 @@ class SystemWebViewTest {
     }
 
     @Test
-    @DisplayName("Math stylesheet is bundled into the WebView document head")
-    void mathHeadAssets_whenRendered_containsBundledKatexStylesheet() {
-        String assets = SystemWebView.mathHeadAssets();
-
-        assertThat(assets)
-                .contains("chat4j-katex-css")
-                .contains("data:font/woff2;base64,")
-                .doesNotContain("cdn.jsdelivr")
-                .doesNotContain("unpkg.com");
-    }
-
-    @Test
-    @DisplayName("Math and diagram assets are bundled into the WebView document head")
-    void mathHeadAssets_whenRendered_containsBundledDiagramScripts() {
-        String assets = SystemWebView.mathHeadAssets();
-
-        assertThat(assets)
-                .contains("chat4j-mermaid-script")
-                .contains("chat4j-smiles-drawer-script")
-                .contains("chat4j-diagram-render-script")
-                .contains("chat4jRenderEnhancements")
-                .doesNotContain("cdn.jsdelivr")
-                .doesNotContain("unpkg.com");
-    }
-
-    @Test
-    @DisplayName("Math bridge script bundles KaTeX mhchem diagrams and the renderers")
-    void mathBridgeScript_whenRendered_containsBundledKatexDiagramsAndRenderers() {
-        String script = SystemWebView.mathBridgeScript();
-
-        assertThat(script)
-                .contains("katex")
-                .contains("mhchem")
-                .contains("mermaid")
-                .contains("SmilesDrawer")
-                .contains("scale: 1.35")
-                .contains("parseMolV2000")
-                .contains("renderMolLikeBlock")
-                .contains("SDF_MAX_RECORDS = 12")
-                .contains("Showing first ")
-                .contains("chat4jRenderMath")
-                .contains("chat4jRenderDiagrams")
-                .contains("chat4jRenderEnhancements")
-                .doesNotContain("cdn.jsdelivr")
-                .doesNotContain("unpkg.com");
-    }
-
-    @Test
-    @DisplayName("Diagram bridge can open rendered Mermaid diagrams externally")
-    void mathBridgeScript_whenRendered_containsOpenMermaidDiagramAction() {
-        String script = SystemWebView.mathBridgeScript();
-
-        assertThat(script)
-                .contains("open-diagram-html")
-                .contains("XMLSerializer")
-                .contains("chat4j-mermaid-display")
-                .contains("diagram-open-button")
-                .contains("window.chat4jDispatchTranscriptAction('open-diagram-html', -1, payload)")
-                .contains("window.chat4jOpenMermaidDiagram = openMermaidDiagram")
-                .contains("Open diagram");
-    }
-
-    @Test
-    @DisplayName("Transcript bridge exposes the shared action dispatcher for rendered diagrams")
-    void bridgeScript_whenRendered_exposesDiagramActionDispatcher() {
-        String script = SystemWebView.bridgeScript();
-
-        assertThat(script)
-                .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
-                .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
-                .contains("data-action=\"open-diagram\"")
-                .contains("Open Diagram");
-    }
-
-    @Test
-    @DisplayName("Diagram bridge preserves source blocks on rendering errors")
-    void mathBridgeScript_whenRendered_preservesDiagramSourceOnError() {
-        String script = SystemWebView.mathBridgeScript();
-
-        assertThat(script)
-                .contains("table.insertRow(0)")
-                .contains("chat4j-diagram-error-badge")
-                .contains("target.parentNode.replaceChild(originalNode, target)")
-                .contains("window.mermaid.parse(candidate)")
-                .contains("repairMermaidSource(source)")
-                .contains("renderSource(repaired, '-repaired')")
-                .contains("mermaidErrorSvg(svg)")
-                .contains("friendlyDiagramError")
-                .contains("Mermaid syntax error — source shown below")
-                .contains("Mermaid renderer unavailable")
-                .contains("Mermaid render timed out")
-                .contains("SMILES renderer unavailable")
-                .contains("SMILES render failed")
-                .contains("MOL must be complete V2000 source — source shown below")
-                .contains("SDF must be complete V2000 source — source shown below")
-                .contains("chat4j-chem-record-summary");
-    }
-
-    @Test
-    @DisplayName("Math renderer only targets explicit LaTeX fallback elements")
-    void mathBridgeScript_whenRendered_targetsFallbackMathElementsOnly() {
-        String script = SystemWebView.mathBridgeScript();
-
-        assertThat(script)
-                .contains("code.md-latex-inline:not([data-chat4j-math-rendered])")
-                .contains("table.md-latex-block:not([data-chat4j-math-rendered])")
-                .contains("throwOnError: false")
-                .contains("trust: false");
-    }
-
-    @Test
     @DisplayName("Math fallback nodes are replaced with server-rendered KaTeX before WebView load")
     void renderMathFallbacks_whenDocumentContainsMath_replacesFallbackNodesWithKatexHtml() {
         var document = Jsoup.parse("""
@@ -200,7 +89,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderMathFallbacks(document);
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
 
         assertThat(document.select("code.md-latex-inline")).isEmpty();
         assertThat(document.select("table.md-latex-block")).isEmpty();
@@ -217,7 +106,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderMathFallbacks(document);
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
 
         assertThat(document.select("code.md-latex-inline")).isEmpty();
         assertThat(document.select(".chat4j-math-inline .katex")).hasSize(1);
@@ -233,7 +122,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderMathFallbacks(document);
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
 
         assertThat(document.select("table.md-latex-block")).isEmpty();
         assertThat(document.select(".chat4j-math-display .katex-display")).hasSize(1);
@@ -249,7 +138,7 @@ class SystemWebViewTest {
                 """, false);
         var document = Jsoup.parse(html);
 
-        SystemWebView.renderMathFallbacks(document);
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
 
         var dataRowCells = document.select("table.md-table tr").get(1).select("td");
         var visualCell = dataRowCells.get(3);
@@ -270,7 +159,7 @@ class SystemWebViewTest {
                 </p></body></html>
                 """);
 
-        SystemWebView.removeAdjacentDuplicateSourceCitations(document);
+        TranscriptDocumentRenderer.removeAdjacentDuplicateSourceCitations(document);
 
         assertThat(document.select("a.source-citation")).hasSize(2);
         assertThat(document.select("a.source-citation").eachText()).containsExactly("9", "10");
@@ -285,7 +174,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs.language-java")).hasSize(1);
         assertThat(document.select("pre .hljs-keyword")).isNotEmpty();
@@ -301,7 +190,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs")).isEmpty();
         assertThat(document.select("pre").text()).contains("class Demo");
@@ -316,7 +205,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs")).isEmpty();
         assertThat(document.select("pre").text()).contains("graph TD");
@@ -331,7 +220,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs")).isEmpty();
         assertThat(document.select("table.md-diagram-block")).hasSize(1);
@@ -346,7 +235,7 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs")).isEmpty();
         assertThat(document.select("table.md-latex-block")).hasSize(1);
@@ -361,21 +250,21 @@ class SystemWebViewTest {
                 </body></html>
                 """);
 
-        SystemWebView.renderCodeHighlights(document);
+        TranscriptDocumentRenderer.renderCodeHighlights(document);
 
         assertThat(document.select("pre.hljs.language-markdown")).hasSize(1);
         assertThat(document.select("pre .hljs-section")).isNotEmpty();
     }
 
     private static void writePng(Path path) throws Exception {
-        BufferedImage image = new BufferedImage(24, 12, BufferedImage.TYPE_INT_RGB);
-        Graphics2D graphics = image.createGraphics();
-        try {
-            graphics.setColor(Color.BLUE);
-            graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
-        } finally {
-            graphics.dispose();
+            BufferedImage image = new BufferedImage(24, 12, BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = image.createGraphics();
+            try {
+                graphics.setColor(Color.BLUE);
+                graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+            } finally {
+                graphics.dispose();
+            }
+            ImageIO.write(image, "png", path.toFile());
         }
-        ImageIO.write(image, "png", path.toFile());
-    }
 }

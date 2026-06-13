@@ -28,6 +28,42 @@ class DiagramHtmlExporterTest {
     }
 
     @Test
+    @DisplayName("Standalone Mermaid HTML preserves dark rendered diagram colors")
+    void parsePayload_whenStyleColorsArePresent_usesDiagramColorsInStandaloneHtml() throws Exception {
+        String payload = """
+                {"type":"mermaid","title":"Dark","source":"sequenceDiagram","background":"rgb(49, 57, 70)","color":"rgb(241, 245, 249)","borderColor":"rgba(255,255,255,0.18)","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\"><g><text>Hi</text></g></svg>"}
+                """;
+
+        DiagramHtmlExporter.DiagramPayload diagramPayload = DiagramHtmlExporter.parsePayload(payload);
+        String html = DiagramHtmlExporter.toHtml(diagramPayload);
+
+        assertThat(html)
+                .contains("background: rgb(49, 57, 70)")
+                .contains("color: rgb(241, 245, 249)")
+                .contains("border: 1px solid rgba(255,255,255,0.18)")
+                .contains(".diagram svg { max-width: 100%; height: auto; color: inherit; }");
+    }
+
+    @Test
+    @DisplayName("Standalone Mermaid HTML rejects injected CSS color values")
+    void parsePayload_whenStyleColorsContainCssInjection_usesSafeFallbacks() throws Exception {
+        String payload = """
+                {"type":"mermaid","title":"Bad colors","background":"#fff; body { display:none }","color":"url(https://example.test)","borderColor":"red; color: red","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\"><g><text>Hi</text></g></svg>"}
+                """;
+
+        DiagramHtmlExporter.DiagramPayload diagramPayload = DiagramHtmlExporter.parsePayload(payload);
+        String html = DiagramHtmlExporter.toHtml(diagramPayload);
+
+        assertThat(html)
+                .contains("background: #ffffff")
+                .contains("color: #1f2937")
+                .contains("border: 1px solid #d9dee7")
+                .doesNotContain("display:none")
+                .doesNotContain("url(https://example.test)")
+                .doesNotContain("red; color: red");
+    }
+
+    @Test
     @DisplayName("Unsafe SVG payloads are rejected")
     void parsePayload_whenSvgContainsActiveContent_throwsException() {
         String payload = """
