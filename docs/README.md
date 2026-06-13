@@ -22,7 +22,7 @@ Use this page as the canonical entry point for implementation and operational de
 ## Operations and packaging
 
 - [runtime-operations.md](runtime-operations.md)
-  - Startup flow, macOS jpackage shell-environment loading, logging, and diagnostics.
+  - Startup flow, configurable chat storage, macOS jpackage shell-environment loading, logging, and diagnostics.
 
 - [calver.md](calver.md)
   - CalVer versioning, pre-commit bump flow, and packaging version alignment.

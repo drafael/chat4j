@@ -11,7 +11,7 @@ Startup order:
 1. Configure platform integration before Swing/AWT use.
 2. Configure early FlatLaf look and feel.
 3. Run `EnvironmentBootstrapper.initialize()`.
-4. Initialize storage, data source, Flyway, and repositories.
+4. Resolve chat storage backend, run pending storage migration if needed, initialize data source, Flyway, and repositories.
 5. Apply saved appearance.
 6. Initialize JCEF with a modal progress dialog when the configured/fallback web-view path may need Chromium.
 7. Create and show `MainFrame` on the EDT.
@@ -26,6 +26,20 @@ Key classes:
 - `EnvironmentInitResult` — loaded shell env and warning flag.
 
 Add future startup concerns as explicit named steps in `ApplicationBootstrap.start()`.
+
+## Chat storage backend
+
+Chat persistence supports H2 and SQLite. The active backend is stored in `chat.storage.backend.active`; a Settings UI change writes `chat.storage.backend.pending` and takes effect the next time Chat4J starts.
+
+Files live under the app config directory:
+
+```text
+<app-config>/data/chat4j.mv.db      # H2
+<app-config>/data/chat4j.sqlite3    # SQLite
+<app-config>/db.credentials         # H2 credentials
+```
+
+Startup migrates `active -> pending` before `MainFrame` is created, using backend-specific Flyway migrations in `db/migration/h2` and `db/migration/sqlite`. Migration copies logical chat rows into staged target files, verifies table counts, promotes the staged database, and keeps existing target files in `data/backups/`.
 
 ## macOS jpackage environment loading
 

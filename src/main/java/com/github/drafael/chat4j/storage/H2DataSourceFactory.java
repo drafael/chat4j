@@ -32,8 +32,12 @@ public final class H2DataSourceFactory {
     }
 
     public static DataSource create(StoragePaths storagePaths) {
+        return create(storagePaths, false);
+    }
+
+    public static DataSource create(StoragePaths storagePaths, boolean migrating) {
         DatabaseCredentials credentials = resolveDatabaseCredentials(storagePaths);
-        return createDataSource(storagePaths.jdbcUrl(), credentials.user(), credentials.password());
+        return createDataSource(storagePaths.h2JdbcUrl(migrating), credentials.user(), credentials.password());
     }
 
     private static DatabaseCredentials resolveDatabaseCredentials(StoragePaths storagePaths) {

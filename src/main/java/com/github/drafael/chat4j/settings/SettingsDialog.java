@@ -29,8 +29,10 @@ public class SettingsDialog extends JDialog {
     private boolean savingBeforeDispose;
     private final PropertyChangeListener lafChangeListener;
 
+    private final Runnable exitAction;
+
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepo settingsRepo) {
-        this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault());
+        this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
     }
 
     public SettingsDialog(
@@ -38,7 +40,17 @@ public class SettingsDialog extends JDialog {
             @NonNull SettingsRepo settingsRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus
     ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, () -> System.exit(0));
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepo settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction
+    ) {
         super(owner, "Settings", true);
+        this.exitAction = exitAction;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -140,7 +152,7 @@ public class SettingsDialog extends JDialog {
 
     private List<SettingsSection> createSections(SettingsRepo settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         return List.of(
-                new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo)),
+                new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo, exitAction)),
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus)),
                 new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))

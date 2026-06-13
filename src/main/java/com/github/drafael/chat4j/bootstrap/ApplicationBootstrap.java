@@ -5,6 +5,9 @@ import com.github.drafael.chat4j.logging.LoggingBootstrap;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
+import com.github.drafael.chat4j.storage.ChatDataSourceFactory;
+import com.github.drafael.chat4j.storage.ChatStorageConfig;
+import com.github.drafael.chat4j.storage.ChatStorageMigrationService;
 import com.github.drafael.chat4j.storage.ConversationRepo;
 import com.github.drafael.chat4j.storage.DatabaseBootstrap;
 import com.github.drafael.chat4j.storage.H2DataSourceFactory;
@@ -14,6 +17,9 @@ import com.github.drafael.chat4j.storage.ProviderModelCacheService;
 import com.github.drafael.chat4j.storage.SettingsDbToPropertiesMigrationCoordinator;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.storage.SqlDialect;
+import com.github.drafael.chat4j.storage.SqlDialects;
+import com.github.drafael.chat4j.storage.StorageBackend;
 import com.github.drafael.chat4j.storage.StoragePaths;
 import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTMaterialLighterIJTheme;
 import com.formdev.flatlaf.util.SystemInfo;
@@ -22,6 +28,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.sql.DataSource;
 import javax.swing.*;
+import java.nio.file.Files;
+import java.sql.SQLException;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -95,24 +103,31 @@ public final class ApplicationBootstrap {
 
     private AppServices initializeStorage() {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
-        DataSource dataSource = H2DataSourceFactory.create(storagePaths);
-        DatabaseBootstrap databaseBootstrap = new DatabaseBootstrap(storagePaths, dataSource);
-        ConversationRepo conversationRepo = new ConversationRepo(dataSource, storagePaths.attachmentsDirectory());
         SettingsRepo settingsRepo = new SettingsRepo(storagePaths);
-        SettingsDbToPropertiesMigrationCoordinator settingsMigrationCoordinator =
-                new SettingsDbToPropertiesMigrationCoordinator(dataSource, settingsRepo);
         ProviderModelCacheService providerModelCacheService =
                 new ProviderModelCacheService(new ModelCache(storagePaths));
         ModelFavoritesService modelFavoritesService = new ModelFavoritesService(settingsRepo);
 
+        DataSource dataSource;
+        SqlDialect sqlDialect;
         try {
-            settingsMigrationCoordinator.migrateIfNeeded();
-            databaseBootstrap.init();
+            migrateLegacyH2SettingsIfNeeded(storagePaths, settingsRepo);
+            StorageBackend activeBackend = new ChatStorageMigrationService(storagePaths, settingsRepo).migrateIfNeeded();
+            sqlDialect = SqlDialects.forBackend(activeBackend);
+            dataSource = ChatDataSourceFactory.create(storagePaths, activeBackend);
+            new DatabaseBootstrap(storagePaths, dataSource, sqlDialect).init();
         } catch (Exception e) {
             String message = "Failed to initialize database: %s".formatted(ExceptionUtils.getMessage(e));
             log.error(message);
             showStartupErrorAndExit(message);
+            throw new IllegalStateException(message, e);
         }
+
+        ConversationRepo conversationRepo = new ConversationRepo(
+                dataSource,
+                storagePaths.attachmentsDirectory(),
+                sqlDialect
+        );
 
         providerModelCacheService.primeFromDisk(
                 ProviderRegistry.allProviders().stream()
@@ -122,6 +137,27 @@ public final class ApplicationBootstrap {
         log.info("Storage initialized and model cache primed");
 
         return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService);
+    }
+
+    private void migrateLegacyH2SettingsIfNeeded(StoragePaths storagePaths, SettingsRepo settingsRepo) throws SQLException {
+        if (settingsRepo.get(SettingsKeys.SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER).isPresent()) {
+            return;
+        }
+
+        ChatStorageConfig storageConfig = ChatStorageConfig.load(settingsRepo);
+        if (storageConfig.activeBackend() != StorageBackend.H2) {
+            return;
+        }
+
+        if (!Files.exists(storagePaths.h2DatabaseFile())) {
+            settingsRepo.put(SettingsKeys.SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER, "v1-no-legacy-table");
+            return;
+        }
+
+        DataSource legacyH2DataSource = H2DataSourceFactory.create(storagePaths);
+        SettingsDbToPropertiesMigrationCoordinator settingsMigrationCoordinator =
+                new SettingsDbToPropertiesMigrationCoordinator(legacyH2DataSource, settingsRepo);
+        settingsMigrationCoordinator.migrateIfNeeded();
     }
 
     private void applySavedAppearance(SettingsRepo settingsRepo) {

@@ -53,14 +53,20 @@ public class ConversationRepo {
 
     private final DataSource dataSource;
     private final Path attachmentRoot;
+    private final SqlDialect sqlDialect;
 
     public ConversationRepo(DataSource dataSource) {
-        this(dataSource, null);
+        this(dataSource, null, new H2SqlDialect());
     }
 
     public ConversationRepo(DataSource dataSource, Path attachmentRoot) {
+        this(dataSource, attachmentRoot, new H2SqlDialect());
+    }
+
+    public ConversationRepo(DataSource dataSource, Path attachmentRoot, SqlDialect sqlDialect) {
         this.dataSource = dataSource;
         this.attachmentRoot = normalizeAttachmentRoot(attachmentRoot);
+        this.sqlDialect = sqlDialect;
     }
 
     public UUID createConversation(String title, String provider, String model) throws SQLException {
@@ -71,7 +77,7 @@ public class ConversationRepo {
                      "INSERT INTO conversations (id, title, provider, model) VALUES (?, ?, ?, ?)"
              )
         ) {
-            ps.setObject(1, id);
+            sqlDialect.bindUuid(ps, 1, id);
             ps.setString(2, title);
             ps.setString(3, provider);
             ps.setString(4, model);
@@ -88,7 +94,7 @@ public class ConversationRepo {
              )
         ) {
             ps.setString(1, title);
-            ps.setObject(2, id);
+            sqlDialect.bindUuid(ps, 2, id);
             ps.executeUpdate();
         }
     }
@@ -96,10 +102,11 @@ public class ConversationRepo {
     public void toggleFavorite(UUID id) throws SQLException {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement ps = connection.prepareStatement(
-                     "UPDATE conversations SET is_favorite = NOT is_favorite, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                     "UPDATE conversations SET is_favorite = %s, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+                             .formatted(sqlDialect.booleanToggleExpression("is_favorite"))
              )
         ) {
-            ps.setObject(1, id);
+            sqlDialect.bindUuid(ps, 1, id);
             ps.executeUpdate();
         }
     }
@@ -115,7 +122,7 @@ public class ConversationRepo {
         ) {
             ps.setBoolean(1, effectiveAgentModeEnabled);
             ps.setString(2, normalizedRoot == null ? null : normalizedRoot.toString());
-            ps.setObject(3, id);
+            sqlDialect.bindUuid(ps, 3, id);
             ps.executeUpdate();
         }
     }
@@ -129,7 +136,7 @@ public class ConversationRepo {
              )
         ) {
             ps.setString(1, normalizedLevel.toSettingValue());
-            ps.setObject(2, id);
+            sqlDialect.bindUuid(ps, 2, id);
             ps.executeUpdate();
         }
     }
@@ -142,7 +149,7 @@ public class ConversationRepo {
             )) {
                 ps.setBoolean(1, enabled);
                 ps.setString(2, StringUtils.trimToNull(optionId));
-                ps.setObject(3, id);
+                sqlDialect.bindUuid(ps, 3, id);
                 ps.executeUpdate();
             }
         }
@@ -151,7 +158,7 @@ public class ConversationRepo {
     public void deleteConversation(UUID id) throws SQLException {
         List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
             try (PreparedStatement ps = connection.prepareStatement("DELETE FROM conversations WHERE id = ?")) {
-                ps.setObject(1, id);
+                sqlDialect.bindUuid(ps, 1, id);
                 ps.executeUpdate();
             }
         });
@@ -161,7 +168,7 @@ public class ConversationRepo {
     public void deleteMessages(UUID conversationId) throws SQLException {
         List<Path> orphanAttachmentFiles = deleteRowsAndCollectOrphanAttachmentFiles(connection -> {
             try (PreparedStatement ps = connection.prepareStatement("DELETE FROM messages WHERE conversation_id = ?")) {
-                ps.setObject(1, conversationId);
+                sqlDialect.bindUuid(ps, 1, conversationId);
                 ps.executeUpdate();
             }
         });
@@ -179,7 +186,7 @@ public class ConversationRepo {
                     "DELETE FROM conversations WHERE id IN (%s)".formatted(placeholders)
             )) {
                 for (int i = 0; i < ids.size(); i++) {
-                    ps.setObject(i + 1, ids.get(i));
+                    sqlDialect.bindUuid(ps, i + 1, ids.get(i));
                 }
                 ps.executeUpdate();
             }
@@ -205,8 +212,8 @@ public class ConversationRepo {
                 try (PreparedStatement ps = connection.prepareStatement(
                         "INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json) VALUES (?, ?, ?, ?, ?, ?)"
                 )) {
-                    ps.setObject(1, messageId);
-                    ps.setObject(2, conversationId);
+                    sqlDialect.bindUuid(ps, 1, messageId);
+                    sqlDialect.bindUuid(ps, 2, conversationId);
                     ps.setString(3, message.role().name());
                     ps.setString(4, message.content());
                     ps.setString(5, serializeParts(message.parts()));
@@ -219,7 +226,7 @@ public class ConversationRepo {
                 try (PreparedStatement ps = connection.prepareStatement(
                         "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
                 )) {
-                    ps.setObject(1, conversationId);
+                    sqlDialect.bindUuid(ps, 1, conversationId);
                     ps.executeUpdate();
                 }
 
@@ -241,11 +248,11 @@ public class ConversationRepo {
             try (PreparedStatement ps = connection.prepareStatement(
                     "SELECT id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, web_search_enabled, web_search_option, created_at, updated_at FROM conversations WHERE id = ?"
             )) {
-                ps.setObject(1, id);
+                sqlDialect.bindUuid(ps, 1, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         return Optional.of(new ConversationRecord(
-                                rs.getObject("id", UUID.class),
+                                sqlDialect.readUuid(rs, "id"),
                                 rs.getString("title"),
                                 rs.getString("provider"),
                                 rs.getString("model"),
@@ -274,12 +281,12 @@ public class ConversationRepo {
                      "SELECT id, role, content, content_json, meta_json, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at"
              )
         ) {
-            ps.setObject(1, conversationId);
+            sqlDialect.bindUuid(ps, 1, conversationId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     LocalDateTime createdAt = rs.getTimestamp("created_at").toLocalDateTime();
                     messages.add(new MessageRecord(
-                        rs.getObject("id", UUID.class),
+                        sqlDialect.readUuid(rs, "id"),
                         deserializeMessage(
                             rs.getString("role"),
                             rs.getString("content"),
@@ -308,7 +315,7 @@ public class ConversationRepo {
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     ConversationRecord rec = new ConversationRecord(
-                            rs.getObject("id", UUID.class),
+                            sqlDialect.readUuid(rs, "id"),
                             rs.getString("title"),
                             rs.getString("provider"),
                             rs.getString("model"),
@@ -350,11 +357,11 @@ public class ConversationRepo {
                      WHERE LOWER(c.title) LIKE ?
                      UNION ALL
                      SELECT c.id, c.title, c.provider, c.model, c.updated_at,
-                            SUBSTRING(m.content, 1, 120) AS snippet FROM messages m
+                            %s AS snippet FROM messages m
                      JOIN conversations c ON c.id = m.conversation_id
                      WHERE LOWER(m.content) LIKE ?
                      ORDER BY updated_at DESC
-                     """
+                     """.formatted(sqlDialect.substringExpression("m.content", 1, 120))
              )
         ) {
             ps.setString(1, like);
@@ -362,7 +369,7 @@ public class ConversationRepo {
             try (ResultSet rs = ps.executeQuery()) {
                 Set<UUID> seen = new HashSet<>();
                 while (rs.next()) {
-                    UUID id = rs.getObject("id", UUID.class);
+                    UUID id = sqlDialect.readUuid(rs, "id");
                     if (seen.add(id)) {
                         results.add(new SearchResult(
                             id,
@@ -528,17 +535,7 @@ public class ConversationRepo {
     }
 
     private void ensureConversationWebSearchColumns(Connection connection) throws SQLException {
-        try (PreparedStatement ps = connection.prepareStatement(
-                "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN DEFAULT FALSE"
-        )) {
-            ps.executeUpdate();
-        }
-
-        try (PreparedStatement ps = connection.prepareStatement(
-                "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_option VARCHAR(80)"
-        )) {
-            ps.executeUpdate();
-        }
+        sqlDialect.ensureConversationWebSearchColumns(connection);
     }
 
     private void persistAttachmentLinks(Connection connection, UUID messageId, List<ContentPart> parts) throws SQLException {
@@ -564,9 +561,9 @@ public class ConversationRepo {
         }
 
         try (PreparedStatement ps = connection.prepareStatement(
-                "MERGE INTO attachments (id, storage_path, original_name, mime_type, size_bytes, sha256) KEY (id) VALUES (?, ?, ?, ?, ?, ?)"
+                sqlDialect.attachmentUpsertSql()
         )) {
-            ps.setObject(1, attachmentRef.id());
+            sqlDialect.bindUuid(ps, 1, attachmentRef.id());
             ps.setString(2, attachmentRef.storagePath());
             ps.setString(3, attachmentRef.originalName());
             ps.setString(4, attachmentRef.mimeType());
@@ -580,8 +577,8 @@ public class ConversationRepo {
         try (PreparedStatement ps = connection.prepareStatement(
                 "INSERT INTO message_attachments (message_id, attachment_id, part_index) VALUES (?, ?, ?)"
         )) {
-            ps.setObject(1, messageId);
-            ps.setObject(2, attachmentRef.id());
+            sqlDialect.bindUuid(ps, 1, messageId);
+            sqlDialect.bindUuid(ps, 2, attachmentRef.id());
             ps.setInt(3, partIndex);
             ps.executeUpdate();
         } catch (SQLException e) {

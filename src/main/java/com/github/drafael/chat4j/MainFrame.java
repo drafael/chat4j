@@ -1243,7 +1243,12 @@ public class MainFrame extends JFrame {
         settingsOpenFlowCoordinator.open(
                 SwingUtilities.isEventDispatchThread(),
                 () -> SwingUtilities.invokeLater(this::openSettings),
-                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(this, settingsRepo, chatWebViewRuntimeStatus)),
+                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(
+                        this,
+                        settingsRepo,
+                        chatWebViewRuntimeStatus,
+                        this::requestWindowClose
+                )),
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();

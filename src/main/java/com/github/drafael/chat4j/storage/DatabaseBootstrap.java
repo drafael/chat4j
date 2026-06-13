@@ -11,10 +11,16 @@ public class DatabaseBootstrap {
 
     private final StoragePaths storagePaths;
     private final DataSource dataSource;
+    private final SqlDialect sqlDialect;
 
     public DatabaseBootstrap(StoragePaths storagePaths, DataSource dataSource) {
+        this(storagePaths, dataSource, new H2SqlDialect());
+    }
+
+    public DatabaseBootstrap(StoragePaths storagePaths, DataSource dataSource, SqlDialect sqlDialect) {
         this.storagePaths = storagePaths;
         this.dataSource = dataSource;
+        this.sqlDialect = sqlDialect;
     }
 
     public void init() throws IOException {
@@ -22,7 +28,7 @@ public class DatabaseBootstrap {
 
         Flyway.configure()
                 .dataSource(dataSource)
-                .locations("classpath:db/migration")
+                .locations(sqlDialect.migrationLocation())
                 .baselineOnMigrate(true)
                 .baselineVersion(MigrationVersion.fromVersion("0"))
                 .load()

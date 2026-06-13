@@ -40,6 +40,15 @@ class StoragePathsTest {
     }
 
     @Test
+    @DisplayName("SQLite database path uses explicit sqlite3 file under data directory")
+    void sqliteDatabaseFile_whenResolved_usesSqlite3FileName() {
+        var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.sqliteDatabaseFile())
+                .isEqualTo(Path.of("/tmp/xdg").resolve("chat4j").resolve("data").resolve("chat4j.sqlite3"));
+    }
+
+    @Test
     @DisplayName("JCEF bundle path is rooted under the application config directory")
     void jcefBundleDirectory_whenResolved_usesApplicationConfigDirectory() {
         var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);

@@ -353,6 +353,10 @@ public abstract class AbstractSettingsPanel extends JPanel {
         statusLabel.setVisible(true);
     }
 
+    protected SettingsRepo settingsRepo() {
+        return settingsRepo;
+    }
+
     protected JLabel statusLabel() {
         return statusLabel;
     }

@@ -1,8 +1,10 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.storage.ChatStorageConfig;
 import com.github.drafael.chat4j.storage.SettingsKeys;
 import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.storage.StorageBackend;
 import com.formdev.flatlaf.util.SystemInfo;
 import org.apache.commons.lang3.StringUtils;
 
@@ -14,6 +16,7 @@ import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.Arrays;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class GeneralPanel extends AbstractSettingsPanel {
 
@@ -26,8 +29,15 @@ public class GeneralPanel extends AbstractSettingsPanel {
     private static final String SEND_ENTER = "Enter";
     private static final String SEND_CTRL_ENTER = "Ctrl+Enter";
 
+    private final Runnable exitAction;
+
     public GeneralPanel(SettingsRepo settingsRepo) {
+        this(settingsRepo, () -> System.exit(0));
+    }
+
+    public GeneralPanel(SettingsRepo settingsRepo, Runnable exitAction) {
         super(settingsRepo);
+        this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
 
         JPanel form = createFormPanel("General");
         GridBagConstraints gbc = createFormConstraints();
@@ -106,6 +116,16 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
         row = addSectionHint(form, gbc, row, "Prompt addendum is appended to the default Agent Mode system prompt.");
 
+        row = addSectionHeader(form, gbc, row, "Storage");
+
+        JComboBox<StorageBackend> storageBackend = withPreferredWidth(
+                new JComboBox<>(StorageBackend.values()),
+                220
+        );
+        addRow(form, gbc, row++, "Chat storage", storageBackend);
+        bindStorageBackend(storageBackend);
+        row = addSectionHint(form, gbc, row, "Changing storage requires a restart. Existing chats will be migrated automatically.");
+
         row = addSectionHeader(form, gbc, row, "Application");
 
         JComboBox<String> language = withPreferredWidth(new JComboBox<>(new String[]{"English"}), 220);
@@ -117,6 +137,88 @@ public class GeneralPanel extends AbstractSettingsPanel {
         bindCheckBox(menuBarEnabled, KEY_MENU_BAR_ENABLED, SystemInfo.isMacOS, null);
 
         addVerticalSpacer(form, gbc, row);
+    }
+
+    private void bindStorageBackend(JComboBox<StorageBackend> storageBackend) {
+        ChatStorageConfig config = readStorageConfig();
+        StorageBackend activeBackend = config.activeBackend();
+        StorageBackend selectedBackend = config.pendingMigrationTarget().orElse(activeBackend);
+        AtomicBoolean updating = new AtomicBoolean(true);
+        storageBackend.setSelectedItem(selectedBackend);
+        updating.set(false);
+
+        storageBackend.addActionListener(e -> {
+            if (updating.get()) {
+                return;
+            }
+
+            Object selected = storageBackend.getSelectedItem();
+            if (!(selected instanceof StorageBackend backend)) {
+                return;
+            }
+
+            if (backend == activeBackend) {
+                removeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING);
+                setStatusInfo(STATUS_SAVED);
+                return;
+            }
+
+            writeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, backend.settingValue());
+            setStatusInfo("Saved — restart required");
+            int choice = showStorageBackendChangePrompt(activeBackend, backend);
+
+            if (choice == JOptionPane.YES_OPTION) {
+                exitAction.run();
+                return;
+            }
+            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) {
+                removeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING);
+                updating.set(true);
+                storageBackend.setSelectedItem(activeBackend);
+                updating.set(false);
+                setStatusInfo(STATUS_SAVED);
+            }
+        });
+    }
+
+    private int showStorageBackendChangePrompt(StorageBackend activeBackend, StorageBackend selectedBackend) {
+        Object[] options = {"Exit Now", "Later", "Cancel"};
+        JOptionPane optionPane = new JOptionPane(
+                "Chat storage will switch from %s to %s after you reopen Chat4J. Existing chats will be migrated automatically."
+                        .formatted(activeBackend.displayName(), selectedBackend.displayName()),
+                JOptionPane.INFORMATION_MESSAGE,
+                JOptionPane.YES_NO_CANCEL_OPTION,
+                null,
+                options,
+                options[0]
+        );
+
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setContentPane(optionPane);
+        optionPane.addPropertyChangeListener(JOptionPane.VALUE_PROPERTY, event -> dialog.dispose());
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+
+        Object selectedValue = optionPane.getValue();
+        if (options[0].equals(selectedValue)) {
+            return JOptionPane.YES_OPTION;
+        }
+        if (options[1].equals(selectedValue)) {
+            return JOptionPane.NO_OPTION;
+        }
+        return JOptionPane.CANCEL_OPTION;
+    }
+
+    private ChatStorageConfig readStorageConfig() {
+        try {
+            return ChatStorageConfig.load(settingsRepo());
+        } catch (Exception e) {
+            setStatusError("Failed to read chat storage setting");
+            return new ChatStorageConfig(ChatStorageConfig.DEFAULT_BACKEND, null);
+        }
     }
 
     private static String[] renderModeSettingValues() {

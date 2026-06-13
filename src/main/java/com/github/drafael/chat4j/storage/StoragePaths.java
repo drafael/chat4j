@@ -9,6 +9,9 @@ public final class StoragePaths {
 
     private static final String APP_NAME = "chat4j";
     private static final String DB_NAME = "chat4j";
+    private static final String SQLITE_DB_FILE_NAME = "chat4j.sqlite3";
+    private static final String SQLITE_MIGRATING_DB_FILE_NAME = "chat4j.sqlite3.migrating";
+    private static final String H2_MIGRATING_DB_NAME = "chat4j-h2-migrating";
     private static final String WINDOWS_APPDATA_ENV = "APPDATA";
 
     private final Path configHome;
@@ -47,11 +50,39 @@ public final class StoragePaths {
     }
 
     public Path databaseFilePrefix() {
-        return databaseDirectory().resolve(DB_NAME);
+        return h2DatabaseFilePrefix();
     }
 
     public Path databaseFile() {
+        return h2DatabaseFile();
+    }
+
+    public Path h2DatabaseFilePrefix() {
+        return databaseDirectory().resolve(DB_NAME);
+    }
+
+    public Path h2MigratingDatabaseFilePrefix() {
+        return databaseDirectory().resolve(H2_MIGRATING_DB_NAME);
+    }
+
+    public Path h2DatabaseFile() {
         return databaseDirectory().resolve("%s.mv.db".formatted(DB_NAME));
+    }
+
+    public Path h2MigratingDatabaseFile() {
+        return databaseDirectory().resolve("%s.mv.db".formatted(H2_MIGRATING_DB_NAME));
+    }
+
+    public Path sqliteDatabaseFile() {
+        return databaseDirectory().resolve(SQLITE_DB_FILE_NAME);
+    }
+
+    public Path sqliteMigratingDatabaseFile() {
+        return databaseDirectory().resolve(SQLITE_MIGRATING_DB_FILE_NAME);
+    }
+
+    public Path backupsDirectory() {
+        return databaseDirectory().resolve("backups");
     }
 
     public Path attachmentsDirectory() {
@@ -71,6 +102,16 @@ public final class StoragePaths {
     }
 
     public String jdbcUrl() {
-        return "jdbc:h2:file:%s".formatted(databaseFilePrefix());
+        return h2JdbcUrl(false);
+    }
+
+    public String h2JdbcUrl(boolean migrating) {
+        Path filePrefix = migrating ? h2MigratingDatabaseFilePrefix() : h2DatabaseFilePrefix();
+        return "jdbc:h2:file:%s".formatted(filePrefix);
+    }
+
+    public String sqliteJdbcUrl(boolean migrating) {
+        Path databaseFile = migrating ? sqliteMigratingDatabaseFile() : sqliteDatabaseFile();
+        return "jdbc:sqlite:%s".formatted(databaseFile.toAbsolutePath());
     }
 }
