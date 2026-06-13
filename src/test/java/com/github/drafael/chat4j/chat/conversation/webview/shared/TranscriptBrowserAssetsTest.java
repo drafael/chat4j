@@ -128,7 +128,7 @@ class TranscriptBrowserAssetsTest {
     @Test
     @DisplayName("Bundled math and diagram bridge contains renderers and failure fallbacks")
     void mathBridgeScript_whenRendered_containsBundledRenderersActionsAndFallbacks() {
-        String script = TranscriptBrowserAssets.mathBridgeScript();
+        String script = normalizeNewlines(TranscriptBrowserAssets.mathBridgeScript());
 
         assertThat(script)
                 .contains("katex")
@@ -246,6 +246,10 @@ class TranscriptBrowserAssetsTest {
                 .contains("trust: false")
                 .doesNotContain("cdn.jsdelivr")
                 .doesNotContain("unpkg.com");
+    }
+
+    private static String normalizeNewlines(String value) {
+        return value.replace("\r\n", "\n");
     }
 
     @Test
