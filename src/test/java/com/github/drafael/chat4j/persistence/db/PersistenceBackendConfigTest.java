@@ -12,13 +12,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PersistenceBackendConfigTest {
 
     @Test
-    @DisplayName("Storage config defaults to H2 when no backend is configured")
-    void load_whenNoBackendConfigured_defaultsToH2() throws Exception {
+    @DisplayName("Storage config defaults to SQLite when no backend is configured")
+    void load_whenNoBackendConfigured_defaultsToSqlite() throws Exception {
         var settingsRepo = settingsRepo("chat-storage-config-default");
 
         PersistenceBackendConfig subject = PersistenceBackendConfig.load(settingsRepo);
 
-        assertThat(subject.activeBackend()).isEqualTo(StorageBackend.H2);
+        assertThat(subject.activeBackend()).isEqualTo(StorageBackend.SQLITE);
         assertThat(subject.pendingMigrationTarget()).isEmpty();
     }
 
@@ -27,19 +27,19 @@ class PersistenceBackendConfigTest {
     void requestBackend_whenBackendDiffers_storesPendingBackend() throws Exception {
         var settingsRepo = settingsRepo("chat-storage-config-pending");
 
-        PersistenceBackendConfig.requestBackend(settingsRepo, StorageBackend.SQLITE);
+        PersistenceBackendConfig.requestBackend(settingsRepo, StorageBackend.H2);
 
-        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).contains("sqlite");
-        assertThat(PersistenceBackendConfig.load(settingsRepo).pendingMigrationTarget()).contains(StorageBackend.SQLITE);
+        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).contains("h2");
+        assertThat(PersistenceBackendConfig.load(settingsRepo).pendingMigrationTarget()).contains(StorageBackend.H2);
     }
 
     @Test
     @DisplayName("Requesting the active backend clears pending storage migration")
     void requestBackend_whenBackendMatchesActive_clearsPendingBackend() throws Exception {
         var settingsRepo = settingsRepo("chat-storage-config-clear-pending");
-        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, StorageBackend.SQLITE.settingValue());
+        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, StorageBackend.H2.settingValue());
 
-        PersistenceBackendConfig.requestBackend(settingsRepo, StorageBackend.H2);
+        PersistenceBackendConfig.requestBackend(settingsRepo, StorageBackend.SQLITE);
 
         assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).isEmpty();
     }

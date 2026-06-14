@@ -9,7 +9,7 @@ import org.apache.commons.lang3.StringUtils;
 
 public final class PersistenceBackendConfig {
 
-    public static final StorageBackend DEFAULT_BACKEND = StorageBackend.H2;
+    public static final StorageBackend DEFAULT_BACKEND = StorageBackend.SQLITE;
 
     private final StorageBackend activeBackend;
     private final StorageBackend pendingBackend;

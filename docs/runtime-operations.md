@@ -29,7 +29,7 @@ Add future startup concerns as explicit named steps in `ApplicationBootstrap.sta
 
 ## Chat storage backend
 
-Chat persistence supports H2 and SQLite. The active backend is stored in `chat.storage.backend.active`; a Settings UI change writes `chat.storage.backend.pending` and takes effect the next time Chat4J starts.
+Chat persistence supports SQLite and H2. SQLite is the default backend. The active backend is stored in `chat.storage.backend.active`; a Settings UI change writes `chat.storage.backend.pending` and takes effect the next time Chat4J starts.
 
 Files live under the app config directory:
 
@@ -39,7 +39,7 @@ Files live under the app config directory:
 <app-config>/db.credentials         # H2 credentials
 ```
 
-Startup migrates `active -> pending` before `MainFrame` is created, using backend-specific Flyway migrations in `db/migration/h2` and `db/migration/sqlite`. Migration copies logical chat rows into staged target files, verifies table counts, promotes the staged database, and keeps existing target files in `data/backups/`.
+Startup migrates `active -> pending` before `MainFrame` is created, using backend-specific Flyway migrations in `db/migration/h2` and `db/migration/sqlite`. Existing unconfigured H2 storage is migrated to SQLite on first startup with the SQLite default. Migration copies logical chat rows into staged target files, verifies table counts, promotes the staged database, and keeps existing target files in `data/backups/`.
 
 ## macOS jpackage environment loading
 

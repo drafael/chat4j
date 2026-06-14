@@ -95,11 +95,27 @@ class PersistenceBackendMigrationServiceTest {
     @DisplayName("Migration copies chat data from H2 to SQLite and marks SQLite active")
     void migrateIfNeeded_whenPendingIsSqlite_copiesH2DataAndMarksSqliteActive() throws Exception {
         UUID conversationId = createH2Conversation();
+        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE, StorageBackend.H2.settingValue());
         settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, StorageBackend.SQLITE.settingValue());
         var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
 
         StorageBackend activeBackend = subject.migrateIfNeeded();
 
+        assertThatSqliteConversationWasMigrated(activeBackend, conversationId);
+    }
+
+    @Test
+    @DisplayName("Existing unconfigured H2 storage migrates to the SQLite default")
+    void migrateIfNeeded_whenDefaultSqliteAndExistingH2Storage_migratesH2DataAndMarksSqliteActive() throws Exception {
+        UUID conversationId = createH2Conversation();
+        var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
+
+        StorageBackend activeBackend = subject.migrateIfNeeded();
+
+        assertThatSqliteConversationWasMigrated(activeBackend, conversationId);
+    }
+
+    private void assertThatSqliteConversationWasMigrated(StorageBackend activeBackend, UUID conversationId) throws Exception {
         assertThat(activeBackend).isEqualTo(StorageBackend.SQLITE);
         assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE)).contains("sqlite");
         assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).isEmpty();
