@@ -558,7 +558,7 @@ public class SidebarPanel extends JPanel {
         int rightEdge = visible.x + visible.width;
         int indicatorX = rightEdge - TRIM_INDICATOR_RIGHT_PADDING - indicatorWidth;
         int backgroundLeft = Math.max(visible.x, indicatorX - TRIM_INDICATOR_BACKGROUND_PADDING);
-        Color background = resolveTrimIndicatorBackground(label, index);
+        Color background = resolveTrimIndicatorBackground(label);
 
         paintTrimIndicatorBackground(graphics2d, bounds, backgroundLeft, rightEdge, background);
         graphics2d.setColor(label.getForeground());
@@ -567,12 +567,18 @@ public class SidebarPanel extends JPanel {
         graphics2d.dispose();
     }
 
-    private Color resolveTrimIndicatorBackground(JLabel label, int index) {
-        if (conversationList.getSelectedIndex() == index && label.getBackground() != null) {
-            return label.getBackground();
+    private Color resolveTrimIndicatorBackground(JLabel label) {
+        Color background = label.getBackground();
+        if (background != null) {
+            return background;
         }
 
-        Color background = conversationList.getParent() != null ? conversationList.getParent().getBackground() : null;
+        background = conversationList.getBackground();
+        if (background != null) {
+            return background;
+        }
+
+        background = conversationList.getParent() != null ? conversationList.getParent().getBackground() : null;
         if (background == null) {
             background = getBackground();
         }
