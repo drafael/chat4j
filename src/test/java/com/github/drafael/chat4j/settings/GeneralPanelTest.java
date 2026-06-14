@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.swing.*;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.*;
 import java.nio.file.Path;
+import javax.swing.*;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,7 +15,7 @@ class GeneralPanelTest {
     @Test
     @DisplayName("Prompt addendum updates persist to Agent Mode system prompt setting")
     void updatePromptAddendum_whenTextChanges_persistsSetting() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("general-panel-agent-prompt-append");
+        SettingsRepository settingsRepo = settingsRepo("general-panel-agent-prompt-append");
         GeneralPanel subject = new GeneralPanel(settingsRepo);
 
         JTextArea promptArea = findComponentByName(subject, "agentSystemPromptAppendArea", JTextArea.class);
@@ -26,8 +25,8 @@ class GeneralPanelTest {
                 .contains("Always include key files in summaries.");
     }
 
-    private SettingsRepo settingsRepo(String testName) {
-        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
     }
 
     private <T extends Component> T findComponentByName(Container root, String name, Class<T> type) {

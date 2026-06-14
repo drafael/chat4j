@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
@@ -9,9 +9,9 @@ public class AgentModeSettingsCoordinator {
 
     private static final String KEY_AGENT_SYSTEM_PROMPT_APPEND = SettingsKeys.CHAT_AGENT_SYSTEM_PROMPT_APPEND;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public AgentModeSettingsCoordinator(@NonNull SettingsRepo settingsRepo) {
+    public AgentModeSettingsCoordinator(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

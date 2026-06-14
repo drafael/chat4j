@@ -1,10 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.webview.WebViewEngine;
-import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.util.Fonts;
 import com.formdev.flatlaf.*;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.intellijthemes.*;
@@ -13,12 +8,11 @@ import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 import com.formdev.flatlaf.themes.FlatMacLightLaf;
 import com.formdev.flatlaf.util.ColorFunctions;
 import com.formdev.flatlaf.util.SystemInfo;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.plaf.FontUIResource;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.net.URL;
 import java.util.Arrays;
@@ -30,6 +24,11 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.IntStream;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.FontUIResource;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.stream.Collectors.toSet;
 
@@ -155,7 +154,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     /** Restore saved accent color (call before LaF setup). */
-    public static void restoreAccentColor(SettingsRepo settings) {
+    public static void restoreAccentColor(SettingsRepository settings) {
         try {
             String hex = settings.get(KEY_ACCENT_COLOR, null);
             accentColor = StringUtils.isNotEmpty(hex) ? Color.decode(hex) : null;
@@ -164,7 +163,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
     }
 
-    public static void applySavedFonts(SettingsRepo settings) {
+    public static void applySavedFonts(SettingsRepository settings) {
         try {
             String savedAppFont = settings.get(KEY_APP_FONT, DEFAULT_APP_FONT);
             int savedAppFontSize = parseAppFontSize(
@@ -281,11 +280,11 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return Collections.unmodifiableMap(grouped);
     }
 
-    public AppearancePanel(SettingsRepo settingsRepo) {
+    public AppearancePanel(SettingsRepository settingsRepo) {
         this(settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault());
     }
 
-    public AppearancePanel(SettingsRepo settingsRepo, WebViewRuntimeStatus runtimeStatus) {
+    public AppearancePanel(SettingsRepository settingsRepo, WebViewRuntimeStatus runtimeStatus) {
         super(settingsRepo);
         this.runtimeStatus = runtimeStatus;
 

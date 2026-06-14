@@ -1,17 +1,16 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import static java.util.stream.Collectors.toMap;
 
@@ -20,10 +19,10 @@ public class ProviderAvailabilityResolver {
 
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final LocalServiceHealthProbe localServiceHealthProbe;
 
-    public ProviderAvailabilityResolver(SettingsRepo settingsRepo) {
+    public ProviderAvailabilityResolver(SettingsRepository settingsRepo) {
         this(settingsRepo, new LocalServiceHealthProbe() {
             @Override
             public boolean isReachable(String baseUrl) {
@@ -37,7 +36,7 @@ public class ProviderAvailabilityResolver {
         });
     }
 
-    ProviderAvailabilityResolver(@NonNull SettingsRepo settingsRepo, @NonNull LocalServiceHealthProbe localServiceHealthProbe) {
+    ProviderAvailabilityResolver(@NonNull SettingsRepository settingsRepo, @NonNull LocalServiceHealthProbe localServiceHealthProbe) {
         this.settingsRepo = settingsRepo;
         this.localServiceHealthProbe = localServiceHealthProbe;
     }

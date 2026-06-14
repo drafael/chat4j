@@ -1,18 +1,17 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveCoordinator;
+import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
-import com.github.drafael.chat4j.storage.ShutdownSaveDispatchCoordinator;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;

@@ -1,14 +1,9 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -16,6 +11,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,7 +24,7 @@ class ProviderAvailabilityResolverTest {
     @Test
     @DisplayName("Model selection is enabled for non-local providers")
     void isModelSelectionEnabled_whenProviderIsNotHealthGated_returnsTrue() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("provider-availability-non-local");
+        SettingsRepository settingsRepo = settingsRepo("provider-availability-non-local");
         var probe = new FakeLocalServiceHealthProbe();
         var subject = new ProviderAvailabilityResolver(settingsRepo, probe);
 
@@ -38,7 +37,7 @@ class ProviderAvailabilityResolverTest {
     @Test
     @DisplayName("Model selection for local providers uses non-blocking health probe")
     void isModelSelectionEnabled_whenProviderIsHealthGated_usesNonBlockingProbe() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("provider-availability-local");
+        SettingsRepository settingsRepo = settingsRepo("provider-availability-local");
         var probe = new FakeLocalServiceHealthProbe();
         probe.nonBlockingResultByUrl.put("http://localhost:11434/v1", true);
         var subject = new ProviderAvailabilityResolver(settingsRepo, probe);
@@ -52,7 +51,7 @@ class ProviderAvailabilityResolverTest {
     @Test
     @DisplayName("Menu availability uses configured base URLs for local providers")
     void resolveMenuAvailability_whenBaseUrlConfigured_usesConfiguredUrlForReachability() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("provider-availability-configured");
+        SettingsRepository settingsRepo = settingsRepo("provider-availability-configured");
         settingsRepo.put(SettingsKeys.providerBaseUrlKey("Ollama"), "http://127.0.0.1:11434/v1");
 
         var probe = new FakeLocalServiceHealthProbe();
@@ -75,7 +74,7 @@ class ProviderAvailabilityResolverTest {
     @Test
     @DisplayName("Menu availability falls back to default base URL when configured value is blank")
     void resolveMenuAvailability_whenConfiguredBaseUrlBlank_usesDefaultBaseUrl() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("provider-availability-blank");
+        SettingsRepository settingsRepo = settingsRepo("provider-availability-blank");
         settingsRepo.put(SettingsKeys.providerBaseUrlKey("LM Studio"), "   ");
 
         var probe = new FakeLocalServiceHealthProbe();
@@ -93,10 +92,10 @@ class ProviderAvailabilityResolverTest {
         assertThat(probe.blockingCalls).contains("http://localhost:1234/v1");
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {

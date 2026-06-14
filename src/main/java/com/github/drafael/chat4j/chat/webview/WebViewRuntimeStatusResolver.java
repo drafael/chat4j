@@ -1,28 +1,27 @@
 package com.github.drafael.chat4j.chat.webview;
 
-import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefRuntime;
 import ca.weblite.webview.swing.WebViewComponent;
 import com.formdev.flatlaf.util.SystemInfo;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
+import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefRuntime;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 public final class WebViewRuntimeStatusResolver {
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final BooleanSupplier macOsSupplier;
     private final BooleanSupplier windowsSupplier;
     private final Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier;
     private final Supplier<JcefAvailability> jcefAvailabilitySupplier;
 
-    public WebViewRuntimeStatusResolver(@NonNull SettingsRepo settingsRepo) {
+    public WebViewRuntimeStatusResolver(@NonNull SettingsRepository settingsRepo) {
         this(
                 settingsRepo,
                 () -> SystemInfo.isMacOS,
@@ -33,7 +32,7 @@ public final class WebViewRuntimeStatusResolver {
     }
 
     WebViewRuntimeStatusResolver(
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull BooleanSupplier macOsSupplier,
             @NonNull BooleanSupplier windowsSupplier,
             @NonNull Supplier<SwingWebViewAvailability> swingWebViewAvailabilitySupplier,

@@ -1,19 +1,19 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 
 public class GeneralSettingsResolver {
 
     private static final String KEY_MENU_BAR_ENABLED = SettingsKeys.MENU_BAR_ENABLED;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final RenderModeSettingsCoordinator renderModeSettingsCoordinator;
 
     public GeneralSettingsResolver(
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull RenderModeSettingsCoordinator renderModeSettingsCoordinator
     ) {
         this.settingsRepo = settingsRepo;

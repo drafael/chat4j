@@ -1,12 +1,11 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import lombok.NonNull;
-import org.apache.commons.lang3.Validate;
-
 import java.util.List;
 import java.util.Map;
+import lombok.NonNull;
+import org.apache.commons.lang3.Validate;
 
 import static java.util.Collections.emptyList;
 

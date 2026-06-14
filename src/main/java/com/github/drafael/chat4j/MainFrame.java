@@ -1,14 +1,15 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.ChatPanel;
+import com.github.drafael.chat4j.chat.NewChatCoordinator;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
+import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.chat.search.ChatSearchPopup;
+import com.github.drafael.chat4j.chat.search.ChatSearchPopupCoordinator;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatusResolver;
-import com.github.drafael.chat4j.chat.search.ChatSearchPopup;
-import com.github.drafael.chat4j.chat.search.ChatSearchPopupCoordinator;
-import com.github.drafael.chat4j.chat.NewChatCoordinator;
 import com.github.drafael.chat4j.menu.BoundMenuFactory;
 import com.github.drafael.chat4j.menu.FileMenuFactory;
 import com.github.drafael.chat4j.menu.HelpMenuFactory;
@@ -17,8 +18,8 @@ import com.github.drafael.chat4j.menu.MainMenuBarApplyStateCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarBuilder;
 import com.github.drafael.chat4j.menu.MainMenuBarCreateDispatchCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarCreatedApplyCoordinator;
-import com.github.drafael.chat4j.menu.MainMenuBarEnsureCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarEnsureApplyFlowCoordinator;
+import com.github.drafael.chat4j.menu.MainMenuBarEnsureCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarEnsureDispatchCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarEnsureResultApplyCoordinator;
 import com.github.drafael.chat4j.menu.MainMenuBarEnsureStateResolver;
@@ -26,51 +27,64 @@ import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
-import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
-import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
-import com.github.drafael.chat4j.util.PopupMenuSupport;
+import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionEventDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionFlowCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadApplyDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadFailureCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadResultPlanner;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadStartCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.MessageRecord;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.conversation.ConversationTitleDeriver;
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveUiApplyCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.persistence.shutdown.ShutdownFlowCoordinator;
+import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
+import com.github.drafael.chat4j.prompts.CommandCenterAction;
+import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
+import com.github.drafael.chat4j.prompts.PromptCommandCenter;
+import com.github.drafael.chat4j.prompts.PromptTemplate;
+import com.github.drafael.chat4j.prompts.PromptTemplateRenderer;
+import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
-import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
-import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
+import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCatalogSectionAppender;
 import com.github.drafael.chat4j.provider.support.ProviderFavoritesResolver;
 import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
+import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityRefreshDispatchCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderMenuDataResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
+import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuReadyCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderMenuReadyDispatchCoordinator;
-import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
-import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
-import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
-import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
-import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
-import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder;
-import com.formdev.flatlaf.util.SystemInfo;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
+import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
+import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
+import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
 import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.RenderModeToggleCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeToggleSelectionSyncCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuReadyCoordinator;
@@ -80,8 +94,8 @@ import com.github.drafael.chat4j.settings.FontMenuSelectionDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionRefreshCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
-import com.github.drafael.chat4j.settings.FontMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuStructureRebuildApplyCoordinator;
+import com.github.drafael.chat4j.settings.FontMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
 import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
@@ -95,6 +109,13 @@ import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingCoordinator;
 import com.github.drafael.chat4j.settings.MenuBarSettingDispatchCoordinator;
 import com.github.drafael.chat4j.settings.ProviderSettingsApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeToggleCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeToggleSelectionSyncCoordinator;
 import com.github.drafael.chat4j.settings.SettingsDialog;
 import com.github.drafael.chat4j.settings.SettingsDialogCoordinator;
 import com.github.drafael.chat4j.settings.SettingsOpenDispatchCoordinator;
@@ -108,44 +129,17 @@ import com.github.drafael.chat4j.settings.ThemeMenuSelectionDispatchCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionRefreshCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
-import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
+import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
 import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
-import com.github.drafael.chat4j.prompts.CommandCenterAction;
-import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
-import com.github.drafael.chat4j.prompts.PromptCommandCenter;
-import com.github.drafael.chat4j.prompts.PromptTemplate;
-import com.github.drafael.chat4j.prompts.PromptTemplateRenderer;
-import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionDispatchCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionEventDispatchCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadApplyDispatchCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadDispatchCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadFailureCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadResultPlanner;
-import com.github.drafael.chat4j.storage.ConversationLoadStartCoordinator;
-import com.github.drafael.chat4j.storage.ConversationPersistenceCoordinator;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ConversationTitleDeriver;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveDispatchCoordinator;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveUiApplyCoordinator;
-import com.github.drafael.chat4j.storage.ShutdownFlowCoordinator;
-import com.github.drafael.chat4j.storage.ShutdownSaveDispatchCoordinator;
-import com.github.drafael.chat4j.storage.ConversationRepo.MessageRecord;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.PersistedMessageCounter;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-
-import javax.swing.*;
+import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
+import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
+import com.github.drafael.chat4j.util.PopupMenuSupport;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.WindowAdapter;
@@ -159,6 +153,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import javax.swing.*;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toMap;
@@ -211,8 +210,8 @@ public class MainFrame extends JFrame {
     private final ClearChatConfirmationDialog clearChatConfirmationDialog = new ClearChatConfirmationDialog();
     private final MainFrameShutdownSaveActionFactory shutdownSaveActionFactory = new MainFrameShutdownSaveActionFactory();
     private final JSplitPane splitPane;
-    private final ConversationRepo conversationRepo;
-    private final SettingsRepo settingsRepo;
+    private final ConversationRepository conversationRepo;
+    private final SettingsRepository settingsRepo;
     private final WebViewRuntimeStatus chatWebViewRuntimeStatus;
     private final PromptCatalogRepo promptCatalogRepo;
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
@@ -381,8 +380,8 @@ public class MainFrame extends JFrame {
     };
 
     public MainFrame(
-        @NonNull ConversationRepo conversationRepo,
-        @NonNull SettingsRepo settingsRepo,
+        @NonNull ConversationRepository conversationRepo,
+        @NonNull SettingsRepository settingsRepo,
         @NonNull ProviderModelCacheService modelCacheService,
         @NonNull ModelFavoritesService modelFavoritesService
     ) {
@@ -978,7 +977,7 @@ public class MainFrame extends JFrame {
             long requestId,
             UUID conversationId,
             List<MessageRecord> records,
-            ConversationRepo.ConversationRecord conversation
+            ConversationRepository.ConversationRecord conversation
     ) {
         boolean applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
                 requestId,

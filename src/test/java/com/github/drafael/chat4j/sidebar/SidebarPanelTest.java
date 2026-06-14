@@ -1,21 +1,7 @@
 package com.github.drafael.chat4j.sidebar;
 
 import com.formdev.flatlaf.ui.FlatLineBorder;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.swing.DefaultListModel;
-import javax.swing.Icon;
-import javax.swing.JButton;
-import javax.swing.JList;
-import javax.swing.JLabel;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTextField;
-import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
-import javax.swing.border.EmptyBorder;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
@@ -31,11 +17,24 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.stream.IntStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
+import javax.swing.DefaultListModel;
+import javax.swing.Icon;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.border.EmptyBorder;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -100,7 +99,7 @@ class SidebarPanelTest {
     void refresh_whenDateGroupsExist_rendersDateGroupHeaders() throws Exception {
         UUID todayId = UUID.randomUUID();
         UUID yesterdayId = UUID.randomUUID();
-        Map<String, List<ConversationRepo.ConversationRecord>> grouped = new LinkedHashMap<>();
+        Map<String, List<ConversationRepository.ConversationRecord>> grouped = new LinkedHashMap<>();
         grouped.put("Today", List.of(conversation(todayId, "Today chat")));
         grouped.put("Yesterday", List.of(conversation(yesterdayId, "Yesterday chat")));
         var repo = new DelayedConversationRepo(0, grouped);
@@ -214,7 +213,7 @@ class SidebarPanelTest {
     void refresh_whenRepositoryAlreadyGroupsFavorites_rendersSingleFavoritesSection() throws Exception {
         UUID favoriteId = UUID.randomUUID();
         UUID regularId = UUID.randomUUID();
-        Map<String, List<ConversationRepo.ConversationRecord>> grouped = new LinkedHashMap<>();
+        Map<String, List<ConversationRepository.ConversationRecord>> grouped = new LinkedHashMap<>();
         grouped.put("Favorites", List.of(conversation(favoriteId, "Favorite chat", true)));
         grouped.put("Today", List.of(conversation(regularId, "Regular chat")));
         var repo = new DelayedConversationRepo(0, grouped);
@@ -326,19 +325,19 @@ class SidebarPanelTest {
     @DisplayName("Refresh keeps the restored selected row visible after sidebar reordering")
     void refresh_whenSelectedConversationMoves_keepsSelectedRowVisible() throws Exception {
         UUID selectedId = UUID.randomUUID();
-        List<ConversationRepo.ConversationRecord> initialRecords = new ArrayList<>();
+        List<ConversationRepository.ConversationRecord> initialRecords = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
             initialRecords.add(conversation(UUID.randomUUID(), "Chat " + i));
         }
         initialRecords.add(conversation(selectedId, "Streaming LM Studio chat"));
 
-        List<ConversationRepo.ConversationRecord> reorderedRecords = new ArrayList<>();
+        List<ConversationRepository.ConversationRecord> reorderedRecords = new ArrayList<>();
         reorderedRecords.add(conversation(selectedId, "Streaming LM Studio chat"));
         reorderedRecords.addAll(initialRecords.stream()
                 .filter(record -> !record.id().equals(selectedId))
                 .toList());
 
-        var repo = new MutableConversationRepo(grouped("Today", initialRecords.toArray(ConversationRepo.ConversationRecord[]::new)));
+        var repo = new MutableConversationRepo(grouped("Today", initialRecords.toArray(ConversationRepository.ConversationRecord[]::new)));
         var panelRef = new AtomicReference<SidebarPanel>();
 
         SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
@@ -363,7 +362,7 @@ class SidebarPanelTest {
         });
         assertThat(selectedConversationIsVisible(subject)).isTrue();
 
-        repo.grouped = grouped("Today", reorderedRecords.toArray(ConversationRepo.ConversationRecord[]::new));
+        repo.grouped = grouped("Today", reorderedRecords.toArray(ConversationRepository.ConversationRecord[]::new));
         SwingUtilities.invokeAndWait(subject::refresh);
 
         awaitCondition(2, TimeUnit.SECONDS, () -> selectedConversationIsVisible(subject));
@@ -527,23 +526,23 @@ class SidebarPanelTest {
         }
     }
 
-    private static Map<String, List<ConversationRepo.ConversationRecord>> grouped(String groupName, String title) {
+    private static Map<String, List<ConversationRepository.ConversationRecord>> grouped(String groupName, String title) {
         return grouped(groupName, conversation(UUID.randomUUID(), title));
     }
 
-    private static Map<String, List<ConversationRepo.ConversationRecord>> grouped(
+    private static Map<String, List<ConversationRepository.ConversationRecord>> grouped(
             String groupName,
-            ConversationRepo.ConversationRecord... records
+            ConversationRepository.ConversationRecord... records
     ) {
         return Map.of(groupName, List.of(records));
     }
 
-    private static ConversationRepo.ConversationRecord conversation(UUID id, String title) {
+    private static ConversationRepository.ConversationRecord conversation(UUID id, String title) {
         return conversation(id, title, false);
     }
 
-    private static ConversationRepo.ConversationRecord conversation(UUID id, String title, boolean favorite) {
-        return new ConversationRepo.ConversationRecord(
+    private static ConversationRepository.ConversationRecord conversation(UUID id, String title, boolean favorite) {
+        return new ConversationRepository.ConversationRecord(
                 id,
                 title,
                 "OpenAI",
@@ -580,35 +579,35 @@ class SidebarPanelTest {
         boolean getAsBoolean() throws Exception;
     }
 
-    private static class DelayedConversationRepo extends ConversationRepo {
+    private static class DelayedConversationRepo extends ConversationRepository {
 
         private final long delayMillis;
-        private final Map<String, List<ConversationRepo.ConversationRecord>> grouped;
+        private final Map<String, List<ConversationRepository.ConversationRecord>> grouped;
 
-        private DelayedConversationRepo(long delayMillis, Map<String, List<ConversationRepo.ConversationRecord>> grouped) {
+        private DelayedConversationRepo(long delayMillis, Map<String, List<ConversationRepository.ConversationRecord>> grouped) {
             super(null);
             this.delayMillis = delayMillis;
             this.grouped = grouped;
         }
 
         @Override
-        public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
+        public Map<String, List<ConversationRepository.ConversationRecord>> findAllGroupedByDate() {
             sleep(delayMillis);
             return grouped;
         }
     }
 
-    private static class MutableConversationRepo extends ConversationRepo {
+    private static class MutableConversationRepo extends ConversationRepository {
 
-        private Map<String, List<ConversationRepo.ConversationRecord>> grouped;
+        private Map<String, List<ConversationRepository.ConversationRecord>> grouped;
 
-        private MutableConversationRepo(Map<String, List<ConversationRepo.ConversationRecord>> grouped) {
+        private MutableConversationRepo(Map<String, List<ConversationRepository.ConversationRecord>> grouped) {
             super(null);
             this.grouped = grouped;
         }
 
         @Override
-        public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
+        public Map<String, List<ConversationRepository.ConversationRecord>> findAllGroupedByDate() {
             return grouped;
         }
     }
@@ -617,7 +616,7 @@ class SidebarPanelTest {
 
         private final List<UUID> deletedConversationIds = new ArrayList<>();
 
-        private DeletableConversationRepo(Map<String, List<ConversationRepo.ConversationRecord>> grouped) {
+        private DeletableConversationRepo(Map<String, List<ConversationRepository.ConversationRecord>> grouped) {
             super(0, grouped);
         }
 
@@ -627,7 +626,7 @@ class SidebarPanelTest {
         }
     }
 
-    private static class SequencedConversationRepo extends ConversationRepo {
+    private static class SequencedConversationRepo extends ConversationRepository {
 
         private final AtomicInteger calls = new AtomicInteger();
         private final CountDownLatch secondCallStarted = new CountDownLatch(1);
@@ -642,7 +641,7 @@ class SidebarPanelTest {
         }
 
         @Override
-        public Map<String, List<ConversationRepo.ConversationRecord>> findAllGroupedByDate() {
+        public Map<String, List<ConversationRepository.ConversationRecord>> findAllGroupedByDate() {
             int call = calls.incrementAndGet();
             return switch (call) {
                 case 1 -> grouped("Today", "Initial conversation");

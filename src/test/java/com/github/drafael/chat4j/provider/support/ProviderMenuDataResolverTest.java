@@ -1,23 +1,22 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.ModelCache;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,10 +70,10 @@ class ProviderMenuDataResolverTest {
         );
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {
@@ -101,7 +100,7 @@ class ProviderMenuDataResolverTest {
         private List<ProviderRegistry.ProviderDef> lastProviders;
 
         private StubProviderModelsResolver(Map<String, List<String>> modelsByProvider) {
-            super(new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths())));
+            super(new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths())));
             this.modelsByProvider = modelsByProvider;
         }
 
@@ -136,7 +135,7 @@ class ProviderMenuDataResolverTest {
 
     private static class StubProviderAvailabilityResolver extends ProviderAvailabilityResolver {
 
-        private StubProviderAvailabilityResolver(SettingsRepo settingsRepo) {
+        private StubProviderAvailabilityResolver(SettingsRepository settingsRepo) {
             super(settingsRepo);
         }
 

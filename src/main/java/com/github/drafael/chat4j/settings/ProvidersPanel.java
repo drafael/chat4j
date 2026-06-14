@@ -2,20 +2,16 @@ package com.github.drafael.chat4j.settings;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.formdev.flatlaf.extras.FlatSVGIcon;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
-import com.formdev.flatlaf.extras.FlatSVGIcon;
-import lombok.extern.slf4j.Slf4j;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.WindowAdapter;
@@ -37,7 +33,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -127,7 +125,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         PROVIDERS.put("Ollama", ProviderInfo.local("http://localhost:11434/v1"));
     }
 
-    public ProvidersPanel(SettingsRepo settingsRepo) {
+    public ProvidersPanel(SettingsRepository settingsRepo) {
         super(settingsRepo);
 
         PROVIDER_BASE_ICON_CACHE.clear();

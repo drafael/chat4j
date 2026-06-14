@@ -1,21 +1,12 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.ModelCache;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
-import javax.swing.ButtonGroup;
-import javax.swing.JMenu;
-import javax.swing.JMenuItem;
-import javax.swing.JRadioButtonMenuItem;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -24,6 +15,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import javax.sql.DataSource;
+import javax.swing.ButtonGroup;
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
+import javax.swing.JRadioButtonMenuItem;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,10 +126,10 @@ class ProviderMenuStructureRebuilderTest {
         );
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {
@@ -156,7 +155,7 @@ class ProviderMenuStructureRebuilderTest {
 
         private ThrowingProviderMenuDataResolver() {
             super(
-                    new ProviderModelsResolver(new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()))),
+                    new ProviderModelsResolver(new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()))),
                     new ProviderSelectableResolver(),
                     new ProviderFavoritesResolver(ModelFavoritesService.createInMemory()),
                     new ProviderAvailabilityResolver(settingsRepoQuietly())
@@ -178,7 +177,7 @@ class ProviderMenuStructureRebuilderTest {
 
         private StubProviderMenuDataResolver(ProviderMenuData result) {
             super(
-                    new ProviderModelsResolver(new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()))),
+                    new ProviderModelsResolver(new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()))),
                     new ProviderSelectableResolver(),
                     new ProviderFavoritesResolver(ModelFavoritesService.createInMemory()),
                     new ProviderAvailabilityResolver(settingsRepoQuietly())
@@ -260,7 +259,7 @@ class ProviderMenuStructureRebuilderTest {
         }
     }
 
-    private SettingsRepo settingsRepoQuietly() {
+    private SettingsRepository settingsRepoQuietly() {
         try {
             return settingsRepo("provider-menu-structure-%s".formatted(System.nanoTime()));
         } catch (SQLException e) {

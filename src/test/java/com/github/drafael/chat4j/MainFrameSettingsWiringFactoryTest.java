@@ -1,23 +1,22 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
 import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -85,10 +84,10 @@ class MainFrameSettingsWiringFactoryTest {
                 .hasMessageContaining("settingsRepo");
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {

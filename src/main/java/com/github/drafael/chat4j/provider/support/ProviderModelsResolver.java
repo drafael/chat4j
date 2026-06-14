@@ -1,15 +1,15 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
+
 import static java.util.stream.Collectors.toMap;
 
 public class ProviderModelsResolver {

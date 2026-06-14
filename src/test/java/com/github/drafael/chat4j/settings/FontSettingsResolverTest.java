@@ -1,12 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.Set;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,7 +14,7 @@ class FontSettingsResolverTest {
     @Test
     @DisplayName("Resolve menu selection uses defaults when settings are missing")
     void resolveMenuSelection_whenSettingsMissing_usesDefaults() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("font-settings-defaults");
+        SettingsRepository settingsRepo = settingsRepo("font-settings-defaults");
         var subject = new FontSettingsResolver(settingsRepo);
 
         FontSettingsResolver.FontMenuSelection selection = subject.resolveMenuSelection(
@@ -32,7 +31,7 @@ class FontSettingsResolverTest {
     @Test
     @DisplayName("Resolve menu selection falls back for unavailable font families")
     void resolveMenuSelection_whenConfiguredFamiliesAreUnavailable_fallsBackToDefaults() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("font-settings-family-fallback");
+        SettingsRepository settingsRepo = settingsRepo("font-settings-family-fallback");
         settingsRepo.put(AppearancePanel.KEY_APP_FONT, "Unavailable UI Font");
         settingsRepo.put(AppearancePanel.KEY_CODE_FONT, "Unavailable Code Font");
         settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, "18");
@@ -53,7 +52,7 @@ class FontSettingsResolverTest {
     @Test
     @DisplayName("Resolve app font size falls back to default when value is invalid")
     void resolveAppFontSizeSetting_whenValueIsInvalid_returnsDefaultNormalizedSize() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("font-settings-size-invalid");
+        SettingsRepository settingsRepo = settingsRepo("font-settings-size-invalid");
         settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, "not-a-number");
 
         var subject = new FontSettingsResolver(settingsRepo);
@@ -66,7 +65,7 @@ class FontSettingsResolverTest {
     @Test
     @DisplayName("Resolve methods return defaults when repository access fails")
     void resolveMethods_whenRepositoryFails_returnDefaults() {
-        SettingsRepo failingRepo = new ThrowingSettingsRepo();
+        SettingsRepository failingRepo = new ThrowingSettingsRepo();
         var subject = new FontSettingsResolver(failingRepo);
 
         assertThat(subject.resolveAppFontFamilySetting()).isEqualTo(AppearancePanel.DEFAULT_APP_FONT);
@@ -75,11 +74,11 @@ class FontSettingsResolverTest {
                 .isEqualTo(AppearancePanel.normalizeAppFontSize(AppearancePanel.defaultAppFontSize()));
     }
 
-    private SettingsRepo settingsRepo(String testName) {
-        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
     }
 
-    private static class ThrowingSettingsRepo extends SettingsRepo {
+    private static class ThrowingSettingsRepo extends SettingsRepository {
 
         private ThrowingSettingsRepo() {
             super(Path.of("target", "test-font-settings-resolver-throwing.properties"));

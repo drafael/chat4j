@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.bootstrap;
 
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,7 +48,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Configured JCEF initializes even when System WebView is available")
     void shouldInitialize_whenJcefConfigured_returnsTrue() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JCEF.settingValue());
         var subject = decider(true, false, true);
 
@@ -61,7 +60,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Configured System WebView skips JCEF when system engine is available")
     void shouldInitialize_whenSystemWebViewConfiguredAndAvailable_returnsFalse() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
         var subject = decider(false, false, true);
 
@@ -73,7 +72,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Configured System WebView initializes JCEF when system engine is unavailable")
     void shouldInitialize_whenSystemWebViewConfiguredAndUnavailable_returnsTrue() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
         var subject = decider(false, false, false);
 
@@ -85,7 +84,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Configured JEditorPane skips JCEF startup initialization")
     void shouldInitialize_whenJEditorPaneConfigured_returnsFalse() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JEDITOR_PANE.settingValue());
         var subject = decider(false, false, false);
 
@@ -97,7 +96,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Invalid engine setting uses the non-system platform default")
     void shouldInitialize_whenInvalidEngineConfiguredOutsideMacOsAndWindows_returnsTrue() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "invalid");
         var subject = decider(false, false, false);
 
@@ -109,7 +108,7 @@ class JcefStartupInitializationDeciderTest {
     @Test
     @DisplayName("Obsolete engine setting uses the macOS platform default")
     void shouldInitialize_whenObsoleteEngineConfiguredOnMacOsAndSystemWebViewAvailable_returnsFalse() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo();
+        SettingsRepository settingsRepo = settingsRepo();
         settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "obsolete-webview");
         var subject = decider(true, false, true);
 
@@ -126,7 +125,7 @@ class JcefStartupInitializationDeciderTest {
         );
     }
 
-    private SettingsRepo settingsRepo() {
-        return new SettingsRepo(tempDir.resolve("settings.properties"));
+    private SettingsRepository settingsRepo() {
+        return new SettingsRepository(tempDir.resolve("settings.properties"));
     }
 }

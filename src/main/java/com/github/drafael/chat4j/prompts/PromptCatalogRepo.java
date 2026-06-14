@@ -3,13 +3,12 @@ package com.github.drafael.chat4j.prompts;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.util.List;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-
-import java.util.List;
 
 @Slf4j
 public class PromptCatalogRepo {
@@ -17,14 +16,14 @@ public class PromptCatalogRepo {
     private static final TypeReference<List<PromptTemplate>> PROMPT_LIST_TYPE = new TypeReference<>() {
     };
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final ObjectMapper objectMapper;
 
-    public PromptCatalogRepo(@NonNull SettingsRepo settingsRepo) {
+    public PromptCatalogRepo(@NonNull SettingsRepository settingsRepo) {
         this(settingsRepo, new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT));
     }
 
-    PromptCatalogRepo(@NonNull SettingsRepo settingsRepo, @NonNull ObjectMapper objectMapper) {
+    PromptCatalogRepo(@NonNull SettingsRepository settingsRepo, @NonNull ObjectMapper objectMapper) {
         this.settingsRepo = settingsRepo;
         this.objectMapper = objectMapper;
     }

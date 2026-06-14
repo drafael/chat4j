@@ -1,30 +1,29 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
+import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
+import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
 import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
-import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
-import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.FontPreviewApplier;
 import com.github.drafael.chat4j.settings.FontSelectionNormalizer;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.PersistedMessageCounter;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
-
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,7 +60,7 @@ class MainFrameDependenciesFactoryTest {
     @DisplayName("Dependencies context validates required components")
     void dependenciesContext_whenComponentMissing_throwsException() {
         assertThatThrownBy(() -> new MainFrameDependenciesFactory.DependenciesContext(
-                new ConversationRepo(null),
+                new ConversationRepository(null),
                 null,
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
@@ -102,8 +101,8 @@ class MainFrameDependenciesFactoryTest {
         var providerModelMenuItemFactory = new ProviderModelMenuItemFactory(providerMenuIconResolver);
 
         return new MainFrameDependenciesFactory.DependenciesContext(
-                new ConversationRepo(null),
-                new SettingsRepo(Path.of("target", "test-mainframe-dependencies-settings.properties")),
+                new ConversationRepository(null),
+                new SettingsRepository(Path.of("target", "test-mainframe-dependencies-settings.properties")),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
                 new ProviderSelectableResolver(),

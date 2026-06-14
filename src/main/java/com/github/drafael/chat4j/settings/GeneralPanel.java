@@ -1,23 +1,22 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.storage.ChatStorageConfig;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.storage.StorageBackend;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import com.formdev.flatlaf.util.SystemInfo;
-import org.apache.commons.lang3.StringUtils;
-
-import javax.swing.*;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
+import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.persistence.db.PersistenceBackendConfig;
+import com.github.drafael.chat4j.persistence.db.StorageBackend;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import org.apache.commons.lang3.StringUtils;
 
 public class GeneralPanel extends AbstractSettingsPanel {
 
@@ -32,11 +31,11 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
     private final Runnable exitAction;
 
-    public GeneralPanel(SettingsRepo settingsRepo) {
+    public GeneralPanel(SettingsRepository settingsRepo) {
         this(settingsRepo, () -> System.exit(0));
     }
 
-    public GeneralPanel(SettingsRepo settingsRepo, Runnable exitAction) {
+    public GeneralPanel(SettingsRepository settingsRepo, Runnable exitAction) {
         super(settingsRepo);
         this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
 
@@ -135,7 +134,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
     }
 
     private void bindStorageBackend(JComboBox<StorageBackend> storageBackend) {
-        ChatStorageConfig config = readStorageConfig();
+        PersistenceBackendConfig config = readStorageConfig();
         StorageBackend activeBackend = config.activeBackend();
         StorageBackend selectedBackend = config.pendingMigrationTarget().orElse(activeBackend);
         AtomicBoolean updating = new AtomicBoolean(true);
@@ -206,12 +205,12 @@ public class GeneralPanel extends AbstractSettingsPanel {
         return JOptionPane.CANCEL_OPTION;
     }
 
-    private ChatStorageConfig readStorageConfig() {
+    private PersistenceBackendConfig readStorageConfig() {
         try {
-            return ChatStorageConfig.load(settingsRepo());
+            return PersistenceBackendConfig.load(settingsRepo());
         } catch (Exception e) {
             setStatusError("Failed to read chat storage setting");
-            return new ChatStorageConfig(ChatStorageConfig.DEFAULT_BACKEND, null);
+            return new PersistenceBackendConfig(PersistenceBackendConfig.DEFAULT_BACKEND, null);
         }
     }
 

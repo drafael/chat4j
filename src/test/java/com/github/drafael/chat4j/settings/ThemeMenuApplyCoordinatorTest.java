@@ -1,17 +1,16 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,7 +19,7 @@ class ThemeMenuApplyCoordinatorTest {
     @Test
     @DisplayName("Apply runs theme side effects in order and returns success")
     void apply_whenSuccessful_runsThemeSideEffectsInOrder() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("theme-apply-success");
+        SettingsRepository settingsRepo = settingsRepo("theme-apply-success");
         List<String> calls = new ArrayList<>();
         var themeSettingsResolver = new RecordingThemeSettingsResolver(settingsRepo, calls);
 
@@ -58,7 +57,7 @@ class ThemeMenuApplyCoordinatorTest {
     @Test
     @DisplayName("Apply returns failure when look and feel switch fails and skips downstream actions")
     void apply_whenLookAndFeelSwitchFails_returnsFailureAndSkipsDownstreamActions() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("theme-apply-failure");
+        SettingsRepository settingsRepo = settingsRepo("theme-apply-failure");
         List<String> calls = new ArrayList<>();
         var themeSettingsResolver = new RecordingThemeSettingsResolver(settingsRepo, calls);
 
@@ -94,10 +93,10 @@ class ThemeMenuApplyCoordinatorTest {
         assertThat(syncFontCalls.get()).isZero();
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {
@@ -122,7 +121,7 @@ class ThemeMenuApplyCoordinatorTest {
         private final List<String> calls;
         private final AtomicInteger persistCalls = new AtomicInteger();
 
-        private RecordingThemeSettingsResolver(SettingsRepo settingsRepo, List<String> calls) {
+        private RecordingThemeSettingsResolver(SettingsRepository settingsRepo, List<String> calls) {
             super(settingsRepo);
             this.calls = calls;
         }

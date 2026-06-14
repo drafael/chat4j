@@ -1,16 +1,15 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.sql.SQLException;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
-import java.sql.SQLException;
-
 public class FontSettingsPersister {
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public FontSettingsPersister(@NonNull SettingsRepo settingsRepo) {
+    public FontSettingsPersister(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

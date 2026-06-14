@@ -1,16 +1,15 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.ModelCache;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,7 +19,7 @@ class ProviderModelsResolverTest {
     @Test
     @DisplayName("Resolve prefers cached models when cache contains entries")
     void resolve_whenCacheContainsModels_prefersCachedModels() {
-        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        var modelCacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
         String providerName = "TestProvider-%s".formatted(UUID.randomUUID());
         modelCacheService.update(providerName, List.of("z-model", "a-model"));
 
@@ -37,7 +36,7 @@ class ProviderModelsResolverTest {
     @Test
     @DisplayName("Resolve uses Perplexity seed models even when stale cache entries exist")
     void resolve_whenPerplexityCacheContainsStaleModels_usesSeedModels() {
-        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        var modelCacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
         modelCacheService.update("Perplexity", List.of("sonar-pro", "sonar"));
 
         var subject = new ProviderModelsResolver(modelCacheService);
@@ -56,7 +55,7 @@ class ProviderModelsResolverTest {
     @Test
     @DisplayName("Resolve falls back to seed models when cache is empty")
     void resolve_whenCacheIsEmpty_usesSeedModels() {
-        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        var modelCacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
         String providerName = "SeedProvider-%s".formatted(UUID.randomUUID());
 
         var subject = new ProviderModelsResolver(modelCacheService);

@@ -1,27 +1,26 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
+import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
+import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuAvailabilityApplier;
 import com.github.drafael.chat4j.provider.support.ProviderMenuEmptyStateFactory;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
-import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
-import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.storage.ModelCache;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,7 +32,7 @@ class MainFrameProviderMenuWiringFactoryTest {
     void create_whenCalled_buildsProviderMenuWiring() throws Exception {
         var subject = new MainFrameProviderMenuWiringFactory();
         var settingsRepo = settingsRepo("mainframe-provider-menu-wiring");
-        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        var modelCacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
         var modelFavoritesService = ModelFavoritesService.createInMemory();
         var providerSelectableResolver = new ProviderSelectableResolver();
         var providerMenuAvailabilityApplier = new ProviderMenuAvailabilityApplier();
@@ -76,7 +75,7 @@ class MainFrameProviderMenuWiringFactoryTest {
     void create_whenRequiredDependencyMissing_throwsException() throws Exception {
         var subject = new MainFrameProviderMenuWiringFactory();
         var settingsRepo = settingsRepo("mainframe-provider-menu-wiring-validation");
-        var modelCacheService = new ProviderModelCacheService(new ModelCache(StoragePaths.defaultPaths()));
+        var modelCacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
         var modelFavoritesService = ModelFavoritesService.createInMemory();
         var providerSelectableResolver = new ProviderSelectableResolver();
         var providerMenuAvailabilityApplier = new ProviderMenuAvailabilityApplier();
@@ -120,10 +119,10 @@ class MainFrameProviderMenuWiringFactoryTest {
                 .hasMessageContaining("providerSelectableResolver");
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {

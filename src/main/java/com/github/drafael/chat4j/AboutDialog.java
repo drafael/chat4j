@@ -3,10 +3,9 @@ package com.github.drafael.chat4j;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.util.Fonts;
-import org.apache.commons.lang3.ObjectUtils;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -15,8 +14,8 @@ import java.awt.Desktop;
 import java.awt.Dialog;
 import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -29,9 +28,9 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
-import java.net.URI;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.net.URL;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -54,6 +53,7 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 public final class AboutDialog {
@@ -67,7 +67,7 @@ public final class AboutDialog {
         show(owner, null, WebViewRuntimeStatus.jEditorPaneDefault());
     }
 
-    public static void show(Window owner, SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
+    public static void show(Window owner, SettingsRepository settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
         Info info = loadInfo(settingsRepo, webViewRuntimeStatus);
 
         JDialog dialog = new JDialog(owner, "About %s".formatted(info.appName), Dialog.ModalityType.APPLICATION_MODAL);
@@ -197,7 +197,7 @@ public final class AboutDialog {
         return icon;
     }
 
-    private static Info loadInfo(SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
+    private static Info loadInfo(SettingsRepository settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
         Properties build = loadProperties("/build.properties");
         Properties git = loadProperties("/git.properties");
 
@@ -234,7 +234,7 @@ public final class AboutDialog {
         return new Info(appName, rows);
     }
 
-    private static String formatWebViewEngine(SettingsRepo settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
+    private static String formatWebViewEngine(SettingsRepository settingsRepo, WebViewRuntimeStatus webViewRuntimeStatus) {
         WebViewRuntimeStatus status = webViewRuntimeStatus != null
                 ? webViewRuntimeStatus
                 : WebViewRuntimeStatus.jEditorPaneDefault();
@@ -250,7 +250,7 @@ public final class AboutDialog {
         return "%s selected, %s active until restart".formatted(selectedEngine.displayName(), activeEngine.displayName());
     }
 
-    private static WebViewEngine selectedWebViewEngine(SettingsRepo settingsRepo, WebViewRuntimeStatus status) {
+    private static WebViewEngine selectedWebViewEngine(SettingsRepository settingsRepo, WebViewRuntimeStatus status) {
         if (settingsRepo == null) {
             return status.configuredEngine();
         }

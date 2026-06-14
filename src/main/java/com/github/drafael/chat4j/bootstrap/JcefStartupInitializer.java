@@ -1,18 +1,17 @@
 package com.github.drafael.chat4j.bootstrap;
 
 import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefRuntime;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import javax.swing.SwingUtilities;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.GraphicsEnvironment;
 import java.lang.reflect.InvocationTargetException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.SwingUtilities;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
 final class JcefStartupInitializer {
@@ -35,7 +34,7 @@ final class JcefStartupInitializer {
         this.executor = executor;
     }
 
-    void initializeIfNeeded(@NonNull SettingsRepo settingsRepo) {
+    void initializeIfNeeded(@NonNull SettingsRepository settingsRepo) {
         if (GraphicsEnvironment.isHeadless()) {
             log.debug("Skipping startup JCEF initialization in headless environment");
             return;

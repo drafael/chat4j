@@ -3,11 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
@@ -15,6 +11,9 @@ import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.net.URL;
 import java.util.List;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import lombok.NonNull;
 
 import static java.util.Collections.emptyList;
 
@@ -31,13 +30,13 @@ public class SettingsDialog extends JDialog {
 
     private final Runnable exitAction;
 
-    public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepo settingsRepo) {
+    public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
         this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
     }
 
     public SettingsDialog(
             @NonNull Frame owner,
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus
     ) {
         this(owner, settingsRepo, chatWebViewRuntimeStatus, () -> System.exit(0));
@@ -45,7 +44,7 @@ public class SettingsDialog extends JDialog {
 
     public SettingsDialog(
             @NonNull Frame owner,
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull Runnable exitAction
     ) {
@@ -93,7 +92,7 @@ public class SettingsDialog extends JDialog {
         add(titleBarSpacer, BorderLayout.NORTH);
     }
 
-    private JComponent createSettingsShell(SettingsRepo settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
+    private JComponent createSettingsShell(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         sections = createSections(settingsRepo, chatWebViewRuntimeStatus);
 
         DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
@@ -150,7 +149,7 @@ public class SettingsDialog extends JDialog {
         return splitPane;
     }
 
-    private List<SettingsSection> createSections(SettingsRepo settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
+    private List<SettingsSection> createSections(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         return List.of(
                 new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo, exitAction)),
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus)),

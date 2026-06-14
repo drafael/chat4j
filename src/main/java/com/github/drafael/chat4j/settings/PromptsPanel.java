@@ -1,26 +1,25 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.prompts.PromptVariableType;
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.ModalDialogSupport;
-import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-import javax.swing.table.AbstractTableModel;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.IntStream;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.table.AbstractTableModel;
+import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
@@ -41,7 +40,7 @@ public class PromptsPanel extends JPanel {
     private String lastSaveError = "";
     private int currentEditingIndex = -1;
 
-    public PromptsPanel(@NonNull SettingsRepo settingsRepo) {
+    public PromptsPanel(@NonNull SettingsRepository settingsRepo) {
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
         setLayout(new BorderLayout());
         add(createHeader(), BorderLayout.NORTH);

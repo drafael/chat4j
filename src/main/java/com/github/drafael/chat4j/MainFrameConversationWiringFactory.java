@@ -1,22 +1,22 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionCoordinator;
-import com.github.drafael.chat4j.storage.AssistantMessageCompletionFlowCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadApplyCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadApplyDispatchCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadCoordinator;
-import com.github.drafael.chat4j.storage.ConversationLoadResultPlanner;
-import com.github.drafael.chat4j.storage.ConversationPersistenceCoordinator;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ConversationTitleDeriver;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
-import com.github.drafael.chat4j.storage.PersistedMessageCounter;
+import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionFlowCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadApplyCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadApplyDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationLoadResultPlanner;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.conversation.ConversationTitleDeriver;
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import lombok.NonNull;
 
 public class MainFrameConversationWiringFactory {
 
     public ConversationWiring create(
-            @NonNull ConversationRepo conversationRepo,
+            @NonNull ConversationRepository conversationRepo,
             @NonNull PersistedMessageCounter persistedMessageCounter
     ) {
         var conversationLoadCoordinator = new ConversationLoadCoordinator(conversationRepo);

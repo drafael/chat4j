@@ -1,17 +1,16 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.h2.jdbcx.JdbcDataSource;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import javax.sql.DataSource;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Rectangle;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Optional;
+import javax.sql.DataSource;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,7 +19,7 @@ class WindowStateSettingsCoordinatorTest {
     @Test
     @DisplayName("Save persists window bounds entries")
     void save_whenCalled_persistsWindowBoundsSettings() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("window-state-save");
+        SettingsRepository settingsRepo = settingsRepo("window-state-save");
         var subject = new WindowStateSettingsCoordinator(settingsRepo);
 
         subject.save(new Rectangle(10, 20, 900, 600));
@@ -34,7 +33,7 @@ class WindowStateSettingsCoordinatorTest {
     @Test
     @DisplayName("Load returns bounds when stored window intersects visible screen")
     void loadIfVisible_whenStoredBoundsIntersectScreen_returnsBounds() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("window-state-visible");
+        SettingsRepository settingsRepo = settingsRepo("window-state-visible");
         settingsRepo.put(SettingsKeys.WINDOW_X, "100");
         settingsRepo.put(SettingsKeys.WINDOW_Y, "80");
         settingsRepo.put(SettingsKeys.WINDOW_WIDTH, "800");
@@ -50,7 +49,7 @@ class WindowStateSettingsCoordinatorTest {
     @Test
     @DisplayName("Load returns empty when stored bounds are outside visible screen")
     void loadIfVisible_whenStoredBoundsAreOutsideScreen_returnsEmpty() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("window-state-offscreen");
+        SettingsRepository settingsRepo = settingsRepo("window-state-offscreen");
         settingsRepo.put(SettingsKeys.WINDOW_X, "4000");
         settingsRepo.put(SettingsKeys.WINDOW_Y, "3000");
         settingsRepo.put(SettingsKeys.WINDOW_WIDTH, "800");
@@ -66,7 +65,7 @@ class WindowStateSettingsCoordinatorTest {
     @Test
     @DisplayName("Load returns empty when stored values are invalid")
     void loadIfVisible_whenStoredValuesAreInvalid_returnsEmpty() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("window-state-invalid");
+        SettingsRepository settingsRepo = settingsRepo("window-state-invalid");
         settingsRepo.put(SettingsKeys.WINDOW_X, "abc");
 
         var subject = new WindowStateSettingsCoordinator(settingsRepo);
@@ -76,10 +75,10 @@ class WindowStateSettingsCoordinatorTest {
         assertThat(loaded).isEmpty();
     }
 
-    private SettingsRepo settingsRepo(String dbName) throws SQLException {
+    private SettingsRepository settingsRepo(String dbName) throws SQLException {
         DataSource dataSource = createDataSource(dbName);
         createSettingsTable(dataSource);
-        return new SettingsRepo(dataSource);
+        return new SettingsRepository(dataSource);
     }
 
     private DataSource createDataSource(String dbName) {

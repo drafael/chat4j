@@ -1,22 +1,22 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import static java.util.Collections.emptyMap;
 
 public class ProviderRuntimeSettingsResolver {
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public ProviderRuntimeSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+    public ProviderRuntimeSettingsResolver(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

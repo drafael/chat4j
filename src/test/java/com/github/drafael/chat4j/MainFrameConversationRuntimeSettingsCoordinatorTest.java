@@ -1,20 +1,19 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -22,8 +21,8 @@ import static org.mockito.Mockito.when;
 
 class MainFrameConversationRuntimeSettingsCoordinatorTest {
 
-    private final ConversationRepo conversationRepo = mock(ConversationRepo.class);
-    private final SettingsRepo settingsRepo = mock(SettingsRepo.class);
+    private final ConversationRepository conversationRepo = mock(ConversationRepository.class);
+    private final SettingsRepository settingsRepo = mock(SettingsRepository.class);
     private final AgentModeSettingsCoordinator agentModeSettingsCoordinator = mock(AgentModeSettingsCoordinator.class);
     private final MainFrameConversationRuntimeSettingsCoordinator subject = new MainFrameConversationRuntimeSettingsCoordinator(
             conversationRepo,
@@ -38,7 +37,7 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
     @DisplayName("Loaded conversation settings apply reasoning, web search, and valid agent root")
     void applyLoadedConversationSettings_whenConversationHasRuntimeSettings_appliesAllSettings() {
         var target = new RecordingRuntimeSettingsTarget();
-        ConversationRepo.ConversationRecord conversation = conversationRecord(
+        ConversationRepository.ConversationRecord conversation = conversationRecord(
                 "high",
                 true,
                 tempDir.toString(),
@@ -60,7 +59,7 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
     @DisplayName("Loaded conversation settings ignore invalid agent root and reset disabled values")
     void applyLoadedConversationSettings_whenConversationMissingRuntimeSettings_resetsRuntimeState() {
         var target = new RecordingRuntimeSettingsTarget();
-        ConversationRepo.ConversationRecord conversation = conversationRecord(
+        ConversationRepository.ConversationRecord conversation = conversationRecord(
                 null,
                 true,
                 tempDir.resolve("missing").toString(),
@@ -101,14 +100,14 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
         assertThat(appliedTopN).hasValue(7);
     }
 
-    private ConversationRepo.ConversationRecord conversationRecord(
+    private ConversationRepository.ConversationRecord conversationRecord(
             String reasoningLevel,
             boolean agentModeEnabled,
             String agentProjectRoot,
             boolean webSearchEnabled,
             String webSearchOption
     ) {
-        return new ConversationRepo.ConversationRecord(
+        return new ConversationRepository.ConversationRecord(
                 UUID.randomUUID(),
                 "Title",
                 "OpenAI",

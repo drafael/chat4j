@@ -2,47 +2,15 @@ package com.github.drafael.chat4j.sidebar;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.formdev.flatlaf.ui.FlatLineBorder;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.formdev.flatlaf.icons.FlatTreeCollapsedIcon;
 import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
+import com.formdev.flatlaf.ui.FlatLineBorder;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.ConversationRecord;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.ModalDialogSupport;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
-import lombok.Setter;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
-
-import javax.swing.AbstractButton;
-import javax.swing.BorderFactory;
-import javax.swing.ButtonModel;
-import javax.swing.DefaultListCellRenderer;
-import javax.swing.DefaultListModel;
-import javax.swing.Icon;
-import javax.swing.JButton;
-import javax.swing.JDialog;
-import javax.swing.JList;
-import javax.swing.JLabel;
-import javax.swing.JMenuItem;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
-import javax.swing.JScrollPane;
-import javax.swing.JTextField;
-import javax.swing.ListSelectionModel;
-import javax.swing.ScrollPaneConstants;
-import javax.swing.SwingConstants;
-import javax.swing.SwingUtilities;
-import javax.swing.Timer;
-import javax.swing.ToolTipManager;
-import javax.swing.UIManager;
-import javax.swing.border.EmptyBorder;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
-import javax.swing.event.ListSelectionEvent;
 import java.awt.AWTEvent;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
@@ -55,8 +23,8 @@ import java.awt.EventQueue;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GradientPaint;
-import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Graphics;
 import java.awt.Insets;
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -79,6 +47,37 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.stream.IntStream;
+import javax.swing.AbstractButton;
+import javax.swing.BorderFactory;
+import javax.swing.ButtonModel;
+import javax.swing.DefaultListCellRenderer;
+import javax.swing.DefaultListModel;
+import javax.swing.Icon;
+import javax.swing.JButton;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
+import javax.swing.JTextField;
+import javax.swing.ListSelectionModel;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.ToolTipManager;
+import javax.swing.UIManager;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.event.ListSelectionEvent;
+import lombok.Setter;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import static java.util.Collections.emptyMap;
 
@@ -135,7 +134,7 @@ public class SidebarPanel extends JPanel {
     private final JList<Object> conversationList;
     private final JScrollPane conversationScrollPane;
     private final JTextField filterField;
-    private final ConversationRepo conversationRepo;
+    private final ConversationRepository conversationRepo;
     private final Set<String> collapsedGroups = new HashSet<>();
     private final Set<UUID> streamingConversationIds = new HashSet<>();
 
@@ -159,7 +158,7 @@ public class SidebarPanel extends JPanel {
     private boolean initialSelectionNotificationSent;
     private Map<String, List<ConversationRecord>> lastGroupedConversations = emptyMap();
 
-    public SidebarPanel(ConversationRepo conversationRepo) {
+    public SidebarPanel(ConversationRepository conversationRepo) {
         this.conversationRepo = Objects.requireNonNull(conversationRepo);
 
         configurePanel();
@@ -696,10 +695,10 @@ public class SidebarPanel extends JPanel {
         }
 
         runRepositoryAction(DELETE_GROUP_ERROR, CONVERSATIONS_TITLE, () -> {
-            Map<String, List<ConversationRepo.ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
-            List<ConversationRepo.ConversationRecord> groupRecords = grouped.get(groupName);
+            Map<String, List<ConversationRepository.ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
+            List<ConversationRepository.ConversationRecord> groupRecords = grouped.get(groupName);
             if (ObjectUtils.isNotEmpty(groupRecords)) {
-                List<UUID> ids = groupRecords.stream().map(ConversationRepo.ConversationRecord::id).toList();
+                List<UUID> ids = groupRecords.stream().map(ConversationRepository.ConversationRecord::id).toList();
                 conversationRepo.deleteConversations(ids);
                 refresh();
                 notifyConversationsDeleted(ids);

@@ -1,20 +1,19 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.sql.SQLException;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
-
-import java.sql.SQLException;
 
 public class ThemeSettingsResolver {
 
     public static final String DEFAULT_THEME = "Material Lighter";
     private static final String KEY_THEME = SettingsKeys.THEME_NAME;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public ThemeSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+    public ThemeSettingsResolver(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

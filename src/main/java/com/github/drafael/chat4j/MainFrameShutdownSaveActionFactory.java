@@ -1,16 +1,15 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveCoordinator;
+import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import com.github.drafael.chat4j.storage.CurrentConversationSaveCoordinator;
-import com.github.drafael.chat4j.storage.ShutdownSaveDispatchCoordinator;
-import lombok.NonNull;
-
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
+import lombok.NonNull;
 
 public class MainFrameShutdownSaveActionFactory {
 

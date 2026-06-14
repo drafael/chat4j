@@ -1,23 +1,22 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconRenderer;
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import com.github.drafael.chat4j.util.WindowUiRefreshSupport;
+import javax.swing.UIManager;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
-
-import javax.swing.UIManager;
 
 public class ThemeMenuApplyCoordinator {
 
     private final ThemeSettingsResolver themeSettingsResolver;
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final LookAndFeelSwitcher lookAndFeelSwitcher;
     private final IconCacheInvalidator iconCacheInvalidator;
     private final SavedFontsApplier savedFontsApplier;
     private final WindowRefresher windowRefresher;
 
-    public ThemeMenuApplyCoordinator(ThemeSettingsResolver themeSettingsResolver, SettingsRepo settingsRepo) {
+    public ThemeMenuApplyCoordinator(ThemeSettingsResolver themeSettingsResolver, SettingsRepository settingsRepo) {
         this(
                 themeSettingsResolver,
                 settingsRepo,
@@ -30,7 +29,7 @@ public class ThemeMenuApplyCoordinator {
 
     ThemeMenuApplyCoordinator(
             @NonNull ThemeSettingsResolver themeSettingsResolver,
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull LookAndFeelSwitcher lookAndFeelSwitcher,
             @NonNull IconCacheInvalidator iconCacheInvalidator,
             @NonNull SavedFontsApplier savedFontsApplier,
@@ -92,7 +91,7 @@ public class ThemeMenuApplyCoordinator {
 
     @FunctionalInterface
     interface SavedFontsApplier {
-        void apply(SettingsRepo settingsRepo);
+        void apply(SettingsRepository settingsRepo);
     }
 
     @FunctionalInterface

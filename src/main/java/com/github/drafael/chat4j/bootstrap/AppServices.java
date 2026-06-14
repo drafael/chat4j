@@ -1,16 +1,16 @@
 package com.github.drafael.chat4j.bootstrap;
 
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 
 /**
  * Startup-created services required to construct the main UI.
  */
 public record AppServices(
-    ConversationRepo conversationRepo,
-    SettingsRepo settingsRepo,
+    ConversationRepository conversationRepo,
+    SettingsRepository settingsRepo,
     ProviderModelCacheService providerModelCacheService,
     ModelFavoritesService modelFavoritesService
 ) {

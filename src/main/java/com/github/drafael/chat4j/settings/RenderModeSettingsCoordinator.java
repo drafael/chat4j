@@ -1,17 +1,17 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 
 public class RenderModeSettingsCoordinator {
 
     private static final String KEY_RENDER_MODE_DEFAULT = SettingsKeys.CHAT_RENDER_MODE;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public RenderModeSettingsCoordinator(@NonNull SettingsRepo settingsRepo) {
+    public RenderModeSettingsCoordinator(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

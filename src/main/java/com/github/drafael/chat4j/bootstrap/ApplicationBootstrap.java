@@ -1,37 +1,31 @@
 package com.github.drafael.chat4j.bootstrap;
 
+import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTMaterialLighterIJTheme;
+import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.MainFrame;
 import com.github.drafael.chat4j.logging.LoggingBootstrap;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.db.DatabaseBootstrap;
+import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
+import com.github.drafael.chat4j.persistence.db.SqlDialect;
+import com.github.drafael.chat4j.persistence.db.SqlDialects;
+import com.github.drafael.chat4j.persistence.db.StorageBackend;
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.migration.PersistenceBackendMigrationService;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
-import com.github.drafael.chat4j.storage.ChatDataSourceFactory;
-import com.github.drafael.chat4j.storage.ChatStorageConfig;
-import com.github.drafael.chat4j.storage.ChatStorageMigrationService;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.DatabaseBootstrap;
-import com.github.drafael.chat4j.storage.H2DataSourceFactory;
-import com.github.drafael.chat4j.storage.ModelCache;
-import com.github.drafael.chat4j.storage.ModelFavoritesService;
-import com.github.drafael.chat4j.storage.ProviderModelCacheService;
-import com.github.drafael.chat4j.storage.SettingsDbToPropertiesMigrationCoordinator;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import com.github.drafael.chat4j.storage.SqlDialect;
-import com.github.drafael.chat4j.storage.SqlDialects;
-import com.github.drafael.chat4j.storage.StorageBackend;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTMaterialLighterIJTheme;
-import com.formdev.flatlaf.util.SystemInfo;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import javax.sql.DataSource;
-import javax.swing.*;
-import java.nio.file.Files;
-import java.sql.SQLException;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
+import javax.swing.*;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 /**
  * Coordinates application startup from platform/bootstrap setup through first window display.
@@ -103,18 +97,17 @@ public final class ApplicationBootstrap {
 
     private AppServices initializeStorage() {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
-        SettingsRepo settingsRepo = new SettingsRepo(storagePaths);
+        SettingsRepository settingsRepo = new SettingsRepository(storagePaths);
         ProviderModelCacheService providerModelCacheService =
-                new ProviderModelCacheService(new ModelCache(storagePaths));
+                new ProviderModelCacheService(new ProviderModelCache(storagePaths));
         ModelFavoritesService modelFavoritesService = new ModelFavoritesService(settingsRepo);
 
         DataSource dataSource;
         SqlDialect sqlDialect;
         try {
-            migrateLegacyH2SettingsIfNeeded(storagePaths, settingsRepo);
-            StorageBackend activeBackend = new ChatStorageMigrationService(storagePaths, settingsRepo).migrateIfNeeded();
+            StorageBackend activeBackend = new PersistenceBackendMigrationService(storagePaths, settingsRepo).migrateIfNeeded();
             sqlDialect = SqlDialects.forBackend(activeBackend);
-            dataSource = ChatDataSourceFactory.create(storagePaths, activeBackend);
+            dataSource = PersistenceDataSourceFactory.create(storagePaths, activeBackend);
             new DatabaseBootstrap(storagePaths, dataSource, sqlDialect).init();
         } catch (Exception e) {
             String message = "Failed to initialize database: %s".formatted(ExceptionUtils.getMessage(e));
@@ -123,7 +116,7 @@ public final class ApplicationBootstrap {
             throw new IllegalStateException(message, e);
         }
 
-        ConversationRepo conversationRepo = new ConversationRepo(
+        ConversationRepository conversationRepo = new ConversationRepository(
                 dataSource,
                 storagePaths.attachmentsDirectory(),
                 sqlDialect
@@ -139,28 +132,7 @@ public final class ApplicationBootstrap {
         return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService);
     }
 
-    private void migrateLegacyH2SettingsIfNeeded(StoragePaths storagePaths, SettingsRepo settingsRepo) throws SQLException {
-        if (settingsRepo.get(SettingsKeys.SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER).isPresent()) {
-            return;
-        }
-
-        ChatStorageConfig storageConfig = ChatStorageConfig.load(settingsRepo);
-        if (storageConfig.activeBackend() != StorageBackend.H2) {
-            return;
-        }
-
-        if (!Files.exists(storagePaths.h2DatabaseFile())) {
-            settingsRepo.put(SettingsKeys.SETTINGS_DB_TO_PROPERTIES_MIGRATION_MARKER, "v1-no-legacy-table");
-            return;
-        }
-
-        DataSource legacyH2DataSource = H2DataSourceFactory.create(storagePaths);
-        SettingsDbToPropertiesMigrationCoordinator settingsMigrationCoordinator =
-                new SettingsDbToPropertiesMigrationCoordinator(legacyH2DataSource, settingsRepo);
-        settingsMigrationCoordinator.migrateIfNeeded();
-    }
-
-    private void applySavedAppearance(SettingsRepo settingsRepo) {
+    private void applySavedAppearance(SettingsRepository settingsRepo) {
         try {
             AppearancePanel.restoreAccentColor(settingsRepo);
 

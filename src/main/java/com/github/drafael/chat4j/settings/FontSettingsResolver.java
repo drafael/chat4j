@@ -1,15 +1,14 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.Set;
+import lombok.NonNull;
 
 public class FontSettingsResolver {
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public FontSettingsResolver(@NonNull SettingsRepo settingsRepo) {
+    public FontSettingsResolver(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

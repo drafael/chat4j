@@ -1,8 +1,7 @@
 package com.github.drafael.chat4j.chat.composer;
 
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
-import com.github.drafael.chat4j.storage.StoragePaths;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;

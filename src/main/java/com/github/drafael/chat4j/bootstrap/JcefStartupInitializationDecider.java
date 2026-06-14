@@ -3,14 +3,13 @@ package com.github.drafael.chat4j.bootstrap;
 import ca.weblite.webview.swing.WebViewComponent;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.util.List;
+import java.util.function.BooleanSupplier;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-
-import java.util.List;
-import java.util.function.BooleanSupplier;
 
 @Slf4j
 final class JcefStartupInitializationDecider {
@@ -37,7 +36,7 @@ final class JcefStartupInitializationDecider {
         this.systemWebViewAvailableSupplier = systemWebViewAvailableSupplier;
     }
 
-    boolean shouldInitialize(@NonNull SettingsRepo settingsRepo) {
+    boolean shouldInitialize(@NonNull SettingsRepository settingsRepo) {
         WebViewEngine configuredEngine = resolveConfiguredEngine(settingsRepo);
         if (configuredEngine == WebViewEngine.JCEF) {
             return true;
@@ -51,7 +50,7 @@ final class JcefStartupInitializationDecider {
         return platformFallbackChain().contains(WebViewEngine.JCEF);
     }
 
-    private WebViewEngine resolveConfiguredEngine(SettingsRepo settingsRepo) {
+    private WebViewEngine resolveConfiguredEngine(SettingsRepository settingsRepo) {
         try {
             String configuredValue = settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE, "");
             return WebViewEngine.fromSettingValue(configuredValue, platformFallbackChain().getFirst());

@@ -3,14 +3,10 @@ package com.github.drafael.chat4j.chat.search;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.ConversationRepo.ConversationRecord;
-import com.github.drafael.chat4j.storage.ConversationRepo.SearchResult;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.ConversationRecord;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.SearchResult;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.util.Fonts;
-
-import javax.swing.*;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.*;
 import java.net.URL;
@@ -21,6 +17,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -47,7 +46,7 @@ public class ChatSearchPopup extends JDialog {
     private final JTextField searchField;
     private final JPanel listPanel;
     private final JScrollPane scrollPane;
-    private final ConversationRepo conversationRepo;
+    private final ConversationRepository conversationRepo;
     private final Consumer<UUID> onSelect;
     private final List<JPanel> resultRows = new ArrayList<>();
     private final List<UUID> resultIds = new ArrayList<>();
@@ -58,7 +57,7 @@ public class ChatSearchPopup extends JDialog {
     private final AWTEventListener outsideClickListener;
     private boolean outsideClickListenerInstalled;
 
-    public ChatSearchPopup(Window owner, ConversationRepo conversationRepo, Consumer<UUID> onSelect) {
+    public ChatSearchPopup(Window owner, ConversationRepository conversationRepo, Consumer<UUID> onSelect) {
         super(owner);
         this.conversationRepo = conversationRepo;
         this.onSelect = onSelect;

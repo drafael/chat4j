@@ -1,14 +1,13 @@
 package com.github.drafael.chat4j.startup;
 
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.OffsetDateTime;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 
 /**
  * Minimal startup logger that remains available before the regular SLF4J backend is ready.

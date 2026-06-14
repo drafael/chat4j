@@ -1,13 +1,8 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AppFontSizeStepResolver;
-import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeChangePlanner;
-import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
-import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionDispatchCoordinator;
@@ -22,6 +17,12 @@ import com.github.drafael.chat4j.settings.GeneralSettingsApplyCoordinator;
 import com.github.drafael.chat4j.settings.GeneralSettingsApplyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.GeneralSettingsResolver;
 import com.github.drafael.chat4j.settings.GeneralSettingsUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeChangePlanner;
+import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
+import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionDispatchCoordinator;
@@ -29,13 +30,12 @@ import com.github.drafael.chat4j.settings.ThemeMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionRefreshCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
-import com.github.drafael.chat4j.storage.SettingsRepo;
 import lombok.NonNull;
 
 public class MainFrameSettingsWiringFactory {
 
     public SettingsWiring create(
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull RenderModeSelectionResolver renderModeSelectionResolver,
             @NonNull RenderModeChangeUiApplyCoordinator renderModeChangeUiApplyCoordinator,
             @NonNull GeneralSettingsUiApplyCoordinator generalSettingsUiApplyCoordinator,

@@ -1,11 +1,10 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Rectangle;
 import java.util.Optional;
+import lombok.NonNull;
 
 public class WindowStateSettingsCoordinator {
 
@@ -14,9 +13,9 @@ public class WindowStateSettingsCoordinator {
     private static final String WINDOW_WIDTH_KEY = SettingsKeys.WINDOW_WIDTH;
     private static final String WINDOW_HEIGHT_KEY = SettingsKeys.WINDOW_HEIGHT;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
 
-    public WindowStateSettingsCoordinator(@NonNull SettingsRepo settingsRepo) {
+    public WindowStateSettingsCoordinator(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 

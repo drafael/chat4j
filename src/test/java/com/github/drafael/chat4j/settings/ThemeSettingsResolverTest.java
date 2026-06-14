@@ -1,12 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,7 +14,7 @@ class ThemeSettingsResolverTest {
     @Test
     @DisplayName("Resolve selected theme returns default when setting is missing")
     void resolveSelectedTheme_whenSettingMissing_returnsDefaultTheme() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("theme-settings-default");
+        SettingsRepository settingsRepo = settingsRepo("theme-settings-default");
         var subject = new ThemeSettingsResolver(settingsRepo);
 
         String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
@@ -26,7 +25,7 @@ class ThemeSettingsResolverTest {
     @Test
     @DisplayName("Resolve selected theme returns stored value when configured")
     void resolveSelectedTheme_whenStoredValueExists_returnsStoredTheme() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("theme-settings-stored");
+        SettingsRepository settingsRepo = settingsRepo("theme-settings-stored");
         settingsRepo.put(SettingsKeys.THEME_NAME, "Solarized Dark");
 
         var subject = new ThemeSettingsResolver(settingsRepo);
@@ -49,7 +48,7 @@ class ThemeSettingsResolverTest {
     @Test
     @DisplayName("Persist selected theme stores theme setting")
     void persistSelectedTheme_whenCalled_persistsThemeSetting() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("theme-settings-persist");
+        SettingsRepository settingsRepo = settingsRepo("theme-settings-persist");
         var subject = new ThemeSettingsResolver(settingsRepo);
 
         subject.persistSelectedTheme("GitHub Dark");
@@ -57,11 +56,11 @@ class ThemeSettingsResolverTest {
         assertThat(settingsRepo.get(SettingsKeys.THEME_NAME)).contains("GitHub Dark");
     }
 
-    private SettingsRepo settingsRepo(String testName) {
-        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
     }
 
-    private static class ThrowingSettingsRepo extends SettingsRepo {
+    private static class ThrowingSettingsRepo extends SettingsRepository {
 
         private ThrowingSettingsRepo() {
             super(Path.of("target", "test-theme-settings-resolver-throwing.properties"));

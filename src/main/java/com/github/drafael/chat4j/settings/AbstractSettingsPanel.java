@@ -1,13 +1,8 @@
 package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.extras.components.FlatSeparator;
-import com.github.drafael.chat4j.storage.SettingsRepo;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.util.Fonts;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
@@ -16,6 +11,10 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 
 public abstract class AbstractSettingsPanel extends JPanel {
 
@@ -30,11 +29,11 @@ public abstract class AbstractSettingsPanel extends JPanel {
     private static final int SECTION_BOTTOM_GAP = 2;
     private static final int STATUS_CLEAR_DELAY_MILLIS = 1400;
 
-    private final SettingsRepo settingsRepo;
+    private final SettingsRepository settingsRepo;
     private final JLabel statusLabel = new JLabel(" ");
     private final Timer statusClearTimer;
 
-    protected AbstractSettingsPanel(SettingsRepo settingsRepo) {
+    protected AbstractSettingsPanel(SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
 
         Fonts.apply(statusLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
@@ -353,7 +352,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         statusLabel.setVisible(true);
     }
 
-    protected SettingsRepo settingsRepo() {
+    protected SettingsRepository settingsRepo() {
         return settingsRepo;
     }
 

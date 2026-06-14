@@ -1,32 +1,31 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 
 @Slf4j
 public class MainFrameConversationRuntimeSettingsCoordinator {
 
     private static final int DEFAULT_WEB_BROWSE_TOP_N = 3;
 
-    private final ConversationRepo conversationRepo;
-    private final SettingsRepo settingsRepo;
+    private final ConversationRepository conversationRepo;
+    private final SettingsRepository settingsRepo;
     private final AgentModeSettingsCoordinator agentModeSettingsCoordinator;
 
     public MainFrameConversationRuntimeSettingsCoordinator(
-            @NonNull ConversationRepo conversationRepo,
-            @NonNull SettingsRepo settingsRepo,
+            @NonNull ConversationRepository conversationRepo,
+            @NonNull SettingsRepository settingsRepo,
             @NonNull AgentModeSettingsCoordinator agentModeSettingsCoordinator
     ) {
         this.conversationRepo = conversationRepo;
@@ -35,7 +34,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     }
 
     public void applyLoadedConversationSettings(
-            ConversationRepo.ConversationRecord conversation,
+            ConversationRepository.ConversationRecord conversation,
             @NonNull RuntimeSettingsTarget target
     ) {
         applyLoadedConversationReasoningSettings(conversation, target);
@@ -121,7 +120,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     }
 
     private void applyLoadedConversationReasoningSettings(
-            ConversationRepo.ConversationRecord conversation,
+            ConversationRepository.ConversationRecord conversation,
             RuntimeSettingsTarget target
     ) {
         ReasoningLevel level = conversation == null
@@ -131,7 +130,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     }
 
     private void applyLoadedConversationWebSearchSettings(
-            ConversationRepo.ConversationRecord conversation,
+            ConversationRepository.ConversationRecord conversation,
             RuntimeSettingsTarget target
     ) {
         boolean enabled = conversation != null && conversation.webSearchEnabled();
@@ -144,7 +143,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     }
 
     private void applyLoadedConversationAgentSettings(
-            ConversationRepo.ConversationRecord conversation,
+            ConversationRepository.ConversationRecord conversation,
             RuntimeSettingsTarget target
     ) {
         Path projectRoot = null;

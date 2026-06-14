@@ -4,10 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,10 +15,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
-import static java.util.stream.Collectors.toMap;
 import static java.util.Collections.emptyMap;
+import static java.util.stream.Collectors.toMap;
 
 public class CopilotModelMetadataStore {
 

@@ -1,13 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.storage.SettingsKeys;
-import com.github.drafael.chat4j.storage.SettingsRepo;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
+import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,7 +15,7 @@ class GeneralSettingsResolverTest {
     @Test
     @DisplayName("Resolve returns default values when settings are missing")
     void resolve_whenSettingsMissing_returnsDefaults() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("general-settings-defaults");
+        SettingsRepository settingsRepo = settingsRepo("general-settings-defaults");
         var modeCoordinator = new RenderModeSettingsCoordinator(settingsRepo);
         var subject = new GeneralSettingsResolver(settingsRepo, modeCoordinator);
 
@@ -31,7 +30,7 @@ class GeneralSettingsResolverTest {
     @Test
     @DisplayName("Resolve returns configured values when settings exist")
     void resolve_whenSettingsConfigured_returnsConfiguredValues() throws Exception {
-        SettingsRepo settingsRepo = settingsRepo("general-settings-configured");
+        SettingsRepository settingsRepo = settingsRepo("general-settings-configured");
         settingsRepo.put(SettingsKeys.CHAT_SEND_KEY, "Ctrl+Enter");
         settingsRepo.put(SettingsKeys.CHAT_AUTO_SCROLL, "false");
         settingsRepo.put(SettingsKeys.CHAT_RENDER_MODE, SettingsKeys.CHAT_RENDER_MODE_MARKDOWN);
@@ -51,7 +50,7 @@ class GeneralSettingsResolverTest {
     @Test
     @DisplayName("Resolve falls back to safe defaults when repository access fails")
     void resolve_whenRepositoryFails_returnsSafeDefaults() {
-        SettingsRepo failingRepo = new ThrowingSettingsRepo();
+        SettingsRepository failingRepo = new ThrowingSettingsRepo();
         var modeCoordinator = new RenderModeSettingsCoordinator(failingRepo);
         var subject = new GeneralSettingsResolver(failingRepo, modeCoordinator);
 
@@ -63,11 +62,11 @@ class GeneralSettingsResolverTest {
         assertThat(settings.menuBarEnabled()).isFalse();
     }
 
-    private SettingsRepo settingsRepo(String testName) {
-        return new SettingsRepo(Path.of("target", "%s.properties".formatted(testName)));
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
     }
 
-    private static class ThrowingSettingsRepo extends SettingsRepo {
+    private static class ThrowingSettingsRepo extends SettingsRepository {
 
         private ThrowingSettingsRepo() {
             super(Path.of("target", "test-general-settings-resolver-throwing.properties"));

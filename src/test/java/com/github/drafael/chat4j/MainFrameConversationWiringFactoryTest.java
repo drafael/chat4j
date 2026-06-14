@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j;
 
-import com.github.drafael.chat4j.storage.ConversationRepo;
-import com.github.drafael.chat4j.storage.PersistedMessageCounter;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +14,7 @@ class MainFrameConversationWiringFactoryTest {
     @DisplayName("Create builds conversation wiring without render-mode persistence")
     void create_whenCalled_buildsConversationWiring() throws Exception {
         var subject = new MainFrameConversationWiringFactory();
-        var wiring = subject.create(new ConversationRepo(null), new PersistedMessageCounter());
+        var wiring = subject.create(new ConversationRepository(null), new PersistedMessageCounter());
 
         assertThat(wiring.conversationLoadCoordinator()).isNotNull();
         assertThat(wiring.conversationLoadResultPlanner()).isNotNull();

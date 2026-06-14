@@ -2,15 +2,14 @@ package com.github.drafael.chat4j.logging;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import com.github.drafael.chat4j.storage.StoragePaths;
-import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.LoggerFactory;
-
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Map;
+import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.LoggerFactory;
 
 import static java.util.Collections.emptyMap;
 
