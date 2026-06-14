@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ContentParts;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
@@ -115,6 +116,19 @@ class ConversationMessageJsonCodec {
             return node;
         }
 
+        if (part instanceof GeneratedImagePart generatedImagePart) {
+            node.put("type", "generated_image");
+            node.set("attachment", serializeAttachment(generatedImagePart.attachmentRef()));
+            if (generatedImagePart.width() != null) {
+                node.put("width", generatedImagePart.width());
+            }
+            if (generatedImagePart.height() != null) {
+                node.put("height", generatedImagePart.height());
+            }
+            node.put("altText", generatedImagePart.altText());
+            return node;
+        }
+
         node.put("type", "text");
         node.put("text", part.asTextProjection());
         return node;
@@ -185,6 +199,12 @@ class ConversationMessageJsonCodec {
                     readOptionalInt(node, "height")
             ));
             case "file" -> Optional.of(new FilePart(deserializeAttachment(node.path("attachment"))));
+            case "generated_image" -> Optional.of(new GeneratedImagePart(
+                    deserializeAttachment(node.path("attachment")),
+                    readOptionalInt(node, "width"),
+                    readOptionalInt(node, "height"),
+                    node.path("altText").asText("Generated image")
+            ));
             default -> Optional.empty();
         };
     }

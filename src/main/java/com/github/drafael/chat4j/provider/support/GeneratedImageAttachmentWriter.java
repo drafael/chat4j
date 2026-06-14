@@ -1,7 +1,10 @@
-package com.github.drafael.chat4j.chat.composer;
+package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import org.apache.commons.lang3.StringUtils;
+
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -10,50 +13,57 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
 import java.util.UUID;
-import org.apache.commons.lang3.StringUtils;
 
-public class AttachmentStager {
+public class GeneratedImageAttachmentWriter {
 
     private static final DateTimeFormatter DAY_DIR_FORMAT = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final DateTimeFormatter FILE_TIME_FORMAT = DateTimeFormatter.ofPattern("HHmmss");
 
     private final StoragePaths storagePaths;
 
-    public AttachmentStager() {
+    public GeneratedImageAttachmentWriter() {
         this(StoragePaths.defaultPaths());
     }
 
-    public AttachmentStager(StoragePaths storagePaths) {
+    GeneratedImageAttachmentWriter(StoragePaths storagePaths) {
         this.storagePaths = storagePaths;
     }
 
-    public AttachmentRef stage(ComposerAttachment attachment) throws IOException {
+    public AttachmentRef write(byte[] bytes, String mimeType) throws IOException {
+        if (bytes == null || bytes.length == 0) {
+            throw new IOException("Generated image was empty.");
+        }
+
         UUID id = UUID.randomUUID();
-        Path targetPath = targetPath(id, attachment.displayName());
-        Files.copy(attachment.path(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-        return attachmentRef(id, targetPath, attachment.displayName(), attachment.mimeType());
-    }
-
-    private Path targetPath(UUID id, String displayName) throws IOException {
-        Path targetDirectory = attachmentsDirectory();
-        Files.createDirectories(targetDirectory);
-        String safeName = sanitizeFileName(displayName);
-        return targetDirectory.resolve("%s-%s".formatted(id, safeName));
-    }
-
-    private AttachmentRef attachmentRef(UUID id, Path targetPath, String displayName, String mimeType) throws IOException {
-        String sha256 = sha256Hex(targetPath);
-        long size = Files.size(targetPath);
-
+        String resolvedMimeType = StringUtils.defaultIfBlank(mimeType, "image/png");
+        String displayName = generatedImageFileName(id, resolvedMimeType);
+        Path targetPath = targetPath(displayName);
+        Files.copy(new ByteArrayInputStream(bytes), targetPath, StandardCopyOption.REPLACE_EXISTING);
         return new AttachmentRef(
                 id,
                 targetPath.toString(),
                 displayName,
-                mimeType,
-                size,
-                sha256
+                resolvedMimeType,
+                Files.size(targetPath),
+                sha256Hex(targetPath)
+        );
+    }
+
+    private Path targetPath(String displayName) throws IOException {
+        Path targetDirectory = attachmentsDirectory();
+        Files.createDirectories(targetDirectory);
+        return targetDirectory.resolve(sanitizeFileName(displayName));
+    }
+
+    private String generatedImageFileName(UUID id, String mimeType) {
+        return "generated-image-%s-%s.%s".formatted(
+                LocalTime.now().format(FILE_TIME_FORMAT),
+                id.toString().substring(0, 8),
+                imageExtension(mimeType)
         );
     }
 
@@ -62,9 +72,19 @@ public class AttachmentStager {
         return storagePaths.attachmentsDirectory().resolve(dayFolder);
     }
 
+    private String imageExtension(String mimeType) {
+        String normalized = StringUtils.defaultString(mimeType).toLowerCase();
+        return switch (normalized) {
+            case "image/jpeg", "image/jpg" -> "jpg";
+            case "image/webp" -> "webp";
+            case "image/gif" -> "gif";
+            default -> "png";
+        };
+    }
+
     private String sanitizeFileName(String fileName) {
         if (StringUtils.isBlank(fileName)) {
-            return "attachment";
+            return "generated-image";
         }
 
         return fileName

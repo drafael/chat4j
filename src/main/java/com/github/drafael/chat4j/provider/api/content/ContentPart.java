@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.provider.api.content;
 
-public sealed interface ContentPart permits TextPart, ImagePart, FilePart {
+public sealed interface ContentPart permits TextPart, ImagePart, FilePart, GeneratedImagePart {
 
     String asTextProjection();
 

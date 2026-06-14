@@ -6,21 +6,41 @@ import com.github.drafael.chat4j.chat.render.MarkdownRenderer;
 import com.github.drafael.chat4j.chat.render.Palette;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.util.Fonts;
+import javax.imageio.ImageIO;
+import java.awt.Dimension;
+import java.awt.image.BufferedImage;
+import java.nio.file.Path;
+import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.stream.Collectors.joining;
 
 public final class MessageHtmlRenderer {
 
+    private static final int GENERATED_IMAGE_MAX_WIDTH = 640;
+    private static final int GENERATED_IMAGE_MAX_HEIGHT = 640;
+
     public String render(Role role, RenderMode renderMode, String text, boolean isDark) {
         return render(role, renderMode, text, isDark, MarkdownPaletteResolver.resolve(isDark));
     }
 
     public String render(Role role, RenderMode renderMode, String text, boolean isDark, Palette palette) {
-        String safeText = StringUtils.defaultString(text);
+        return render(role, renderMode, List.of(new TextPart(StringUtils.defaultString(text))), isDark, palette);
+    }
 
-        return switch (role) {
+    public String render(Role role, RenderMode renderMode, List<ContentPart> parts, boolean isDark) {
+        return render(role, renderMode, parts, isDark, MarkdownPaletteResolver.resolve(isDark));
+    }
+
+    public String render(Role role, RenderMode renderMode, List<ContentPart> parts, boolean isDark, Palette palette) {
+        List<ContentPart> safeParts = parts == null ? List.of() : parts.stream().filter(part -> part != null && !part.isEmpty()).toList();
+        String safeText = textProjection(safeParts);
+        String html = switch (role) {
             case USER -> renderMode == RenderMode.MARKDOWN
                     ? toEscapedHtml(safeText, palette, true)
                     : toUserMarkdownHtml(safeText, palette, isDark);
@@ -28,6 +48,83 @@ public final class MessageHtmlRenderer {
                     ? toEscapedHtml(safeText, palette, true)
                     : MarkdownRenderer.toHtml(safeText, palette);
         };
+        if (role == Role.USER || renderMode == RenderMode.MARKDOWN || safeParts.stream().noneMatch(GeneratedImagePart.class::isInstance)) {
+            return html;
+        }
+        return appendGeneratedImageHtml(html, safeParts);
+    }
+
+    private String textProjection(List<ContentPart> parts) {
+        return parts.stream()
+                .filter(TextPart.class::isInstance)
+                .map(TextPart.class::cast)
+                .map(TextPart::text)
+                .collect(joining());
+    }
+
+    private String appendGeneratedImageHtml(String html, List<ContentPart> parts) {
+        String imagesHtml = parts.stream()
+                .filter(GeneratedImagePart.class::isInstance)
+                .map(GeneratedImagePart.class::cast)
+                .map(this::renderGeneratedImageHtml)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n"));
+        if (StringUtils.isBlank(imagesHtml)) {
+            return html;
+        }
+        String generatedImageCss = """
+                .generated-image-wrap, .generated-image-wrap:link, .generated-image-wrap:visited, .generated-image-wrap:focus { display: inline-block; border: none; outline: none; background: transparent; padding: 0; margin: 8px 0 4px 0; cursor: pointer; text-decoration: none; color: inherit; }
+                .generated-image { max-width: 420px; max-height: 420px; border: 0; border-radius: 12px; display: block; }
+                """;
+        return html
+                .replace("</style>", "%s</style>".formatted(generatedImageCss))
+                .replace("</body>", "%s</body>".formatted(imagesHtml));
+    }
+
+    private String renderGeneratedImageHtml(GeneratedImagePart part) {
+        AttachmentRef ref = part.attachmentRef();
+        if (ref == null || StringUtils.isBlank(ref.storagePath())) {
+            return "";
+        }
+        try {
+            String uri = Path.of(ref.storagePath()).toUri().toString();
+            String alt = escapeHtmlAttribute(part.altText());
+            String path = escapeHtmlAttribute(ref.storagePath());
+            Dimension size = generatedImageDisplaySize(part);
+            return """
+                    <a class="generated-image-wrap" href="%s" data-action="open-attachment" data-attachment-path="%s" title="%s" style="border: none; outline: none; text-decoration: none;"><img class="generated-image" src="%s" alt="%s" width="%d" height="%d" border="0" style="border: 0;"></a>
+                    """.formatted(uri, path, alt, uri, alt, size.width, size.height);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private Dimension generatedImageDisplaySize(GeneratedImagePart part) {
+        Dimension naturalSize = generatedImageNaturalSize(part);
+        double scale = Math.min(
+                1.0,
+                Math.min(
+                        GENERATED_IMAGE_MAX_WIDTH / (double) naturalSize.width,
+                        GENERATED_IMAGE_MAX_HEIGHT / (double) naturalSize.height
+                )
+        );
+        int width = Math.max(1, (int) Math.round(naturalSize.width * scale));
+        int height = Math.max(1, (int) Math.round(naturalSize.height * scale));
+        return new Dimension(width, height);
+    }
+
+    private Dimension generatedImageNaturalSize(GeneratedImagePart part) {
+        if (part.width() != null && part.height() != null && part.width() > 0 && part.height() > 0) {
+            return new Dimension(part.width(), part.height());
+        }
+        try {
+            BufferedImage image = ImageIO.read(Path.of(part.attachmentRef().storagePath()).toFile());
+            if (image != null && image.getWidth() > 0 && image.getHeight() > 0) {
+                return new Dimension(image.getWidth(), image.getHeight());
+            }
+        } catch (Exception ignored) {
+        }
+        return new Dimension(GENERATED_IMAGE_MAX_WIDTH, GENERATED_IMAGE_MAX_HEIGHT);
     }
 
     String toEscapedHtml(String text, Palette palette, boolean monospaced) {

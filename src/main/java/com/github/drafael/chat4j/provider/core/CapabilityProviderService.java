@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
@@ -115,6 +116,36 @@ public class CapabilityProviderService implements ProviderService {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) {
+        streamCompletion(
+                history,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                onThinkingToken,
+                part -> {
+                },
+                onComplete,
+                onError,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
+    @Override
+    public void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Consumer<ContentPart> onPart,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) {
         try {
             chatCompletionClient.streamCompletion(
                 runtime,
@@ -123,6 +154,8 @@ public class CapabilityProviderService implements ProviderService {
                 webSearchOptions == null ? WebSearchRequestOptions.disabled() : webSearchOptions,
                 onToken,
                 onThinkingToken,
+                onPart == null ? part -> {
+                } : onPart,
                 isCancelled,
                 registerActiveStream,
                 clearActiveStream

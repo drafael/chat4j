@@ -20,6 +20,8 @@ public final class TranscriptAttachmentRenderer {
 
     private static final int ATTACHMENT_IMAGE_MAX_WIDTH = 420;
     private static final int ATTACHMENT_IMAGE_MAX_HEIGHT = 360;
+    private static final int GENERATED_IMAGE_SOURCE_MAX_WIDTH = 1280;
+    private static final int GENERATED_IMAGE_SOURCE_MAX_HEIGHT = 1280;
 
     private TranscriptAttachmentRenderer() {
     }
@@ -96,7 +98,19 @@ public final class TranscriptAttachmentRenderer {
         );
     }
 
+    public static String generatedImageDataUri(String storagePath) {
+        return imageDataUri(
+                new ConversationAttachment(storagePath, "generated image", "image/png", 0L, true),
+                GENERATED_IMAGE_SOURCE_MAX_WIDTH,
+                GENERATED_IMAGE_SOURCE_MAX_HEIGHT
+        );
+    }
+
     private static String imageThumbnailDataUri(ConversationAttachment attachment) {
+        return imageDataUri(attachment, ATTACHMENT_IMAGE_MAX_WIDTH, ATTACHMENT_IMAGE_MAX_HEIGHT);
+    }
+
+    private static String imageDataUri(ConversationAttachment attachment, int maxWidth, int maxHeight) {
         Path path = attachmentPath(attachment);
         if (path == null || !Files.exists(path)) {
             return "";
@@ -107,7 +121,7 @@ public final class TranscriptAttachmentRenderer {
             if (image == null) {
                 return "";
             }
-            BufferedImage thumbnail = renderThumbnail(image);
+            BufferedImage thumbnail = renderThumbnail(image, maxWidth, maxHeight);
             ByteArrayOutputStream output = new ByteArrayOutputStream();
             ImageIO.write(thumbnail, "png", output);
             String encoded = Base64.getEncoder().encodeToString(output.toByteArray());
@@ -117,12 +131,12 @@ public final class TranscriptAttachmentRenderer {
         }
     }
 
-    private static BufferedImage renderThumbnail(BufferedImage source) {
+    private static BufferedImage renderThumbnail(BufferedImage source, int maxWidth, int maxHeight) {
         double scale = Math.min(
                 1.0,
                 Math.min(
-                        ATTACHMENT_IMAGE_MAX_WIDTH / (double) source.getWidth(),
-                        ATTACHMENT_IMAGE_MAX_HEIGHT / (double) source.getHeight()
+                        maxWidth / (double) source.getWidth(),
+                        maxHeight / (double) source.getHeight()
                 )
         );
         int width = Math.max(1, (int) Math.round(source.getWidth() * scale));

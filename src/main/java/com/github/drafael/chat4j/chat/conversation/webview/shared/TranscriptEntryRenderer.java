@@ -97,7 +97,9 @@ public final class TranscriptEntryRenderer {
                     """.formatted(openAttribute, escapeHtml(entry.title()), content);
         }
 
-        String rendered = renderEntryContentHtml(entry.role(), entry.text(), snapshot);
+        String rendered = entry.parts().isEmpty()
+                ? renderEntryContentHtml(entry.role(), entry.text(), snapshot)
+                : messageHtmlRenderer.render(entry.role(), snapshot.renderMode(), entry.parts(), snapshot.dark(), snapshot.palette());
         Document document = Jsoup.parse(rendered);
         prepareRenderedDocument(document, false);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
@@ -165,6 +167,7 @@ public final class TranscriptEntryRenderer {
     private void prepareRenderedDocument(Document document, boolean replaceInlineCitationsWithChips) {
         renderCodeHighlights(document);
         renderMathFallbacks(document);
+        replaceGeneratedImageSources(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
         annotateSourceLinks(document, replaceInlineCitationsWithChips);
         removeAdjacentDuplicateSourceCitations(document);
@@ -178,6 +181,20 @@ public final class TranscriptEntryRenderer {
             }
             table.addClass("without-header");
             rows.addClass("code-body");
+        });
+    }
+
+    static void replaceGeneratedImageSources(Document document) {
+        document.select("img.generated-image").forEach(image -> {
+            Element attachmentElement = image.closest("[data-attachment-path]");
+            if (attachmentElement == null) {
+                return;
+            }
+            String dataUri = TranscriptAttachmentRenderer.generatedImageDataUri(attachmentElement.attr("data-attachment-path"));
+            if (StringUtils.isBlank(dataUri)) {
+                return;
+            }
+            image.attr("src", dataUri);
         });
     }
 

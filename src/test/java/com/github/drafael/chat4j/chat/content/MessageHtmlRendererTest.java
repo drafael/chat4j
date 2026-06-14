@@ -2,7 +2,13 @@ package com.github.drafael.chat4j.chat.content;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import org.jsoup.Jsoup;
+
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -188,6 +194,30 @@ class MessageHtmlRendererTest {
                 """, false);
 
         assertThat(html).contains("href=\"https://example.com/source\">[1]</a>");
+    }
+
+    @Test
+    @DisplayName("Assistant preview mode renders generated image parts inline")
+    void render_whenAssistantHasGeneratedImagePart_rendersOpenableImage() {
+        var ref = new AttachmentRef(UUID.randomUUID(), "/tmp/generated.png", "generated.png", "image/png", 12L, "hash");
+        String html = subject.render(
+                Role.ASSISTANT,
+                RenderMode.PREVIEW,
+                List.of(new TextPart("Done"), new GeneratedImagePart(ref, 32, 24, "Generated cat")),
+                false
+        );
+
+        var document = Jsoup.parse(html);
+        var link = document.selectFirst("a.generated-image-wrap");
+
+        assertThat(link).isNotNull();
+        assertThat(link.attr("data-action")).isEqualTo("open-attachment");
+        assertThat(link.attr("data-attachment-path")).isEqualTo("/tmp/generated.png");
+        assertThat(link.attr("style")).contains("border: none", "text-decoration: none");
+        assertThat(link.selectFirst("img.generated-image").attr("alt")).isEqualTo("Generated cat");
+        assertThat(link.selectFirst("img.generated-image").attr("border")).isEqualTo("0");
+        assertThat(link.selectFirst("img.generated-image").attr("width")).isEqualTo("32");
+        assertThat(link.selectFirst("img.generated-image").attr("height")).isEqualTo("24");
     }
 
     @Test

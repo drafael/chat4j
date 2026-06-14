@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.PerplexityChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
@@ -90,6 +91,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
         return switch (providerName) {
             case "OpenAI Codex" -> new CodexCliChatCompletionClient();
             case "Perplexity" -> new PerplexityChatCompletionClient();
+            case "Google AI" -> new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient());
             default -> new OpenAiChatCompletionClient();
         };
     }

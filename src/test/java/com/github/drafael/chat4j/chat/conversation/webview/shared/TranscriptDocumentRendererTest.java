@@ -4,6 +4,8 @@ import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,11 +13,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;
+import java.io.ByteArrayInputStream;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -77,6 +82,30 @@ class TranscriptDocumentRendererTest {
         assertThat(document.select(".attachment-image")).isEmpty();
         assertThat(document.select(".attachment-chip.unavailable")).hasSize(1);
         assertThat(document.select(".attachment-chip").text()).contains("missing.png", "256 B");
+    }
+
+    @Test
+    @DisplayName("Generated images use embedded data URLs before WebView load")
+    void replaceGeneratedImageSources_whenGeneratedImageUsesFileUri_embedsThumbnailDataUri() throws Exception {
+        Path imagePath = tempDir.resolve("generated.png");
+        writePng(imagePath, 1000, 700);
+        var attachmentRef = new AttachmentRef(UUID.randomUUID(), imagePath.toString(), "generated.png", "image/png", Files.size(imagePath), "sha");
+        String html = new MessageHtmlRenderer().render(
+                Role.ASSISTANT,
+                RenderMode.PREVIEW,
+                List.of(new GeneratedImagePart(attachmentRef, 40, 30, "Generated image")),
+                false
+        );
+        var document = Jsoup.parse(html);
+
+        assertThat(document.selectFirst("img.generated-image").attr("src")).startsWith("file:");
+
+        TranscriptEntryRenderer.replaceGeneratedImageSources(document);
+
+        String src = document.selectFirst("img.generated-image").attr("src");
+        assertThat(src).startsWith("data:image/png;base64,");
+        BufferedImage embeddedImage = ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(src.substring("data:image/png;base64,".length()))));
+        assertThat(embeddedImage.getWidth()).isGreaterThan(420);
     }
 
     @Test
@@ -257,14 +286,18 @@ class TranscriptDocumentRendererTest {
     }
 
     private static void writePng(Path path) throws Exception {
-            BufferedImage image = new BufferedImage(24, 12, BufferedImage.TYPE_INT_RGB);
-            Graphics2D graphics = image.createGraphics();
-            try {
-                graphics.setColor(Color.BLUE);
-                graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
-            } finally {
-                graphics.dispose();
-            }
-            ImageIO.write(image, "png", path.toFile());
+        writePng(path, 24, 12);
+    }
+
+    private static void writePng(Path path, int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setColor(Color.BLUE);
+            graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+        } finally {
+            graphics.dispose();
         }
+        ImageIO.write(image, "png", path.toFile());
+    }
 }

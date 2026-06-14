@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.agent;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import org.apache.commons.lang3.StringUtils;
@@ -65,14 +66,20 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
             providerService.streamCompletion(
                     augmentHistoryWithWorkspaceSnapshot(request.history(), request.projectRoot()),
                     request.reasoningLevel(),
+                    WebSearchRequestOptions.disabled(),
                     callbacks.onToken(),
                     callbacks.onThinkingToken(),
+                    callbacks.onPart(),
                     () -> completed.set(true),
                     error -> {
                         failed.set(true);
                         callbacks.onError().accept(error);
                     },
-                    request.isCancelled()
+                    request.isCancelled(),
+                    stream -> {
+                    },
+                    () -> {
+                    }
             );
         }
 

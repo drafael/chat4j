@@ -8,6 +8,7 @@ import javax.swing.event.HyperlinkEvent;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultCaret;
 import javax.swing.text.DefaultEditorKit;
+import javax.swing.text.AttributeSet;
 import javax.swing.text.Element;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.View;
@@ -18,6 +19,9 @@ import javax.swing.text.html.InlineView;
 import javax.swing.text.html.ParagraphView;
 import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.function.IntSupplier;
 
 public final class JEditorPaneMessageContentView implements MessageContentView {
@@ -126,6 +130,10 @@ public final class JEditorPaneMessageContentView implements MessageContentView {
                 return;
             }
 
+            if (openAttachmentLink(event)) {
+                return;
+            }
+
             String link = event.getURL() != null ? event.getURL().toExternalForm() : event.getDescription();
             if (StringUtils.isBlank(link)) {
                 return;
@@ -133,6 +141,67 @@ public final class JEditorPaneMessageContentView implements MessageContentView {
 
             ExternalLinkSupport.openExternalLink(link);
         });
+    }
+
+    private boolean openAttachmentLink(HyperlinkEvent event) {
+        String attachmentPath = sourceElementAttribute(event.getSourceElement(), "data-attachment-path");
+        if (StringUtils.isBlank(attachmentPath) && isGeneratedImageLink(event)) {
+            attachmentPath = filePathFromEventUrl(event);
+        }
+        if (StringUtils.isBlank(attachmentPath)) {
+            return false;
+        }
+        openLocalAttachment(attachmentPath);
+        return true;
+    }
+
+    private boolean isGeneratedImageLink(HyperlinkEvent event) {
+        String className = sourceElementAttribute(event.getSourceElement(), "class");
+        return StringUtils.contains(className, "generated-image-wrap");
+    }
+
+    private String filePathFromEventUrl(HyperlinkEvent event) {
+        if (event.getURL() == null || !"file".equalsIgnoreCase(event.getURL().getProtocol())) {
+            return "";
+        }
+        try {
+            return Path.of(URI.create(event.getURL().toExternalForm())).toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private String sourceElementAttribute(Element element, String attributeName) {
+        Element current = element;
+        while (current != null) {
+            AttributeSet attributes = current.getAttributes();
+            Object directValue = attributes.getAttribute(attributeName);
+            if (directValue != null) {
+                return directValue.toString();
+            }
+            Object anchorValue = attributes.getAttribute(HTML.Tag.A);
+            if (anchorValue instanceof AttributeSet anchorAttributes) {
+                Object value = anchorAttributes.getAttribute(attributeName);
+                if (value != null) {
+                    return value.toString();
+                }
+            }
+            current = current.getParentElement();
+        }
+        return "";
+    }
+
+    private void openLocalAttachment(String attachmentPath) {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+            return;
+        }
+        try {
+            Path path = Path.of(attachmentPath);
+            if (Files.isRegularFile(path)) {
+                Desktop.getDesktop().open(path.toFile());
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private static final class WrappingEditorPane extends JEditorPane {

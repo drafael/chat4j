@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.persistence.db.SqlDialect;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -116,6 +117,10 @@ class ConversationAttachmentStore {
 
         if (part instanceof FilePart filePart) {
             return filePart.attachmentRef();
+        }
+
+        if (part instanceof GeneratedImagePart generatedImagePart) {
+            return generatedImagePart.attachmentRef();
         }
 
         return null;

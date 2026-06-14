@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.chat;
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
 import com.github.drafael.chat4j.chat.render.ThinkTagStreamParser;
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -20,6 +21,7 @@ final class StreamingSession {
     final AtomicBoolean activeRequestRegistered = new AtomicBoolean(false);
     final AtomicReference<AutoCloseable> activeRequest = new AtomicReference<>();
     final StringBuilder response = new StringBuilder();
+    final List<ContentPart> responseParts = synchronizedList(new ArrayList<>());
     final StringBuilder thinking = new StringBuilder();
     final StringBuilder webSearchActivity = new StringBuilder();
     final List<AgentToolActivity> agentToolActivities = synchronizedList(new ArrayList<>());

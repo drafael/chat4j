@@ -6,7 +6,11 @@ import com.github.drafael.chat4j.chat.content.MessageContentViewProvider;
 import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.awt.geom.RoundRectangle2D;
 import javax.swing.*;
 
@@ -17,6 +21,7 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     private final Role role;
     private RenderMode renderMode = RenderMode.PREVIEW;
     private final StringBuilder fullText = new StringBuilder();
+    private final List<ContentPart> contentParts = new ArrayList<>();
     private final MessageHtmlRenderer messageHtmlRenderer;
     private final MessageContentView contentView;
     private int maxContentWidth = Integer.MAX_VALUE;
@@ -87,6 +92,7 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     @Override
     public void appendText(String token) {
         fullText.append(token);
+        appendTextPart(token);
         renderContent();
     }
 
@@ -94,7 +100,51 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     public void setText(String text) {
         fullText.setLength(0);
         fullText.append(text);
+        contentParts.clear();
+        if (text != null) {
+            contentParts.add(new TextPart(text));
+        }
         renderContent();
+    }
+
+    @Override
+    public void appendPart(ContentPart part) {
+        if (part == null) {
+            return;
+        }
+        contentParts.add(part);
+        if (part instanceof TextPart textPart) {
+            fullText.append(textPart.text());
+        }
+        renderContent();
+    }
+
+    @Override
+    public void setContentParts(List<ContentPart> parts) {
+        contentParts.clear();
+        if (parts != null) {
+            contentParts.addAll(parts.stream().filter(part -> part != null && !part.isEmpty()).toList());
+        }
+        fullText.setLength(0);
+        contentParts.stream()
+                .filter(TextPart.class::isInstance)
+                .map(TextPart.class::cast)
+                .map(TextPart::text)
+                .forEach(fullText::append);
+        renderContent();
+    }
+
+    @Override
+    public List<ContentPart> contentPartsSnapshot() {
+        return List.copyOf(contentParts);
+    }
+
+    private void appendTextPart(String token) {
+        if (!contentParts.isEmpty() && contentParts.getLast() instanceof TextPart textPart) {
+            contentParts.set(contentParts.size() - 1, new TextPart("%s%s".formatted(textPart.text(), token)));
+            return;
+        }
+        contentParts.add(new TextPart(token));
     }
 
     @Override
@@ -122,9 +172,8 @@ public class MessageBubble extends JPanel implements ChatMessageView {
     }
 
     private void renderContent() {
-        String text = fullText.toString();
         boolean isDark = detectDarkMode();
-        contentView.setHtml(messageHtmlRenderer.render(role, renderMode, text, isDark));
+        contentView.setHtml(messageHtmlRenderer.render(role, renderMode, contentPartsSnapshot(), isDark));
 
         revalidate();
         contentView.component().repaint();
