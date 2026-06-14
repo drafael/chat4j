@@ -45,6 +45,10 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
         int row = 0;
 
+        JCheckBox menuBarEnabled = new JCheckBox();
+        row = addCheckBoxRow(form, gbc, row, menuBarEnabled, "Enable menu bar");
+        bindCheckBox(menuBarEnabled, KEY_MENU_BAR_ENABLED, SystemInfo.isMacOS, null);
+
         row = addSectionHeader(form, gbc, row, "Chat Behavior");
 
         JComboBox<String> sendKey = withPreferredWidth(new JComboBox<>(new String[]{SEND_ENTER, SEND_CTRL_ENTER}), 220);
@@ -126,16 +130,6 @@ public class GeneralPanel extends AbstractSettingsPanel {
         addRow(form, gbc, row++, "Chat storage", storageBackend);
         bindStorageBackend(storageBackend);
         row = addSectionHint(form, gbc, row, "Changing storage requires a restart. Existing chats will be migrated automatically.");
-
-        row = addSectionHeader(form, gbc, row, "Application");
-
-        JComboBox<String> language = withPreferredWidth(new JComboBox<>(new String[]{"English"}), 220);
-        language.setEnabled(false);
-        addRow(form, gbc, row++, "Language", language);
-
-        JCheckBox menuBarEnabled = new JCheckBox();
-        row = addCheckBoxRow(form, gbc, row, menuBarEnabled, "Enable menu bar");
-        bindCheckBox(menuBarEnabled, KEY_MENU_BAR_ENABLED, SystemInfo.isMacOS, null);
 
         addVerticalSpacer(form, gbc, row);
     }
