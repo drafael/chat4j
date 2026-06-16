@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiImageGenerationChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.PerplexityChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.OpenAiModelCatalogClient;
@@ -89,9 +90,10 @@ public class OpenAiCompatibleModule implements ProviderModule {
 
     private ChatCompletionClient selectChatClient(String providerName) {
         return switch (providerName) {
-            case "OpenAI Codex" -> new CodexCliChatCompletionClient();
+            case "OpenAI Codex" -> new OpenAiImageGenerationChatCompletionClient(new CodexCliChatCompletionClient());
             case "Perplexity" -> new PerplexityChatCompletionClient();
             case "Google AI" -> new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient());
+            case "OpenAI", "OpenRouter" -> new OpenAiImageGenerationChatCompletionClient(new OpenAiChatCompletionClient());
             default -> new OpenAiChatCompletionClient();
         };
     }
