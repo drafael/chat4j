@@ -22,6 +22,42 @@ mvn clean compile
 mvn exec:java
 ```
 
+## First run from release artifacts
+
+Chat4J release artifacts are currently unsigned and not notarized. macOS Gatekeeper and Windows SmartScreen may warn or block the first launch. Only run artifacts you downloaded from the official GitHub Releases page, and verify checksums when possible.
+
+### macOS
+
+If macOS says Chat4J “cannot be opened” or is from an unidentified developer:
+
+1. Open **Finder** and locate `Chat4J.app`.
+2. Control-click / right-click the app and choose **Open**.
+3. Click **Open** again in the confirmation dialog.
+
+If the app is still blocked, open **System Settings → Privacy & Security**, scroll to the Gatekeeper message for Chat4J, and click **Open Anyway**.
+
+Advanced Terminal alternative:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Chat4J.app
+open /Applications/Chat4J.app
+```
+
+Adjust the path if you installed Chat4J somewhere else.
+
+### Windows
+
+If Windows SmartScreen appears:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+If Windows marks the downloaded file as blocked:
+
+1. Right-click the `.msi` or `.exe` and choose **Properties**.
+2. On the **General** tab, check **Unblock** if present.
+3. Click **Apply**, then run the installer again.
+
 ## Build & test
 
 ```bash
