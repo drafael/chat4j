@@ -35,7 +35,7 @@
         <flyway.version>11.8.2</flyway.version>
         <cyclonedx.maven.plugin.version>2.9.1</cyclonedx.maven.plugin.version>
         <dependency-check.maven.version>12.2.2</dependency-check.maven.version>
-        <versions.maven.plugin.version>2.18.0</versions.maven.plugin.version>
+        <versions.maven.plugin.version>2.21.0</versions.maven.plugin.version>
         <jacoco.maven.plugin.version>0.8.12</jacoco.maven.plugin.version>
         <jacoco.argLine></jacoco.argLine>
         <junit.version>5.12.2</junit.version>
