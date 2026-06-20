@@ -6,7 +6,6 @@ import com.github.drafael.chat4j.persistence.db.PersistenceBackendConfig;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
@@ -159,13 +158,13 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
             writeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, backend.settingValue());
             setStatusInfo("Saved — restart required");
-            int choice = showStorageBackendChangePrompt(activeBackend, backend);
+            RestartRequiredDialog.Choice choice = showStorageBackendChangePrompt(activeBackend, backend);
 
-            if (choice == JOptionPane.YES_OPTION) {
+            if (choice == RestartRequiredDialog.Choice.EXIT_NOW) {
                 exitAction.run();
                 return;
             }
-            if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) {
+            if (choice == RestartRequiredDialog.Choice.CANCEL) {
                 removeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING);
                 updating.set(true);
                 storageBackend.setSelectedItem(activeBackend);
@@ -175,34 +174,12 @@ public class GeneralPanel extends AbstractSettingsPanel {
         });
     }
 
-    private int showStorageBackendChangePrompt(StorageBackend activeBackend, StorageBackend selectedBackend) {
-        Object[] options = {"Exit Now", "Later", "Cancel"};
-        JOptionPane optionPane = new JOptionPane(
-                "<html><div style='width:260px'>Chat storage will switch from %s to %s after you reopen Chat4J. Existing chats will be migrated automatically.</div></html>"
-                        .formatted(activeBackend.displayName(), selectedBackend.displayName()),
-                JOptionPane.INFORMATION_MESSAGE,
-                JOptionPane.YES_NO_CANCEL_OPTION,
-                null,
-                options,
-                options[0]
+    private RestartRequiredDialog.Choice showStorageBackendChangePrompt(StorageBackend activeBackend, StorageBackend selectedBackend) {
+        return RestartRequiredDialog.show(
+                this,
+                "Chat storage will switch from %s to %s after you reopen Chat4J. Existing chats will be migrated automatically."
+                        .formatted(activeBackend.displayName(), selectedBackend.displayName())
         );
-
-        Window owner = SwingUtilities.getWindowAncestor(this);
-        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(optionPane);
-        optionPane.addPropertyChangeListener(JOptionPane.VALUE_PROPERTY, event -> dialog.dispose());
-        ModalDialogSupport.prepareCompactModal(dialog, this);
-        dialog.setVisible(true);
-
-        Object selectedValue = optionPane.getValue();
-        if (options[0].equals(selectedValue)) {
-            return JOptionPane.YES_OPTION;
-        }
-        if (options[1].equals(selectedValue)) {
-            return JOptionPane.NO_OPTION;
-        }
-        return JOptionPane.CANCEL_OPTION;
     }
 
     private PersistenceBackendConfig readStorageConfig() {

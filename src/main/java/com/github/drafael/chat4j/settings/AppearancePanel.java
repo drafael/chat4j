@@ -78,6 +78,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static final int WEB_VIEW_ENGINE_SELECTOR_WIDTH = 340;
 
     private final WebViewRuntimeStatus runtimeStatus;
+    private final Runnable exitAction;
+    private final RestartPrompt restartPrompt;
     private final JLabel webViewHealthIcon = new JLabel();
     private final JLabel webViewHealthTitle = new JLabel();
     private final JLabel webViewHealthDetails = new JLabel();
@@ -87,6 +89,11 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static final Map<String, String> CORE_THEMES = new LinkedHashMap<>();
     private static final Map<String, String> INTELLIJ_THEMES = new LinkedHashMap<>();
     private static final Map<String, String> MATERIAL_THEMES = new LinkedHashMap<>();
+
+    @FunctionalInterface
+    interface RestartPrompt {
+        RestartRequiredDialog.Choice show(Component parent, String message);
+    }
 
     static {
         // Core themes
@@ -285,8 +292,23 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     public AppearancePanel(SettingsRepository settingsRepo, WebViewRuntimeStatus runtimeStatus) {
+        this(settingsRepo, runtimeStatus, () -> System.exit(0));
+    }
+
+    public AppearancePanel(SettingsRepository settingsRepo, WebViewRuntimeStatus runtimeStatus, Runnable exitAction) {
+        this(settingsRepo, runtimeStatus, exitAction, RestartRequiredDialog::show);
+    }
+
+    AppearancePanel(
+            SettingsRepository settingsRepo,
+            WebViewRuntimeStatus runtimeStatus,
+            Runnable exitAction,
+            RestartPrompt restartPrompt
+    ) {
         super(settingsRepo);
         this.runtimeStatus = runtimeStatus;
+        this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
+        this.restartPrompt = restartPrompt == null ? RestartRequiredDialog::show : restartPrompt;
 
         JPanel form = createFormPanel("Appearance");
         GridBagConstraints gbc = createFormConstraints();
@@ -377,10 +399,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 SettingsKeys.WEBVIEW_ENGINE,
                 runtimeStatus.configuredEngine().settingValue(),
                 engineValidator(),
-                value -> {
-                    refreshRestartHint(value);
-                    setStatusInfo("Saved — restart Chat4J to apply");
-                }
+                value -> handleWebViewEngineApplied(engineComboBox, value)
         );
 
         row = addFullWidthRow(form, gbc, row, restartHint);
@@ -393,6 +412,38 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 runtimeStatus.configuredEngine().settingValue()
         ));
         return row;
+    }
+
+    private void handleWebViewEngineApplied(JComboBox<String> engineComboBox, String selectedValue) {
+        WebViewEngine selectedEngine = WebViewEngine.fromSettingValue(selectedValue, runtimeStatus.configuredEngine());
+        refreshRestartHint(selectedEngine.settingValue());
+
+        if (selectedEngine == runtimeStatus.activeEngine()) {
+            setStatusInfo(STATUS_SAVED);
+            return;
+        }
+
+        setStatusInfo("Saved — restart Chat4J to apply");
+        RestartRequiredDialog.Choice choice = showWebViewEngineChangePrompt(selectedEngine);
+        if (choice == RestartRequiredDialog.Choice.EXIT_NOW) {
+            exitAction.run();
+            return;
+        }
+        if (choice == RestartRequiredDialog.Choice.CANCEL) {
+            String activeValue = runtimeStatus.activeEngine().settingValue();
+            writeSetting(SettingsKeys.WEBVIEW_ENGINE, activeValue);
+            engineComboBox.setSelectedItem(activeValue);
+            refreshRestartHint(activeValue);
+            setStatusInfo(STATUS_SAVED);
+        }
+    }
+
+    private RestartRequiredDialog.Choice showWebViewEngineChangePrompt(WebViewEngine selectedEngine) {
+        return restartPrompt.show(
+                this,
+                "Chat WebView engine will switch from %s to %s after you reopen Chat4J."
+                        .formatted(runtimeStatus.activeEngine().displayName(), selectedEngine.displayName())
+        );
     }
 
     private SettingsValidator<String> engineValidator() {
