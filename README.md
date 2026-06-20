@@ -24,7 +24,23 @@ mvn exec:java
 
 ## First run from release artifacts
 
-Chat4J release artifacts are currently unsigned and not notarized. macOS Gatekeeper and Windows SmartScreen may warn or block the first launch. Only run artifacts you downloaded from the official GitHub Releases page, and verify checksums when possible.
+Chat4J release artifacts are currently unsigned and not notarized. macOS Gatekeeper and Windows SmartScreen may warn or block the first launch. Only run artifacts you downloaded from the [official GitHub Releases page](https://github.com/drafael/chat4j/releases), and verify checksums before bypassing operating-system warnings.
+
+Download `SHA256SUMS.txt` alongside the artifact you plan to run, then verify it from the download directory:
+
+```bash
+# macOS / Linux; replace the filename with the artifact you downloaded
+artifact="Chat4J-<version>.dmg"
+awk -v artifact="$artifact" '$2 == artifact { print }' SHA256SUMS.txt | shasum -a 256 -c -
+```
+
+```powershell
+# Windows PowerShell; replace the filename with the artifact you downloaded
+$artifact = "Chat4J-<version>.msi"
+$parts = (Get-Content SHA256SUMS.txt | Where-Object { $_ -match "\s$([regex]::Escape($artifact))$" }) -split '\s+', 2
+$actual = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLowerInvariant()
+if ($actual -ne $parts[0]) { throw "Checksum mismatch: $artifact" }
+```
 
 ### macOS
 
