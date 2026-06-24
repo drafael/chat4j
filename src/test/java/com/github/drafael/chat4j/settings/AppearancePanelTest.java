@@ -8,6 +8,7 @@ import java.awt.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.*;
 import org.junit.jupiter.api.DisplayName;
@@ -45,6 +46,36 @@ class AppearancePanelTest {
         assertThat(engineComboBox.getSelectedItem()).isEqualTo(WebViewEngine.SYSTEM.settingValue());
         assertThat(exitCalled).isFalse();
         assertThat(promptMessage.get()).contains("System WebView", "Chromium Embedded Framework");
+    }
+
+    @Test
+    @DisplayName("Canceling a WebView engine change during fallback preserves the configured engine")
+    void webViewEngineSelection_whenFallbackPromptCanceled_restoresConfiguredEngine() throws Exception {
+        var settingsRepo = settingsRepo("appearance-panel-webview-fallback-cancel");
+        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
+        var exitCalled = new AtomicBoolean(false);
+        var promptCount = new AtomicInteger();
+        AppearancePanel subject = new AppearancePanel(
+                settingsRepo,
+                fallbackRuntimeStatus(),
+                () -> exitCalled.set(true),
+                (parent, message) -> {
+                    promptCount.incrementAndGet();
+                    return RestartRequiredDialog.Choice.CANCEL;
+                }
+        );
+        JComboBox<?> engineComboBox = findComponentByName(
+                subject,
+                "chatWebViewEngineComboBox",
+                JComboBox.class
+        );
+
+        SwingUtilities.invokeAndWait(() -> engineComboBox.setSelectedItem(WebViewEngine.JCEF.settingValue()));
+
+        assertThat(settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE)).contains(WebViewEngine.SYSTEM.settingValue());
+        assertThat(engineComboBox.getSelectedItem()).isEqualTo(WebViewEngine.SYSTEM.settingValue());
+        assertThat(exitCalled).isFalse();
+        assertThat(promptCount).hasValue(1);
     }
 
     @Test
@@ -112,6 +143,18 @@ class AppearancePanelTest {
                 true,
                 "Windowed/native",
                 ""
+        );
+    }
+
+    private WebViewRuntimeStatus fallbackRuntimeStatus() {
+        return new WebViewRuntimeStatus(
+                WebViewEngine.SYSTEM,
+                WebViewEngine.JEDITOR_PANE,
+                false,
+                "Unavailable",
+                false,
+                "Unavailable",
+                "System WebView unavailable: missing runtime"
         );
     }
 

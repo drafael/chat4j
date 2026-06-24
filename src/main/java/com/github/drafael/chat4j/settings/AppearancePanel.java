@@ -84,6 +84,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private final JLabel webViewHealthTitle = new JLabel();
     private final JLabel webViewHealthDetails = new JLabel();
     private final JLabel restartHint = new JLabel("Changes apply after restarting Chat4J.");
+    private boolean restoringWebViewEngineSelection;
+    private String currentWebViewEngineSettingValue;
 
     // Theme name -> LaF class name, grouped for display
     private static final Map<String, String> CORE_THEMES = new LinkedHashMap<>();
@@ -394,6 +396,10 @@ public class AppearancePanel extends AbstractSettingsPanel {
         engineComboBox.setName("chatWebViewEngineComboBox");
         engineComboBox.setRenderer(new EngineRenderer());
         addRow(form, gbc, row++, "Engine", engineComboBox);
+        currentWebViewEngineSettingValue = WebViewEngine.fromSettingValue(
+                readString(SettingsKeys.WEBVIEW_ENGINE, runtimeStatus.configuredEngine().settingValue()),
+                runtimeStatus.configuredEngine()
+        ).settingValue();
         bindComboBox(
                 engineComboBox,
                 SettingsKeys.WEBVIEW_ENGINE,
@@ -416,9 +422,23 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     private void handleWebViewEngineApplied(JComboBox<String> engineComboBox, String selectedValue) {
         WebViewEngine selectedEngine = WebViewEngine.fromSettingValue(selectedValue, runtimeStatus.configuredEngine());
-        refreshRestartHint(selectedEngine.settingValue());
+        String selectedEngineValue = selectedEngine.settingValue();
+
+        if (restoringWebViewEngineSelection) {
+            currentWebViewEngineSettingValue = selectedEngineValue;
+            refreshRestartHint(selectedEngineValue);
+            setStatusInfo(STATUS_SAVED);
+            return;
+        }
+
+        String previousValue = StringUtils.defaultIfBlank(
+                currentWebViewEngineSettingValue,
+                runtimeStatus.configuredEngine().settingValue()
+        );
+        refreshRestartHint(selectedEngineValue);
 
         if (selectedEngine == runtimeStatus.activeEngine()) {
+            currentWebViewEngineSettingValue = selectedEngineValue;
             setStatusInfo(STATUS_SAVED);
             return;
         }
@@ -426,16 +446,28 @@ public class AppearancePanel extends AbstractSettingsPanel {
         setStatusInfo("Saved — restart Chat4J to apply");
         RestartRequiredDialog.Choice choice = showWebViewEngineChangePrompt(selectedEngine);
         if (choice == RestartRequiredDialog.Choice.EXIT_NOW) {
+            currentWebViewEngineSettingValue = selectedEngineValue;
             exitAction.run();
             return;
         }
         if (choice == RestartRequiredDialog.Choice.CANCEL) {
-            String activeValue = runtimeStatus.activeEngine().settingValue();
-            writeSetting(SettingsKeys.WEBVIEW_ENGINE, activeValue);
-            engineComboBox.setSelectedItem(activeValue);
-            refreshRestartHint(activeValue);
-            setStatusInfo(STATUS_SAVED);
+            restoreWebViewEngineSelection(engineComboBox, previousValue);
+            return;
         }
+        currentWebViewEngineSettingValue = selectedEngineValue;
+    }
+
+    private void restoreWebViewEngineSelection(JComboBox<String> engineComboBox, String value) {
+        writeSetting(SettingsKeys.WEBVIEW_ENGINE, value);
+        restoringWebViewEngineSelection = true;
+        try {
+            engineComboBox.setSelectedItem(value);
+        } finally {
+            restoringWebViewEngineSelection = false;
+        }
+        currentWebViewEngineSettingValue = value;
+        refreshRestartHint(value);
+        setStatusInfo(STATUS_SAVED);
     }
 
     private RestartRequiredDialog.Choice showWebViewEngineChangePrompt(WebViewEngine selectedEngine) {
