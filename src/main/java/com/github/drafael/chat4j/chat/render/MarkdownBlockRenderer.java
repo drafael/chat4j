@@ -338,10 +338,18 @@ final class MarkdownBlockRenderer {
         if (index + 1 < text.length() && text.charAt(index + 1) == '$') {
             return findDollarMathClose(text, index + 2, true) >= 0 ? 2 : 0;
         }
-        if (index + 1 >= text.length() || Character.isDigit(text.charAt(index + 1)) || text.charAt(index + 1) == '.' || text.charAt(index + 1) == ',') {
+        if (index + 1 >= text.length() || text.charAt(index + 1) == '.' || text.charAt(index + 1) == ',') {
             return 0;
         }
-        return findDollarMathClose(text, index + 1, false) >= 0 ? 1 : 0;
+        int close = findDollarMathClose(text, index + 1, false);
+        if (close < 0) {
+            return 0;
+        }
+        if (Character.isDigit(text.charAt(index + 1))
+                && !MarkdownMathHeuristics.isNumericLeadingMathContent(text.substring(index + 1, close))) {
+            return 0;
+        }
+        return 1;
     }
 
     private static int findDollarMathClose(String text, int start, boolean display) {

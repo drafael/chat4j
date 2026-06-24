@@ -98,6 +98,24 @@ class MessageHtmlRendererTest {
     }
 
     @Test
+    @DisplayName("Preview mode keeps numeric formula ranges in table cells detectable for WebView math rendering")
+    void render_whenTableCellContainsNumericFormulaRange_preservesLatexFallbackClass() {
+        String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """
+                | Step | Duration |
+                | --- | --- |
+                | Rest | $10-15$ minutes |
+                """, false);
+
+        var document = Jsoup.parse(html);
+        var dataRowCells = document.select("table.md-table tr").get(1).select("td");
+        var durationCell = dataRowCells.get(1);
+
+        assertThat(dataRowCells).hasSize(2);
+        assertThat(durationCell.select("code.md-latex-inline")).hasSize(1);
+        assertThat(durationCell.text()).contains("$10-15$ minutes");
+    }
+
+    @Test
     @DisplayName("Preview mode keeps formulas in table cells detectable for WebView math rendering")
     void render_whenTableCellContainsFormula_preservesLatexFallbackClass() {
         String html = subject.render(Role.ASSISTANT, RenderMode.PREVIEW, """

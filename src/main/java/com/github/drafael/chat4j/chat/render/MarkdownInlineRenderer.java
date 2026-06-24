@@ -37,8 +37,8 @@ final class MarkdownInlineRenderer {
         String rendered = applyInlineFormatting(mathExtraction.text());
 
         rendered = restoreMarkdownLinks(rendered, linkExtraction.linkSegments());
-        rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2, palette);
-        rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1, palette);
+        rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2);
+        rendered = renderAnchors(rendered, AUTO_LINK_PATTERN, 1, 1);
         rendered = restoreMathSegments(rendered, mathExtraction.mathSegments(), palette);
 
         return restoreInlineCode(rendered, codeExtraction.codeSegments(), palette);
@@ -132,16 +132,10 @@ final class MarkdownInlineRenderer {
 
             rendered.append(text, index, open);
             boolean display = open + 1 < text.length() && text.charAt(open + 1) == '$';
-            if (!display && isLikelyCurrencyOrPunctuationMath(text, open)) {
-                rendered.append(text.charAt(open));
-                index = open + 1;
-                continue;
-            }
-
             String delimiter = display ? "$$" : "$";
             int contentStart = open + delimiter.length();
             int close = findDollarMathClose(text, contentStart, display);
-            if (close < 0) {
+            if (close < 0 || (!display && isLikelyCurrencyOrPunctuationMath(text, open, contentStart, close))) {
                 rendered.append(text.charAt(open));
                 index = open + 1;
                 continue;
@@ -200,12 +194,18 @@ final class MarkdownInlineRenderer {
         return slashCount % 2 == 1;
     }
 
-    private static boolean isLikelyCurrencyOrPunctuationMath(String text, int dollarIndex) {
+    private static boolean isLikelyCurrencyOrPunctuationMath(String text, int dollarIndex, int contentStart, int close) {
         if (dollarIndex + 1 >= text.length()) {
             return true;
         }
         char next = text.charAt(dollarIndex + 1);
-        return next == '$' || Character.isDigit(next) || next == '.' || next == ',';
+        if (next == '$' || next == '.' || next == ',') {
+            return true;
+        }
+        if (!Character.isDigit(next)) {
+            return false;
+        }
+        return !MarkdownMathHeuristics.isNumericLeadingMathContent(text.substring(contentStart, close));
     }
 
     private static String restoreMathSegments(String text, List<String> mathSegments, Palette palette) {
@@ -219,7 +219,7 @@ final class MarkdownInlineRenderer {
         });
     }
 
-    private static String renderAnchors(String text, Pattern pattern, int labelGroup, int hrefGroup, Palette palette) {
+    private static String renderAnchors(String text, Pattern pattern, int labelGroup, int hrefGroup) {
         return pattern.matcher(text).replaceAll(matchResult -> {
             String label = matchResult.group(labelGroup);
             String href = matchResult.group(hrefGroup);
@@ -227,14 +227,10 @@ final class MarkdownInlineRenderer {
                 href = matchResult.group(hrefGroup + 1);
             }
             String renderedLabel = label.matches("\\d+")
-                    ? sourceReferenceHtml(label, palette)
+                    ? "[%s]".formatted(label)
                     : unescapeLinkLabel(label);
             return Matcher.quoteReplacement("<a href=\"%s\">%s</a>".formatted(href, renderedLabel));
         });
-    }
-
-    private static String sourceReferenceHtml(String label, Palette palette) {
-        return "[%s]".formatted(label);
     }
 
     private static String unescapeLinkLabel(String label) {

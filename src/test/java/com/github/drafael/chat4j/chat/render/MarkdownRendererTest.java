@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.render;
 
+import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -179,6 +180,41 @@ class MarkdownRendererTest {
                 .contains("$24.7 billion in 2025 to $45.8 billion")
                 .doesNotContain("chat4j-math-inline")
                 .doesNotContain("md-latex-inline");
+    }
+
+    @Test
+    @DisplayName("Currency phrases with plus signs do not render as inline LaTeX")
+    void toHtml_whenCurrencyTextContainsPlusSign_keepsCurrencyTextReadable() {
+        String body = renderBody("It costs $5 + tax today and $7 tomorrow.");
+
+        assertThat(body)
+                .contains("It costs $5 + tax today and $7 tomorrow.")
+                .doesNotContain("chat4j-math-inline")
+                .doesNotContain("md-latex-inline");
+    }
+
+    @Test
+    @DisplayName("Repeated-dollar currency ranges do not render as inline LaTeX")
+    void toHtml_whenCurrencyRangeRepeatsDollarSign_keepsCurrencyTextReadable() {
+        String body = renderBody("It costs $5 - $7 today, or $5-$7 without spaces.");
+
+        assertThat(body)
+                .contains("It costs $5 - $7 today, or $5-$7 without spaces.")
+                .doesNotContain("chat4j-math-inline")
+                .doesNotContain("md-latex-inline");
+    }
+
+    @Test
+    @DisplayName("Numeric LaTeX units and ranges render as inline math fallbacks")
+    void toHtml_whenMarkdownContainsNumericLatexUnitsAndRanges_rendersInlineCodeFallbacks() {
+        String body = renderBody("Use $10\\text{g}$ of salt, (about $1-2\\text{g}$), for about $10-15$ minutes.");
+        var document = Jsoup.parseBodyFragment(body);
+
+        assertThat(document.select("code.md-latex-inline")).hasSize(3);
+        assertThat(body)
+                .contains("$10\\text{g}$")
+                .contains("$1-2\\text{g}$")
+                .contains("$10-15$");
     }
 
     @Test

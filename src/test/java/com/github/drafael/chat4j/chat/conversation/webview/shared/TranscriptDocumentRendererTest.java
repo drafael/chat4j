@@ -127,6 +127,23 @@ class TranscriptDocumentRendererTest {
     }
 
     @Test
+    @DisplayName("Numeric inline math is server-rendered before WebView load")
+    void renderMathFallbacks_whenNumericInlineMathIsRendered_replacesFallbackNodes() {
+        String rendered = new MessageHtmlRenderer().render(
+                Role.ASSISTANT,
+                RenderMode.PREVIEW,
+                "Use $10\\text{g}$ of salt, about $1-2\\text{g}$, for $10-15$ minutes.",
+                false
+        );
+        var document = Jsoup.parse(rendered);
+
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
+
+        assertThat(document.select("code.md-latex-inline")).isEmpty();
+        assertThat(document.select(".chat4j-math-inline .katex")).hasSize(3);
+    }
+
+    @Test
     @DisplayName("Math fallback rendering handles nested-dollar text formulas")
     void renderMathFallbacks_whenInlineMathContainsNestedTextDollars_replacesFallbackNode() {
         var document = Jsoup.parse("""
