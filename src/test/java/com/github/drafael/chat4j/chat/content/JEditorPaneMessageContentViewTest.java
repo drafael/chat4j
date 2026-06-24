@@ -146,6 +146,30 @@ class JEditorPaneMessageContentViewTest {
     }
 
     @Test
+    @DisplayName("Swing content view renders LaTeX fallbacks as readable text")
+    void setHtml_whenContentContainsLatexFallbacks_replacesRawLatexCodeChips() {
+        JEditorPaneMessageContentView subject = new JEditorPaneMessageContentView(Role.ASSISTANT, () -> Integer.MAX_VALUE);
+        String html = new MessageHtmlRenderer().render(
+                Role.ASSISTANT,
+                RenderMode.PREVIEW,
+                "Iodine ($I_2$) and Water ($H_2O$). Place $10\\text{g}$ of salt (about $1-2\\text{g}$) for about $10-15$ minutes.",
+                false
+        );
+
+        subject.setHtml(html);
+
+        assertThat(subject.htmlSnapshot())
+                .doesNotContain("$10\\text{g}$")
+                .doesNotContain("$1-2\\text{g}$")
+                .doesNotContain("$10-15$");
+        assertThat(subject.textSnapshot())
+                .contains("Iodine (I2) and Water (H2O).")
+                .contains("Place 10g of salt")
+                .contains("about 1−2g")
+                .contains("about 10−15 minutes");
+    }
+
+    @Test
     @DisplayName("Swing content view marks itself disposed and clears popup menu")
     void dispose_whenCalled_marksDisposedAndClearsPopupMenu() {
         JEditorPaneMessageContentView subject = new JEditorPaneMessageContentView(Role.ASSISTANT, () -> Integer.MAX_VALUE);

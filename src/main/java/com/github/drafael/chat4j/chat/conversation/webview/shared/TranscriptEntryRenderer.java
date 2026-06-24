@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
 import com.github.drafael.chat4j.chat.content.HighlightJsCodeRenderer;
 import com.github.drafael.chat4j.chat.content.KatexMathRenderer;
+import com.github.drafael.chat4j.chat.content.MathFallbackTextRenderer;
 import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
@@ -227,11 +228,17 @@ public final class TranscriptEntryRenderer {
 
     public static void renderMathFallbacks(Document document) {
         document.select("code.md-latex-inline").forEach(code ->
-                KATEX_RENDERER.render(code.text(), false).ifPresent(html -> {
+                KATEX_RENDERER.render(code.text(), false).ifPresentOrElse(html -> {
                     Element replacement = new Element("span")
                             .addClass("chat4j-math-inline")
                             .attr("data-chat4j-math-rendered", "server");
                     replacement.html(html);
+                    code.replaceWith(replacement);
+                }, () -> {
+                    Element replacement = new Element("span")
+                            .addClass("chat4j-math-text-fallback")
+                            .attr("data-chat4j-math-rendered", "text-fallback");
+                    replacement.text(MathFallbackTextRenderer.readableText(code.text(), false));
                     code.replaceWith(replacement);
                 })
         );
@@ -241,11 +248,17 @@ public final class TranscriptEntryRenderer {
             if (pre == null) {
                 return;
             }
-            KATEX_RENDERER.render(pre.text(), true).ifPresent(html -> {
+            KATEX_RENDERER.render(pre.text(), true).ifPresentOrElse(html -> {
                 Element replacement = new Element("div")
                         .addClass("chat4j-math-display")
                         .attr("data-chat4j-math-rendered", "server");
                 replacement.html(html);
+                table.replaceWith(replacement);
+            }, () -> {
+                Element replacement = new Element("div")
+                        .addClass("chat4j-math-display chat4j-math-text-fallback")
+                        .attr("data-chat4j-math-rendered", "text-fallback");
+                replacement.text(MathFallbackTextRenderer.readableText(pre.text(), true));
                 table.replaceWith(replacement);
             });
         });

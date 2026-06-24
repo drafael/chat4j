@@ -160,6 +160,24 @@ class TranscriptDocumentRendererTest {
     }
 
     @Test
+    @DisplayName("Unrenderable math fallbacks become readable text instead of raw LaTeX chips")
+    void renderMathFallbacks_whenKatexCannotRender_replacesFallbackNodesWithReadableText() {
+        var document = Jsoup.parse("""
+                <html><body>
+                  <p>Unknown inline <code class=\"md-latex-inline\">$\\bad{value$</code>.</p>
+                  <table class=\"md-code-block md-latex-block\"><tr><td><pre>\\bad{display</pre></td></tr></table>
+                </body></html>
+                """);
+
+        TranscriptDocumentRenderer.renderMathFallbacks(document);
+
+        assertThat(document.select("code.md-latex-inline")).isEmpty();
+        assertThat(document.select("table.md-latex-block")).isEmpty();
+        assertThat(document.select("[data-chat4j-math-rendered=text-fallback]")).hasSize(2);
+        assertThat(document.text()).contains("value", "display").doesNotContain("$\\bad{value$");
+    }
+
+    @Test
     @DisplayName("Math fallback rendering handles display arrays with lenient KaTeX strict mode")
     void renderMathFallbacks_whenDisplayArrayHasLooseColumnSpec_replacesFallbackNode() {
         var document = Jsoup.parse("""

@@ -49,7 +49,7 @@ public final class JEditorPaneMessageContentView implements MessageContentView {
 
     @Override
     public void setHtml(String html) {
-        editorPane.setText(StringUtils.defaultString(html));
+        editorPane.setText(MathFallbackTextRenderer.replaceFallbackNodesWithReadableText(html));
     }
 
     @Override

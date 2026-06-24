@@ -1,6 +1,7 @@
                     .message .chat4j-math-inline { display: inline-block; max-width: none; overflow: visible; vertical-align: -0.12em; line-height: 1.2; }
                     .message .chat4j-math-inline::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
                     .message .chat4j-math-inline .katex { font-size: 1.04em; }
+                    .message .chat4j-math-text-fallback { font-family: var(--chat4j-base-font-family); font-style: normal; }
                     .message .chat4j-math-display { display: block; box-sizing: border-box; width: 100%; margin: 10px 0 16px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0 4px 0; scrollbar-color: var(--chat4j-scrollbar-thumb) var(--chat4j-scrollbar-track); }
                     .message .chat4j-math-display .katex-display { margin: 0; }
                     .message .chat4j-math-display .katex { text-align: left; }
