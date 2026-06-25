@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.content;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -15,6 +16,7 @@ import java.util.regex.Pattern;
 
 import static java.util.Collections.synchronizedMap;
 
+@Slf4j
 public final class HighlightJsCodeRenderer {
 
     private static final HighlightJsCodeRenderer INSTANCE = new HighlightJsCodeRenderer();
@@ -112,6 +114,7 @@ public final class HighlightJsCodeRenderer {
                 return StringUtils.isBlank(html) ? Optional.empty() : Optional.of(html);
             } catch (Throwable t) {
                 if (!(t instanceof PolyglotException)) {
+                    log.warn("Highlight.js server-side rendering is unavailable: {}", t.toString());
                     unavailable = true;
                     closeContext();
                 }

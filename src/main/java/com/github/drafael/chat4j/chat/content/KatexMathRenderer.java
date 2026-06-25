@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.content;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.PolyglotException;
@@ -13,6 +14,7 @@ import java.util.Optional;
 
 import static java.util.Collections.synchronizedMap;
 
+@Slf4j
 public final class KatexMathRenderer {
 
     private static final KatexMathRenderer INSTANCE = new KatexMathRenderer();
@@ -79,6 +81,7 @@ public final class KatexMathRenderer {
                 return Optional.empty();
             } catch (Throwable t) {
                 if (!(t instanceof PolyglotException)) {
+                    log.warn("KaTeX server-side rendering is unavailable: {}", t.toString());
                     unavailable = true;
                     closeContext();
                 }
