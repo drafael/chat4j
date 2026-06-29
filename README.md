@@ -97,13 +97,13 @@ mvn -Pcoverage verify
 mvn -Psbom verify
 
 # Run OWASP Dependency-Check; fails on CVSS 7+
-mvn -Pdependency-audit verify
+NVD_API_KEY=your-nvd-api-key mvn -Pdependency-audit verify
 
 # Check available dependency/plugin updates
 mvn versions:display-dependency-updates versions:display-plugin-updates
 ```
 
-Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Actions updates. The scheduled Security Audit workflow runs OWASP Dependency-Check weekly and uploads HTML/JSON reports.
+Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Actions updates. The scheduled Security Audit workflow runs OWASP Dependency-Check weekly and uploads HTML/JSON reports. Configure a repository secret named `NVD_API_KEY` to avoid public NVD API rate limits during vulnerability data updates.
 
 ## What it does
 

@@ -37,6 +37,8 @@ jobs:
             dependency-check-data-${{ runner.os }}-
 
       - name: Run dependency audit
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: mvn -B -ntp -Pdependency-audit verify
 
       - name: Upload dependency audit reports

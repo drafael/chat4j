@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.6.55</version>
+    <version>26.6.56</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -35,6 +35,8 @@
         <flyway.version>11.8.2</flyway.version>
         <cyclonedx.maven.plugin.version>2.9.1</cyclonedx.maven.plugin.version>
         <dependency-check.maven.version>12.2.2</dependency-check.maven.version>
+        <dependency-check.nvd.valid-for-hours>24</dependency-check.nvd.valid-for-hours>
+        <dependency-check.nvd.max-retry-count>10</dependency-check.nvd.max-retry-count>
         <versions.maven.plugin.version>2.21.0</versions.maven.plugin.version>
         <jacoco.maven.plugin.version>0.8.12</jacoco.maven.plugin.version>
         <jacoco.argLine></jacoco.argLine>
@@ -537,6 +539,10 @@
                         </executions>
                         <configuration>
                             <failBuildOnCVSS>7</failBuildOnCVSS>
+                            <dataDirectory>${user.home}/.m2/repository/org/owasp/dependency-check-data</dataDirectory>
+                            <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                            <nvdMaxRetryCount>${dependency-check.nvd.max-retry-count}</nvdMaxRetryCount>
+                            <nvdValidForHours>${dependency-check.nvd.valid-for-hours}</nvdValidForHours>
                             <formats>
                                 <format>HTML</format>
                                 <format>JSON</format>
