@@ -165,7 +165,7 @@ import static java.util.stream.Collectors.toMap;
 @Slf4j
 public class MainFrame extends JFrame {
     private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
-    private static final int EMPTY_STATE_PROMPT_ACTION_LIMIT = 4;
+    private static final int EMPTY_STATE_PROMPT_ACTION_LIMIT = 7;
 
     private final ChatPanel chatPanel;
     private final SidebarPanel sidebarPanel;
