@@ -42,7 +42,7 @@ Missing, unknown, or obsolete saved values are treated as the platform default r
 
 ## JCEF implementation notes
 
-JCEF support uses native/windowed rendering. `JcefRuntime` initializes CEF once, applies reduced-background-networking flags, and keeps DevTools behind `-Dchat4j.jcef.devtools=true`. `JcefBrowserView` serves generated HTML from a controlled in-memory `https://chat4j.local/...` resource and blocks in-browser navigation.
+JCEF support uses native/windowed rendering. `JcefRuntime` initializes CEF once, applies reduced-background-networking flags, and keeps DevTools behind `-Dchat4j.jcef.devtools=true`. `JcefBrowserView` serves generated HTML from a controlled in-memory `https://chat4j.local/...` resource, blocks in-browser navigation, and waits for main-frame load completion before applying transcript DOM updates.
 
 At startup, `JcefStartupInitializer` initializes JCEF only when the configured/default fallback chain may need Chromium. A non-cancelable `Preparing Chromium` dialog displays `jcefmaven` download, extraction, install, and initialization progress. If availability was already resolved in the JVM, startup skips the dialog.
 

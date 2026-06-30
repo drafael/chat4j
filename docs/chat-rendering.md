@@ -172,6 +172,7 @@ Runtime behavior:
 - Native/windowed rendering is the supported path; OSR/windowless remains experimental.
 - Conversation HTML is served through an in-memory `https://chat4j.local/...` resource handler.
 - The response declares UTF-8 and supplementary Unicode code points are encoded as numeric entities before loading.
+- Transcript updates wait for main-frame load completion before touching the DOM, which avoids stale updates during streaming and conversation switches.
 - In-browser navigation is blocked; safe links open externally through `ExternalLinkSupport`.
 - DevTools/remote debugging is opt-in with `-Dchat4j.jcef.devtools=true`.
 - Native runtime files are extracted through `me.friwi:jcefmaven` into `~/.chat4j/jcef-bundle` by default, or `-Dchat4j.jcef.installDir=...`.

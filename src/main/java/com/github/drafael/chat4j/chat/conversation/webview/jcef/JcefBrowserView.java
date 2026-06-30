@@ -38,6 +38,8 @@ import org.cef.browser.CefFrame;
 import org.cef.browser.CefMessageRouter;
 import org.cef.callback.CefQueryCallback;
 import org.cef.callback.CefResourceReadCallback;
+import org.cef.handler.CefLoadHandler;
+import org.cef.handler.CefLoadHandlerAdapter;
 import org.cef.handler.CefMessageRouterHandlerAdapter;
 import org.cef.handler.CefRequestHandlerAdapter;
 import org.cef.handler.CefResourceHandlerAdapter;
@@ -75,6 +77,10 @@ public final class JcefBrowserView {
     private DocumentUrl pendingDocumentUrl;
     private long pendingDocumentRequestId;
     private boolean pendingDocumentScrollToBottom;
+    private long loadingDocumentRequestId;
+    private boolean loadingDocumentScrollToBottom;
+    private String loadingDocumentUrl = "";
+    private String currentDocumentUrl = "";
     private Path currentDocumentPath;
     private boolean disposed;
     @Setter
@@ -116,9 +122,6 @@ public final class JcefBrowserView {
             return;
         }
         if (documentLoadPending) {
-            if (jumpButtonChanged) {
-                reload(scrollToBottom);
-            }
             return;
         }
         if (!documentInitialized) {
@@ -185,7 +188,7 @@ public final class JcefBrowserView {
 
     private void applyDocumentUrl(long requestId, DocumentUrl documentUrl, boolean scrollToBottom) {
         if (disposed || requestId != renderRequestCounter.get()) {
-            documentUrl.deleteFile();
+            removeDocumentUrl(documentUrl);
             return;
         }
         if (!isBrowserPanelReadyForDocumentLoad()) {
@@ -196,11 +199,18 @@ public final class JcefBrowserView {
         pendingDocumentUrl = null;
         pendingDocumentRequestId = 0L;
         pendingDocumentScrollToBottom = false;
-        loadUrl(documentUrl.url());
+        documentInitialized = false;
+        documentLoadPending = true;
+        loadingDocumentRequestId = requestId;
+        loadingDocumentScrollToBottom = scrollToBottom;
+        loadingDocumentUrl = documentUrl.url();
+        if (!loadUrl(documentUrl.url())) {
+            clearLoadingDocumentState(requestId, documentUrl.url());
+            removeDocumentUrl(documentUrl);
+            return;
+        }
+        replaceCurrentDocumentUrl(documentUrl.url());
         replaceCurrentDocumentPath(documentUrl.path());
-        documentInitialized = true;
-        documentLoadPending = false;
-        schedulePostReloadTranscriptUpdate(requestId, scrollToBottom);
     }
 
     private void applyPendingDocumentUrl() {
@@ -223,11 +233,27 @@ public final class JcefBrowserView {
 
     private void deletePendingDocumentUrl() {
         if (pendingDocumentUrl != null) {
-            pendingDocumentUrl.deleteFile();
+            removeDocumentUrl(pendingDocumentUrl);
         }
         pendingDocumentUrl = null;
         pendingDocumentRequestId = 0L;
         pendingDocumentScrollToBottom = false;
+    }
+
+    private void removeDocumentUrl(DocumentUrl documentUrl) {
+        if (documentUrl == null) {
+            return;
+        }
+        htmlByUrl.remove(documentUrl.url());
+        documentUrl.deleteFile();
+    }
+
+    private void replaceCurrentDocumentUrl(String nextUrl) {
+        String previousUrl = currentDocumentUrl;
+        currentDocumentUrl = StringUtils.defaultString(nextUrl);
+        if (StringUtils.isNotBlank(previousUrl) && !Strings.CS.equals(previousUrl, currentDocumentUrl)) {
+            htmlByUrl.remove(previousUrl);
+        }
     }
 
     private void replaceCurrentDocumentPath(Path nextPath) {
@@ -241,15 +267,40 @@ public final class JcefBrowserView {
         }
     }
 
-    private void schedulePostReloadTranscriptUpdate(long reloadRequestId, boolean scrollToBottom) {
-        Timer timer = new Timer(150, event -> {
-            if (disposed || reloadRequestId != renderRequestCounter.get() || !documentInitialized) {
-                return;
-            }
-            scheduleTranscriptHtmlUpdate(scrollToBottom, transcriptRenderSnapshot());
-        });
-        timer.setRepeats(false);
-        timer.start();
+    private void handleDocumentLoadEnd(String loadedUrl) {
+        if (disposed || !isActiveLoadingDocument(loadedUrl)) {
+            return;
+        }
+        long requestId = loadingDocumentRequestId;
+        boolean scrollToBottom = loadingDocumentScrollToBottom;
+        clearLoadingDocumentState(requestId, loadedUrl);
+        documentInitialized = true;
+        documentLoadPending = false;
+        scheduleTranscriptHtmlUpdate(scrollToBottom, transcriptRenderSnapshot());
+    }
+
+    private void handleDocumentLoadError(String failedUrl) {
+        if (disposed || !isActiveLoadingDocument(failedUrl)) {
+            return;
+        }
+        clearLoadingDocumentState(loadingDocumentRequestId, failedUrl);
+        documentInitialized = false;
+        documentLoadPending = false;
+    }
+
+    private boolean isActiveLoadingDocument(String url) {
+        return loadingDocumentRequestId == renderRequestCounter.get()
+                && StringUtils.isNotBlank(loadingDocumentUrl)
+                && Strings.CS.equals(loadingDocumentUrl, url);
+    }
+
+    private void clearLoadingDocumentState(long requestId, String url) {
+        if (loadingDocumentRequestId != requestId || !Strings.CS.equals(loadingDocumentUrl, url)) {
+            return;
+        }
+        loadingDocumentRequestId = 0L;
+        loadingDocumentScrollToBottom = false;
+        loadingDocumentUrl = "";
     }
 
     private void scheduleTranscriptHtmlUpdate(boolean scrollToBottom, TranscriptRenderSnapshot snapshot) {
@@ -320,7 +371,16 @@ public final class JcefBrowserView {
         return null;
     }
 
-    private boolean isInternalUrl(String url) {
+    static NavigationDecision navigationDecision(String url, boolean userGesture) {
+        if (isInternalUrl(url)) {
+            return userGesture ? NavigationDecision.BLOCK : NavigationDecision.ALLOW;
+        }
+        return userGesture && ExternalLinkSupport.isAllowedExternalLink(url)
+                ? NavigationDecision.OPEN_EXTERNAL
+                : NavigationDecision.BLOCK;
+    }
+
+    private static boolean isInternalUrl(String url) {
         try {
             URI uri = new URI(StringUtils.defaultString(url));
             return Strings.CI.equals(uri.getScheme(), "https") && Strings.CI.equals(uri.getHost(), "chat4j.local");
@@ -353,22 +413,27 @@ public final class JcefBrowserView {
                 """;
     }
 
-    private void loadUrl(String url) {
-        ensureBrowser(url);
-        if (browser != null) {
+    private boolean loadUrl(String url) {
+        boolean createdBrowser = ensureBrowser(url);
+        if (browser == null) {
+            return false;
+        }
+        if (!createdBrowser) {
             browser.loadURL(url);
         }
+        return true;
     }
 
-    private void ensureBrowser(String initialUrl) {
+    private boolean ensureBrowser(String initialUrl) {
         if (browser != null || disposed) {
-            return;
+            return false;
         }
         try {
             cefClient = JcefRuntime.getInstance().createClient();
             messageRouter = createMessageRouter();
             cefClient.addMessageRouter(messageRouter);
             cefClient.addRequestHandler(new TranscriptRequestHandler());
+            cefClient.addLoadHandler(new TranscriptLoadHandler());
             browser = cefClient.createBrowser(initialUrl, false, false);
             Component browserComponent = browser.getUIComponent();
             browserComponent.setPreferredSize(new Dimension(800, 600));
@@ -378,11 +443,13 @@ public final class JcefBrowserView {
             browserPanel.revalidate();
             browserPanel.repaint();
             repairBrowserLayout();
+            return true;
         } catch (Throwable t) {
             browserPanel.removeAll();
             browserPanel.add(new JLabel("JCEF transcript failed to start", SwingConstants.CENTER), BorderLayout.CENTER);
             browserPanel.revalidate();
             browserPanel.repaint();
+            return false;
         }
     }
 
@@ -494,8 +561,16 @@ public final class JcefBrowserView {
         } catch (Exception ignored) {
             // Native browser shutdown can be noisy; app shutdown owns final process cleanup.
         } finally {
+            currentDocumentUrl = "";
             htmlByUrl.clear();
         }
+    }
+
+
+    enum NavigationDecision {
+        ALLOW,
+        BLOCK,
+        OPEN_EXTERNAL
     }
 
 
@@ -513,25 +588,39 @@ public final class JcefBrowserView {
     }
 
 
+    private final class TranscriptLoadHandler extends CefLoadHandlerAdapter {
+        @Override
+        public void onLoadEnd(CefBrowser browser, CefFrame frame, int httpStatusCode) {
+            if (frame == null || !frame.isMain()) {
+                return;
+            }
+            String loadedUrl = frame.getURL();
+            SwingUtilities.invokeLater(() -> handleDocumentLoadEnd(loadedUrl));
+        }
+
+        @Override
+        public void onLoadError(CefBrowser browser, CefFrame frame, CefLoadHandler.ErrorCode errorCode, String errorText, String failedUrl) {
+            if (frame == null || !frame.isMain()) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> handleDocumentLoadError(failedUrl));
+        }
+    }
+
     private final class TranscriptRequestHandler extends CefRequestHandlerAdapter {
         @Override
         public boolean onBeforeBrowse(CefBrowser browser, CefFrame frame, CefRequest request, boolean userGesture, boolean isRedirect) {
             String url = request == null ? "" : request.getURL();
-            if (!userGesture) {
-                return false;
-            }
-            if (isInternalUrl(url)) {
-                return true;
-            }
-            if (StringUtils.isNotBlank(url)) {
+            NavigationDecision decision = navigationDecision(url, userGesture);
+            if (decision == NavigationDecision.OPEN_EXTERNAL) {
                 ExternalLinkSupport.openExternalLink(url);
             }
-            return true;
+            return decision != NavigationDecision.ALLOW;
         }
 
         @Override
         public boolean onOpenURLFromTab(CefBrowser browser, CefFrame frame, String targetUrl, boolean userGesture) {
-            if (userGesture && StringUtils.isNotBlank(targetUrl)) {
+            if (navigationDecision(targetUrl, userGesture) == NavigationDecision.OPEN_EXTERNAL) {
                 ExternalLinkSupport.openExternalLink(targetUrl);
             }
             return true;
