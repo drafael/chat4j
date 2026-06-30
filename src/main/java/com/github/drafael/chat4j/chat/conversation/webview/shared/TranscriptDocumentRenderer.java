@@ -120,10 +120,10 @@ public final class TranscriptDocumentRenderer {
                   --chat4j-scrollbar-track: %s;
                   --chat4j-scrollbar-thumb: %s;
                   --chat4j-scrollbar-hover-thumb: %s;
-                  --chat4j-source-chip-bg: %s;
-                  --chat4j-source-chip-border: %s;
-                  --chat4j-source-chip-text: %s;
-                  --chat4j-source-chip-hover-bg: %s;
+                  --chat4j-source-citation-bg: %s;
+                  --chat4j-source-citation-border: %s;
+                  --chat4j-source-citation-text: %s;
+                  --chat4j-source-citation-hover-bg: %s;
                   --chat4j-mermaid-canvas-bg: var(--chat4j-code-bg);
                   --chat4j-mermaid-primary-bg: var(--chat4j-menu-bg);
                   --chat4j-mermaid-secondary-bg: var(--chat4j-inline-code-bg);
@@ -172,10 +172,10 @@ public final class TranscriptDocumentRenderer {
                 chrome.scrollbarTrack(),
                 chrome.scrollbarThumb(),
                 chrome.scrollbarHoverThumb(),
-                chrome.sourceChipBackground(),
-                chrome.sourceChipBorder(),
-                chrome.sourceChipText(),
-                chrome.sourceChipHoverBackground(),
+                chrome.sourceCitationBackground(),
+                chrome.sourceCitationBorder(),
+                chrome.sourceCitationText(),
+                chrome.sourceCitationHoverBackground(),
                 chrome.jumpRing(),
                 chrome.jumpRingTrack(),
                 snapshot.jumpButtonVisible() ? "flex" : "none",

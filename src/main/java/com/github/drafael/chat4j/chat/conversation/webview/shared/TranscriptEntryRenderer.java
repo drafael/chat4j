@@ -24,13 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
-import static com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptResources.iconDataUri;
 import static java.util.stream.Collectors.joining;
 
 public final class TranscriptEntryRenderer {
 
-    private static final String COPY_ICON = iconDataUri("/icons/input/copy.svg");
-    private static final String REGENERATE_ICON = iconDataUri("/icons/chat/refresh-cw.svg");
     private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
     private static final HighlightJsCodeRenderer HIGHLIGHT_RENDERER = HighlightJsCodeRenderer.instance();
 
@@ -82,7 +79,7 @@ public final class TranscriptEntryRenderer {
         if (entry.kind() == ConversationEntryKind.ACTIVITY) {
             String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), snapshot);
             Document activityDocument = Jsoup.parse(renderedActivity);
-            prepareRenderedDocument(activityDocument, false);
+            prepareRenderedDocument(activityDocument);
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
             String content = StringUtils.isBlank(entry.text())
                     ? ""
@@ -102,7 +99,7 @@ public final class TranscriptEntryRenderer {
                 ? renderEntryContentHtml(entry.role(), entry.text(), snapshot)
                 : messageHtmlRenderer.render(entry.role(), snapshot.renderMode(), entry.parts(), snapshot.dark(), snapshot.palette());
         Document document = Jsoup.parse(rendered);
-        prepareRenderedDocument(document, false);
+        prepareRenderedDocument(document);
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
@@ -165,12 +162,12 @@ public final class TranscriptEntryRenderer {
         );
     }
 
-    private void prepareRenderedDocument(Document document, boolean replaceInlineCitationsWithChips) {
+    private void prepareRenderedDocument(Document document) {
         renderCodeHighlights(document);
         renderMathFallbacks(document);
         replaceGeneratedImageSources(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
-        annotateSourceLinks(document, replaceInlineCitationsWithChips);
+        annotateSourceLinks(document);
         removeAdjacentDuplicateSourceCitations(document);
         document.select("table.md-code-block").forEach(table -> {
             var rows = table.select("tr");
@@ -264,7 +261,7 @@ public final class TranscriptEntryRenderer {
         });
     }
 
-    private void annotateSourceLinks(Document document, boolean replaceInlineCitationsWithChips) {
+    private void annotateSourceLinks(Document document) {
         Map<String, SourcePreview> previewsByUrl = new LinkedHashMap<>();
         document.select("a[href]").stream()
                 .filter(anchor -> isHttpUrl(anchor.attr("href")))
@@ -278,12 +275,8 @@ public final class TranscriptEntryRenderer {
 
             anchor.addClass("source-link");
             if (isCitationAnchor(anchor)) {
-                if (replaceInlineCitationsWithChips && !isInsideSourcesList(anchor)) {
-                    applyInlineSourceChip(anchor, preview);
-                } else {
-                    anchor.addClass("source-citation");
-                    anchor.text(citationNumber(anchor.text()));
-                }
+                anchor.addClass("source-citation");
+                anchor.text(stripCitationBrackets(anchor.text()));
             }
             anchor.attr("data-source-title", preview.title());
             anchor.attr("data-source-domain", preview.domain());
@@ -325,35 +318,6 @@ public final class TranscriptEntryRenderer {
         }
     }
 
-    private boolean isInsideSourcesList(Element anchor) {
-        Element listItem = anchor.closest("li");
-        if (listItem == null || listItem.parent() == null) {
-            return false;
-        }
-        Element previous = listItem.parent().previousElementSibling();
-        if (previous == null) {
-            return false;
-        }
-        String heading = StringUtils.removeEnd(StringUtils.defaultString(previous.text()).trim(), ":");
-        return Strings.CI.equals(heading, "Sources");
-    }
-
-    private void applyInlineSourceChip(Element anchor, SourcePreview preview) {
-        anchor.removeClass("source-citation");
-        anchor.addClass("source-chip");
-        anchor.empty();
-        anchor.appendElement("span").addClass("source-chip-label").text(sourceChipLabel(preview.domain()));
-    }
-
-    private String sourceChipLabel(String domain) {
-        String value = StringUtils.defaultIfBlank(domain, "source");
-        String[] parts = value.split("\\.");
-        if (parts.length >= 2 && parts[parts.length - 1].length() <= 3) {
-            return parts[parts.length - 2];
-        }
-        return parts.length == 0 ? value : parts[0];
-    }
-
     private SourcePreview preferSourcePreview(SourcePreview existing, SourcePreview candidate) {
         boolean existingNumeric = isCitationText(existing.title());
         boolean candidateNumeric = isCitationText(candidate.title());
@@ -368,10 +332,6 @@ public final class TranscriptEntryRenderer {
 
     private boolean isCitationAnchor(Element anchor) {
         return isCitationText(anchor.text());
-    }
-
-    private String citationNumber(String text) {
-        return stripCitationBrackets(text);
     }
 
     private boolean isCitationText(String text) {
@@ -439,11 +399,5 @@ public final class TranscriptEntryRenderer {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
-    }
-
-    private static String escapeHtmlAttribute(String text) {
-        return escapeHtml(text)
-                .replace("\"", "&quot;")
-                .replace("'", "&#39;");
     }
 }
