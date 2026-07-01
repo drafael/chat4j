@@ -1,0 +1,42 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - duplicate
+      - invalid
+      - question
+      - wontfix
+  categories:
+    - title: Highlights
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Security
+      labels:
+        - security
+    - title: Dependencies
+      labels:
+        - dependencies
+        - dependency
+        - dependabot
+        - maven
+        - github-actions
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+    - title: Maintenance
+      labels:
+        - maintenance
+        - chore
+        - ci
+        - build
+        - refactor
+        - test
+    - title: Other Changes
+      labels:
+        - "*"
