@@ -20,7 +20,7 @@
         <flatlaf.version>3.7.1</flatlaf.version>
         <lombok.version>1.18.46</lombok.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
-        <commons-text.version>1.13.1</commons-text.version>
+        <commons-text.version>1.15.0</commons-text.version>
         <jackson.version>2.22.0</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.21.2</jsoup.version>
