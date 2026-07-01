@@ -90,6 +90,35 @@ Common failure causes:
 - Shell profile starts interactive tools (`tmux`, prompts, `ssh-agent`) and times out.
 - Gatekeeper/signing/quarantine failure occurs before the JVM starts; use `chat4j-doctor.sh`.
 
+## Anthropic live smoke check
+
+The Anthropic SDK/network path has an opt-in smoke utility under test sources. It is disabled during normal test runs and requires `ANTHROPIC_API_KEY` plus `-Dchat4j.smoke.anthropic=true`.
+
+JUnit smoke:
+
+```bash
+ANTHROPIC_API_KEY=sk-... mvn -s /tmp/chat4j-empty-settings.xml \
+  -Dchat4j.smoke.anthropic=true \
+  -Dtest=AnthropicChatCompletionClientSmokeTest \
+  test
+```
+
+CLI smoke:
+
+```bash
+ANTHROPIC_API_KEY=sk-... mvn -s /tmp/chat4j-empty-settings.xml -q \
+  -DskipTests \
+  test-compile dependency:build-classpath \
+  -Dmdep.outputFile=/tmp/chat4j-smoke-classpath.txt
+
+java --enable-preview \
+  -Dchat4j.smoke.anthropic=true \
+  -cp "target/test-classes:target/classes:$(cat /tmp/chat4j-smoke-classpath.txt)" \
+  com.github.drafael.chat4j.provider.capability.chat.impl.AnthropicSmokeMain
+```
+
+The runner lists available Anthropic models first, auto-selects an available Claude 4 model when no override is supplied, and exercises model listing, text streaming, system prompts, reasoning tokens, web search, image input, and cancellation cleanup. Override models with `chat4j.smoke.anthropic.model`, `chat4j.smoke.anthropic.reasoningModel`, `chat4j.smoke.anthropic.visionModel`, and `chat4j.smoke.anthropic.webSearchModel`.
+
 ## Logging
 
 Stack:

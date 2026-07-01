@@ -15,13 +15,12 @@ import com.anthropic.models.messages.WebSearchTool20250305;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
-import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
-import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import org.apache.commons.lang3.StringUtils;
@@ -33,6 +32,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+
 import static java.util.Collections.emptyList;
 
 public class AnthropicChatCompletionClient implements ChatCompletionClient {
