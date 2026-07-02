@@ -21,6 +21,10 @@ label.setFont(Fonts.of(Font.BOLD, 18));
 
 Rule: when manually setting fonts in Chat4J Swing code, use `com.github.drafael.chat4j.util.Fonts`.
 
+## Window placement
+
+Chat4J persists main-window bounds in the settings file, including monitor bounds/ID metadata when available. Restore is monitor-aware: it prefers the saved display, supports negative coordinates for external monitors, clamps oversized/offscreen windows, and repairs placement after display layout changes.
+
 ## App icons
 
 Source and generated runtime icons live under:

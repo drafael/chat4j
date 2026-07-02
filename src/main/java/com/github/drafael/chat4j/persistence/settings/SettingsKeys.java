@@ -17,6 +17,11 @@ public final class SettingsKeys {
     public static final String WINDOW_Y = "chat4j.ui.window.y";
     public static final String WINDOW_WIDTH = "chat4j.ui.window.width";
     public static final String WINDOW_HEIGHT = "chat4j.ui.window.height";
+    public static final String WINDOW_SCREEN_X = "chat4j.ui.window.screen.x";
+    public static final String WINDOW_SCREEN_Y = "chat4j.ui.window.screen.y";
+    public static final String WINDOW_SCREEN_WIDTH = "chat4j.ui.window.screen.width";
+    public static final String WINDOW_SCREEN_HEIGHT = "chat4j.ui.window.screen.height";
+    public static final String WINDOW_SCREEN_ID = "chat4j.ui.window.screen.id";
     public static final String MENU_BAR_ENABLED = "chat4j.ui.menuBar.enabled";
 
     public static final String CHAT_SEND_KEY = "chat4j.chat.input.sendKey";

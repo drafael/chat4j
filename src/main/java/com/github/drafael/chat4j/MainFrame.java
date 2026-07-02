@@ -132,8 +132,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuSelectionSynchronizer;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
-import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
-import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
+import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
@@ -313,8 +312,7 @@ public class MainFrame extends JFrame {
             new FontMenuSelectionApplyCoordinator();
     private final FontMenuSelectionFlowCoordinator fontMenuSelectionFlowCoordinator;
     private final MainFrameFontMenuCoordinator fontMenuCoordinator;
-    private final WindowStateSettingsCoordinator windowStateSettingsCoordinator;
-    private final WindowStateRestoreCoordinator windowStateRestoreCoordinator;
+    private final WindowPlacementCoordinator windowPlacementCoordinator;
     private final ConversationLoadCoordinator conversationLoadCoordinator;
     private final ConversationLoadDispatchCoordinator conversationLoadDispatchCoordinator =
             new ConversationLoadDispatchCoordinator();
@@ -494,8 +492,7 @@ public class MainFrame extends JFrame {
                 providerMenuIconResolver
         );
         this.lookAndFeelMenuRefreshCoordinator = lifecycleWiring.lookAndFeelMenuRefreshCoordinator();
-        this.windowStateSettingsCoordinator = lifecycleWiring.windowStateSettingsCoordinator();
-        this.windowStateRestoreCoordinator = lifecycleWiring.windowStateRestoreCoordinator();
+        this.windowPlacementCoordinator = lifecycleWiring.windowPlacementCoordinator();
 
         var conversationWiring = dependencies.conversationWiring();
         this.conversationLoadCoordinator = conversationWiring.conversationLoadCoordinator();
@@ -547,6 +544,7 @@ public class MainFrame extends JFrame {
         add(splitPane, BorderLayout.CENTER);
 
         installCloseHandlers();
+        windowPlacementCoordinator.registerDisplayChangeHandler(this);
         installDesktopHandlers();
         setupKeyboardShortcuts();
         showChatWebViewFallbackWarningIfNeeded();
@@ -1103,16 +1101,14 @@ public class MainFrame extends JFrame {
     }
 
     private void saveWindowState() {
-        windowStateSettingsCoordinator.save(getBounds());
+        windowPlacementCoordinator.save(this);
     }
 
     private void restoreWindowState() {
-        windowStateRestoreCoordinator.restore(
-                this::setBounds,
-                () -> {
-                    setSize(1000, 700);
-                    setLocationRelativeTo(null);
-                }
+        windowPlacementCoordinator.restore(
+                this,
+                WindowPlacementCoordinator.DEFAULT_WINDOW_WIDTH,
+                WindowPlacementCoordinator.DEFAULT_WINDOW_HEIGHT
         );
     }
 

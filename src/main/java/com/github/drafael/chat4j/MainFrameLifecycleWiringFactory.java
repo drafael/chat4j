@@ -3,7 +3,7 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
-import com.github.drafael.chat4j.settings.WindowStateRestoreCoordinator;
+import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
 import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
@@ -17,14 +17,13 @@ public class MainFrameLifecycleWiringFactory {
                 new ModelMenuDirtyRefreshTriggerCoordinator(modelMenuDirtyRefreshCoordinator);
         var lookAndFeelMenuRefreshCoordinator = new LookAndFeelMenuRefreshCoordinator(menuPopupVisibleRunner);
         var windowStateSettingsCoordinator = new WindowStateSettingsCoordinator(settingsRepo);
-        var windowStateRestoreCoordinator = new WindowStateRestoreCoordinator(windowStateSettingsCoordinator);
+        var windowPlacementCoordinator = new WindowPlacementCoordinator(windowStateSettingsCoordinator);
 
         return new LifecycleWiring(
                 modelMenuDirtyRefreshCoordinator,
                 modelMenuDirtyRefreshTriggerCoordinator,
                 lookAndFeelMenuRefreshCoordinator,
-                windowStateSettingsCoordinator,
-                windowStateRestoreCoordinator
+                windowPlacementCoordinator
         );
     }
 
@@ -32,8 +31,7 @@ public class MainFrameLifecycleWiringFactory {
             ModelMenuDirtyRefreshCoordinator modelMenuDirtyRefreshCoordinator,
             ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator,
             LookAndFeelMenuRefreshCoordinator lookAndFeelMenuRefreshCoordinator,
-            WindowStateSettingsCoordinator windowStateSettingsCoordinator,
-            WindowStateRestoreCoordinator windowStateRestoreCoordinator
+            WindowPlacementCoordinator windowPlacementCoordinator
     ) {
     }
 }
