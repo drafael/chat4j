@@ -13,7 +13,7 @@ This document describes the provider architecture under `src/main/java/com/githu
 - `provider/api`
   - `ProviderDescriptor`: provider metadata and base URL normalization strategy.
   - `ProviderCapabilities`: declared provider feature flags.
-  - `ProviderService`: runtime service contract used by chat UI.
+  - `ProviderService`: runtime service contract used by chat UI; streams text, thinking, rich parts, and optional citation metadata.
 
 - `provider/core`
   - `ProviderRuntime`: resolved runtime context (descriptor, key, base URL, model).
@@ -24,7 +24,7 @@ This document describes the provider architecture under `src/main/java/com/githu
 
 - `provider/capability`
   - `auth`: credential strategy abstraction and env-var implementation.
-  - `chat`: streaming completion contract + protocol implementations.
+  - `chat`: streaming completion contract + protocol implementations, including provider citation normalization when supported.
   - `models`: model catalog contract + protocol implementations.
 
 - `provider/modules`

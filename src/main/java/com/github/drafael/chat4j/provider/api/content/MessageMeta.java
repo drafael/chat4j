@@ -12,7 +12,8 @@ public record MessageMeta(
     String error,
     String assistantThinking,
     String assistantWebSearch,
-    List<AgentToolActivityMeta> agentToolActivities
+    List<AgentToolActivityMeta> agentToolActivities,
+    List<CitationRef> citations
 ) {
 
     public MessageMeta {
@@ -24,6 +25,9 @@ public record MessageMeta(
         agentToolActivities = agentToolActivities == null
                 ? emptyList()
                 : agentToolActivities.stream().filter(Objects::nonNull).toList();
+        citations = citations == null
+                ? emptyList()
+                : citations.stream().filter(Objects::nonNull).toList();
     }
 
     public MessageMeta(List<String> activeSkills, boolean cancelled, String error) {
@@ -41,7 +45,7 @@ public record MessageMeta(
             String error,
             String assistantThinking
     ) {
-        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, "", emptyList());
+        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, "", emptyList(), emptyList());
     }
 
     public MessageMeta(
@@ -52,10 +56,22 @@ public record MessageMeta(
             String assistantThinking,
             String assistantWebSearch
     ) {
-        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, assistantWebSearch, emptyList());
+        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, assistantWebSearch, emptyList(), emptyList());
+    }
+
+    public MessageMeta(
+            List<String> activeSkills,
+            List<String> fallbackNotices,
+            boolean cancelled,
+            String error,
+            String assistantThinking,
+            String assistantWebSearch,
+            List<AgentToolActivityMeta> agentToolActivities
+    ) {
+        this(activeSkills, fallbackNotices, cancelled, error, assistantThinking, assistantWebSearch, agentToolActivities, emptyList());
     }
 
     public static MessageMeta empty() {
-        return new MessageMeta(emptyList(), emptyList(), false, "", "", "", emptyList());
+        return new MessageMeta(emptyList(), emptyList(), false, "", "", "", emptyList(), emptyList());
     }
 }

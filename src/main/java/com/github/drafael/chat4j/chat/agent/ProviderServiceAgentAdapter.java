@@ -70,6 +70,7 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
                     callbacks.onToken(),
                     callbacks.onThinkingToken(),
                     callbacks.onPart(),
+                    callbacks.onCitation(),
                     () -> completed.set(true),
                     error -> {
                         failed.set(true);

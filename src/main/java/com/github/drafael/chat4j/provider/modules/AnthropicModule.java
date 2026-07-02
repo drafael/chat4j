@@ -30,7 +30,7 @@ public class AnthropicModule implements ProviderModule {
             null,
             defaultBaseUrl,
             emptyList(),
-            ProviderCapabilities.chatModelsAndImages(),
+            ProviderCapabilities.chatModelsImagesAndFiles(),
             BaseUrlNormalizer::normalizeAnthropicBaseUrl
         );
     }

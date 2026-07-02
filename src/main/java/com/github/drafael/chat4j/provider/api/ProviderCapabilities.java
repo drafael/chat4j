@@ -30,6 +30,10 @@ public record ProviderCapabilities(
         return new ProviderCapabilities(true, true, true, false, false, false);
     }
 
+    public static ProviderCapabilities chatModelsImagesAndFiles() {
+        return new ProviderCapabilities(true, true, true, true, false, false);
+    }
+
     public static ProviderCapabilities chatModelsAndNativeWebSearch() {
         return new ProviderCapabilities(true, true, false, false, true, true);
     }

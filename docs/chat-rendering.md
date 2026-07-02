@@ -63,7 +63,7 @@ Important shared classes:
 - `TranscriptDocumentRequest` — immutable full-document render input: snapshot, scroll behavior, asset mode, and optional internal asset URLs.
 - `TranscriptRenderSnapshot` / `TranscriptRenderSupport` — stable render input and font-scope handling.
 - `TranscriptDocumentRenderer` — full transcript document assembly and theme CSS generation.
-- `TranscriptEntryRenderer` / `TranscriptAttachmentRenderer` — message, activity, attachment, source-link, code, and math fallback HTML.
+- `TranscriptEntryRenderer` / `TranscriptAttachmentRenderer` — message, activity, attachment, source/citation-link, code, and math fallback HTML.
 - `TranscriptBrowserAssets` / `TranscriptAssetMode` — browser asset tag generation. System WebView uses inline assets; JCEF serves large Mermaid and SmilesDrawer bundles from internal `chat4j.local` URLs.
 - `TranscriptResources` — required classpath resource loading, data URI generation, script escaping, font inlining, and fixed-token template resolution with unresolved-token validation.
 - `TranscriptUpdateScripts` — shared incremental transcript, jump-button, and scroll-to-bottom JavaScript snippets.
@@ -87,7 +87,7 @@ src/main/resources/web/chat/
 
 Both browser engines own the rendered conversation chrome:
 
-- markdown, tables, code blocks, activity bubbles, attachments, and source previews
+- markdown, tables, code blocks, activity bubbles, attachments, and source/citation previews
 - light/dark theme CSS derived from FlatLaf colors
 - custom scrollbar, fades, and jump-to-latest control
 - selected-text copy, context-menu actions, code/activity copy buttons, and regenerate actions
@@ -111,6 +111,10 @@ Rules:
 - raw Markdown mode renders the whole message as highlighted `markdown` source
 
 Bundled language coverage includes Markdown, Java, Kotlin, JavaScript, TypeScript, JSON, XML/HTML, CSS, Bash/Shell, YAML, SQL, Python, diff, and plaintext. Common aliases are normalized (`js` → `javascript`, `ts` → `typescript`, `sh`/`shell` → `bash`, `md` → `markdown`, `html` → `xml`).
+
+## Source and citation previews
+
+Browser transcripts enhance normal HTTP source links and provider metadata-backed citations into compact numbered pills with hover previews. URL citations keep safe external navigation through the existing link router; document/search citations have no external `href` and show title, location, and cited text metadata. Raw Markdown mode keeps the original source text visible instead of injecting citation HTML.
 
 ## Math, diagrams, and chemistry
 

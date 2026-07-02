@@ -44,6 +44,7 @@ import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
@@ -133,6 +134,7 @@ public class ChatPanel extends JPanel {
     private static final int ASSISTANT_MESSAGE_SIDE_MARGIN = 0;
     private static final String MESSAGE_ROLE_PROPERTY = "chat4j.messageRole";
     private static final String MESSAGE_INDEX_PROPERTY = "chat4j.messageIndex";
+    private static final String MESSAGE_META_PROPERTY = "chat4j.messageMeta";
     private static final String MESSAGE_VIEW_PROPERTY = "chat4j.messageView";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
@@ -978,6 +980,7 @@ public class ChatPanel extends JPanel {
                 token -> handleAssistantToken(session, sendJob, token),
                 thinkingToken -> handleAssistantThinkingToken(session, sendJob, thinkingToken),
                 part -> handleAssistantPart(session, part),
+                citation -> handleAssistantCitation(session, citation),
                 activity -> handleAgentToolActivity(session, activity),
                 () -> {
                     if (!session.beginTerminalCallback()) {
@@ -1055,6 +1058,7 @@ public class ChatPanel extends JPanel {
                         callbacks.onToken(),
                         callbacks.onThinkingToken(),
                         callbacks.onPart(),
+                        callbacks.onCitation(),
                         callbacks.onComplete(),
                         callbacks.onError(),
                         session.cancelled::get,
@@ -1115,6 +1119,39 @@ public class ChatPanel extends JPanel {
                         onToken,
                         onThinkingToken,
                         onPart,
+                        citation -> {
+                        },
+                        onComplete,
+                        onError,
+                        isCancelled,
+                        session::registerActiveRequest,
+                        session::clearActiveRequest
+                );
+            }
+
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                delegate.streamCompletion(
+                        history,
+                        reasoningLevel,
+                        webSearchOptions,
+                        onToken,
+                        onThinkingToken,
+                        onPart,
+                        onCitation,
                         onComplete,
                         onError,
                         isCancelled,
@@ -1826,6 +1863,7 @@ public class ChatPanel extends JPanel {
         ChatMessageView bubble = createMessageView(Role.USER);
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
         bubble.component().putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
+        bubble.component().putClientProperty(MESSAGE_META_PROPERTY, message.meta());
         bubble.setRenderMode(renderMode);
         bubble.setText(formatUserBubbleText(message));
         bubble.setMaxContentWidth(userBubbleMaxContentWidth());
@@ -2462,8 +2500,26 @@ public class ChatPanel extends JPanel {
                 messageView.getFullText(),
                 actionMessageIndex,
                 attachments,
-                messageView.contentPartsSnapshot()
+                messageView.contentPartsSnapshot(),
+                messageMeta(component)
         );
+    }
+
+    private MessageMeta messageMeta(Component component) {
+        if (component instanceof JComponent jComponent) {
+            Object value = jComponent.getClientProperty(MESSAGE_META_PROPERTY);
+            if (value instanceof MessageMeta meta) {
+                return meta;
+            }
+        }
+        if (!(component instanceof Container container)) {
+            return MessageMeta.empty();
+        }
+        return Arrays.stream(container.getComponents())
+                .map(this::messageMeta)
+                .filter(meta -> !meta.equals(MessageMeta.empty()))
+                .findFirst()
+                .orElse(MessageMeta.empty());
     }
 
     private List<ConversationAttachment> conversationAttachments(Component component) {
@@ -2570,6 +2626,7 @@ public class ChatPanel extends JPanel {
         }
 
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
+        bubble.component().putClientProperty(MESSAGE_META_PROPERTY, MessageMeta.empty());
         if (role == Role.ASSISTANT) {
             assistantBubbles.add(bubble);
         }
@@ -2583,6 +2640,7 @@ public class ChatPanel extends JPanel {
             bubble.setContentParts(message.parts());
         }
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
+        bubble.component().putClientProperty(MESSAGE_META_PROPERTY, message == null ? MessageMeta.empty() : message.meta());
         if (role == Role.ASSISTANT) {
             assistantBubbles.add(bubble);
         }
@@ -3584,6 +3642,29 @@ public class ChatPanel extends JPanel {
         });
     }
 
+    private void handleAssistantCitation(StreamingSession session, CitationRef citation) {
+        if (!session.isLive() || citation == null) {
+            return;
+        }
+        synchronized (session.responseCitations) {
+            if (session.responseCitations.stream().anyMatch(existing -> existing.number() == citation.number())) {
+                return;
+            }
+            session.responseCitations.add(citation);
+        }
+        List<CitationRef> citations = snapshotCitations(session);
+        SwingUtilities.invokeLater(() -> {
+            if (!session.isLive() || !isVisibleSession(session) || currentAssistantBubble == null) {
+                return;
+            }
+            currentAssistantBubble.component().putClientProperty(
+                    MESSAGE_META_PROPERTY,
+                    new MessageMeta(emptyList(), emptyList(), false, "", "", "", emptyList(), citations)
+            );
+            refreshWebTranscript(true);
+        });
+    }
+
     private void handleAssistantThinkingToken(StreamingSession session, SendJob sendJob, String thinkingToken) {
         handleAssistantThinkingToken(session, sendJob, thinkingToken, false);
     }
@@ -3685,6 +3766,7 @@ public class ChatPanel extends JPanel {
         }
         assistantWebSearch = normalizeWebSearchActivity(mergeAssistantWebSearchWithAnswerSources(sendJob, assistantText, assistantWebSearch));
         List<AgentToolActivityMeta> agentToolActivities = snapshotAgentToolActivities(session);
+        List<CitationRef> citations = snapshotCitations(session);
         if (isVisibleConversation(session.conversationId) && StringUtils.isNotBlank(assistantWebSearch)) {
             showWebSearchActivity(session, assistantWebSearch);
         }
@@ -3714,7 +3796,8 @@ public class ChatPanel extends JPanel {
                         "",
                         assistantThinking,
                         assistantWebSearch,
-                        agentToolActivities
+                        agentToolActivities,
+                        citations
                 )
         );
         UUID conversationId = session.conversationId;
@@ -3724,6 +3807,7 @@ public class ChatPanel extends JPanel {
                 addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT);
             } else {
                 currentAssistantBubble.setContentParts(assistantMessage.parts());
+                currentAssistantBubble.component().putClientProperty(MESSAGE_META_PROPERTY, assistantMessage.meta());
                 refreshWebTranscript(false);
             }
             updateClearChatButtonVisibility();
@@ -3815,6 +3899,16 @@ public class ChatPanel extends JPanel {
 
         synchronized (session.agentToolActivities) {
             return !session.agentToolActivities.isEmpty();
+        }
+    }
+
+    private List<CitationRef> snapshotCitations(StreamingSession session) {
+        if (session == null) {
+            return emptyList();
+        }
+
+        synchronized (session.responseCitations) {
+            return session.responseCitations.isEmpty() ? emptyList() : List.copyOf(session.responseCitations);
         }
     }
 
@@ -3933,6 +4027,7 @@ public class ChatPanel extends JPanel {
                 .toList();
 
         MessageMeta meta = primary.meta() == null ? MessageMeta.empty() : primary.meta();
+        List<CitationRef> mergedCitations = meta.citations();
         MessageMeta mergedMeta = new MessageMeta(
                 meta.activeSkills(),
                 meta.fallbackNotices(),
@@ -3940,7 +4035,8 @@ public class ChatPanel extends JPanel {
                 meta.error(),
                 mergedThinking,
                 mergedWebSearch,
-                mergedAgentToolActivities
+                mergedAgentToolActivities,
+                mergedCitations
         );
 
         return new Message(primary.role(), primary.parts(), primary.timestamp(), mergedMeta);

@@ -110,7 +110,7 @@ public final class ProviderAttachmentSupport {
         return Optional.empty();
     }
 
-    private static Optional<Path> attachmentPath(FilePart filePart) {
+    public static Optional<Path> attachmentPath(FilePart filePart) {
         String storagePath = filePart.attachmentRef().storagePath();
         if (StringUtils.isBlank(storagePath)) {
             return Optional.empty();
@@ -123,7 +123,7 @@ public final class ProviderAttachmentSupport {
         }
     }
 
-    private static String resolvedMimeType(FilePart filePart, Path path) throws IOException {
+    public static String resolvedMimeType(FilePart filePart, Path path) throws IOException {
         String mimeType = filePart.attachmentRef().mimeType();
         if (StringUtils.isBlank(mimeType)) {
             mimeType = Files.probeContentType(path);
@@ -131,11 +131,11 @@ public final class ProviderAttachmentSupport {
         return StringUtils.defaultString(mimeType).toLowerCase(Locale.ROOT);
     }
 
-    private static boolean isPdf(String mimeType, String extension) {
+    public static boolean isPdf(String mimeType, String extension) {
         return "application/pdf".equals(mimeType) || "pdf".equals(extension);
     }
 
-    private static boolean isTextFile(String mimeType, String extension) {
+    public static boolean isTextFile(String mimeType, String extension) {
         return mimeType.startsWith("text/") || TEXT_EXTENSIONS.contains(extension);
     }
 
@@ -153,7 +153,7 @@ public final class ProviderAttachmentSupport {
                 : Optional.of(StringUtils.abbreviate(normalized, MAX_EXTRACTED_CHARS));
     }
 
-    private static String fileExtension(Path path) {
+    public static String fileExtension(Path path) {
         String name = path.getFileName() == null ? "" : path.getFileName().toString();
         int dot = name.lastIndexOf('.');
         return dot < 0 || dot == name.length() - 1

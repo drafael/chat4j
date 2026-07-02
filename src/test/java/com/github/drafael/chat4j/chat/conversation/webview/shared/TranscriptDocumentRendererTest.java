@@ -2,10 +2,14 @@ package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
 import com.github.drafael.chat4j.chat.content.MessageHtmlRenderer;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
+import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -227,6 +231,100 @@ class TranscriptDocumentRendererTest {
 
         assertThat(document.select("a.source-citation")).hasSize(2);
         assertThat(document.select("a.source-citation").eachText()).containsExactly("9", "10");
+    }
+
+    @Test
+    @DisplayName("Metadata-backed document citations render source preview attributes")
+    void renderEntriesHtml_whenDocumentCitationMetadataPresent_replacesPlainMarkerWithPreviewCitation() {
+        var citation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.DOCUMENT_PAGE)
+                .title("earth.pdf")
+                .citedText("Earth is the third planet from the Sun.")
+                .documentIndex(0L)
+                .documentTitle("earth.pdf")
+                .fileId("file_123")
+                .startPage(4L)
+                .endPage(5L)
+                .build();
+        var entry = ConversationEntry.message(
+                Role.ASSISTANT,
+                "Earth facts [1]",
+                0,
+                List.of(),
+                List.of(),
+                new MessageMeta(List.of(), List.of(), false, "", "", "", List.of(), List.of(citation))
+        );
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false));
+        var document = Jsoup.parseBodyFragment(html);
+        var anchor = document.selectFirst("a.source-citation.citation-ref");
+
+        assertThat(anchor).isNotNull();
+        assertThat(anchor.text()).isEqualTo("1");
+        assertThat(anchor.hasAttr("href")).isFalse();
+        assertThat(anchor.attr("data-source-title")).isEqualTo("earth.pdf");
+        assertThat(anchor.attr("data-source-domain")).isEqualTo("pages 4-5");
+        assertThat(anchor.attr("data-source-snippet")).contains("Earth is the third planet");
+    }
+
+    @Test
+    @DisplayName("Metadata-backed web citations keep URL navigation and preview attributes")
+    void renderEntriesHtml_whenWebCitationMetadataPresent_annotatesMarkdownCitationWithPreviewData() {
+        var citation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Example Source")
+                .citedText("Quoted web text")
+                .url("https://example.com/source")
+                .encryptedIndex("enc")
+                .build();
+        var entry = ConversationEntry.message(
+                Role.ASSISTANT,
+                "Fact [1](https://example.com/source)",
+                0,
+                List.of(),
+                List.of(),
+                new MessageMeta(List.of(), List.of(), false, "", "", "", List.of(), List.of(citation))
+        );
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false));
+        var document = Jsoup.parseBodyFragment(html);
+        var anchor = document.selectFirst("a.source-citation.citation-ref");
+
+        assertThat(anchor).isNotNull();
+        assertThat(anchor.attr("href")).isEqualTo("https://example.com/source");
+        assertThat(anchor.attr("data-source-title")).isEqualTo("Example Source");
+        assertThat(anchor.attr("data-source-domain")).isEqualTo("example.com");
+        assertThat(anchor.attr("data-source-snippet")).isEqualTo("Quoted web text");
+    }
+
+    @Test
+    @DisplayName("Unsafe metadata-backed web citation URLs do not become navigable links")
+    void renderEntriesHtml_whenWebCitationUrlIsNotHttp_removesHref() {
+        var citation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Unsafe Source")
+                .citedText("Quoted text")
+                .url("javascript:alert(1)")
+                .build();
+        var entry = ConversationEntry.message(
+                Role.ASSISTANT,
+                "Fact [1]",
+                0,
+                List.of(),
+                List.of(),
+                new MessageMeta(List.of(), List.of(), false, "", "", "", List.of(), List.of(citation))
+        );
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false));
+        var document = Jsoup.parseBodyFragment(html);
+        var anchor = document.selectFirst("a.source-citation.citation-ref");
+
+        assertThat(anchor).isNotNull();
+        assertThat(anchor.hasAttr("href")).isFalse();
+        assertThat(anchor.attr("data-source-url")).isEqualTo("citation:1");
     }
 
     @Test

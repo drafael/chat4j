@@ -8,6 +8,8 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ContentParts;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
@@ -67,6 +69,12 @@ class ConversationMessageJsonCodec {
                 .map(this::serializeAgentToolActivity)
                 .forEach(agentToolActivities::add);
         node.set("agentToolActivities", agentToolActivities);
+
+        ArrayNode citations = JSON.createArrayNode();
+        value.citations().stream()
+                .map(this::serializeCitation)
+                .forEach(citations::add);
+        node.set("citations", citations);
         return node.toString();
     }
 
@@ -152,6 +160,39 @@ class ConversationMessageJsonCodec {
         node.put("sizeBytes", value.sizeBytes());
         node.put("sha256", value.sha256());
         return node;
+    }
+
+    private ObjectNode serializeCitation(CitationRef citation) {
+        CitationRef value = citation == null
+                ? CitationRef.builder().kind(CitationKind.WEB).build()
+                : citation;
+        ObjectNode node = JSON.createObjectNode();
+        node.put("number", value.number());
+        node.put("kind", value.kind().name());
+        node.put("title", value.title());
+        node.put("citedText", value.citedText());
+        node.put("url", value.url());
+        node.put("encryptedIndex", value.encryptedIndex());
+        putNullableLong(node, "documentIndex", value.documentIndex());
+        node.put("documentTitle", value.documentTitle());
+        node.put("fileId", value.fileId());
+        putNullableLong(node, "startPage", value.startPage());
+        putNullableLong(node, "endPage", value.endPage());
+        putNullableLong(node, "startChar", value.startChar());
+        putNullableLong(node, "endChar", value.endChar());
+        putNullableLong(node, "startBlock", value.startBlock());
+        putNullableLong(node, "endBlock", value.endBlock());
+        node.put("source", value.source());
+        putNullableLong(node, "searchResultIndex", value.searchResultIndex());
+        return node;
+    }
+
+    private void putNullableLong(ObjectNode node, String fieldName, Long value) {
+        if (value == null) {
+            node.putNull(fieldName);
+            return;
+        }
+        node.put(fieldName, value);
     }
 
     private ObjectNode serializeAgentToolActivity(AgentToolActivityMeta activity) {
@@ -245,10 +286,56 @@ class ConversationMessageJsonCodec {
                     node.path("error").asText(""),
                     node.path("assistantThinking").asText(""),
                     node.path("assistantWebSearch").asText(""),
-                    deserializeAgentToolActivities(node.path("agentToolActivities"))
+                    deserializeAgentToolActivities(node.path("agentToolActivities")),
+                    deserializeCitations(node.path("citations"))
             );
         } catch (Exception e) {
             return MessageMeta.empty();
+        }
+    }
+
+    private List<CitationRef> deserializeCitations(JsonNode node) {
+        if (node == null || !node.isArray()) {
+            return emptyList();
+        }
+
+        List<CitationRef> citations = new ArrayList<>();
+        node.forEach(citationNode -> deserializeCitation(citationNode).ifPresent(citations::add));
+        return List.copyOf(citations);
+    }
+
+    private Optional<CitationRef> deserializeCitation(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return Optional.empty();
+        }
+
+        try {
+            int number = node.path("number").asInt(0);
+            if (number <= 0) {
+                return Optional.empty();
+            }
+            CitationKind kind = CitationKind.valueOf(node.path("kind").asText(""));
+            return Optional.of(CitationRef.builder()
+                    .number(number)
+                    .kind(kind)
+                    .title(node.path("title").asText(""))
+                    .citedText(node.path("citedText").asText(""))
+                    .url(node.path("url").asText(""))
+                    .encryptedIndex(node.path("encryptedIndex").asText(""))
+                    .documentIndex(readOptionalLong(node, "documentIndex"))
+                    .documentTitle(node.path("documentTitle").asText(""))
+                    .fileId(node.path("fileId").asText(""))
+                    .startPage(readOptionalLong(node, "startPage"))
+                    .endPage(readOptionalLong(node, "endPage"))
+                    .startChar(readOptionalLong(node, "startChar"))
+                    .endChar(readOptionalLong(node, "endChar"))
+                    .startBlock(readOptionalLong(node, "startBlock"))
+                    .endBlock(readOptionalLong(node, "endBlock"))
+                    .source(node.path("source").asText(""))
+                    .searchResultIndex(readOptionalLong(node, "searchResultIndex"))
+                    .build());
+        } catch (Exception e) {
+            return Optional.empty();
         }
     }
 
@@ -304,5 +391,10 @@ class ConversationMessageJsonCodec {
     private Integer readOptionalInt(JsonNode node, String fieldName) {
         JsonNode value = node.path(fieldName);
         return value.isMissingNode() || value.isNull() ? null : value.asInt();
+    }
+
+    private Long readOptionalLong(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        return value.isMissingNode() || value.isNull() ? null : value.asLong();
     }
 }

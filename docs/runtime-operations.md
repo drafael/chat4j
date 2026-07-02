@@ -117,7 +117,7 @@ java --enable-preview \
   com.github.drafael.chat4j.provider.capability.chat.impl.AnthropicSmokeMain
 ```
 
-The runner lists available Anthropic models first, auto-selects an available Claude 4 model when no override is supplied, and exercises model listing, text streaming, system prompts, reasoning tokens, web search, image input, and cancellation cleanup. Override models with `chat4j.smoke.anthropic.model`, `chat4j.smoke.anthropic.reasoningModel`, `chat4j.smoke.anthropic.visionModel`, and `chat4j.smoke.anthropic.webSearchModel`.
+The runner lists available Anthropic models first, auto-selects an available Claude 4 model when no override is supplied, and exercises model listing, text streaming, system prompts, reasoning tokens, web search, image input, and cancellation cleanup. Web-search responses also cover the citation streaming path when Anthropic returns citation deltas. Override models with `chat4j.smoke.anthropic.model`, `chat4j.smoke.anthropic.reasoningModel`, `chat4j.smoke.anthropic.visionModel`, and `chat4j.smoke.anthropic.webSearchModel`.
 
 ## Logging
 

@@ -10,6 +10,8 @@ import com.github.drafael.chat4j.chat.conversation.ConversationEntryKind;
 import com.github.drafael.chat4j.chat.render.Palette;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.jsoup.Jsoup;
@@ -22,14 +24,19 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.function.BooleanSupplier;
 
+import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
 
 public final class TranscriptEntryRenderer {
 
     private static final KatexMathRenderer KATEX_RENDERER = KatexMathRenderer.instance();
     private static final HighlightJsCodeRenderer HIGHLIGHT_RENDERER = HighlightJsCodeRenderer.instance();
+    private static final Pattern PLAIN_CITATION_PATTERN = Pattern.compile("\\[(\\d+)]");
 
     private final MessageHtmlRenderer messageHtmlRenderer = new MessageHtmlRenderer();
 
@@ -79,7 +86,7 @@ public final class TranscriptEntryRenderer {
         if (entry.kind() == ConversationEntryKind.ACTIVITY) {
             String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), snapshot);
             Document activityDocument = Jsoup.parse(renderedActivity);
-            prepareRenderedDocument(activityDocument);
+            prepareRenderedDocument(activityDocument, emptyList());
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
             String content = StringUtils.isBlank(entry.text())
                     ? ""
@@ -99,7 +106,7 @@ public final class TranscriptEntryRenderer {
                 ? renderEntryContentHtml(entry.role(), entry.text(), snapshot)
                 : messageHtmlRenderer.render(entry.role(), snapshot.renderMode(), entry.parts(), snapshot.dark(), snapshot.palette());
         Document document = Jsoup.parse(rendered);
-        prepareRenderedDocument(document);
+        prepareRenderedDocument(document, entry.meta().citations());
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
@@ -162,12 +169,13 @@ public final class TranscriptEntryRenderer {
         );
     }
 
-    private void prepareRenderedDocument(Document document) {
+    private void prepareRenderedDocument(Document document, List<CitationRef> citations) {
         renderCodeHighlights(document);
         renderMathFallbacks(document);
         replaceGeneratedImageSources(document);
         document.select("table.md-table").wrap("<div class=\"table-wrap\"></div>");
         annotateSourceLinks(document);
+        annotateCitationMetadata(document, citations);
         removeAdjacentDuplicateSourceCitations(document);
         document.select("table.md-code-block").forEach(table -> {
             var rows = table.select("tr");
@@ -259,6 +267,136 @@ public final class TranscriptEntryRenderer {
                 table.replaceWith(replacement);
             });
         });
+    }
+
+    private void annotateCitationMetadata(Document document, List<CitationRef> citations) {
+        if (citations == null || citations.isEmpty()) {
+            return;
+        }
+
+        Map<Integer, CitationRef> citationsByNumber = new LinkedHashMap<>();
+        citations.stream()
+                .filter(citation -> citation != null && citation.number() > 0)
+                .forEach(citation -> citationsByNumber.putIfAbsent(citation.number(), citation));
+        if (citationsByNumber.isEmpty()) {
+            return;
+        }
+
+        document.select("a").forEach(anchor -> citationNumber(anchor.text())
+                .map(citationsByNumber::get)
+                .ifPresent(citation -> applyCitationMetadata(anchor, citation)));
+
+        if (document.body() != null) {
+            annotatePlainCitationMarkers(document.body(), citationsByNumber);
+            document.select("a.citation-ref").forEach(anchor -> citationNumber(anchor.text())
+                    .map(citationsByNumber::get)
+                    .ifPresent(citation -> applyCitationMetadata(anchor, citation)));
+        }
+    }
+
+    private void annotatePlainCitationMarkers(Element root, Map<Integer, CitationRef> citationsByNumber) {
+        root.textNodes().forEach(textNode -> {
+            if (hasCitationIgnoredAncestor(textNode)) {
+                return;
+            }
+
+            String text = textNode.getWholeText();
+            Matcher matcher = PLAIN_CITATION_PATTERN.matcher(text);
+            if (!matcher.find()) {
+                return;
+            }
+
+            StringBuilder replacement = new StringBuilder();
+            int cursor = 0;
+            matcher.reset();
+            while (matcher.find()) {
+                int number = Integer.parseInt(matcher.group(1));
+                CitationRef citation = citationsByNumber.get(number);
+                if (citation == null) {
+                    continue;
+                }
+
+                replacement.append(escapeHtml(text.substring(cursor, matcher.start())));
+                replacement.append(citationAnchorHtml(citation));
+                cursor = matcher.end();
+            }
+            replacement.append(escapeHtml(text.substring(cursor)));
+            if (cursor == 0) {
+                return;
+            }
+
+            List<Node> nodes = Jsoup.parseBodyFragment(replacement.toString()).body().childNodes();
+            nodes.forEach(node -> textNode.before(node.clone()));
+            textNode.remove();
+        });
+
+        root.children().forEach(child -> annotatePlainCitationMarkers(child, citationsByNumber));
+    }
+
+    private boolean hasCitationIgnoredAncestor(TextNode textNode) {
+        Element parent = textNode.parent();
+        while (parent != null) {
+            String tagName = parent.tagName();
+            if (Strings.CI.equalsAny(tagName, "a", "code", "pre", "table")) {
+                return true;
+            }
+            parent = parent.parent();
+        }
+        return false;
+    }
+
+    private String citationAnchorHtml(CitationRef citation) {
+        String href = citation.kind() == CitationKind.WEB && isHttpUrl(citation.url())
+                ? " href=\"%s\"".formatted(escapeHtmlAttribute(citation.url()))
+                : "";
+        return "<a%s class=\"source-citation citation-ref\">%d</a>".formatted(href, citation.number());
+    }
+
+    private Optional<Integer> citationNumber(String text) {
+        String stripped = stripCitationBrackets(text);
+        if (!stripped.matches("\\d+")) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Integer.parseInt(stripped));
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
+
+    private void applyCitationMetadata(Element anchor, CitationRef citation) {
+        anchor.addClass("source-citation");
+        anchor.addClass("citation-ref");
+        anchor.text(String.valueOf(citation.number()));
+        if (citation.kind() == CitationKind.WEB && isHttpUrl(citation.url())) {
+            anchor.attr("href", citation.url());
+            anchor.attr("data-source-url", citation.url());
+            anchor.attr("data-source-domain", sourceDomain(citation.url()));
+        } else {
+            anchor.removeAttr("href");
+            anchor.attr("role", "button");
+            anchor.attr("tabindex", "0");
+            anchor.attr("data-source-url", "citation:%d".formatted(citation.number()));
+            anchor.attr("data-source-domain", citation.locationLabel());
+        }
+        anchor.attr("data-source-title", StringUtils.defaultIfBlank(citation.displayTitle(), "Citation %d".formatted(citation.number())));
+        anchor.attr("data-source-snippet", citationSnippet(citation));
+        anchor.attr("title", citationTitle(citation));
+    }
+
+    private String citationSnippet(CitationRef citation) {
+        String citedText = StringUtils.abbreviate(StringUtils.trimToEmpty(citation.citedText()), 360);
+        if (StringUtils.isNotBlank(citedText)) {
+            return citedText;
+        }
+        return StringUtils.defaultIfBlank(citation.locationLabel(), citation.displayTitle());
+    }
+
+    private String citationTitle(CitationRef citation) {
+        String location = citation.locationLabel();
+        return StringUtils.isBlank(location)
+                ? citation.displayTitle()
+                : "%s — %s".formatted(citation.displayTitle(), location);
     }
 
     private void annotateSourceLinks(Document document) {
@@ -399,5 +537,11 @@ public final class TranscriptEntryRenderer {
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
+    }
+
+    private static String escapeHtmlAttribute(String text) {
+        return escapeHtml(text)
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 }

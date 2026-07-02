@@ -4,11 +4,14 @@ import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.http.StreamResponse;
 import com.anthropic.models.messages.Base64ImageSource;
+import com.anthropic.models.messages.CitationsConfigParam;
 import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.DocumentBlockParam;
 import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
+import com.anthropic.models.messages.RawContentBlockDelta;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.WebSearchTool20250305;
@@ -16,7 +19,9 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
@@ -25,7 +30,11 @@ import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import org.apache.commons.lang3.StringUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -36,6 +45,9 @@ import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
 
 public class AnthropicChatCompletionClient implements ChatCompletionClient {
+
+    private static final long MAX_NATIVE_TEXT_DOCUMENT_BYTES = 1_000_000L;
+    private static final long MAX_NATIVE_PDF_DOCUMENT_BYTES = 20L * 1024L * 1024L;
 
     @Override
     public void streamCompletion(
@@ -73,6 +85,37 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
+        streamCompletion(
+                runtime,
+                history,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                onThinkingToken,
+                part -> {
+                },
+                citation -> {
+                },
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
+    @Override
+    public void streamCompletion(
+        ProviderRuntime runtime,
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Consumer<ContentPart> onPart,
+        Consumer<CitationRef> onCitation,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) throws Exception {
         AnthropicClient client = AnthropicOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
                 .baseUrl(runtime.baseUrl())
@@ -103,6 +146,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
 
         MessageCreateParams params = paramsBuilder.build();
 
+        CitationAccumulator citationAccumulator = new CitationAccumulator();
         try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
             registerActiveStream.accept(stream);
             Iterator<RawMessageStreamEvent> iterator = stream.stream().iterator();
@@ -115,23 +159,42 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                     continue;
                 }
 
-                if (event.asContentBlockDelta().delta().isText()) {
-                    String delta = event.asContentBlockDelta().delta().asText().text();
-                    if (StringUtils.isNotEmpty(delta)) {
-                        onToken.accept(delta);
+                RawContentBlockDelta delta = event.asContentBlockDelta().delta();
+                if (delta.isText()) {
+                    String text = delta.asText().text();
+                    if (StringUtils.isNotEmpty(text)) {
+                        onToken.accept(text);
                     }
                 }
 
-                if (reasoningLevel.enabled() && event.asContentBlockDelta().delta().isThinking()) {
-                    String delta = event.asContentBlockDelta().delta().asThinking().thinking();
-                    if (StringUtils.isNotEmpty(delta)) {
-                        onThinkingToken.accept(delta);
+                if (delta.isCitations()) {
+                    emitCitation(delta, citationAccumulator, onToken, onCitation);
+                }
+
+                if (reasoningLevel.enabled() && delta.isThinking()) {
+                    String thinking = delta.asThinking().thinking();
+                    if (StringUtils.isNotEmpty(thinking)) {
+                        onThinkingToken.accept(thinking);
                     }
                 }
             }
         } finally {
             clearActiveStream.run();
         }
+    }
+
+    private void emitCitation(
+            RawContentBlockDelta delta,
+            CitationAccumulator citationAccumulator,
+            Consumer<String> onToken,
+            Consumer<CitationRef> onCitation
+    ) {
+        AnthropicCitationMapper.fromDelta(delta.asCitations())
+                .map(citationAccumulator::add)
+                .ifPresent(citation -> {
+                    onToken.accept(" [%d]".formatted(citation.number()));
+                    onCitation.accept(citation);
+                });
     }
 
     private MessageParam toParam(Message message, ProviderRuntime runtime) {
@@ -154,32 +217,89 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         return builder.content(content).build();
     }
 
-    private List<ContentBlockParam> mapUserBlocks(Message message, ProviderRuntime runtime) {
-        if (!supportsNativeImages(runtime) || message.parts().isEmpty()) {
+    List<ContentBlockParam> mapUserBlocks(Message message, ProviderRuntime runtime) {
+        if (message.parts().isEmpty()) {
             return emptyList();
         }
 
         List<ContentBlockParam> blocks = new ArrayList<>();
         message.parts().stream()
-                .map(this::mapPart)
+                .map(part -> mapPart(part, runtime))
                 .flatMap(List::stream)
                 .forEach(blocks::add);
 
         return blocks;
     }
 
-    private List<ContentBlockParam> mapPart(ContentPart part) {
+    private List<ContentBlockParam> mapPart(ContentPart part, ProviderRuntime runtime) {
         if (part instanceof TextPart textPart && !textPart.text().isBlank()) {
             return List.of(toTextBlock(textPart.text()));
         }
 
         if (part instanceof ImagePart imagePart) {
-            return imageToBlock(imagePart)
-                    .map(List::of)
-                    .orElseGet(() -> List.of(toTextBlock(ProviderAttachmentSupport.textProjection(imagePart))));
+            return supportsNativeImages(runtime)
+                    ? imageToBlock(imagePart).map(List::of).orElseGet(() -> fallbackTextBlock(imagePart))
+                    : fallbackTextBlock(imagePart);
         }
 
-        return List.of(toTextBlock(ProviderAttachmentSupport.textProjection(part)));
+        if (part instanceof FilePart filePart) {
+            return supportsNativeDocuments(runtime)
+                    ? fileToDocumentBlock(filePart).map(List::of).orElseGet(() -> fallbackTextBlock(filePart))
+                    : fallbackTextBlock(filePart);
+        }
+
+        return fallbackTextBlock(part);
+    }
+
+    private List<ContentBlockParam> fallbackTextBlock(ContentPart part) {
+        String text = ProviderAttachmentSupport.textProjection(part);
+        return StringUtils.isBlank(text) ? emptyList() : List.of(toTextBlock(text));
+    }
+
+    private Optional<ContentBlockParam> fileToDocumentBlock(FilePart filePart) {
+        return ProviderAttachmentSupport.attachmentPath(filePart)
+                .flatMap(path -> documentBlock(filePart, path));
+    }
+
+    private Optional<ContentBlockParam> documentBlock(FilePart filePart, Path path) {
+        try {
+            String mimeType = ProviderAttachmentSupport.resolvedMimeType(filePart, path);
+            String extension = ProviderAttachmentSupport.fileExtension(path);
+            if (ProviderAttachmentSupport.isPdf(mimeType, extension) && Files.size(path) <= MAX_NATIVE_PDF_DOCUMENT_BYTES) {
+                return Optional.of(toPdfDocumentBlock(filePart, path));
+            }
+            if (ProviderAttachmentSupport.isTextFile(mimeType, extension) && Files.size(path) <= MAX_NATIVE_TEXT_DOCUMENT_BYTES) {
+                return Optional.of(toTextDocumentBlock(filePart, path));
+            }
+            return Optional.empty();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private ContentBlockParam toPdfDocumentBlock(FilePart filePart, Path path) throws Exception {
+        String encoded = Base64.getEncoder().encodeToString(Files.readAllBytes(path));
+        DocumentBlockParam document = documentBuilder(filePart)
+                .base64Source(encoded)
+                .build();
+        return ContentBlockParam.ofDocument(document);
+    }
+
+    private ContentBlockParam toTextDocumentBlock(FilePart filePart, Path path) throws Exception {
+        DocumentBlockParam document = documentBuilder(filePart)
+                .textSource(Files.readString(path, StandardCharsets.UTF_8))
+                .build();
+        return ContentBlockParam.ofDocument(document);
+    }
+
+    private DocumentBlockParam.Builder documentBuilder(FilePart filePart) {
+        DocumentBlockParam.Builder builder = DocumentBlockParam.builder()
+                .citations(CitationsConfigParam.builder().enabled(true).build());
+        String title = filePart.attachmentRef().originalName();
+        if (StringUtils.isNotBlank(title)) {
+            builder.title(title);
+        }
+        return builder;
     }
 
     private Optional<ContentBlockParam> imageToBlock(ImagePart imagePart) {
@@ -229,6 +349,14 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                 runtime.selectedModel(),
                 runtime.baseUrl(),
                 runtime.apiKey()
+        );
+    }
+
+    private boolean supportsNativeDocuments(ProviderRuntime runtime) {
+        return ProviderCapabilityResolver.supportsFileInput(
+                runtime.descriptor().capabilities(),
+                runtime.descriptor().name(),
+                runtime.selectedModel()
         );
     }
 
