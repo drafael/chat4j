@@ -185,6 +185,11 @@ jobs:
       - jar
       - native
     steps:
+      - name: Check out sources
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -214,13 +219,17 @@ jobs:
               | sed 's#  ./#  #' > SHA256SUMS.txt
           )
 
+      - name: Generate release notes
+        shell: bash
+        run: scripts/generate-release-notes.sh "${{ needs.metadata.outputs.tag }}" release-assets/release-notes.md "${{ github.repository }}"
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.metadata.outputs.tag }}
           name: Chat4J ${{ needs.metadata.outputs.version }}
           prerelease: ${{ needs.metadata.outputs.prerelease }}
-          generate_release_notes: true
+          body_path: release-assets/release-notes.md
           files: |
             release-assets/upload/*
           fail_on_unmatched_files: true
