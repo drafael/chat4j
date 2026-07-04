@@ -57,9 +57,9 @@ Settings UI behavior:
 3. Preserve saved model/voice selections.
 4. Refresh catalogs in the background when credentials are available.
 5. Update Swing controls only on the EDT and ignore stale refresh results.
-6. Keep unavailable providers visible with helper text naming the required environment variable.
+6. Keep unavailable providers visible with provider-specific helper text.
 
-No API key fields should be added to the UI.
+Missing or blank provider settings resolve to available `System`, otherwise `Off`. Explicit `off` is respected. Saved unavailable providers remain selected so the UI can explain what is missing. No API key fields should be added to the UI.
 
 ## System provider
 
@@ -70,6 +70,8 @@ The System provider is always present in the settings list. It is available when
 - Linux: `espeak-ng` on `PATH`
 
 The System provider exposes one model (`System TTS`) and always keeps `System Default` as the first voice. Discovered OS voices appear after the default. If a saved OS voice disappears, synthesis falls back to the system default voice.
+
+System synthesis is process-based but never shell-interpolates user text. Backends use `ProcessBuilder` argument lists, UTF-8 temp input files, temp audio output files, bounded timeouts, concise sanitized errors, and `finally` cleanup. Interrupting playback/read-aloud destroys the active subprocess and preserves the thread interrupt flag. macOS returns AIFF from `say`; Windows and Linux return WAV.
 
 ## Chat UI behavior
 
@@ -100,6 +102,7 @@ WebView transcript:
 - Clicking the active message again stops playback instead of starting a duplicate request.
 - Synthesis and playback never block the EDT.
 - Stale synthesis results are ignored after stop/new request/dispose.
+- Providers only return `TextToSpeechAudio`; playback remains centralized in `AudioPlaybackService`.
 - User-facing errors are concise and must never include API keys, request bodies, generated audio bytes, or full provider response bodies.
 
 ## Testing expectations
