@@ -16,6 +16,7 @@ public class TextToSpeechProviderRegistry {
     public static TextToSpeechProviderRegistry createDefault() {
         TtsHttpTransport transport = new JavaNetTtsHttpTransport();
         return new TextToSpeechProviderRegistry(List.of(
+                SystemTextToSpeechProvider.createDefault(),
                 new GroqTextToSpeechProvider(transport),
                 new ElevenLabsTextToSpeechProvider(transport)
         ));

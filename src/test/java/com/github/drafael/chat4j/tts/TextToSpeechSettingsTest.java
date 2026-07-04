@@ -43,8 +43,8 @@ class TextToSpeechSettingsTest {
     }
 
     @Test
-    @DisplayName("Default provider is off")
-    void resolve_noProviderSaved_defaultsToOff() throws Exception {
+    @DisplayName("Default provider is off when System is absent")
+    void resolve_noProviderSavedAndSystemAbsent_defaultsToOff() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
         var subject = new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(emptyList()));
 
@@ -52,5 +52,100 @@ class TextToSpeechSettingsTest {
 
         assertThat(selection.enabled()).isFalse();
         assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_OFF);
+    }
+
+    @Test
+    @DisplayName("Missing provider setting defaults to available System provider")
+    void resolve_noProviderSavedAndSystemAvailable_defaultsToSystem() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
+        var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(true));
+
+        TextToSpeechSettings.Selection selection = subject.resolve();
+
+        assertThat(selection.enabled()).isTrue();
+        assertThat(selection.available()).isTrue();
+        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
+        assertThat(settingsRepo.get(SettingsKeys.TTS_PROVIDER)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Blank provider setting follows the implicit System default")
+    void resolve_blankProviderSavedAndSystemAvailable_defaultsToSystem() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, " ");
+        var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(true));
+
+        TextToSpeechSettings.Selection selection = subject.resolve();
+
+        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
+    }
+
+    @Test
+    @DisplayName("Explicit off is respected when System is available")
+    void resolve_offProviderSavedAndSystemAvailable_staysOff() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, SettingsKeys.TTS_PROVIDER_OFF);
+        var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(true));
+
+        TextToSpeechSettings.Selection selection = subject.resolve();
+
+        assertThat(selection.enabled()).isFalse();
+        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_OFF);
+    }
+
+    @Test
+    @DisplayName("Saved System stays selected when backend becomes unavailable")
+    void resolve_systemSavedAndUnavailable_staysSelectedUnavailable() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, SettingsKeys.TTS_PROVIDER_SYSTEM);
+        var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(false));
+
+        TextToSpeechSettings.Selection selection = subject.resolve();
+
+        assertThat(selection.enabled()).isTrue();
+        assertThat(selection.available()).isFalse();
+        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
+    }
+
+    private static TextToSpeechProviderRegistry registryWithSystem(boolean available) {
+        return new TextToSpeechProviderRegistry(List.of(new SystemTextToSpeechProvider(new FakeSystemBackend(available))));
+    }
+
+    private static final class FakeSystemBackend implements SystemTtsBackend {
+        private final boolean available;
+
+        private FakeSystemBackend(boolean available) {
+            this.available = available;
+        }
+
+        @Override
+        public boolean available() {
+            return available;
+        }
+
+        @Override
+        public String unavailableMessage() {
+            return "System unavailable.";
+        }
+
+        @Override
+        public String availableMessage() {
+            return "System available.";
+        }
+
+        @Override
+        public String defaultResponseFormat() {
+            return "wav";
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchVoices() {
+            return emptyList();
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+        }
     }
 }

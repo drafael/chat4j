@@ -73,6 +73,45 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Read aloud uses provider default response format")
+    void readAloud_providerDefaultResponseFormat_sendsProviderFormat() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        var provider = new FakeProvider();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                executor
+        );
+
+        subject.readAloud("message", "hello", error -> {
+        });
+        executor.shutdown();
+        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(provider.requests).extracting(TextToSpeechRequest::responseFormat).containsExactly("test-format");
+    }
+
+    @Test
+    @DisplayName("Read aloud uses provider unavailable message")
+    void readAloud_providerUnavailable_reportsProviderMessage() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "unavailable");
+        var error = new AtomicReference<String>();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(new UnavailableProvider()))),
+                new RecordingPlaybackService(),
+                Executors.newSingleThreadExecutor()
+        );
+
+        subject.readAloud("message", "hello", error::set);
+
+        assertThat(error.get()).isEqualTo("Provider unavailable without credentials message.");
+        subject.dispose();
+    }
+
+    @Test
     @DisplayName("Read aloud reports when the executor has already been disposed")
     void readAloud_executorDisposed_reportsError() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
@@ -91,7 +130,7 @@ class TextToSpeechServiceTest {
         assertThat(error.get()).contains("Read aloud is not available");
     }
 
-    private static final class FakeProvider implements TextToSpeechProvider {
+    private static class FakeProvider implements TextToSpeechProvider {
         private final List<TextToSpeechRequest> requests = new ArrayList<>();
 
         @Override
@@ -135,6 +174,11 @@ class TextToSpeechServiceTest {
         }
 
         @Override
+        public String defaultResponseFormat() {
+            return "test-format";
+        }
+
+        @Override
         public List<TextToSpeechCatalogItem> fetchModels() {
             return bundledModels();
         }
@@ -148,6 +192,23 @@ class TextToSpeechServiceTest {
         public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
             requests.add(request);
             return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+        }
+    }
+
+    private static final class UnavailableProvider extends FakeProvider {
+        @Override
+        public String id() {
+            return "unavailable";
+        }
+
+        @Override
+        public boolean available() {
+            return false;
+        }
+
+        @Override
+        public String unavailableMessage() {
+            return "Provider unavailable without credentials message.";
         }
     }
 

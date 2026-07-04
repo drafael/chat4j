@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.tts;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
 
 public class TextToSpeechSettings {
@@ -15,7 +16,7 @@ public class TextToSpeechSettings {
     }
 
     public Selection resolve() {
-        String providerId = normalizeProviderId(settingsRepo.get(SettingsKeys.TTS_PROVIDER, SettingsKeys.TTS_PROVIDER_OFF));
+        String providerId = resolveProviderId();
         if (SettingsKeys.TTS_PROVIDER_OFF.equals(providerId)) {
             return Selection.off();
         }
@@ -38,8 +39,14 @@ public class TextToSpeechSettings {
         return new Selection(provider, model, voice, provider.available());
     }
 
+    public boolean isProviderUnsetOrBlank() {
+        return settingsRepo.get(SettingsKeys.TTS_PROVIDER)
+                .map(StringUtils::isBlank)
+                .orElse(true);
+    }
+
     public void saveProvider(String providerId) {
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, normalizeProviderId(providerId));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, StringUtils.defaultIfBlank(normalizeProviderId(providerId), SettingsKeys.TTS_PROVIDER_OFF));
     }
 
     public void saveModel(String providerId, TextToSpeechCatalogItem model) {
@@ -61,9 +68,22 @@ public class TextToSpeechSettings {
         settingsRepo.put(labelKey, item.label());
     }
 
+    private String resolveProviderId() {
+        return settingsRepo.get(SettingsKeys.TTS_PROVIDER)
+                .map(TextToSpeechSettings::normalizeProviderId)
+                .filter(StringUtils::isNotBlank)
+                .orElseGet(this::defaultProviderId);
+    }
+
+    private String defaultProviderId() {
+        return providerRegistry.find(SettingsKeys.TTS_PROVIDER_SYSTEM)
+                .filter(TextToSpeechProvider::available)
+                .map(TextToSpeechProvider::id)
+                .orElse(SettingsKeys.TTS_PROVIDER_OFF);
+    }
+
     private static String normalizeProviderId(String providerId) {
-        String normalized = StringUtils.trimToEmpty(providerId).toLowerCase();
-        return StringUtils.defaultIfBlank(normalized, SettingsKeys.TTS_PROVIDER_OFF);
+        return StringUtils.trimToEmpty(providerId).toLowerCase(Locale.ROOT);
     }
 
     public record Selection(TextToSpeechProvider provider, TextToSpeechCatalogItem model, TextToSpeechCatalogItem voice, boolean available) {

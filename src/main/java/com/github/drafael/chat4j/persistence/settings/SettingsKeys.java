@@ -47,6 +47,7 @@ public final class SettingsKeys {
 
     public static final String TTS_PROVIDER = "chat4j.tts.provider";
     public static final String TTS_PROVIDER_OFF = "off";
+    public static final String TTS_PROVIDER_SYSTEM = "system";
     public static final String TTS_PREFIX = "chat4j.tts.";
 
     private SettingsKeys() {

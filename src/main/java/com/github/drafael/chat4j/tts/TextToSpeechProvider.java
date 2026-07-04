@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.tts;
 
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.util.List;
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
@@ -31,6 +32,28 @@ public interface TextToSpeechProvider {
 
     default int maxInputCharacters() {
         return 0;
+    }
+
+    default String defaultResponseFormat() {
+        return "mp3";
+    }
+
+    default String unavailableLabel() {
+        return StringUtils.isBlank(requiredEnvVar())
+                ? "%s (unavailable)".formatted(displayName())
+                : "%s (requires %s)".formatted(displayName(), requiredEnvVar());
+    }
+
+    default String unavailableMessage() {
+        return StringUtils.isBlank(requiredEnvVar())
+                ? "%s is not available.".formatted(displayName())
+                : "%s requires %s.".formatted(displayName(), requiredEnvVar());
+    }
+
+    default String availableMessage() {
+        return StringUtils.isBlank(requiredEnvVar())
+                ? "Using %s.".formatted(displayName())
+                : "Using %s with environment variable %s.".formatted(displayName(), requiredEnvVar());
     }
 
     default TextToSpeechCatalogItem normalizeModelSelection(TextToSpeechCatalogItem model) {

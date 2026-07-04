@@ -82,13 +82,18 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     }
 
     @Override
+    public String defaultResponseFormat() {
+        return "wav";
+    }
+
+    @Override
     public TextToSpeechCatalogItem normalizeModelSelection(TextToSpeechCatalogItem model) {
-        return StringUtils.equals(model.id(), "playai-tts") ? DEFAULT_MODEL : model;
+        return Strings.CS.equals(model.id(), "playai-tts") ? DEFAULT_MODEL : model;
     }
 
     @Override
     public TextToSpeechCatalogItem normalizeVoiceSelection(TextToSpeechCatalogItem voice) {
-        return StringUtils.endsWith(voice.id(), "-PlayAI") ? DEFAULT_VOICE : voice;
+        return Strings.CS.endsWith(voice.id(), "-PlayAI") ? DEFAULT_VOICE : voice;
     }
 
     @Override
@@ -131,7 +136,7 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     }
 
     private String normalizeModelId(String modelId) {
-        return StringUtils.equals(modelId, "playai-tts")
+        return Strings.CS.equals(modelId, "playai-tts")
                 ? DEFAULT_MODEL.id()
                 : StringUtils.defaultIfBlank(modelId, DEFAULT_MODEL.id());
     }
@@ -150,7 +155,7 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     }
 
     private boolean isArabicModel(String modelId) {
-        return StringUtils.contains(modelId, "arabic-saudi");
+        return Strings.CS.contains(modelId, "arabic-saudi");
     }
 
     private boolean isEnglishVoice(String voiceId) {
@@ -162,7 +167,7 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     }
 
     private static boolean containsVoice(List<TextToSpeechCatalogItem> voices, String voiceId) {
-        return voices != null && voices.stream().anyMatch(voice -> StringUtils.equals(voice.id(), voiceId));
+        return voices != null && voices.stream().anyMatch(voice -> Strings.CS.equals(voice.id(), voiceId));
     }
 
     private Map<String, String> authHeaders() {

@@ -104,7 +104,7 @@ public class TextToSpeechService {
             return;
         }
         if (!selection.available()) {
-            report(errorHandler, "%s requires %s.".formatted(selection.provider().displayName(), selection.provider().requiredEnvVar()));
+            report(errorHandler, selection.provider().unavailableMessage());
             return;
         }
 
@@ -149,7 +149,7 @@ public class TextToSpeechService {
     ) {
         try {
             TextToSpeechProvider provider = selection.provider();
-            String responseFormat = GroqTextToSpeechProvider.ID.equals(provider.id()) ? "wav" : "mp3";
+            String responseFormat = provider.defaultResponseFormat();
             for (String chunk : speechChunks(text, provider.maxInputCharacters())) {
                 if (isStale(requestId, messageKey)) {
                     return;

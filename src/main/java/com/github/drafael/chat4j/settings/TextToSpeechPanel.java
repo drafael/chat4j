@@ -43,6 +43,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private JButton refreshButton;
     private JLabel helperLabel;
     private boolean updating;
+    private volatile Thread previewThread;
     private String lastProviderId = SettingsKeys.TTS_PROVIDER_OFF;
 
     public TextToSpeechPanel(SettingsRepository settingsRepo) {
@@ -61,7 +62,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     public void removeNotify() {
         refreshCounter.incrementAndGet();
         previewCounter.incrementAndGet();
-        previewPlayback.stop();
+        cancelPreviewWork();
         super.removeNotify();
     }
 
@@ -69,7 +70,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         JPanel form = createFormPanel("Text to Speech");
         GridBagConstraints gbc = createFormConstraints();
         int row = 0;
-        row = addSectionHint(form, gbc, row, "Read assistant messages aloud using env-var configured TTS providers. API keys are never stored in Settings.");
 
         providerComboBox = withPreferredWidth(new JComboBox<>(), FIELD_WIDTH);
         providerComboBox.setRenderer(new ProviderOptionRenderer());
@@ -158,7 +158,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
                 refreshControlsFromSettings(false);
                 return;
             }
-            setStatusError("%s requires %s".formatted(option.displayName(), option.requiredEnvVar()));
+            setStatusError(option.unavailableMessage());
             updating = true;
             providerComboBox.setSelectedItem(findProviderOption(lastProviderId));
             updating = false;
@@ -177,6 +177,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         }
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         selectedCatalogItem(modelComboBox).ifPresent(item -> {
+            persistImplicitSystemProvider(selection);
             textToSpeechSettings.saveModel(selection.providerId(), item);
             setStatusInfo(STATUS_SAVED);
             refreshControlsFromSettings(false);
@@ -189,6 +190,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         }
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         selectedCatalogItem(voiceComboBox).ifPresent(item -> {
+            persistImplicitSystemProvider(selection);
             textToSpeechSettings.saveVoice(selection.providerId(), item);
             setStatusInfo(STATUS_SAVED);
         });
@@ -257,16 +259,19 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         if (!selection.enabled() || !selection.available()) {
             updateControlAvailability(selection);
+            if (selection.enabled()) {
+                setStatusError(selection.provider().unavailableMessage());
+            }
             return;
         }
         TextToSpeechCatalogItem selectedModel = selectedCatalogItem(modelComboBox).orElse(selection.model());
         TextToSpeechCatalogItem selectedVoice = selectedCatalogItem(voiceComboBox).orElse(selection.voice());
         long requestId = previewCounter.incrementAndGet();
-        previewPlayback.stop();
+        cancelPreviewWork();
         setStatusInfo("Preparing preview...");
-        Thread.startVirtualThread(() -> {
+        Thread thread = Thread.ofVirtual().unstarted(() -> {
             try {
-                String format = selection.providerId().equals("groq") ? "wav" : "mp3";
+                String format = selection.provider().defaultResponseFormat();
                 TextToSpeechAudio audio = selection.provider().synthesize(new TextToSpeechRequest(
                         selection.providerId(),
                         selectedModel.id(),
@@ -287,8 +292,23 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
                 if (requestId == previewCounter.get()) {
                     SwingUtilities.invokeLater(() -> setStatusError("Preview failed: %s".formatted(StringUtils.defaultIfBlank(e.getMessage(), "error"))));
                 }
+            } finally {
+                if (previewThread == Thread.currentThread()) {
+                    previewThread = null;
+                }
             }
         });
+        previewThread = thread;
+        thread.start();
+    }
+
+    private void cancelPreviewWork() {
+        Thread thread = previewThread;
+        previewThread = null;
+        if (thread != null) {
+            thread.interrupt();
+        }
+        previewPlayback.stop();
     }
 
     private List<TextToSpeechCatalogItem> voicesForModel(TextToSpeechSettings.Selection selection, List<TextToSpeechCatalogItem> voices) {
@@ -300,6 +320,12 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
             TextToSpeechCatalogItem firstVoice = voices.getFirst();
             textToSpeechSettings.saveVoice(selection.providerId(), firstVoice);
             voiceComboBox.setSelectedItem(firstVoice);
+        }
+    }
+
+    private void persistImplicitSystemProvider(TextToSpeechSettings.Selection selection) {
+        if (SettingsKeys.TTS_PROVIDER_SYSTEM.equals(selection.providerId()) && textToSpeechSettings.isProviderUnsetOrBlank()) {
+            textToSpeechSettings.saveProvider(SettingsKeys.TTS_PROVIDER_SYSTEM);
         }
     }
 
@@ -317,9 +343,9 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         if (!selection.enabled()) {
             helperLabel.setText("Text to Speech is off.");
         } else if (!selection.available()) {
-            helperLabel.setText("%s requires %s.".formatted(selection.provider().displayName(), selection.provider().requiredEnvVar()));
+            helperLabel.setText(selection.provider().unavailableMessage());
         } else {
-            helperLabel.setText("Using %s with env var %s.".formatted(selection.provider().displayName(), selection.provider().requiredEnvVar()));
+            helperLabel.setText(selection.provider().availableMessage());
         }
     }
 
@@ -353,17 +379,15 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         return selected instanceof TextToSpeechCatalogItem item ? Optional.of(item) : Optional.empty();
     }
 
-    record ProviderOption(String providerId, String displayName, String label, String requiredEnvVar, boolean selectable) {
+    record ProviderOption(String providerId, String label, boolean selectable, String unavailableMessage) {
 
         static ProviderOption off() {
-            return new ProviderOption(SettingsKeys.TTS_PROVIDER_OFF, "Off", "Off", "", true);
+            return new ProviderOption(SettingsKeys.TTS_PROVIDER_OFF, "Off", true, "");
         }
 
         static ProviderOption of(TextToSpeechProvider provider, boolean selectable) {
-            String label = selectable
-                    ? provider.displayName()
-                    : "%s (requires %s)".formatted(provider.displayName(), provider.requiredEnvVar());
-            return new ProviderOption(provider.id(), provider.displayName(), label, provider.requiredEnvVar(), selectable);
+            String label = selectable ? provider.displayName() : provider.unavailableLabel();
+            return new ProviderOption(provider.id(), label, selectable, provider.unavailableMessage());
         }
 
         @Override
