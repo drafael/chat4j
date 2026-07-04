@@ -18,7 +18,6 @@ import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import java.awt.*;
-import java.awt.datatransfer.DataFlavor;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -1530,7 +1529,7 @@ public class InputBar extends JPanel {
                 boolean editable = target.isEditable() && target.isEnabled();
                 cutItem.setEnabled(editable && hasSelection);
                 copyItem.setEnabled(hasSelection);
-                pasteItem.setEnabled(editable && clipboardHasText());
+                pasteItem.setEnabled(editable);
             }
 
             @Override
@@ -1570,16 +1569,6 @@ public class InputBar extends JPanel {
             });
         }
         return item;
-    }
-
-    private boolean clipboardHasText() {
-        try {
-            return Toolkit.getDefaultToolkit()
-                    .getSystemClipboard()
-                    .isDataFlavorAvailable(DataFlavor.stringFlavor);
-        } catch (IllegalStateException e) {
-            return false;
-        }
     }
 
     private void configureSlashPopup() {

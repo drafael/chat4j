@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.tts.JavaSoundAudioPlaybackService;
@@ -12,6 +13,7 @@ import com.github.drafael.chat4j.tts.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
+import java.net.URL;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -24,9 +26,11 @@ import static java.util.Collections.emptyList;
 
 public class TextToSpeechPanel extends AbstractSettingsPanel {
 
-    private static final int FIELD_WIDTH = 320;
+    private static final int FIELD_WIDTH = 520;
     private static final int CATALOG_LABEL_MAX_LENGTH = 72;
-    private static final String PREVIEW_TEXT = "Chat4J read aloud preview.";
+    private static final int BUTTON_ICON_SIZE = 16;
+    private static final String SPEAK_ICON_PATH = "/icons/chat/volume-2.svg";
+    private static final String PREVIEW_TEXT = "Chat4J can read assistant messages aloud so you can listen while you work.";
 
     private final TextToSpeechProviderRegistry providerRegistry;
     private final TextToSpeechSettings textToSpeechSettings;
@@ -90,7 +94,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         buttons.setOpaque(false);
-        previewButton = new JButton("Preview");
+        previewButton = new JButton("Speak", loadIcon(SPEAK_ICON_PATH));
+        previewButton.setIconTextGap(6);
         previewButton.addActionListener(e -> previewSelection());
         refreshButton = new JButton("Refresh catalogs");
         refreshButton.addActionListener(e -> refreshCatalogsForSelectedProvider(true));
@@ -377,6 +382,11 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private static Optional<TextToSpeechCatalogItem> selectedCatalogItem(JComboBox<TextToSpeechCatalogItem> comboBox) {
         Object selected = comboBox.getSelectedItem();
         return selected instanceof TextToSpeechCatalogItem item ? Optional.of(item) : Optional.empty();
+    }
+
+    private static Icon loadIcon(String iconPath) {
+        URL url = TextToSpeechPanel.class.getResource(iconPath);
+        return url == null ? null : new ThemeAwareSvgIcon(url, BUTTON_ICON_SIZE);
     }
 
     record ProviderOption(String providerId, String label, boolean selectable, String unavailableMessage) {
