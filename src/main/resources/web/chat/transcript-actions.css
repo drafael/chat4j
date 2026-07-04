@@ -123,6 +123,11 @@
   mask: var(--chat4j-regenerate-icon-mask) center / contain no-repeat;
 }
 
+.icon.open-diagram {
+  -webkit-mask: var(--chat4j-open-diagram-icon-mask) center / contain no-repeat;
+  mask: var(--chat4j-open-diagram-icon-mask) center / contain no-repeat;
+}
+
 .icon.read-aloud {
   -webkit-mask: var(--chat4j-read-aloud-icon-mask) center / contain no-repeat;
   mask: var(--chat4j-read-aloud-icon-mask) center / contain no-repeat;

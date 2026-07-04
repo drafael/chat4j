@@ -137,7 +137,7 @@
                 ? '<button data-action="copy-selected"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Selected Text</span><span class="shortcut">⌘C</span></button><div class="transcript-menu-separator"></div>'
                 : '';
         var diagramOpen = diagram
-                ? '<button data-action="open-diagram"><span class="icon regenerate" aria-hidden="true"></span><span class="label">Open Diagram</span><span class="shortcut"></span></button><div class="transcript-menu-separator"></div>'
+                ? '<button data-action="open-diagram"><span class="icon open-diagram" aria-hidden="true"></span><span class="label">Open Diagram</span><span class="shortcut"></span></button><div class="transcript-menu-separator"></div>'
                 : '';
         var readAloud = hasReadAloud
                 ? '<div class="transcript-menu-separator"></div><button data-action="read-aloud"><span class="icon ' + (readAloudActive ? 'player-stop' : 'read-aloud') + '" aria-hidden="true"></span><span class="label">' + (readAloudActive ? 'Stop' : 'Read aloud') + '</span><span class="shortcut"></span></button>'

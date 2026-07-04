@@ -509,6 +509,23 @@
             .replace(/"/g, '&quot;')
             .trim();
     }
+    function normalizeMermaidLabelLineBreaks(label) {
+        return String(label || '').replace(/\\r\\n|\\n|\\r/g, '<br/>');
+    }
+    function replaceMermaidDelimitedLabelLineBreaks(source, pattern) {
+        return source.replace(pattern, function() {
+            return arguments[1] + normalizeMermaidLabelLineBreaks(arguments[2]) + arguments[3];
+        });
+    }
+    function normalizeMermaidEscapedLineBreaks(source) {
+        var normalized = String(source || '');
+        normalized = replaceMermaidDelimitedLabelLineBreaks(normalized, /(\b[A-Za-z][A-Za-z0-9_]*\[)([^\]\r\n]*)(\])/g);
+        normalized = replaceMermaidDelimitedLabelLineBreaks(normalized, /(\b[A-Za-z][A-Za-z0-9_]*\{)([^}\r\n]*)(\})/g);
+        normalized = replaceMermaidDelimitedLabelLineBreaks(normalized, /(\b[A-Za-z][A-Za-z0-9_]*\()([^)\r\n]*)(\))/g);
+        normalized = replaceMermaidDelimitedLabelLineBreaks(normalized, /(--\s+)((?:(?!-->).)*)(\s+-->)/g);
+        normalized = replaceMermaidDelimitedLabelLineBreaks(normalized, /(\|)([^|\r\n]*)(\|)/g);
+        return normalized.replace(/\\r\\n|\\n|\\r/g, '\n');
+    }
     function repairMermaidSource(source) {
         var lines = String(source || '').split(/\r?\n/);
         return lines.map(function(line) {
@@ -547,6 +564,11 @@
             markError(table, 'Mermaid diagram is too large');
             return;
         }
+        var renderableSource = normalizeMermaidEscapedLineBreaks(source);
+        if (renderableSource.length > MERMAID_MAX_CHARS) {
+            markError(table, 'Mermaid diagram is too large');
+            return;
+        }
         table.setAttribute('data-chat4j-diagram-rendered', 'pending');
         var id = 'chat4j-mermaid-' + Date.now() + '-' + index + '-' + (++renderCounter);
         var completed = false;
@@ -570,9 +592,9 @@
             });
         }
         try {
-            renderSource(source, '-original').catch(function(originalError) {
-                var repaired = repairMermaidSource(source);
-                if (repaired === source) {
+            renderSource(renderableSource, '-original').catch(function(originalError) {
+                var repaired = repairMermaidSource(renderableSource);
+                if (repaired === renderableSource) {
                     throw originalError;
                 }
                 return renderSource(repaired, '-repaired');
@@ -595,7 +617,7 @@
                     return;
                 }
                 appendMermaidThemeStyle(renderedSvg);
-                installMermaidOpenButton(target, source);
+                installMermaidOpenButton(target, renderableSource);
                 replaceSource(table, target);
                 applyReadableNodeLabelTheme(renderedSvg);
                 applyMindmapLabelTheme(renderedSvg);

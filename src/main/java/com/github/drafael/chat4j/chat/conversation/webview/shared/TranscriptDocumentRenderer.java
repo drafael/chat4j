@@ -17,6 +17,7 @@ public final class TranscriptDocumentRenderer {
 
     private static final String COPY_ICON = TranscriptResources.iconDataUri("/icons/input/copy.svg");
     private static final String REGENERATE_ICON = TranscriptResources.iconDataUri("/icons/chat/refresh-cw.svg");
+    private static final String OPEN_DIAGRAM_ICON = TranscriptResources.iconDataUri("/icons/chat/external-link.svg");
     private static final String READ_ALOUD_ICON = TranscriptResources.iconDataUri("/icons/chat/volume-2.svg");
     private static final String PLAYER_STOP_ICON = TranscriptResources.iconDataUri("/icons/chat/player-stop.svg");
     private static final String ARROW_DOWN_ICON = TranscriptResources.iconDataUri("/icons/chat/arrow-down.svg");
@@ -140,6 +141,7 @@ public final class TranscriptDocumentRenderer {
                   --chat4j-jump-button-display: %s;
                   --chat4j-copy-icon-mask: url('%s');
                   --chat4j-regenerate-icon-mask: url('%s');
+                  --chat4j-open-diagram-icon-mask: url('%s');
                   --chat4j-read-aloud-icon-mask: url('%s');
                   --chat4j-player-stop-icon-mask: url('%s');
                   --chat4j-arrow-down-icon-mask: url('%s');
@@ -185,6 +187,7 @@ public final class TranscriptDocumentRenderer {
                 snapshot.jumpButtonVisible() ? "flex" : "none",
                 COPY_ICON,
                 REGENERATE_ICON,
+                OPEN_DIAGRAM_ICON,
                 READ_ALOUD_ICON,
                 PLAYER_STOP_ICON,
                 ARROW_DOWN_ICON

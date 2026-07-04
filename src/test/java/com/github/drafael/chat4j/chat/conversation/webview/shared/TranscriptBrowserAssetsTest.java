@@ -4,6 +4,8 @@ import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntryKind;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.provider.api.Role;
+import org.graalvm.polyglot.Context;
+import org.graalvm.polyglot.Value;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -154,7 +156,8 @@ class TranscriptBrowserAssetsTest {
                 .contains("chat4j-diagram-error-badge")
                 .contains("target.parentNode.replaceChild(originalNode, target)")
                 .contains("window.mermaid.parse(candidate)")
-                .contains("repairMermaidSource(source)")
+                .contains("normalizeMermaidEscapedLineBreaks(source)")
+                .contains("repairMermaidSource(renderableSource)")
                 .contains("renderSource(repaired, '-repaired')")
                 .contains("mermaidErrorSvg(svg)")
                 .contains("friendlyDiagramError")
@@ -264,6 +267,7 @@ class TranscriptBrowserAssetsTest {
                 .contains("player-stop")
                 .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
                 .contains("data-action=\"open-diagram\"")
+                .contains("class=\"icon open-diagram\"")
                 .contains("Open Diagram");
     }
 
@@ -349,6 +353,7 @@ class TranscriptBrowserAssetsTest {
         String layoutCss = TranscriptResources.resourceText("/web/chat/transcript-layout.css");
         String messageCss = TranscriptResources.resourceText("/web/chat/transcript-message-content.css");
         String diagramCss = TranscriptResources.resourceText("/web/chat/transcript-diagrams.css");
+        String actionsCss = TranscriptResources.resourceText("/web/chat/transcript-actions.css");
         String sourceCss = TranscriptResources.resourceText("/web/chat/transcript-sources.css");
         String jumpCss = TranscriptResources.resourceText("/web/chat/transcript-jump.css");
 
@@ -377,8 +382,31 @@ class TranscriptBrowserAssetsTest {
                 .contains(".chat4j-mermaid-display")
                 .contains("var(--chat4j-mermaid-border)")
                 .contains("var(--chat4j-mermaid-canvas-bg)");
+        assertThat(actionsCss)
+                .contains(".icon.open-diagram")
+                .contains("var(--chat4j-open-diagram-icon-mask)");
         assertThat(sourceCss).contains(".source-preview");
         assertThat(jumpCss).contains(".jump-button");
+    }
+
+    @Test
+    @DisplayName("Extracted diagram JavaScript normalizes escaped Mermaid label line breaks")
+    void diagramRenderScript_whenMermaidLabelsContainEscapedNewlines_normalizesLabelBreaksOnly() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            Value normalizer = mermaidEscapedLineBreakNormalizer(context);
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\\nA-->B"))
+                    .isEqualTo("graph TD\nA-->B");
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\nA[Vosk\\nBest Offline Java Option]"))
+                    .isEqualTo("graph TD\nA[Vosk<br/>Best Offline Java Option]");
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\nA[\"Vosk\\nBest Offline Java Option\"]"))
+                    .isEqualTo("graph TD\nA[\"Vosk<br/>Best Offline Java Option\"]");
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\nA-->|Yes\\nLow Latency|B"))
+                    .isEqualTo("graph TD\nA-->|Yes<br/>Low Latency|B");
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\nA -- Yes\\nLow Latency --> B"))
+                    .isEqualTo("graph TD\nA -- Yes<br/>Low Latency --> B");
+            assertThat(normalizeMermaidEscapedLineBreaks(normalizer, "graph TD\nA{Budget\\r\\nScale}"))
+                    .isEqualTo("graph TD\nA{Budget<br/>Scale}");
+        }
     }
 
     @Test
@@ -391,6 +419,23 @@ class TranscriptBrowserAssetsTest {
                 .contains("split(/\\r?\\n/)")
                 .doesNotContain("match(/rgba?\\\\((\\\\d+),\\\\s*(\\\\d+),\\\\s*(\\\\d+)/i)")
                 .doesNotContain("split(/\\\\r?\\\\n/)");
+    }
+
+    private static Value mermaidEscapedLineBreakNormalizer(Context context) {
+        String script = TranscriptBrowserAssets.diagramRenderScript();
+        int end = script.lastIndexOf("})();");
+        assertThat(end).isGreaterThan(0);
+        String testableScript = "%s\nwindow.__chat4jNormalizeMermaidEscapedLineBreaks = normalizeMermaidEscapedLineBreaks;\n%s"
+                .formatted(script.substring(0, end), script.substring(end));
+        context.eval("js", "var window = {};");
+        context.eval("js", testableScript);
+        return context.getBindings("js")
+                .getMember("window")
+                .getMember("__chat4jNormalizeMermaidEscapedLineBreaks");
+    }
+
+    private static String normalizeMermaidEscapedLineBreaks(Value normalizer, String source) {
+        return normalizer.execute(source).asString();
     }
 
     @Test
