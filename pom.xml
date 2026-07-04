@@ -24,7 +24,7 @@
         <jackson.version>2.22.0</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.21.2</jsoup.version>
-        <pdfbox.version>3.0.5</pdfbox.version>
+        <pdfbox.version>3.0.7</pdfbox.version>
         <jlayer.version>1.0.1</jlayer.version>
         <swingwebview.version>1.0.7</swingwebview.version>
         <jna.version>5.17.0</jna.version>
