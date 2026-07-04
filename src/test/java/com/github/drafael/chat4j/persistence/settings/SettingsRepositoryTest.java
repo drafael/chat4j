@@ -2,13 +2,13 @@ package com.github.drafael.chat4j.persistence.settings;
 
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import java.nio.file.Path;
-import java.sql.SQLException;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SettingsRepositoryTest {
 
@@ -17,7 +17,7 @@ class SettingsRepositoryTest {
 
     @Test
     @DisplayName("findByPrefix returns matching settings rows in key order")
-    void findByPrefix_whenKeysSharePrefix_returnsMatchingRows() throws SQLException {
+    void findByPrefix_whenKeysSharePrefix_returnsMatchingRows() {
         var subject = new SettingsRepository(tempDir.resolve("chat4j.properties"));
         subject.put("chat4j.models.favorite.ollama::qwen3%3A14b", "true");
         subject.put("chat4j.models.favorite.openai::gpt-4.1", "true");
@@ -34,7 +34,7 @@ class SettingsRepositoryTest {
 
     @Test
     @DisplayName("Model favorites persisted in settings are restored after service restart")
-    void modelFavoritesService_whenRestarted_restoresPersistedFavorites() throws SQLException {
+    void modelFavoritesService_whenRestarted_restoresPersistedFavorites() {
         Path settingsFile = tempDir.resolve("chat4j.properties");
         var settingsRepo = new SettingsRepository(settingsFile);
         var writer = new ModelFavoritesService(settingsRepo);
@@ -44,5 +44,15 @@ class SettingsRepositoryTest {
         subject.primeFromSettings();
 
         assertThat(subject.isFavorite("Anthropic", "claude-sonnet-4-6")).isTrue();
+    }
+
+    @Test
+    @DisplayName("File failures use settings storage exceptions")
+    void put_whenSettingsPathIsDirectory_throwsSettingsStorageException() {
+        var subject = new SettingsRepository(tempDir);
+
+        assertThatThrownBy(() -> subject.put("chat4j.ui.theme.name", "GitHub"))
+                .isInstanceOf(SettingsStorageException.class)
+                .hasMessageContaining("settings file");
     }
 }

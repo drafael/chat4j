@@ -5,7 +5,6 @@ import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.*;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -13,10 +12,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AppearancePanelTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Canceling a WebView engine change restores the active engine")
@@ -128,10 +131,8 @@ class AppearancePanelTest {
         assertThat(exitCalled).isTrue();
     }
 
-    private SettingsRepository settingsRepo(String testName) throws Exception {
-        Path path = Path.of("target", "%s.properties".formatted(testName));
-        Files.deleteIfExists(path);
-        return new SettingsRepository(path);
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 
     private WebViewRuntimeStatus systemRuntimeStatus() {

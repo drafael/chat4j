@@ -7,10 +7,14 @@ import java.nio.file.Path;
 import javax.swing.*;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class GeneralPanelTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Prompt addendum updates persist to Agent Mode system prompt setting")
@@ -26,7 +30,7 @@ class GeneralPanelTest {
     }
 
     private SettingsRepository settingsRepo(String testName) {
-        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 
     private <T extends Component> T findComponentByName(Container root, String name, Class<T> type) {

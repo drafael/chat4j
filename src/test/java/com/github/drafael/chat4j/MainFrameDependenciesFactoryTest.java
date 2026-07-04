@@ -27,11 +27,15 @@ import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MainFrameDependenciesFactoryTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Create builds non-null dependencies and wiring graphs")
@@ -102,7 +106,7 @@ class MainFrameDependenciesFactoryTest {
 
         return new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepository(null),
-                new SettingsRepository(Path.of("target", "test-mainframe-dependencies-settings.properties")),
+                new SettingsRepository(tempDir.resolve("settings.properties")),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
                 new ProviderSelectableResolver(),

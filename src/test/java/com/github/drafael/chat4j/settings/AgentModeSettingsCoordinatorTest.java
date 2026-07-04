@@ -5,10 +5,14 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentModeSettingsCoordinatorTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Resolve system prompt append returns empty default when value missing")
@@ -46,6 +50,6 @@ class AgentModeSettingsCoordinatorTest {
     }
 
     private SettingsRepository settingsRepo(String testName) {
-        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 }

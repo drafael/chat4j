@@ -14,18 +14,18 @@ import com.github.drafael.chat4j.provider.support.ProviderMenuIconResolver;
 import com.github.drafael.chat4j.provider.support.ProviderMenuIconTintResolver;
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import javax.sql.DataSource;
-import org.h2.jdbcx.JdbcDataSource;
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MainFrameProviderMenuWiringFactoryTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Create builds non-null provider-menu wiring graph")
@@ -119,26 +119,7 @@ class MainFrameProviderMenuWiringFactoryTest {
                 .hasMessageContaining("providerSelectableResolver");
     }
 
-    private SettingsRepository settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepository(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )) {
-            statement.execute();
-        }
+    private SettingsRepository settingsRepo(String name) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
     }
 }

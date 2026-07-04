@@ -259,6 +259,9 @@ class TranscriptBrowserAssetsTest {
 
         assertThat(script)
                 .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
+                .contains("dispatchMessageActionButton(actionButton, event)")
+                .contains("messageActionText(button)")
+                .contains("player-stop")
                 .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
                 .contains("data-action=\"open-diagram\"")
                 .contains("Open Diagram");

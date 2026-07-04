@@ -110,16 +110,21 @@ public final class TranscriptEntryRenderer {
         String body = document.body() == null ? escapeHtml(entry.text()) : document.body().html();
         String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
+        String readAloudAction = shouldRenderReadAloudAction(entry, snapshot)
+                ? renderReadAloudAction(entry, snapshot)
+                : "";
         String actions = entry.messageIndex() < 0
                 ? ""
                 : """
                   <div class="message-actions" data-message-index="%d">
                     <button class="message-action-button" title="Copy message" data-action="copy" data-message-index="%d"><span class="icon copy" aria-hidden="true"></span></button>
+                    %s
                     <button class="message-action-button" title="%s" data-action="regenerate" data-message-index="%d"><span class="icon regenerate" aria-hidden="true"></span></button>
                   </div>
                 """.formatted(
                         entry.messageIndex(),
                         entry.messageIndex(),
+                        readAloudAction,
                         entry.role() == Role.USER ? "Regenerate response" : "Regenerate this response",
                         entry.messageIndex()
                 );
@@ -136,6 +141,24 @@ public final class TranscriptEntryRenderer {
 
     public static String renderAttachmentStripHtml(List<ConversationAttachment> attachments) {
         return TranscriptAttachmentRenderer.renderAttachmentStripHtml(attachments);
+    }
+
+    private String renderReadAloudAction(ConversationEntry entry, TranscriptRenderSnapshot snapshot) {
+        boolean active = snapshot.activeReadAloudMessageIndex() == entry.messageIndex();
+        return """
+                    <button class="message-action-button" title="%s" data-action="read-aloud" data-message-index="%d" data-read-aloud-active="%s"><span class="icon %s" aria-hidden="true"></span></button>
+                """.formatted(
+                active ? "Stop" : "Read aloud",
+                entry.messageIndex(),
+                active ? "true" : "false",
+                active ? "player-stop" : "read-aloud"
+        );
+    }
+
+    private boolean shouldRenderReadAloudAction(ConversationEntry entry, TranscriptRenderSnapshot snapshot) {
+        return snapshot.readAloudAvailable()
+                && entry.role() == Role.ASSISTANT
+                && StringUtils.isNotBlank(entry.text());
     }
 
     private String renderEntryContentHtml(Role role, String text, TranscriptRenderSnapshot snapshot) {

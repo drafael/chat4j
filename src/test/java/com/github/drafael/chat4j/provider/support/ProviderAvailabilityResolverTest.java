@@ -4,22 +4,22 @@ import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.sql.DataSource;
-import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProviderAvailabilityResolverTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Model selection is enabled for non-local providers")
@@ -92,28 +92,8 @@ class ProviderAvailabilityResolverTest {
         assertThat(probe.blockingCalls).contains("http://localhost:1234/v1");
     }
 
-    private SettingsRepository settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepository(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )
-        ) {
-            statement.execute();
-        }
+    private SettingsRepository settingsRepo(String name) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
     }
 
     private ProviderRegistry.ProviderDef provider(String name, String baseUrl) {

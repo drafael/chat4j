@@ -8,8 +8,10 @@ import com.github.drafael.chat4j.chat.composer.InputBar;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.chat.ui.ActivityBubble;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
 import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
+import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
@@ -26,7 +28,15 @@ import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.tts.AudioPlaybackService;
+import com.github.drafael.chat4j.tts.TextToSpeechAudio;
+import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
+import com.github.drafael.chat4j.tts.TextToSpeechService;
+import com.github.drafael.chat4j.tts.TextToSpeechSettings;
 import com.github.drafael.chat4j.web.WebSearchMode;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
@@ -1230,6 +1240,60 @@ class ChatPanelTest {
 
         assertThat(buttons).hasSize(3);
         assertThat(after.height).isEqualTo(before.height);
+    }
+
+    @Test
+    @DisplayName("Read aloud action button invokes Text to Speech service")
+    void readAloudButton_whenClicked_invokesTextToSpeechService() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        subject.loadHistory(List.of(Message.assistant("assistant answer")));
+        flushEdt();
+
+        JButton readAloudButton = findComponents(subject, JButton.class).stream()
+                .filter(button -> "Read aloud".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow();
+
+        SwingUtilities.invokeAndWait(readAloudButton::doClick);
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
+                .contains("Stop");
+    }
+
+    @Test
+    @DisplayName("Read aloud web transcript action uses message indexes without duplicate action bars")
+    void handleWebTranscriptAction_whenReadAloudAfterUserMessage_invokesTextToSpeechService() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        subject.loadHistory(List.of(
+                Message.user("question"),
+                Message.assistant("assistant answer")
+        ));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", 1, "");
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+    }
+
+    @Test
+    @DisplayName("Read aloud web transcript action can use browser-provided text when index is unavailable")
+    void handleWebTranscriptAction_whenReadAloudIndexUnavailable_usesTextPayload() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", -1, "assistant answer");
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
     }
 
     @Test
@@ -2735,6 +2799,16 @@ class ChatPanelTest {
         return layout.getConstraints(row).gridy;
     }
 
+    private static ChatPanel chatPanelWithTextToSpeech(TextToSpeechService textToSpeechService) {
+        return new ChatPanel(
+                ProviderModelCacheService.createDefault(),
+                ModelFavoritesService.createInMemory(),
+                new ChatMessageViewFactory(),
+                WebViewEngine.JEDITOR_PANE,
+                textToSpeechService
+        );
+    }
+
     private static JPopupMenu contentPopupMenu(MessageBubble bubble) {
         return findComponents(bubble, JComponent.class).stream()
                 .map(JComponent::getComponentPopupMenu)
@@ -2757,6 +2831,73 @@ class ChatPanelTest {
             if (component instanceof Container child) {
                 collectComponents(child, componentType, matches);
             }
+        }
+    }
+
+    private static final class RecordingTextToSpeechService extends TextToSpeechService {
+        private String requestedText = "";
+        private String activeMessageKey = "";
+
+        private RecordingTextToSpeechService() throws IOException {
+            super(
+                    new TextToSpeechSettings(
+                            new SettingsRepository(Files.createTempFile("chat4j-tts-chat-panel", ".properties")),
+                            new TextToSpeechProviderRegistry(emptyList())
+                    ),
+                    new AudioPlaybackService() {
+                        @Override
+                        public void play(TextToSpeechAudio audio) {
+                        }
+
+                        @Override
+                        public void stop() {
+                        }
+                    }
+            );
+        }
+
+        @Override
+        public boolean isReadAloudAvailable() {
+            return true;
+        }
+
+        @Override
+        public boolean isReadAloudActive(String messageKey) {
+            return activeMessageKey.equals(messageKey);
+        }
+
+        @Override
+        public void readAloud(String messageKey, String text, Consumer<String> errorHandler) {
+            requestedText = text;
+        }
+
+        @Override
+        public void readAloud(String messageKey, String text, Consumer<String> errorHandler, Consumer<String> statusHandler) {
+            requestedText = text;
+        }
+
+        @Override
+        public void readAloud(
+                String messageKey,
+                String text,
+                Consumer<String> errorHandler,
+                Consumer<String> statusHandler,
+                Runnable stateChangeHandler
+        ) {
+            requestedText = text;
+            activeMessageKey = activeMessageKey.equals(messageKey) ? "" : messageKey;
+            if (stateChangeHandler != null) {
+                stateChangeHandler.run();
+            }
+        }
+
+        @Override
+        public void stop() {
+            activeMessageKey = "";
+        }
+
+        private String requestedText() {
+            return requestedText;
         }
     }
 }

@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.persistence.model;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
-import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -17,7 +16,7 @@ class ModelFavoritesServiceTest {
 
     @Test
     @DisplayName("Favorites are reloaded from settings keys during service priming")
-    void primeFromSettings_whenFavoritesWerePersisted_loadsFavoritesIntoMemory() throws SQLException {
+    void primeFromSettings_whenFavoritesWerePersisted_loadsFavoritesIntoMemory() {
         var settingsRepo = new InMemorySettingsRepo();
         var writer = new ModelFavoritesService(settingsRepo);
         writer.setFavorite("OpenAI", "gpt-4.1", true);
@@ -32,7 +31,7 @@ class ModelFavoritesServiceTest {
 
     @Test
     @DisplayName("Toggling a favorite persists add and remove operations")
-    void toggleFavorite_whenCalledTwice_addsThenRemovesFavorite() throws SQLException {
+    void toggleFavorite_whenCalledTwice_addsThenRemovesFavorite() {
         var settingsRepo = new InMemorySettingsRepo();
         var subject = new ModelFavoritesService(settingsRepo);
 
@@ -47,7 +46,7 @@ class ModelFavoritesServiceTest {
 
     @Test
     @DisplayName("Favorites are tracked by provider and model pair")
-    void isFavorite_whenSameModelExistsInDifferentProviders_tracksEntriesIndependently() throws SQLException {
+    void isFavorite_whenSameModelExistsInDifferentProviders_tracksEntriesIndependently() {
         var settingsRepo = new InMemorySettingsRepo();
         var subject = new ModelFavoritesService(settingsRepo);
 
@@ -62,7 +61,7 @@ class ModelFavoritesServiceTest {
         private final Map<String, String> entries = new LinkedHashMap<>();
 
         private InMemorySettingsRepo() {
-            super(Path.of("target", "test-model-favorites-in-memory.properties"));
+            super(Path.of("unused-model-favorites.properties"));
         }
 
         @Override

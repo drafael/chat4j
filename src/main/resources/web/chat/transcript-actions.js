@@ -86,6 +86,37 @@
         preview.style.left = x + 'px';
         preview.style.top = y + 'px';
     }
+    function rowText(row) {
+        if (!row) {
+            return '';
+        }
+        var message = row.querySelector('.message');
+        return message ? String(message.textContent || '') : '';
+    }
+    function messageActionText(button) {
+        if (!button || button.getAttribute('data-action') !== 'read-aloud') {
+            return '';
+        }
+        return rowText(closest(button, '.row[data-message-index]'));
+    }
+    function dispatchMessageActionButton(button, event) {
+        if (!button) {
+            return;
+        }
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        var action = button.getAttribute('data-action');
+        dispatchTranscriptAction(
+                action,
+                Number(button.getAttribute('data-message-index')),
+                messageActionText(button)
+        );
+        if (action === 'copy') {
+            animateCopyButton(button);
+        }
+    }
     function showTranscriptMenu(event, row) {
         var menu = document.getElementById('chat4j-transcript-menu');
         if (!menu || !row) {
@@ -95,6 +126,10 @@
         if (messageIndex < 0) {
             return;
         }
+        var isAssistant = row.classList.contains('assistant');
+        var readAloudButton = row.querySelector('button[data-action="read-aloud"]');
+        var hasReadAloud = isAssistant && !!readAloudButton;
+        var readAloudActive = hasReadAloud && readAloudButton.getAttribute('data-read-aloud-active') === 'true';
         var regenerateLabel = row.classList.contains('user') ? 'Regenerate Response' : 'Regenerate This Response';
         var selection = selectedText().trim();
         var diagram = closest(event.target, '.chat4j-mermaid-display');
@@ -104,10 +139,14 @@
         var diagramOpen = diagram
                 ? '<button data-action="open-diagram"><span class="icon regenerate" aria-hidden="true"></span><span class="label">Open Diagram</span><span class="shortcut"></span></button><div class="transcript-menu-separator"></div>'
                 : '';
+        var readAloud = hasReadAloud
+                ? '<div class="transcript-menu-separator"></div><button data-action="read-aloud"><span class="icon ' + (readAloudActive ? 'player-stop' : 'read-aloud') + '" aria-hidden="true"></span><span class="label">' + (readAloudActive ? 'Stop' : 'Read aloud') + '</span><span class="shortcut"></span></button>'
+                : '';
         menu.setAttribute('data-selected-text', selection);
         menu.innerHTML = selectedCopy
                 + diagramOpen
                 + '<button data-action="copy"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Message</span><span class="shortcut"></span></button>'
+                + readAloud
                 + '<div class="transcript-menu-separator"></div>'
                 + '<button data-action="regenerate"><span class="icon regenerate" aria-hidden="true"></span><span class="label">' + regenerateLabel + '</span><span class="shortcut"></span></button>';
         menu._chat4jDiagram = diagram || null;
@@ -123,7 +162,9 @@
                     hideTranscriptMenu();
                     return;
                 }
-                var text = action === 'copy-selected' ? menu.getAttribute('data-selected-text') : '';
+                var text = action === 'copy-selected'
+                        ? menu.getAttribute('data-selected-text')
+                        : (action === 'read-aloud' ? rowText(row) : '');
                 dispatchTranscriptAction(action, messageIndex, text);
                 hideTranscriptMenu();
             };
@@ -334,16 +375,7 @@
         }
         var actionButton = closest(event.target, 'button[data-action][data-message-index]');
         if (actionButton) {
-            event.preventDefault();
-            event.stopPropagation();
-            dispatchTranscriptAction(
-                    actionButton.getAttribute('data-action'),
-                    Number(actionButton.getAttribute('data-message-index')),
-                    ''
-            );
-            if (actionButton.getAttribute('data-action') === 'copy') {
-                animateCopyButton(actionButton);
-            }
+            dispatchMessageActionButton(actionButton, event);
             return;
         }
         hideTranscriptMenu();

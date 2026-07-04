@@ -1,21 +1,21 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.sql.DataSource;
-import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class FontMenuApplyCoordinatorTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Apply app font normalizes input, updates preview, persists settings, and syncs")
@@ -150,27 +150,8 @@ class FontMenuApplyCoordinatorTest {
         assertThat(syncCalls.get()).isEqualTo(1);
     }
 
-    private SettingsRepository settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepository(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )) {
-            statement.execute();
-        }
+    private SettingsRepository settingsRepo(String name) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
     }
 
     private static class RecordingFontSelectionNormalizer extends FontSelectionNormalizer {
@@ -225,18 +206,18 @@ class FontMenuApplyCoordinatorTest {
         }
 
         @Override
-        public void persistAppFontSelection(String family, int size) throws SQLException {
+        public void persistAppFontSelection(String family, int size) {
             calls.add("persist-app:%s:%d".formatted(family, size));
             if (throwOnPersistApp) {
-                throw new SQLException("boom-app");
+                throw new IllegalStateException("boom-app");
             }
         }
 
         @Override
-        public void persistCodeFontFamily(String family) throws SQLException {
+        public void persistCodeFontFamily(String family) {
             calls.add("persist-code:%s".formatted(family));
             if (throwOnPersistCode) {
-                throw new SQLException("boom-code");
+                throw new IllegalStateException("boom-code");
             }
         }
     }

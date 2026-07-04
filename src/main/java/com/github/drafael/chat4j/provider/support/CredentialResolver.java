@@ -20,6 +20,7 @@ public final class CredentialResolver {
         "OPENAI_API_KEY",
         "OPENROUTER_API_KEY",
         "GROQ_API_KEY",
+        "ELEVENLABS_API_KEY",
         "DEEPSEEK_API_KEY",
         "MISTRAL_API_KEY",
         "XAI_API_KEY",

@@ -2,14 +2,17 @@ package com.github.drafael.chat4j.persistence.db;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PersistenceBackendConfigTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Storage config defaults to SQLite when no backend is configured")
@@ -44,9 +47,7 @@ class PersistenceBackendConfigTest {
         assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).isEmpty();
     }
 
-    private SettingsRepository settingsRepo(String testName) throws Exception {
-        Path settingsFile = Path.of("target", "%s.properties".formatted(testName));
-        Files.deleteIfExists(settingsFile);
-        return new SettingsRepository(settingsFile);
+    private SettingsRepository settingsRepo(String testName) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 }

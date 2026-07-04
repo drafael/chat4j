@@ -41,6 +41,8 @@ public final class SystemWebView {
     private RenderMode renderMode = RenderMode.PREVIEW;
     private boolean dark;
     private boolean jumpButtonVisible;
+    private boolean readAloudAvailable;
+    private int activeReadAloudMessageIndex = -1;
     private boolean documentInitialized;
     private boolean documentLoadPending;
     private DocumentUrl pendingDocumentUrl;
@@ -87,24 +89,51 @@ public final class SystemWebView {
             boolean scrollToBottom,
             boolean jumpButtonVisible
     ) {
+        setTranscript(entries, renderMode, dark, scrollToBottom, jumpButtonVisible, false);
+    }
+
+    public void setTranscript(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean scrollToBottom,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable
+    ) {
+        setTranscript(entries, renderMode, dark, scrollToBottom, jumpButtonVisible, readAloudAvailable, -1);
+    }
+
+    public void setTranscript(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean scrollToBottom,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable,
+            int activeReadAloudMessageIndex
+    ) {
         RenderMode nextRenderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
         boolean styleChanged = this.renderMode != nextRenderMode || this.dark != dark;
         boolean jumpButtonChanged = this.jumpButtonVisible != jumpButtonVisible;
+        boolean readAloudChanged = this.readAloudAvailable != readAloudAvailable;
+        boolean activeReadAloudChanged = this.activeReadAloudMessageIndex != activeReadAloudMessageIndex;
         this.entries = List.copyOf(entries == null ? emptyList() : entries);
         this.renderMode = nextRenderMode;
         this.dark = dark;
         this.jumpButtonVisible = jumpButtonVisible;
+        this.readAloudAvailable = readAloudAvailable;
+        this.activeReadAloudMessageIndex = activeReadAloudMessageIndex;
 
         if (jumpButtonChanged) {
             updateJumpButtonChrome();
             SwingUtilities.invokeLater(this::updateJumpButtonChrome);
         }
-        if (styleChanged) {
+        if (styleChanged || readAloudChanged) {
             reload(scrollToBottom);
             return;
         }
         if (documentLoadPending) {
-            if (jumpButtonChanged) {
+            if (jumpButtonChanged || activeReadAloudChanged) {
                 reload(scrollToBottom);
             }
             return;
@@ -251,7 +280,7 @@ public final class SystemWebView {
     }
 
     private TranscriptRenderSnapshot transcriptRenderSnapshot() {
-        return TranscriptRenderSupport.snapshot(entries, renderMode, dark, jumpButtonVisible);
+        return TranscriptRenderSupport.snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, activeReadAloudMessageIndex);
     }
 
 

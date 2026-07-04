@@ -1,17 +1,17 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import javax.sql.DataSource;
-import org.h2.jdbcx.JdbcDataSource;
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class FontSettingsPersisterTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Persist app font selection stores family and size settings")
@@ -36,27 +36,7 @@ class FontSettingsPersisterTest {
         assertThat(settingsRepo.get(AppearancePanel.KEY_CODE_FONT)).contains("JetBrains Mono");
     }
 
-    private SettingsRepository settingsRepo(String dbName) throws SQLException {
-        DataSource dataSource = createDataSource(dbName);
-        createSettingsTable(dataSource);
-        return new SettingsRepository(dataSource);
-    }
-
-    private DataSource createDataSource(String dbName) {
-        var dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:%s;DB_CLOSE_DELAY=-1".formatted(dbName));
-        dataSource.setUser("sa");
-        dataSource.setPassword("");
-        return dataSource;
-    }
-
-    private void createSettingsTable(DataSource dataSource) throws SQLException {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "CREATE TABLE IF NOT EXISTS settings (\"key\" VARCHAR(100) PRIMARY KEY, \"value\" VARCHAR(500))"
-             )
-        ) {
-            statement.execute();
-        }
+    private SettingsRepository settingsRepo(String name) {
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
     }
 }

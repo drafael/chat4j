@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.sql.SQLException;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
@@ -27,7 +26,7 @@ public class ThemeSettingsResolver {
         }
     }
 
-    public void persistSelectedTheme(String themeName) throws SQLException {
+    public void persistSelectedTheme(String themeName) {
         Validate.notBlank(themeName, "themeName must not be blank");
         settingsRepo.put(KEY_THEME, themeName);
     }

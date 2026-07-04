@@ -16,6 +16,9 @@ Use this page as the canonical entry point for implementation and operational de
 - [chat-rendering.md](chat-rendering.md)
   - Swing HTML Renderer, System WebView, JCEF, fallback behavior, math/diagram/chem rendering, packaging, and validation.
 
+- [text-to-speech.md](text-to-speech.md)
+  - Read aloud architecture, provider settings, credentials, playback, UI behavior, and testing expectations.
+
 - [configurable-web-view-engine.md](configurable-web-view-engine.md)
   - Short architecture note for the configurable WebView boundary.
 

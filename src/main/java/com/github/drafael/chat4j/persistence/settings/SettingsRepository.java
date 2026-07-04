@@ -7,22 +7,15 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.sql.SQLException;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
-import java.util.WeakHashMap;
-import javax.sql.DataSource;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
 public class SettingsRepository {
-
-    private static final Map<DataSource, Path> SETTINGS_FILE_BY_DATASOURCE =
-            Collections.synchronizedMap(new WeakHashMap<>());
 
     private final Path settingsFile;
     private final Object lock = new Object();
@@ -31,15 +24,11 @@ public class SettingsRepository {
         this(storagePaths.settingsFile());
     }
 
-    public SettingsRepository(@NonNull DataSource dataSource) {
-        this(resolveSettingsFile(dataSource));
-    }
-
     public SettingsRepository(@NonNull Path settingsFile) {
         this.settingsFile = settingsFile;
     }
 
-    public Optional<String> get(String key) throws SQLException {
+    public Optional<String> get(String key) {
         Validate.notBlank(key, "key should not be blank");
 
         synchronized (lock) {
@@ -48,11 +37,11 @@ public class SettingsRepository {
         }
     }
 
-    public String get(String key, String defaultValue) throws SQLException {
+    public String get(String key, String defaultValue) {
         return get(key).orElse(defaultValue);
     }
 
-    public void put(String key, String value) throws SQLException {
+    public void put(String key, String value) {
         Validate.notBlank(key, "key should not be blank");
 
         synchronized (lock) {
@@ -62,7 +51,7 @@ public class SettingsRepository {
         }
     }
 
-    public void remove(String key) throws SQLException {
+    public void remove(String key) {
         Validate.notBlank(key, "key should not be blank");
 
         synchronized (lock) {
@@ -72,7 +61,7 @@ public class SettingsRepository {
         }
     }
 
-    public Map<String, String> findByPrefix(String prefix) throws SQLException {
+    public Map<String, String> findByPrefix(String prefix) {
         String safePrefix = StringUtils.defaultString(prefix);
 
         synchronized (lock) {
@@ -86,7 +75,7 @@ public class SettingsRepository {
         }
     }
 
-    private Properties loadProperties() throws SQLException {
+    private Properties loadProperties() {
         Properties properties = new Properties();
         if (!Files.exists(settingsFile)) {
             return properties;
@@ -96,11 +85,11 @@ public class SettingsRepository {
             properties.load(input);
             return properties;
         } catch (IOException e) {
-            throw new SQLException("Failed to read settings file: %s".formatted(settingsFile), e);
+            throw new SettingsStorageException("Failed to read settings file: %s".formatted(settingsFile), e);
         }
     }
 
-    private void storeProperties(Properties properties) throws SQLException {
+    private void storeProperties(Properties properties) {
         Path parent = settingsFile.getParent();
         try {
             if (parent != null) {
@@ -117,7 +106,7 @@ public class SettingsRepository {
 
             moveAtomicallyOrReplace(tempFile);
         } catch (IOException e) {
-            throw new SQLException("Failed to persist settings file: %s".formatted(settingsFile), e);
+            throw new SettingsStorageException("Failed to persist settings file: %s".formatted(settingsFile), e);
         }
     }
 
@@ -127,15 +116,5 @@ public class SettingsRepository {
         } catch (IOException e) {
             Files.move(tempFile, settingsFile, StandardCopyOption.REPLACE_EXISTING);
         }
-    }
-
-    private static Path resolveSettingsFile(@NonNull DataSource dataSource) {
-        return SETTINGS_FILE_BY_DATASOURCE.computeIfAbsent(dataSource, unused -> {
-            try {
-                return Files.createTempFile("chat4j-settings-", ".properties");
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to create temporary settings file", e);
-            }
-        });
     }
 }

@@ -5,7 +5,6 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.sql.SQLException;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,14 +37,10 @@ public class ModelFavoritesService {
             return;
         }
 
-        try {
-            settingsRepo.findByPrefix(FAVORITE_KEY_PREFIX).keySet().stream()
-                    .map(ModelFavoritesService::parseFavoriteKey)
-                    .filter(Objects::nonNull)
-                    .forEach(favorites::add);
-        } catch (SQLException e) {
-            favorites.clear();
-        }
+        settingsRepo.findByPrefix(FAVORITE_KEY_PREFIX).keySet().stream()
+                .map(ModelFavoritesService::parseFavoriteKey)
+                .filter(Objects::nonNull)
+                .forEach(favorites::add);
     }
 
     public boolean isFavorite(String providerName, String modelId) {
@@ -53,7 +48,7 @@ public class ModelFavoritesService {
         return modelRef != null && favorites.contains(modelRef);
     }
 
-    public boolean setFavorite(String providerName, String modelId, boolean favorite) throws SQLException {
+    public boolean setFavorite(String providerName, String modelId, boolean favorite) {
         ModelRef modelRef = normalize(providerName, modelId);
         if (modelRef == null) {
             return false;
@@ -77,7 +72,7 @@ public class ModelFavoritesService {
         return true;
     }
 
-    public boolean toggleFavorite(String providerName, String modelId) throws SQLException {
+    public boolean toggleFavorite(String providerName, String modelId) {
         boolean shouldFavorite = !isFavorite(providerName, modelId);
         return setFavorite(providerName, modelId, shouldFavorite) ? shouldFavorite : false;
     }

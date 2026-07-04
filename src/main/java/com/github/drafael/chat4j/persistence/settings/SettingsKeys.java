@@ -45,6 +45,9 @@ public final class SettingsKeys {
     public static final String WEB_AUTO_BROWSE_TOP_N = "chat4j.web.autoBrowseTopN";
     public static final String WEB_SEARCH_RESULT_COUNT = "chat4j.web.searchResultCount";
 
+    public static final String TTS_PROVIDER = "chat4j.tts.provider";
+    public static final String TTS_PROVIDER_OFF = "off";
+    public static final String TTS_PREFIX = "chat4j.tts.";
 
     private SettingsKeys() {
     }
@@ -65,5 +68,33 @@ public final class SettingsKeys {
         String normalized = StringUtils.defaultString(providerName).trim().toLowerCase(Locale.ROOT);
         String slug = normalized.replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
         return StringUtils.defaultIfBlank(slug, "unknown");
+    }
+
+    public static String ttsModelIdKey(String providerId) {
+        return "%s%s.model.id".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsModelLabelKey(String providerId) {
+        return "%s%s.model.label".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsVoiceIdKey(String providerId) {
+        return "%s%s.voice.id".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsVoiceLabelKey(String providerId) {
+        return "%s%s.voice.label".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsCatalogModelsKey(String providerId) {
+        return "%scatalog.%s.models".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsCatalogVoicesKey(String providerId) {
+        return "%scatalog.%s.voices".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String ttsCatalogUpdatedAtKey(String providerId) {
+        return "%scatalog.%s.updatedAt".formatted(TTS_PREFIX, providerSlug(providerId));
     }
 }

@@ -6,10 +6,14 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RenderModeSettingsCoordinatorTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Resolve default mode falls back to preview when setting is missing")
@@ -55,6 +59,6 @@ class RenderModeSettingsCoordinatorTest {
     }
 
     private SettingsRepository settingsRepo(String testName) {
-        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 }

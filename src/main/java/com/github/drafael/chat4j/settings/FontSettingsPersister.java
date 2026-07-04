@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.sql.SQLException;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
@@ -13,14 +12,14 @@ public class FontSettingsPersister {
         this.settingsRepo = settingsRepo;
     }
 
-    public void persistAppFontSelection(String family, int size) throws SQLException {
+    public void persistAppFontSelection(String family, int size) {
         Validate.notBlank(family, "family must not be blank");
 
         settingsRepo.put(AppearancePanel.KEY_APP_FONT, family);
         settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, String.valueOf(size));
     }
 
-    public void persistCodeFontFamily(String family) throws SQLException {
+    public void persistCodeFontFamily(String family) {
         Validate.notBlank(family, "family must not be blank");
 
         settingsRepo.put(AppearancePanel.KEY_CODE_FONT, family);

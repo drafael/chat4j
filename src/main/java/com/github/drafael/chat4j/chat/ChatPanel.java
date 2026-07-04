@@ -58,6 +58,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
 import com.github.drafael.chat4j.web.BrowsedPage;
@@ -130,12 +131,14 @@ public class ChatPanel extends JPanel {
     private static final int JUMP_OVERLAY_BOTTOM_GAP = 8;
     private static final int COMPOSER_FADE_HEIGHT = 48;
     private static final int CHAT_TOP_FADE_HEIGHT = 34;
+    private static final int READ_ALOUD_STATUS_CLEAR_DELAY_MILLIS = 2800;
     private static final int CHAT_COLUMN_SIDE_MARGIN = 16;
     private static final int ASSISTANT_MESSAGE_SIDE_MARGIN = 0;
     private static final String MESSAGE_ROLE_PROPERTY = "chat4j.messageRole";
     private static final String MESSAGE_INDEX_PROPERTY = "chat4j.messageIndex";
     private static final String MESSAGE_META_PROPERTY = "chat4j.messageMeta";
     private static final String MESSAGE_VIEW_PROPERTY = "chat4j.messageView";
+    private static final String MESSAGE_ACTION_BAR_PROPERTY = "chat4j.messageActionBar";
     private static final Integer COMPOSER_FADE_LAYER = 50;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING = true;
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
@@ -157,6 +160,8 @@ public class ChatPanel extends JPanel {
     private final JLayeredPane bodyLayered;
     private final JPanel bodyContent;
     private final JumpToLatestButton jumpToLatestOverlay;
+    private final JLabel readAloudStatusLabel = new JLabel();
+    private final Timer readAloudStatusTimer;
     private final ChatFadeOverlay topFadeOverlay;
     private final ChatFadeOverlay composerFadeOverlay;
     private boolean atBottom = true;
@@ -170,6 +175,7 @@ public class ChatPanel extends JPanel {
     private final WebViewEngine webViewEngine;
     private final SystemWebView systemWebView;
     private final JcefBrowserView jcefBrowserView;
+    private final TextToSpeechService textToSpeechService;
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
@@ -273,10 +279,21 @@ public class ChatPanel extends JPanel {
             @NonNull ChatMessageViewFactory messageViewFactory,
             @NonNull WebViewEngine webViewEngine
     ) {
+        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, TextToSpeechService.disabled());
+    }
+
+    public ChatPanel(
+            @NonNull ProviderModelCacheService modelCacheService,
+            @NonNull ModelFavoritesService modelFavoritesService,
+            @NonNull ChatMessageViewFactory messageViewFactory,
+            @NonNull WebViewEngine webViewEngine,
+            @NonNull TextToSpeechService textToSpeechService
+    ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.messageViewFactory = messageViewFactory;
         this.webViewEngine = webViewEngine;
+        this.textToSpeechService = textToSpeechService;
         this.systemWebView = webViewEngine == WebViewEngine.SYSTEM ? new SystemWebView() : null;
         this.jcefBrowserView = webViewEngine == WebViewEngine.JCEF ? new JcefBrowserView() : null;
         if (this.systemWebView != null) {
@@ -335,6 +352,10 @@ public class ChatPanel extends JPanel {
         jumpToLatestOverlay.setVisible(false);
         jumpToLatestOverlay.addActionListener(e -> onJumpToLatestRequested());
 
+        configureReadAloudStatusLabel();
+        readAloudStatusTimer = new Timer(READ_ALOUD_STATUS_CLEAR_DELAY_MILLIS, e -> readAloudStatusLabel.setVisible(false));
+        readAloudStatusTimer.setRepeats(false);
+
         topFadeOverlay = new ChatFadeOverlay(ChatFadeOverlay.Direction.TOP, 0.70f);
         composerFadeOverlay = new ChatFadeOverlay(ChatFadeOverlay.Direction.BOTTOM, 1.0f);
 
@@ -349,23 +370,27 @@ public class ChatPanel extends JPanel {
                 bodyContent.setBounds(0, 0, getWidth(), getHeight());
                 topFadeOverlay.setBounds(0, 0, getWidth(), Math.min(CHAT_TOP_FADE_HEIGHT, getHeight()));
                 layoutJumpOverlay();
+                layoutReadAloudStatusLabel();
             }
         };
         bodyLayered.add(bodyContent, JLayeredPane.DEFAULT_LAYER);
         bodyLayered.add(topFadeOverlay, COMPOSER_FADE_LAYER);
         bodyLayered.add(composerFadeOverlay, COMPOSER_FADE_LAYER);
         bodyLayered.add(jumpToLatestOverlay, JLayeredPane.PALETTE_LAYER);
+        bodyLayered.add(readAloudStatusLabel, JLayeredPane.PALETTE_LAYER);
         add(bodyLayered, BorderLayout.CENTER);
 
         inputBar.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
                 layoutJumpOverlay();
+                layoutReadAloudStatusLabel();
             }
 
             @Override
             public void componentMoved(ComponentEvent e) {
                 layoutJumpOverlay();
+                layoutReadAloudStatusLabel();
             }
         });
 
@@ -391,6 +416,16 @@ public class ChatPanel extends JPanel {
         messagesContainer.repaint();
     }
 
+    private void configureReadAloudStatusLabel() {
+        readAloudStatusLabel.setVisible(false);
+        readAloudStatusLabel.setOpaque(true);
+        readAloudStatusLabel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
+                BorderFactory.createEmptyBorder(6, 10, 6, 10)
+        ));
+        Fonts.apply(readAloudStatusLabel, Font.PLAIN, Fonts.SIZE_SMALL);
+    }
+
     private void layoutJumpOverlay() {
         if (jumpToLatestOverlay == null || inputBar == null || bodyLayered == null) {
             return;
@@ -406,6 +441,16 @@ public class ChatPanel extends JPanel {
             int fadeTop = Math.max(0, inputTopY - COMPOSER_FADE_HEIGHT);
             composerFadeOverlay.setBounds(0, fadeTop, bodyLayered.getWidth(), inputTopY - fadeTop);
         }
+    }
+
+    private void layoutReadAloudStatusLabel() {
+        if (readAloudStatusLabel == null || inputBar == null || bodyLayered == null || !readAloudStatusLabel.isVisible()) {
+            return;
+        }
+        Dimension size = readAloudStatusLabel.getPreferredSize();
+        int x = Math.max(12, (bodyLayered.getWidth() - size.width) / 2);
+        int y = inputBarTopY() - size.height - JUMP_OVERLAY_BOTTOM_GAP;
+        readAloudStatusLabel.setBounds(x, Math.max(8, y), size.width, size.height);
     }
 
     private int inputBarTopY() {
@@ -474,6 +519,7 @@ public class ChatPanel extends JPanel {
 
     @Override
     public void removeNotify() {
+        stopReadAloudPlayback();
         if (modelPopup != null) {
             modelPopup.dispose();
             modelPopup = null;
@@ -1987,19 +2033,33 @@ public class ChatPanel extends JPanel {
         JPanel bar = new JPanel(new FlowLayout(alignment, 2, 0));
         bar.setOpaque(false);
         bar.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
-        int buttonCount = role == Role.USER ? 3 : 2;
+        bar.putClientProperty(MESSAGE_ACTION_BAR_PROPERTY, true);
+        bar.putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
+        bar.putClientProperty(MESSAGE_ROLE_PROPERTY, role);
+        updateBubbleActionBar(bar, bubble, role);
+        return bar;
+    }
+
+    private void updateBubbleActionBar(JPanel bar, ChatMessageView bubble, Role role) {
+        boolean buttonsWereVisible = Arrays.stream(bar.getComponents()).anyMatch(Component::isVisible);
+        bar.removeAll();
+        bar.add(createCopyMessageButton(bubble));
+        if (canReadAloud(bubble, role) || textToSpeechService.isReadAloudActive(swingReadAloudKey(bubble))) {
+            bar.add(createReadAloudButton(bubble));
+        }
+        bar.add(createRegenerateButton(bubble));
+        if (role == Role.USER) {
+            bar.add(createEditMessageButton(bubble));
+        }
+        int buttonCount = bar.getComponentCount();
         int buttonGapWidth = Math.max(0, buttonCount - 1) * 2;
         Dimension size = new Dimension(BUBBLE_ACTION_BUTTON_SIZE * buttonCount + buttonGapWidth, BUBBLE_ACTION_BAR_HEIGHT);
         bar.setPreferredSize(size);
         bar.setMinimumSize(size);
         bar.setMaximumSize(new Dimension(Integer.MAX_VALUE, BUBBLE_ACTION_BAR_HEIGHT));
-        bar.add(createCopyMessageButton(bubble));
-        bar.add(createRegenerateButton(bubble));
-        if (role == Role.USER) {
-            bar.add(createEditMessageButton(bubble));
-        }
-        setBubbleActionButtonsVisible(bar, false);
-        return bar;
+        setBubbleActionButtonsVisible(bar, buttonsWereVisible);
+        bar.revalidate();
+        bar.repaint();
     }
 
     private JButton createRegenerateButton(ChatMessageView bubble) {
@@ -2027,6 +2087,62 @@ public class ChatPanel extends JPanel {
             revertTimer.start();
         });
         return button;
+    }
+
+    private JButton createReadAloudButton(ChatMessageView bubble) {
+        boolean active = textToSpeechService.isReadAloudActive(swingReadAloudKey(bubble));
+        Icon icon = chatMenuIcon(active ? "/icons/chat/player-stop.svg" : "/icons/chat/volume-2.svg");
+        return createBubbleActionButton(icon, active ? "Stop" : "Read aloud", () -> readBubbleAloud(bubble));
+    }
+
+    private boolean canReadAloud(ChatMessageView bubble, Role role) {
+        return role == Role.ASSISTANT
+                && textToSpeechService.isReadAloudAvailable()
+                && StringUtils.isNotBlank(speakableText(bubble));
+    }
+
+    private void readBubbleAloud(ChatMessageView bubble) {
+        textToSpeechService.readAloud(
+                swingReadAloudKey(bubble),
+                speakableText(bubble),
+                this::showReadAloudError,
+                this::showReadAloudStatus,
+                this::refreshReadAloudControls
+        );
+    }
+
+    private String swingReadAloudKey(ChatMessageView bubble) {
+        return "swing:%d".formatted(System.identityHashCode(bubble));
+    }
+
+    private String speakableText(ChatMessageView bubble) {
+        String renderedText = StringUtils.trimToEmpty(bubble.contentTextSnapshot());
+        return StringUtils.defaultIfBlank(renderedText, bubble.getFullText());
+    }
+
+    private void showReadAloudError(String message) {
+        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this, message, "Read aloud", JOptionPane.WARNING_MESSAGE));
+    }
+
+    private void showReadAloudStatus(String message) {
+        SwingUtilities.invokeLater(() -> {
+            if (StringUtils.isBlank(message)) {
+                readAloudStatusLabel.setVisible(false);
+                return;
+            }
+            readAloudStatusLabel.setText(message);
+            readAloudStatusLabel.setBackground(UIManager.getColor("Panel.background"));
+            readAloudStatusLabel.setForeground(UIManager.getColor("Label.foreground"));
+            readAloudStatusLabel.setVisible(true);
+            layoutReadAloudStatusLabel();
+            readAloudStatusTimer.restart();
+        });
+    }
+
+    private void stopReadAloudPlayback() {
+        textToSpeechService.stop();
+        readAloudStatusTimer.stop();
+        readAloudStatusLabel.setVisible(false);
     }
 
     private void installActionBarHoverListener(JComponent hoverGroup, JComponent actionBar) {
@@ -2441,6 +2557,31 @@ public class ChatPanel extends JPanel {
         scrollToBottom();
     }
 
+    public void reloadTextToSpeechSettings() {
+        stopReadAloudPlayback();
+        refreshBubbleActionBars();
+        refreshWebTranscript(false, true);
+    }
+
+    private void refreshBubbleActionBars() {
+        refreshBubbleActionBars(messagesPanel);
+    }
+
+    private void refreshBubbleActionBars(Container container) {
+        for (Component child : container.getComponents()) {
+            if (child instanceof JPanel panel && Boolean.TRUE.equals(panel.getClientProperty(MESSAGE_ACTION_BAR_PROPERTY))) {
+                ChatMessageView bubble = chatMessageView(panel);
+                Object roleValue = panel.getClientProperty(MESSAGE_ROLE_PROPERTY);
+                if (bubble != null && roleValue instanceof Role role) {
+                    updateBubbleActionBar(panel, bubble, role);
+                }
+            }
+            if (child instanceof Container nested) {
+                refreshBubbleActionBars(nested);
+            }
+        }
+    }
+
     private void refreshWebTranscript(boolean scrollToBottom) {
         refreshWebTranscript(scrollToBottom, false);
     }
@@ -2464,17 +2605,27 @@ public class ChatPanel extends JPanel {
                 .toList();
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
         boolean showJumpButton = streaming;
+        boolean readAloudAvailable = textToSpeechService.isReadAloudAvailable();
+        int activeReadAloudMessageIndex = activeWebReadAloudMessageIndex(entries);
         if (isSystemWebViewEnabled()) {
-            systemWebView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+            systemWebView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton, readAloudAvailable, activeReadAloudMessageIndex);
             if (forceReload) {
                 systemWebView.reload(shouldScrollToBottom);
             }
             return;
         }
-        jcefBrowserView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton);
+        jcefBrowserView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton, readAloudAvailable, activeReadAloudMessageIndex);
         if (forceReload) {
             jcefBrowserView.reload(shouldScrollToBottom);
         }
+    }
+
+    private int activeWebReadAloudMessageIndex(List<ConversationEntry> entries) {
+        return entries.stream()
+                .mapToInt(ConversationEntry::messageIndex)
+                .filter(index -> index >= 0 && textToSpeechService.isReadAloudActive(webReadAloudKey(index)))
+                .findFirst()
+                .orElse(-1);
     }
 
     private ConversationEntry toConversationEntry(Component component, int[] messageIndex) {
@@ -2742,6 +2893,13 @@ public class ChatPanel extends JPanel {
                 this::selectAndCopyConversation
         );
 
+        JMenuItem readAloudItem = buildChatMenuItem(
+                "Read aloud",
+                "/icons/chat/volume-2.svg",
+                null,
+                () -> readBubbleAloud(bubble)
+        );
+
         String regenerateLabel = bubble.getRole() == Role.USER
                 ? "Regenerate Response"
                 : "Regenerate This Response";
@@ -2764,6 +2922,10 @@ public class ChatPanel extends JPanel {
         popup.addSeparator();
         popup.add(selectMessageItem);
         popup.add(selectConversationItem);
+        if (bubble.getRole() == Role.ASSISTANT) {
+            popup.addSeparator();
+            popup.add(readAloudItem);
+        }
         popup.addSeparator();
         popup.add(regenerateItem);
         popup.add(clearChatItem);
@@ -2774,6 +2936,8 @@ public class ChatPanel extends JPanel {
                 copyItem.setEnabled(bubble.hasContentSelection());
                 selectMessageItem.setEnabled(!bubble.getFullText().isEmpty());
                 selectConversationItem.setEnabled(hasAnyConversationText());
+                readAloudItem.setVisible(bubble.getRole() == Role.ASSISTANT);
+                updateReadAloudMenuItem(readAloudItem, bubble);
                 regenerateItem.setEnabled(canRegenerateFrom(bubble));
                 clearChatItem.setVisible(canClearChat());
             }
@@ -2788,6 +2952,13 @@ public class ChatPanel extends JPanel {
         });
 
         return popup;
+    }
+
+    private void updateReadAloudMenuItem(JMenuItem item, ChatMessageView bubble) {
+        boolean active = textToSpeechService.isReadAloudActive(swingReadAloudKey(bubble));
+        item.setText(active ? "Stop" : "Read aloud");
+        item.setIcon(chatMenuIcon(active ? "/icons/chat/player-stop.svg" : "/icons/chat/volume-2.svg"));
+        item.setEnabled(active || canReadAloud(bubble, bubble.getRole()));
     }
 
     private int menuShortcutKeyMask() {
@@ -2827,7 +2998,9 @@ public class ChatPanel extends JPanel {
         for (Component child : container.getComponents()) {
             ChatMessageView bubble = child instanceof JComponent component ? chatMessageView(component) : null;
             if (bubble != null) {
-                collected.add(bubble);
+                if (!collected.contains(bubble)) {
+                    collected.add(bubble);
+                }
             } else if (child instanceof Container nested) {
                 collectBubbles(nested, collected);
             }
@@ -2888,6 +3061,9 @@ public class ChatPanel extends JPanel {
 
             List<ChatMessageView> bubbles = collectBubbles();
             if (messageIndex < 0 || messageIndex >= bubbles.size()) {
+                if (Strings.CS.equals(action, "read-aloud") && StringUtils.isNotBlank(text)) {
+                    readWebTranscriptAloud(messageIndex, text);
+                }
                 return;
             }
 
@@ -2896,9 +3072,34 @@ public class ChatPanel extends JPanel {
                 copyBubbleTextToClipboard(bubble);
                 return;
             }
+            if (Strings.CS.equals(action, "read-aloud") && bubble.getRole() == Role.ASSISTANT) {
+                readWebTranscriptAloud(messageIndex, speakableText(bubble));
+                return;
+            }
             if (Strings.CS.equals(action, "regenerate")) {
                 regenerateFromBubble(bubble);
             }
+        });
+    }
+
+    private void readWebTranscriptAloud(int messageIndex, String text) {
+        textToSpeechService.readAloud(
+                webReadAloudKey(messageIndex),
+                text,
+                this::showReadAloudError,
+                this::showReadAloudStatus,
+                this::refreshReadAloudControls
+        );
+    }
+
+    private String webReadAloudKey(int messageIndex) {
+        return "web:%d".formatted(messageIndex);
+    }
+
+    private void refreshReadAloudControls() {
+        SwingUtilities.invokeLater(() -> {
+            refreshBubbleActionBars();
+            refreshWebTranscript(false);
         });
     }
 
@@ -3109,6 +3310,7 @@ public class ChatPanel extends JPanel {
             cancelStreaming();
         }
 
+        stopReadAloudPlayback();
         disposeMessageViews();
         currentAssistantWebSearchBubble = null;
         currentAssistantActivityBubble = null;
@@ -3127,6 +3329,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void clearChatForHistoryLoad() {
+        stopReadAloudPlayback();
         disposeMessageViews();
         currentAssistantWebSearchBubble = null;
         currentAssistantActivityBubble = null;
@@ -3616,7 +3819,11 @@ public class ChatPanel extends JPanel {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
             }
+            boolean wasBlank = StringUtils.isBlank(speakableText(currentAssistantBubble));
             currentAssistantBubble.appendText(token);
+            if (wasBlank) {
+                refreshBubbleActionBars();
+            }
             refreshWebTranscript(true);
             scrollToBottom();
         });
@@ -3636,7 +3843,11 @@ public class ChatPanel extends JPanel {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
             }
+            boolean wasBlank = StringUtils.isBlank(speakableText(currentAssistantBubble));
             currentAssistantBubble.appendPart(part);
+            if (wasBlank) {
+                refreshBubbleActionBars();
+            }
             refreshWebTranscript(true);
             scrollToBottom();
         });

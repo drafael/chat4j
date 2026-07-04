@@ -134,6 +134,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
+import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
@@ -575,7 +576,8 @@ public class MainFrame extends JFrame {
                 modelCacheService,
                 modelFavoritesService,
                 new ChatMessageViewFactory(),
-                chatWebViewRuntimeStatus.activeEngine()
+                chatWebViewRuntimeStatus.activeEngine(),
+                TextToSpeechService.createDefault(settingsRepo)
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -1247,6 +1249,7 @@ public class MainFrame extends JFrame {
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();
+                    chatPanel.reloadTextToSpeechSettings();
                     chatPanel.setPromptQuickActions(promptQuickActions());
                 }
         );

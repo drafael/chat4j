@@ -21,18 +21,41 @@ public final class TranscriptRenderSupport {
             boolean dark,
             boolean jumpButtonVisible
     ) {
+        return snapshot(entries, renderMode, dark, jumpButtonVisible, false);
+    }
+
+    public static TranscriptRenderSnapshot snapshot(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable
+    ) {
+        return snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, -1);
+    }
+
+    public static TranscriptRenderSnapshot snapshot(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable,
+            int activeReadAloudMessageIndex
+    ) {
         Palette palette = MarkdownPaletteResolver.resolve(dark);
         int codeFontSize = CodeFontResolver.resolveCodeFontSize();
-        return new TranscriptRenderSnapshot(
-                entries,
-                renderMode == null ? RenderMode.PREVIEW : renderMode,
-                dark,
-                jumpButtonVisible,
-                palette,
-                TranscriptDocumentRenderer.documentChrome(dark, palette),
-                codeFontSize,
-                Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY
-        );
+        return TranscriptRenderSnapshot.builder()
+                .entries(entries)
+                .renderMode(renderMode == null ? RenderMode.PREVIEW : renderMode)
+                .dark(dark)
+                .jumpButtonVisible(jumpButtonVisible)
+                .palette(palette)
+                .chrome(TranscriptDocumentRenderer.documentChrome(dark, palette))
+                .codeFontSize(codeFontSize)
+                .fontScaleFactor(Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY)
+                .readAloudAvailable(readAloudAvailable)
+                .activeReadAloudMessageIndex(activeReadAloudMessageIndex)
+                .build();
     }
 
     public static <T> T withSnapshotFonts(TranscriptRenderSnapshot snapshot, Supplier<T> action) {

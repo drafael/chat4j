@@ -3,13 +3,16 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
-import java.sql.SQLException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ThemeSettingsResolverTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Resolve selected theme returns default when setting is missing")
@@ -57,18 +60,18 @@ class ThemeSettingsResolverTest {
     }
 
     private SettingsRepository settingsRepo(String testName) {
-        return new SettingsRepository(Path.of("target", "%s.properties".formatted(testName)));
+        return new SettingsRepository(tempDir.resolve("%s.properties".formatted(testName)));
     }
 
     private static class ThrowingSettingsRepo extends SettingsRepository {
 
         private ThrowingSettingsRepo() {
-            super(Path.of("target", "test-theme-settings-resolver-throwing.properties"));
+            super(Path.of("unused-theme-settings-resolver.properties"));
         }
 
         @Override
-        public String get(String key, String defaultValue) throws SQLException {
-            throw new SQLException("forced failure");
+        public String get(String key, String defaultValue) {
+            throw new IllegalStateException("forced failure");
         }
     }
 }
