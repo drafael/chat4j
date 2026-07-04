@@ -915,7 +915,7 @@ public class ChatPanel extends JPanel {
 
             if (!sendJob.agentModeEnabled) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
-                addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
+                addAssistantBubble(currentAssistantBubble, null);
             }
         }
 
@@ -2341,7 +2341,7 @@ public class ChatPanel extends JPanel {
         }
 
         currentAssistantBubble = createMessageView(Role.ASSISTANT);
-        addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
+        addAssistantBubble(currentAssistantBubble, null);
         startAssistantStream(conversationId, currentProvider);
     }
 
@@ -2378,12 +2378,11 @@ public class ChatPanel extends JPanel {
         if (currentProvider == null || isVisibleConversationBusy()) {
             return false;
         }
-        List<ChatMessageView> bubbles = collectBubbles();
-        int bubbleIndex = bubbles.indexOf(bubble);
-        if (bubbleIndex < 0 || bubbleIndex >= history.size()) {
+        int historyMessageIndex = messageIndex(bubble);
+        if (historyMessageIndex < 0 || historyMessageIndex >= history.size()) {
             return false;
         }
-        int keepCount = bubble.getRole() == Role.USER ? bubbleIndex + 1 : bubbleIndex;
+        int keepCount = bubble.getRole() == Role.USER ? historyMessageIndex + 1 : historyMessageIndex;
         return keepCount > 0 && history.get(keepCount - 1).role() == Role.USER;
     }
 
@@ -2415,13 +2414,12 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        List<ChatMessageView> bubbles = collectBubbles();
-        int bubbleIndex = bubbles.indexOf(bubble);
-        if (bubbleIndex < 0 || bubbleIndex >= history.size()) {
+        int historyMessageIndex = messageIndex(bubble);
+        if (historyMessageIndex < 0 || historyMessageIndex >= history.size()) {
             return;
         }
 
-        int keepCount = bubble.getRole() == Role.USER ? bubbleIndex + 1 : bubbleIndex;
+        int keepCount = bubble.getRole() == Role.USER ? historyMessageIndex + 1 : historyMessageIndex;
         if (keepCount <= 0 || history.get(keepCount - 1).role() != Role.USER) {
             return;
         }
@@ -2445,7 +2443,7 @@ public class ChatPanel extends JPanel {
         }
 
         currentAssistantBubble = createMessageView(Role.ASSISTANT);
-        addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
+        addAssistantBubble(currentAssistantBubble, null);
         startAssistantStream(conversationId, currentProvider);
     }
 
@@ -2769,7 +2767,7 @@ public class ChatPanel extends JPanel {
         return messageViewFactory.create(role);
     }
 
-    private void addBubble(ChatMessageView bubble, String text, Role role) {
+    private void addAssistantBubble(ChatMessageView bubble, String text) {
         bubble.setRenderMode(renderMode);
 
         if (text != null) {
@@ -2778,14 +2776,13 @@ public class ChatPanel extends JPanel {
 
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
         bubble.component().putClientProperty(MESSAGE_META_PROPERTY, MessageMeta.empty());
-        if (role == Role.ASSISTANT) {
-            assistantBubbles.add(bubble);
-        }
+        setMessageIndex(bubble, history.size());
+        assistantBubbles.add(bubble);
         installBubbleContextMenu(bubble);
-        addMessageComponent(role, bubble.component(), null);
+        addMessageComponent(Role.ASSISTANT, bubble.component(), null);
     }
 
-    private void addBubble(ChatMessageView bubble, Message message, Role role) {
+    private void addBubble(ChatMessageView bubble, Message message, Role role, int messageIndex) {
         bubble.setRenderMode(renderMode);
         if (message != null) {
             bubble.setContentParts(message.parts());
@@ -2793,10 +2790,17 @@ public class ChatPanel extends JPanel {
         bubble.component().putClientProperty(MESSAGE_VIEW_PROPERTY, bubble);
         bubble.component().putClientProperty(MESSAGE_META_PROPERTY, message == null ? MessageMeta.empty() : message.meta());
         if (role == Role.ASSISTANT) {
+            setMessageIndex(bubble, messageIndex);
             assistantBubbles.add(bubble);
         }
         installBubbleContextMenu(bubble);
         addMessageComponent(role, bubble.component(), null);
+    }
+
+    private void setMessageIndex(ChatMessageView bubble, int messageIndex) {
+        if (messageIndex >= 0) {
+            bubble.component().putClientProperty(MESSAGE_INDEX_PROPERTY, messageIndex);
+        }
     }
 
     private void addActivityBubble(ActivityBubble bubble, String text) {
@@ -2996,6 +3000,9 @@ public class ChatPanel extends JPanel {
 
     private void collectBubbles(Container container, List<ChatMessageView> collected) {
         for (Component child : container.getComponents()) {
+            if (child instanceof ActivityBubble) {
+                continue;
+            }
             ChatMessageView bubble = child instanceof JComponent component ? chatMessageView(component) : null;
             if (bubble != null) {
                 if (!collected.contains(bubble)) {
@@ -3422,7 +3429,7 @@ public class ChatPanel extends JPanel {
                     }
                 }
 
-                addBubble(createMessageView(msg.role()), msg, msg.role());
+                addBubble(createMessageView(msg.role()), msg, msg.role(), messageIndex);
             }
         } finally {
             batchMessageRefresh = false;
@@ -3676,7 +3683,7 @@ public class ChatPanel extends JPanel {
         if (StringUtils.isNotBlank(assistantText) || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart))) {
             if (currentAssistantBubble == null) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
-                addBubble(currentAssistantBubble, new Message(Role.ASSISTANT, assistantParts, Instant.now()), Role.ASSISTANT);
+                addBubble(currentAssistantBubble, new Message(Role.ASSISTANT, assistantParts, Instant.now()), Role.ASSISTANT, history.size());
             } else {
                 currentAssistantBubble.setContentParts(assistantParts);
             }
@@ -3817,7 +3824,7 @@ public class ChatPanel extends JPanel {
             }
             if (currentAssistantBubble == null) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
-                addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
+                addAssistantBubble(currentAssistantBubble, null);
             }
             boolean wasBlank = StringUtils.isBlank(speakableText(currentAssistantBubble));
             currentAssistantBubble.appendText(token);
@@ -3841,7 +3848,7 @@ public class ChatPanel extends JPanel {
             }
             if (currentAssistantBubble == null) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
-                addBubble(currentAssistantBubble, (String) null, Role.ASSISTANT);
+                addAssistantBubble(currentAssistantBubble, null);
             }
             boolean wasBlank = StringUtils.isBlank(speakableText(currentAssistantBubble));
             currentAssistantBubble.appendPart(part);
@@ -4014,11 +4021,13 @@ public class ChatPanel extends JPanel {
         UUID conversationId = session.conversationId;
         if (isVisibleConversation(conversationId)) {
             history.add(assistantMessage);
+            int assistantMessageIndex = history.size() - 1;
             if (currentAssistantBubble == null) {
-                addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT);
+                addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);
             } else {
                 currentAssistantBubble.setContentParts(assistantMessage.parts());
                 currentAssistantBubble.component().putClientProperty(MESSAGE_META_PROPERTY, assistantMessage.meta());
+                setMessageIndex(currentAssistantBubble, assistantMessageIndex);
                 refreshWebTranscript(false);
             }
             updateClearChatButtonVisibility();

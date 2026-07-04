@@ -1297,6 +1297,85 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Web transcript actions use visible message indexes when web search activity is present")
+    void handleWebTranscriptAction_whenWebSearchActivityPresent_usesVisibleMessageIndex() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        Message assistantMessage = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("assistant answer")),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "", "**Searched**\n- java copy message")
+        );
+        subject.loadHistory(List.of(Message.user("question"), assistantMessage));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", 1, "");
+        flushEdt();
+
+        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+        assertThat(findComponents(messagesPanel, ActivityBubble.class)).hasSize(1);
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+    }
+
+    @Test
+    @DisplayName("Regenerating recent assistant response uses stored message indexes")
+    void regenerateRecentResponse_whenRecentBubbleIsAssistant_usesStoredMessageIndex() throws Exception {
+        subject.loadHistory(List.of(
+                Message.user("question"),
+                Message.assistant("old answer")
+        ));
+        setField(subject, "currentProvider", immediateProvider("new answer"));
+        flushEdt();
+
+        assertThat(subject.canRegenerateRecentResponse()).isTrue();
+
+        subject.regenerateRecentResponse();
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            List<Message> history = subject.getHistory();
+            return history.size() == 2 && "new answer".equals(history.getLast().content());
+        });
+
+        assertThat(subject.getHistory())
+                .extracting(Message::content)
+                .containsExactly("question", "new answer");
+    }
+
+    @Test
+    @DisplayName("Regenerating recent response uses history indexes when activity-only assistant entries are hidden")
+    void regenerateRecentResponse_whenActivityOnlyAssistantEntryIsHidden_usesHistoryMessageIndex() throws Exception {
+        Message activityOnlyAssistant = new Message(
+                Role.ASSISTANT,
+                emptyList(),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "", "**Searched**\n- earlier search")
+        );
+        subject.loadHistory(List.of(
+                Message.user("first question"),
+                activityOnlyAssistant,
+                Message.user("second question")
+        ));
+        setField(subject, "currentProvider", immediateProvider("second answer"));
+        flushEdt();
+
+        assertThat(subject.canRegenerateRecentResponse()).isTrue();
+
+        subject.regenerateRecentResponse();
+        awaitCondition(2, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            List<Message> history = subject.getHistory();
+            return history.size() == 4 && "second answer".equals(history.getLast().content());
+        });
+
+        assertThat(subject.getHistory())
+                .extracting(Message::content)
+                .containsExactly("first question", "", "second question", "second answer");
+    }
+
+    @Test
     @DisplayName("Edit user message save only updates history and preserves later assistant response")
     void editUserMessage_whenSaveOnly_updatesHistoryWithoutTruncating() throws Exception {
         var submitted = new AtomicInteger();
