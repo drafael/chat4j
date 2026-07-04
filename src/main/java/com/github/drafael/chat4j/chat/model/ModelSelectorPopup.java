@@ -563,7 +563,9 @@ public class ModelSelectorPopup extends JDialog {
         addWindowFocusListener(new WindowAdapter() {
             @Override
             public void windowLostFocus(WindowEvent e) {
-                hidePopup();
+                if (shouldHideForWindowEvent(e)) {
+                    hidePopup();
+                }
             }
         });
     }
@@ -574,10 +576,8 @@ public class ModelSelectorPopup extends JDialog {
                 return;
             }
 
-            if (event instanceof WindowEvent windowEvent && windowEvent.getID() == WindowEvent.WINDOW_DEACTIVATED) {
-                if (shouldHideForWindowDeactivation(windowEvent)) {
-                    hidePopup();
-                }
+            if (event instanceof WindowEvent windowEvent && shouldHideForWindowEvent(windowEvent)) {
+                hidePopup();
                 return;
             }
 
@@ -603,8 +603,29 @@ public class ModelSelectorPopup extends JDialog {
         };
     }
 
-    private boolean shouldHideForWindowDeactivation(WindowEvent event) {
-        return event.getOppositeWindow() != this;
+    private boolean shouldHideForWindowEvent(WindowEvent event) {
+        return shouldHideForWindowEvent(
+                event.getID(),
+                event.getSource(),
+                this,
+                getOwner(),
+                event.getOppositeWindow()
+        );
+    }
+
+    static boolean shouldHideForWindowEvent(int eventId, Object source, Object popup, Object owner, Object opposite) {
+        boolean sourceIsPopup = source == popup;
+        boolean sourceIsOwner = owner != null && source == owner;
+        if (!sourceIsPopup && !sourceIsOwner) {
+            return false;
+        }
+
+        boolean oppositeIsPopup = opposite == popup;
+        boolean oppositeIsOwner = owner != null && opposite == owner;
+        return switch (eventId) {
+            case WindowEvent.WINDOW_DEACTIVATED, WindowEvent.WINDOW_LOST_FOCUS -> !oppositeIsPopup && !oppositeIsOwner;
+            default -> false;
+        };
     }
 
     private void installOutsideClickListener() {
@@ -614,7 +635,7 @@ public class ModelSelectorPopup extends JDialog {
 
         Toolkit.getDefaultToolkit().addAWTEventListener(
                 outsideClickListener,
-                AWTEvent.MOUSE_EVENT_MASK | AWTEvent.WINDOW_EVENT_MASK
+                AWTEvent.MOUSE_EVENT_MASK | AWTEvent.WINDOW_EVENT_MASK | AWTEvent.WINDOW_FOCUS_EVENT_MASK
         );
         outsideClickListenerInstalled = true;
     }
