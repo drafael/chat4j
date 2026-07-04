@@ -142,6 +142,28 @@ class TextToSpeechProviderTest {
                 .hasMessageContaining("HTTP 400: The model requires terms acceptance.");
     }
 
+    @Test
+    @DisplayName("Provider HTTP errors include full ElevenLabs detail message")
+    void synthesize_elevenLabsHttpError_includesFullDetailMessage() throws Exception {
+        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        String message = "This request exceeds your quota of 10000. You have 34 credits remaining. Please upgrade your plan or wait until the quota resets before trying text to speech again.";
+        var subject = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(
+                401,
+                Map.of("content-type", List.of("application/json")),
+                "{\"detail\":{\"message\":%s}}".formatted(OBJECT_MAPPER.writeValueAsString(message)).getBytes(StandardCharsets.UTF_8)
+        ));
+
+        assertThatThrownBy(() -> subject.synthesize(new TextToSpeechRequest(
+                ElevenLabsTextToSpeechProvider.ID,
+                "eleven_flash_v2_5",
+                "EXAVITQu4vr4xnSDxMaL",
+                "hello",
+                "mp3"
+        )))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("HTTP 401: %s".formatted(message));
+    }
+
     private static TtsHttpResponse json(String body) {
         return new TtsHttpResponse(
                 200,

@@ -60,13 +60,26 @@ abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechProvider 
         }
         try {
             JsonNode root = OBJECT_MAPPER.readTree(body);
-            String message = root.path("error").path("message").asText("");
-            if (StringUtils.isBlank(message)) {
-                message = root.path("message").asText("");
-            }
-            return StringUtils.abbreviate(StringUtils.normalizeSpace(message), 300);
+            String message = firstErrorMessage(root);
+            return StringUtils.normalizeSpace(message);
         } catch (Exception e) {
             return "";
         }
+    }
+
+    private static String firstErrorMessage(JsonNode root) {
+        String errorMessage = root.path("error").path("message").asText("");
+        if (StringUtils.isNotBlank(errorMessage)) {
+            return errorMessage;
+        }
+        String detailMessage = root.path("detail").path("message").asText("");
+        if (StringUtils.isNotBlank(detailMessage)) {
+            return detailMessage;
+        }
+        String message = root.path("message").asText("");
+        if (StringUtils.isNotBlank(message)) {
+            return message;
+        }
+        return root.path("detail").asText("");
     }
 }

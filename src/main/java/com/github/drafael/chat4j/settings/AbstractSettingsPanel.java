@@ -28,6 +28,8 @@ public abstract class AbstractSettingsPanel extends JPanel {
     private static final int SECTION_TOP_GAP = 10;
     private static final int SECTION_BOTTOM_GAP = 2;
     private static final int STATUS_CLEAR_DELAY_MILLIS = 1400;
+    private static final int DEFAULT_STATUS_WRAP_WIDTH = 900;
+    private static final int STATUS_WRAP_CHARACTERS = 96;
 
     private final SettingsRepository settingsRepo;
     private final JLabel statusLabel = new JLabel(" ");
@@ -38,6 +40,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
 
         Fonts.apply(statusLabel, Font.PLAIN, Fonts.SIZE_COMPACT);
         statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
+        statusLabel.setVerticalAlignment(SwingConstants.TOP);
         statusLabel.setVisible(false);
 
         statusClearTimer = new Timer(STATUS_CLEAR_DELAY_MILLIS, e -> clearStatus());
@@ -333,7 +336,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         }
 
         statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        statusLabel.setText(message);
+        setStatusLabelText(message);
         statusLabel.setVisible(true);
 
         if (STATUS_SAVED.equals(message)) {
@@ -348,7 +351,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
                 new Color(200, 50, 50)
         );
         statusLabel.setForeground(error);
-        statusLabel.setText(StringUtils.defaultIfBlank(message, "Error"));
+        setStatusLabelText(StringUtils.defaultIfBlank(message, "Error"));
         statusLabel.setVisible(true);
     }
 
@@ -396,7 +399,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         JPanel statusPanel = new JPanel(new BorderLayout());
         statusPanel.setOpaque(false);
         statusPanel.setBorder(new EmptyBorder(6, 0, 0, 0));
-        statusPanel.add(statusLabel, BorderLayout.WEST);
+        statusPanel.add(statusLabel, BorderLayout.CENTER);
         return statusPanel;
     }
 
@@ -429,6 +432,49 @@ public abstract class AbstractSettingsPanel extends JPanel {
     private void clearStatus() {
         statusLabel.setText(" ");
         statusLabel.setVisible(false);
+    }
+
+    private void setStatusLabelText(String message) {
+        int parentWidth = statusLabel.getParent() == null ? 0 : statusLabel.getParent().getWidth();
+        int wrapWidth = parentWidth > 0
+                ? Math.max(120, Math.min(parentWidth, DEFAULT_STATUS_WRAP_WIDTH))
+                : DEFAULT_STATUS_WRAP_WIDTH;
+        statusLabel.setText("<html><body style='width:%dpx'>%s</body></html>".formatted(wrapWidth, escapedWrappedMessage(message)));
+        statusLabel.revalidate();
+        if (statusLabel.getParent() != null) {
+            statusLabel.getParent().revalidate();
+            statusLabel.getParent().repaint();
+        }
+    }
+
+    private static String escapedWrappedMessage(String message) {
+        String normalized = StringUtils.defaultString(message);
+        StringBuilder wrapped = new StringBuilder();
+        int lineLength = 0;
+        for (String word : normalized.split("\\s+")) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (lineLength > 0 && lineLength + 1 + word.length() > STATUS_WRAP_CHARACTERS) {
+                wrapped.append("<br>");
+                lineLength = 0;
+            } else if (lineLength > 0) {
+                wrapped.append(' ');
+                lineLength++;
+            }
+            wrapped.append(escapeHtml(word));
+            lineLength += word.length();
+        }
+        return wrapped.toString();
+    }
+
+    private static String escapeHtml(String text) {
+        return StringUtils.defaultString(text)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     @FunctionalInterface

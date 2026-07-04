@@ -1332,7 +1332,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JPanel statusPanel = new JPanel(new BorderLayout());
         statusPanel.setOpaque(false);
         statusPanel.setBorder(new EmptyBorder(8, 0, 0, 0));
-        statusPanel.add(statusLabel(), BorderLayout.WEST);
+        statusPanel.add(statusLabel(), BorderLayout.CENTER);
         return statusPanel;
     }
 

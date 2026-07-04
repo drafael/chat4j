@@ -1,13 +1,19 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AbstractSettingsPanelValidatorsTest {
+
+    @TempDir
+    private Path tempDir;
 
     @Test
     @DisplayName("HTTP URL validator accepts valid https URL and trims whitespace")
@@ -47,5 +53,31 @@ class AbstractSettingsPanelValidatorsTest {
 
         assertThat(result.valid()).isFalse();
         assertThat(result.message()).isEqualTo("required");
+    }
+
+    @Test
+    @DisplayName("Status errors render as escaped wrapping HTML")
+    void setStatusError_whenMessageIsLong_rendersEscapedWrappingHtml() {
+        var subject = new TestSettingsPanel(new SettingsRepository(tempDir.resolve("settings.properties")));
+        subject.createFormPanel("Test");
+        subject.statusLabel().getParent().setSize(1400, 40);
+
+        subject.showError("Problem <details> & this message should wrap instead of being clipped while preserving every word in the status message");
+
+        assertThat(subject.statusLabel().getText())
+                .startsWith("<html><body style='width:900px'>")
+                .contains("Problem &lt;details&gt; &amp; this message should wrap instead of being clipped while preserving every")
+                .contains("<br>")
+                .contains("word in the status message");
+    }
+
+    private static final class TestSettingsPanel extends AbstractSettingsPanel {
+        private TestSettingsPanel(SettingsRepository settingsRepo) {
+            super(settingsRepo);
+        }
+
+        private void showError(String message) {
+            setStatusError(message);
+        }
     }
 }
