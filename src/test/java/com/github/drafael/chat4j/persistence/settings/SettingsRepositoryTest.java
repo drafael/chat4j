@@ -55,4 +55,29 @@ class SettingsRepositoryTest {
                 .isInstanceOf(SettingsStorageException.class)
                 .hasMessageContaining("settings file");
     }
+
+    @Test
+    @DisplayName("Batch updates persist correlated values atomically")
+    void updateBatch_whenMultipleValuesProvided_persistsAllValues() {
+        var subject = new SettingsRepository(tempDir.resolve("chat4j.properties"));
+
+        subject.updateBatch(batch -> {
+            batch.put("chat4j.stt.provider", "groq");
+            batch.put("chat4j.stt.groq.model.id", "whisper-large-v3-turbo");
+            batch.put("chat4j.stt.groq.model.label", "Whisper Large v3 Turbo");
+        });
+
+        assertThat(subject.get("chat4j.stt.provider")).contains("groq");
+        assertThat(subject.get("chat4j.stt.groq.model.id")).contains("whisper-large-v3-turbo");
+        assertThat(subject.get("chat4j.stt.groq.model.label")).contains("Whisper Large v3 Turbo");
+    }
+
+    @Test
+    @DisplayName("Batch updates reject blank keys")
+    void updateBatch_whenKeyBlank_rejectsOperation() {
+        var subject = new SettingsRepository(tempDir.resolve("chat4j.properties"));
+
+        assertThatThrownBy(() -> subject.updateBatch(batch -> batch.put(" ", "value")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

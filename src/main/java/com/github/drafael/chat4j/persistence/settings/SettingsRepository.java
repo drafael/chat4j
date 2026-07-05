@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.function.Consumer;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
@@ -72,6 +73,34 @@ public class SettingsRepository {
                     .filter(key -> key.startsWith(safePrefix))
                     .forEach(key -> entries.put(key, properties.getProperty(key)));
             return entries;
+        }
+    }
+
+    public void updateBatch(Consumer<BatchUpdate> updates) {
+        Validate.notNull(updates, "updates should not be null");
+
+        synchronized (lock) {
+            Properties properties = loadProperties();
+            updates.accept(new BatchUpdate(properties));
+            storeProperties(properties);
+        }
+    }
+
+    public static final class BatchUpdate {
+        private final Properties properties;
+
+        private BatchUpdate(Properties properties) {
+            this.properties = properties;
+        }
+
+        public void put(String key, String value) {
+            Validate.notBlank(key, "key should not be blank");
+            properties.setProperty(key, StringUtils.defaultString(value));
+        }
+
+        public void remove(String key) {
+            Validate.notBlank(key, "key should not be blank");
+            properties.remove(key);
         }
     }
 

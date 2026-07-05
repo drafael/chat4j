@@ -129,7 +129,7 @@ public final class ApplicationBootstrap {
         modelFavoritesService.primeFromSettings();
         log.info("Storage initialized and model cache primed");
 
-        return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService);
+        return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService, storagePaths);
     }
 
     private void applySavedAppearance(SettingsRepository settingsRepo) {
@@ -154,7 +154,8 @@ public final class ApplicationBootstrap {
                 services.conversationRepo(),
                 services.settingsRepo(),
                 services.providerModelCacheService(),
-                services.modelFavoritesService());
+                services.modelFavoritesService(),
+                services.storagePaths());
             frame.setVisible(true);
         });
     }

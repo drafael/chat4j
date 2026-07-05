@@ -50,6 +50,13 @@ public final class SettingsKeys {
     public static final String TTS_PROVIDER_SYSTEM = "system";
     public static final String TTS_PREFIX = "chat4j.tts.";
 
+    public static final String STT_PROVIDER = "chat4j.stt.provider";
+    public static final String STT_PROVIDER_OFF = "off";
+    public static final String STT_PROVIDER_GROQ = "groq";
+    public static final String STT_PREFIX = "chat4j.stt.";
+    public static final String STT_MODELS_DIR = "chat4j.stt.models.dir";
+    public static final String STT_RECORDING_MAX_DURATION_SECONDS = "chat4j.stt.recording.maxDurationSeconds";
+
     private SettingsKeys() {
     }
 
@@ -97,5 +104,21 @@ public final class SettingsKeys {
 
     public static String ttsCatalogUpdatedAtKey(String providerId) {
         return "%scatalog.%s.updatedAt".formatted(TTS_PREFIX, providerSlug(providerId));
+    }
+
+    public static String sttModelIdKey(String providerId) {
+        return "%s%s.model.id".formatted(STT_PREFIX, providerSlug(providerId));
+    }
+
+    public static String sttModelLabelKey(String providerId) {
+        return "%s%s.model.label".formatted(STT_PREFIX, providerSlug(providerId));
+    }
+
+    public static String sttCatalogModelsKey(String providerId) {
+        return "%scatalog.%s.models".formatted(STT_PREFIX, providerSlug(providerId));
+    }
+
+    public static String sttCatalogUpdatedAtKey(String providerId) {
+        return "%scatalog.%s.updatedAt".formatted(STT_PREFIX, providerSlug(providerId));
     }
 }

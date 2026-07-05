@@ -243,6 +243,61 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Send action still reaches ChatPanel validation when composer is not sendable")
+    void fireSend_whenComposerNotSendableNotRecording_notifiesListener() throws Exception {
+        InputBar subject = new InputBar();
+        AtomicBoolean notified = new AtomicBoolean(false);
+
+        subject.setText("hello");
+        subject.setProviderReady(false);
+        subject.addSendListener(e -> notified.set(true));
+
+        invokeFireSend(subject);
+
+        assertThat(notified).isTrue();
+    }
+
+    @Test
+    @DisplayName("Send action is blocked with inline feedback while recording")
+    void fireSend_whenRecording_blocksSendAndShowsValidation() throws Exception {
+        InputBar subject = new InputBar();
+        AtomicBoolean notified = new AtomicBoolean(false);
+
+        subject.addSendListener(e -> notified.set(true));
+        subject.showRecordingState();
+
+        invokeFireSend(subject);
+
+        assertThat(notified).isFalse();
+        assertThat(readValidationLabel(subject).getText()).isEqualTo("Finish or cancel transcription before sending.");
+    }
+
+    @Test
+    @DisplayName("Recording panel control cancels while transcribing")
+    void recordingPanelButton_whenTranscribing_invokesCancelListener() throws Exception {
+        AtomicBoolean stopInvoked = new AtomicBoolean(false);
+        AtomicBoolean cancelInvoked = new AtomicBoolean(false);
+        var subject = new InputRecordingPanel(e -> stopInvoked.set(true), e -> cancelInvoked.set(true));
+        JButton stopButton = readStopButton(subject);
+
+        subject.startRecording();
+        SwingUtilities.invokeAndWait(stopButton::doClick);
+
+        assertThat(stopInvoked).isTrue();
+        assertThat(cancelInvoked).isFalse();
+        assertThat(stopButton.getToolTipText()).isEqualTo("Stop recording and transcribe");
+
+        stopInvoked.set(false);
+        subject.setTranscribing();
+        SwingUtilities.invokeAndWait(stopButton::doClick);
+
+        assertThat(stopInvoked).isFalse();
+        assertThat(cancelInvoked).isTrue();
+        assertThat(stopButton.getToolTipText()).isEqualTo("Cancel transcription");
+        assertThat(stopButton.getAccessibleContext().getAccessibleName()).isEqualTo("Cancel transcription");
+    }
+
+    @Test
     @DisplayName("Agent mode request shows validation when unavailable")
     void requestAgentModeEnabled_whenUnavailable_showsValidation() throws Exception {
         InputBar subject = new InputBar();
@@ -397,6 +452,18 @@ class InputBarValidationTest {
         Method method = InputBar.class.getDeclaredMethod("parseSkillFile", Path.class);
         method.setAccessible(true);
         return (Optional<?>) method.invoke(inputBar, path);
+    }
+
+    private void invokeFireSend(InputBar inputBar) throws Exception {
+        Method method = InputBar.class.getDeclaredMethod("fireSend");
+        method.setAccessible(true);
+        method.invoke(inputBar);
+    }
+
+    private JButton readStopButton(InputRecordingPanel panel) throws Exception {
+        Field field = InputRecordingPanel.class.getDeclaredField("stopButton");
+        field.setAccessible(true);
+        return (JButton) field.get(panel);
     }
 
     private String readSkillDescription(Object skillCommand) throws Exception {

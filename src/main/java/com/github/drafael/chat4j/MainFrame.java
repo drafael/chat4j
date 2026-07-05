@@ -46,6 +46,7 @@ import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSav
 import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownFlowCoordinator;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
@@ -134,6 +135,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
+import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
@@ -219,6 +221,8 @@ public class MainFrame extends JFrame {
     private PromptCommandCenter promptCommandCenter;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final Path sttModelsDirectory;
+    private final Path sttTempDirectory;
     private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
     private final ProviderModelsResolver providerModelsResolver;
     private final ProviderFavoritesResolver providerFavoritesResolver;
@@ -384,9 +388,21 @@ public class MainFrame extends JFrame {
         @NonNull ProviderModelCacheService modelCacheService,
         @NonNull ModelFavoritesService modelFavoritesService
     ) {
+        this(conversationRepo, settingsRepo, modelCacheService, modelFavoritesService, StoragePaths.defaultPaths());
+    }
+
+    public MainFrame(
+        @NonNull ConversationRepository conversationRepo,
+        @NonNull SettingsRepository settingsRepo,
+        @NonNull ProviderModelCacheService modelCacheService,
+        @NonNull ModelFavoritesService modelFavoritesService,
+        @NonNull StoragePaths storagePaths
+    ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
+        this.sttModelsDirectory = storagePaths.sttModelsDirectory();
+        this.sttTempDirectory = storagePaths.sttTempDirectory();
         this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
         if (chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.SYSTEM
                 || chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.JCEF
@@ -531,6 +547,7 @@ public class MainFrame extends JFrame {
         chatPanel.setOnConversationStreamingChanged(event ->
                 sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
 
+        sidebarPanel.setGuardedActionAllowed(this::allowSidebarGuardedAction);
         sidebarPanel.setOnConversationSelected(this::loadConversation);
         sidebarPanel.setOnNewChat(this::newChat);
         sidebarPanel.setOnConversationsDeleted(this::handleConversationsDeleted);
@@ -577,7 +594,8 @@ public class MainFrame extends JFrame {
                 modelFavoritesService,
                 new ChatMessageViewFactory(),
                 chatWebViewRuntimeStatus.activeEngine(),
-                TextToSpeechService.createDefault(settingsRepo)
+                TextToSpeechService.createDefault(settingsRepo),
+                SpeechToTextService.createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory)
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -640,12 +658,34 @@ public class MainFrame extends JFrame {
         Desktop desktop = Desktop.getDesktop();
         desktop.setPreferencesHandler(e -> openSettings());
         if (desktop.isSupported(Desktop.Action.APP_ABOUT)) {
-            desktop.setAboutHandler(e -> AboutDialog.show(this, settingsRepo, chatWebViewRuntimeStatus));
+            desktop.setAboutHandler(e -> {
+                if (chatPanel.isSpeechToTextActive()) {
+                    chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening About.");
+                    return;
+                }
+                showAboutDialog();
+            });
         }
         desktop.setQuitHandler((e, response) -> {
             response.cancelQuit();
             requestWindowClose();
         });
+    }
+
+    private boolean allowSidebarGuardedAction() {
+        if (!chatPanel.isSpeechToTextActive()) {
+            return true;
+        }
+        chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before changing conversations.");
+        return false;
+    }
+
+    private void showAboutDialog() {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening About.");
+            return;
+        }
+        AboutDialog.show(this, settingsRepo, chatWebViewRuntimeStatus);
     }
 
     private void toggleSidebar() {
@@ -706,6 +746,10 @@ public class MainFrame extends JFrame {
     }
 
     private void newChat() {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before starting a new chat.");
+            return;
+        }
         pendingLoadConversationId = null;
         chatPanel.setConversationLoading(false);
         conversationLoadCoordinator.invalidatePendingLoads();
@@ -749,6 +793,10 @@ public class MainFrame extends JFrame {
     }
 
     private void loadConversation(UUID id) {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before switching conversations.");
+            return;
+        }
         pendingLoadConversationId = id;
         chatPanel.setConversationLoading(true);
         conversationLoadStartCoordinator.start(
@@ -764,6 +812,10 @@ public class MainFrame extends JFrame {
     }
 
     private void confirmClearCurrentChat() {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before clearing the chat.");
+            return;
+        }
         if (!clearChatConfirmationDialog.confirm(this)) {
             return;
         }
@@ -942,6 +994,7 @@ public class MainFrame extends JFrame {
                     () -> {
                         try {
                             UIManager.removePropertyChangeListener(lookAndFeelListener);
+                            chatPanel.cancelSpeechToText();
                             chatPanel.cancelStreaming();
                             saveWindowState();
                         } catch (Exception e) {
@@ -1129,6 +1182,10 @@ public class MainFrame extends JFrame {
     }
 
     private void openChatSearch(Component relativeTo) {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before searching chats.");
+            return;
+        }
         chatSearchPopupCoordinator.toggle(
                 relativeTo,
                 () -> ChatSearchPopupCoordinator.PopupHandle.forPopup(
@@ -1148,6 +1205,10 @@ public class MainFrame extends JFrame {
     }
 
     private void openCommandCenter() {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening the command center.");
+            return;
+        }
         if (!chatPanel.getInputBar().isEnabled()) {
             return;
         }
@@ -1202,10 +1263,14 @@ public class MainFrame extends JFrame {
     }
 
     private boolean canUseCommandCenterAction() {
-        return chatPanel.getInputBar().isEnabled();
+        return chatPanel.getInputBar().isEnabled() && !chatPanel.isSpeechToTextActive();
     }
 
     private void invokePromptTemplate(PromptTemplate promptTemplate) {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before inserting prompts.");
+            return;
+        }
         Map<String, String> values = new LinkedHashMap<>();
         String currentInput = chatPanel.getInputBar().getRawText();
         promptTemplate.variables().forEach(variable -> {
@@ -1237,6 +1302,10 @@ public class MainFrame extends JFrame {
     }
 
     private void openSettings() {
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening Settings.");
+            return;
+        }
         settingsOpenFlowCoordinator.open(
                 SwingUtilities.isEventDispatchThread(),
                 () -> SwingUtilities.invokeLater(this::openSettings),
@@ -1244,12 +1313,14 @@ public class MainFrame extends JFrame {
                         this,
                         settingsRepo,
                         chatWebViewRuntimeStatus,
-                        this::requestWindowClose
+                        this::requestWindowClose,
+                        sttModelsDirectory
                 )),
                 () -> {
                     applyProviderSettings();
                     applyGeneralSettings();
                     chatPanel.reloadTextToSpeechSettings();
+                    chatPanel.reloadSpeechToTextSettings();
                     chatPanel.setPromptQuickActions(promptQuickActions());
                 }
         );
@@ -1519,7 +1590,7 @@ public class MainFrame extends JFrame {
                         this::ensureThemesMenuReady,
                         this::ensureFontMenuReady,
                         this::ensureModelsMenuReady,
-                        () -> AboutDialog.show(this, settingsRepo, chatWebViewRuntimeStatus)
+                        this::showAboutDialog
                 ),
                 this::syncTogglePreviewMenuSelection,
                 new MainMenuBarEnsureStateResolver.CurrentState(

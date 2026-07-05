@@ -19,6 +19,9 @@ Use this page as the canonical entry point for implementation and operational de
 - [text-to-speech.md](text-to-speech.md)
   - Read aloud architecture, provider settings, credentials, playback, UI behavior, and testing expectations.
 
+- [speech-to-text.md](speech-to-text.md)
+  - Speech to Text settings, Groq transcription, recording UX, privacy, cancellation, and provider extension points.
+
 - [configurable-web-view-engine.md](configurable-web-view-engine.md)
   - Short architecture note for the configurable WebView boundary.
 

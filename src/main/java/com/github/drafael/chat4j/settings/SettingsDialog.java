@@ -10,6 +10,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.List;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -29,6 +30,7 @@ public class SettingsDialog extends JDialog {
     private final PropertyChangeListener lafChangeListener;
 
     private final Runnable exitAction;
+    private final Path sttModelsDirectory;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
         this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
@@ -48,8 +50,19 @@ public class SettingsDialog extends JDialog {
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull Runnable exitAction
     ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, Path.of(System.getProperty("user.home"), ".config", "chat4j", "stt", "models"));
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory
+    ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
+        this.sttModelsDirectory = sttModelsDirectory;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -155,6 +168,7 @@ public class SettingsDialog extends JDialog {
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
                 new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
                 new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo)),
+                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
@@ -199,7 +213,7 @@ public class SettingsDialog extends JDialog {
         if (!saveResult.saved()) {
             JOptionPane.showMessageDialog(
                     this,
-                    "Prompt settings could not be saved:\n\n%s".formatted(saveResult.message()),
+                    "%s could not be saved:\n\n%s".formatted(saveResult.sectionName(), saveResult.message()),
                     "Settings Not Saved",
                     JOptionPane.ERROR_MESSAGE
             );
@@ -210,18 +224,18 @@ public class SettingsDialog extends JDialog {
 
     private SavePendingResult savePendingPanelChangesResult() {
         if (savingBeforeDispose) {
-            return new SavePendingResult(true, "");
+            return new SavePendingResult(true, "", "Settings");
         }
         savingBeforeDispose = true;
         try {
             return sections.stream()
                     .map(SettingsSection::content)
-                    .filter(PromptsPanel.class::isInstance)
-                    .map(PromptsPanel.class::cast)
+                    .filter(PendingSettingsSaveParticipant.class::isInstance)
+                    .map(PendingSettingsSaveParticipant.class::cast)
                     .filter(panel -> !panel.savePendingChanges())
                     .findFirst()
-                    .map(panel -> new SavePendingResult(false, panel.lastSaveError()))
-                    .orElseGet(() -> new SavePendingResult(true, ""));
+                    .map(panel -> new SavePendingResult(false, panel.lastSaveError(), panel.settingsSectionName()))
+                    .orElseGet(() -> new SavePendingResult(true, "", "Settings"));
         } finally {
             savingBeforeDispose = false;
         }
@@ -288,6 +302,6 @@ public class SettingsDialog extends JDialog {
     private record SettingsSection(String id, String title, String iconPath, JComponent content) {
     }
 
-    private record SavePendingResult(boolean saved, String message) {
+    private record SavePendingResult(boolean saved, String message, String sectionName) {
     }
 }

@@ -44,6 +44,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.stream.IntStream;
@@ -150,6 +151,8 @@ public class SidebarPanel extends JPanel {
     private Runnable onNewChat;
     @Setter
     private Runnable onSettings;
+    @Setter
+    private BooleanSupplier guardedActionAllowed = () -> true;
     private boolean suppressSelection;
     private int hoveredIndex = -1;
     private final AtomicLong refreshRequestCounter = new AtomicLong();
@@ -402,6 +405,9 @@ public class SidebarPanel extends JPanel {
         button.setMinimumSize(size);
         button.setMaximumSize(size);
         button.addActionListener(event -> {
+            if (!guardedActionAllowed.getAsBoolean()) {
+                return;
+            }
             if (onSettings != null) {
                 onSettings.run();
             }
@@ -421,6 +427,10 @@ public class SidebarPanel extends JPanel {
         }
 
         selectedConversationId().ifPresent(id -> {
+            if (!guardedActionAllowed.getAsBoolean()) {
+                restoreNotifiedSelection();
+                return;
+            }
             notifiedSelectionConversationId = id;
             if (onConversationSelected != null) {
                 onConversationSelected.accept(id);
@@ -674,6 +684,9 @@ public class SidebarPanel extends JPanel {
     }
 
     private void handleDelete(ConversationItem conversation, boolean skipConfirmation) {
+        if (!guardedActionAllowed.getAsBoolean()) {
+            return;
+        }
         if (skipConfirmation) {
             deleteConversation(conversation);
             return;
@@ -694,6 +707,9 @@ public class SidebarPanel extends JPanel {
     }
 
     private void handleDeleteGroup(String groupName) {
+        if (!guardedActionAllowed.getAsBoolean()) {
+            return;
+        }
         int confirmation = showThemedConfirmDialog(
                 "Delete all chats in \"%s\"?".formatted(groupName), "Confirm");
         if (confirmation != JOptionPane.YES_OPTION) {
@@ -713,6 +729,9 @@ public class SidebarPanel extends JPanel {
     }
 
     private void handleDeleteAll() {
+        if (!guardedActionAllowed.getAsBoolean()) {
+            return;
+        }
         int confirmation = showThemedConfirmDialog("Delete all chats?", "Confirm");
         if (confirmation != JOptionPane.YES_OPTION) {
             return;
@@ -746,6 +765,9 @@ public class SidebarPanel extends JPanel {
     }
 
     private void renameConversation(ConversationItem conversation, String newTitle) {
+        if (!guardedActionAllowed.getAsBoolean()) {
+            return;
+        }
         runRepositoryAction(RENAME_CONVERSATION_ERROR, CONVERSATIONS_TITLE, () -> {
             conversationRepo.updateTitle(conversation.id(), newTitle);
             refresh();

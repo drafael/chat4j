@@ -23,7 +23,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
-public class PromptsPanel extends JPanel {
+public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipant {
 
     private final PromptCatalogRepo promptCatalogRepo;
     private final DefaultListModel<PromptTemplate> promptListModel = new DefaultListModel<>();
@@ -200,6 +200,11 @@ public class PromptsPanel extends JPanel {
 
     public String lastSaveError() {
         return lastSaveError;
+    }
+
+    @Override
+    public String settingsSectionName() {
+        return "Prompt settings";
     }
 
     private void reloadPrompts() {

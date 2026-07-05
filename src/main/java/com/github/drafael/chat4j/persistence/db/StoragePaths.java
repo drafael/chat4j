@@ -100,6 +100,14 @@ public final class StoragePaths {
         return appConfigDirectory().resolve("models-cache");
     }
 
+    public Path sttModelsDirectory() {
+        return appConfigDirectory().resolve("stt").resolve("models");
+    }
+
+    public Path sttTempDirectory() {
+        return appConfigDirectory().resolve("stt").resolve("temp");
+    }
+
     public String jdbcUrl() {
         return h2JdbcUrl(false);
     }

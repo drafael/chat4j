@@ -58,6 +58,8 @@ public class InputBar extends JPanel {
     private static final int CHIP_ICON_SIZE = 12;
     private static final int ATTACH_ICON_SIZE = 16;
     private static final int COMMAND_CENTER_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int MIC_ICON_SIZE = ATTACH_ICON_SIZE;
+    private static final int SEND_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int THINKING_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int WEB_SEARCH_ICON_SIZE = ATTACH_ICON_SIZE;
     private static final int AGENT_ICON_SIZE = ATTACH_ICON_SIZE;
@@ -86,6 +88,12 @@ public class InputBar extends JPanel {
     private final Map<String, JRadioButtonMenuItem> webSearchOptionItems = new LinkedHashMap<>();
     private final JToggleButton agentModeButton;
     private final JButton clearChatButton;
+    private final JButton micButton;
+    private final JButton sendButton;
+    private final InputRecordingPanel recordingPanel;
+    private final JPanel actionsRow;
+    private final JPanel actionsPanel;
+    private final JPanel composerBottomPanel;
     private final JPopupMenu reasoningLevelMenu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
     private final Map<ReasoningLevel, JRadioButtonMenuItem> reasoningLevelItems = new LinkedHashMap<>();
     private final JPanel projectRootRowPanel;
@@ -117,6 +125,9 @@ public class InputBar extends JPanel {
     private final List<ActionListener> commandCenterListeners = new ArrayList<>();
     private final List<ActionListener> clearChatListeners = new ArrayList<>();
     private final List<ActionListener> cancelGenerationListeners = new ArrayList<>();
+    private final List<ActionListener> sttStartListeners = new ArrayList<>();
+    private final List<ActionListener> sttStopListeners = new ArrayList<>();
+    private final List<ActionListener> sttCancelListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
     private final List<Consumer<Boolean>> webSearchEnabledListeners = new ArrayList<>();
     private final List<Consumer<String>> webSearchOptionListeners = new ArrayList<>();
@@ -139,6 +150,12 @@ public class InputBar extends JPanel {
     private Path agentProjectRoot;
     private int slashTokenStart = -1;
     private ProjectRootChooser projectRootChooser = parent -> showProjectRootChooser(parent, null);
+    private boolean sttAvailable;
+    private boolean recording;
+    private boolean transcribing;
+    private boolean normalComposeMode = true;
+    private boolean conversationBusy;
+    private boolean providerReady;
 
     public InputBar() {
         setLayout(new BorderLayout());
@@ -157,6 +174,12 @@ public class InputBar extends JPanel {
             @Override
             public void keyPressed(KeyEvent e) {
                 if (handleSlashPopupKey(e)) {
+                    return;
+                }
+
+                if (e.getKeyCode() == KeyEvent.VK_ESCAPE && isRecordingOrTranscribing()) {
+                    e.consume();
+                    fireSttCancel();
                     return;
                 }
 
@@ -248,6 +271,22 @@ public class InputBar extends JPanel {
         clearChatButton.setVisible(false);
         clearChatButton.addActionListener(e -> fireClearChat());
 
+        micButton = new InputIconButton(this::paintInputIconButtonBackground);
+        configureFocusableInputIconButton(micButton);
+        micButton.setIcon(micIcon(UIManager.getColor("Label.foreground")));
+        micButton.setToolTipText("Start speech recording (Escape cancels)");
+        micButton.getAccessibleContext().setAccessibleName("Start speech recording");
+        micButton.addActionListener(e -> fireSttStart());
+
+        sendButton = new InputIconButton(this::paintInputIconButtonBackground);
+        configureFocusableInputIconButton(sendButton);
+        sendButton.setIcon(sendIcon(UIManager.getColor("Label.foreground")));
+        sendButton.setToolTipText("Send message");
+        sendButton.getAccessibleContext().setAccessibleName("Send message");
+        sendButton.addActionListener(e -> fireSend());
+
+        recordingPanel = new InputRecordingPanel(e -> fireSttStop(), e -> fireSttCancel());
+
         cancelGenerationButton = new JButton();
         cancelGenerationButton.putClientProperty("JButton.buttonType", "toolBarButton");
         cancelGenerationButton.putClientProperty(
@@ -265,7 +304,7 @@ public class InputBar extends JPanel {
         cancelGenerationButton.setVisible(false);
         cancelGenerationButton.addActionListener(e -> fireCancelGeneration());
 
-        JPanel actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        actionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         actionsPanel.setOpaque(false);
         actionsPanel.add(attachButton);
         actionsPanel.add(commandCenterButton);
@@ -277,8 +316,10 @@ public class InputBar extends JPanel {
         JPanel cancelPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         cancelPanel.setOpaque(false);
         cancelPanel.add(cancelGenerationButton);
+        cancelPanel.add(micButton);
+        cancelPanel.add(sendButton);
 
-        JPanel actionsRow = new JPanel(new BorderLayout(0, 0));
+        actionsRow = new JPanel(new BorderLayout(0, 0));
         actionsRow.setOpaque(false);
         actionsRow.add(actionsPanel, BorderLayout.WEST);
         actionsRow.add(cancelPanel, BorderLayout.EAST);
@@ -312,12 +353,14 @@ public class InputBar extends JPanel {
         validationLabel.setVisible(false);
         validationLabel.setAlignmentX(LEFT_ALIGNMENT);
 
-        JPanel composerBottomPanel = new JPanel();
+        composerBottomPanel = new JPanel();
         composerBottomPanel.setOpaque(false);
         composerBottomPanel.setLayout(new BoxLayout(composerBottomPanel, BoxLayout.Y_AXIS));
         actionsRow.setAlignmentX(LEFT_ALIGNMENT);
+        recordingPanel.setAlignmentX(LEFT_ALIGNMENT);
         projectRootRowPanel.setAlignmentX(LEFT_ALIGNMENT);
         composerBottomPanel.add(actionsRow);
+        composerBottomPanel.add(recordingPanel);
         composerBottomPanel.add(Box.createVerticalStrut(4));
         composerBottomPanel.add(projectRootRowPanel);
         composerBottomPanel.add(validationLabel);
@@ -331,6 +374,7 @@ public class InputBar extends JPanel {
         composerShell.add(composerBottomPanel, BorderLayout.SOUTH);
 
         configureSlashPopup();
+        installSttEscapeBinding();
         refreshSkills();
 
         applyThemeStyles();
@@ -359,6 +403,12 @@ public class InputBar extends JPanel {
         button.setPreferredSize(size);
         button.setMinimumSize(size);
         button.setMaximumSize(size);
+    }
+
+    private void configureFocusableInputIconButton(AbstractButton button) {
+        configureInputIconButton(button);
+        button.setFocusable(true);
+        button.putClientProperty(FlatClientProperties.STYLE, "focusWidth:1;innerFocusWidth:1;arc:8");
     }
 
     @Override
@@ -445,8 +495,9 @@ public class InputBar extends JPanel {
         clearChatButton.setEnabled(enabled);
         applyClearChatVisibility();
         if (projectRootButton != null) {
-            projectRootButton.setEnabled(enabled && agentModeAvailable && agentModeEnabled);
+            projectRootButton.setEnabled(enabled && agentModeAvailable && agentModeEnabled && isComposerMutable());
         }
+        recomputeComposerPresentation();
         updateInputButtonIcons();
     }
 
@@ -468,6 +519,121 @@ public class InputBar extends JPanel {
 
     public void addCancelGenerationListener(ActionListener listener) {
         cancelGenerationListeners.add(listener);
+    }
+
+    public void addSpeechToTextStartListener(ActionListener listener) {
+        sttStartListeners.add(listener);
+    }
+
+    public void addSpeechToTextStopListener(ActionListener listener) {
+        sttStopListeners.add(listener);
+    }
+
+    public void addSpeechToTextCancelListener(ActionListener listener) {
+        sttCancelListeners.add(listener);
+    }
+
+    public void setSpeechToTextAvailable(boolean sttAvailable) {
+        this.sttAvailable = sttAvailable;
+        recomputeComposerPresentation();
+    }
+
+    public void setConversationBusy(boolean conversationBusy) {
+        this.conversationBusy = conversationBusy;
+        recomputeComposerPresentation();
+    }
+
+    public void setProviderReady(boolean providerReady) {
+        this.providerReady = providerReady;
+        recomputeComposerPresentation();
+    }
+
+    public void setNormalComposeMode(boolean normalComposeMode) {
+        this.normalComposeMode = normalComposeMode;
+        recomputeComposerPresentation();
+    }
+
+    public void showRecordingState() {
+        recording = true;
+        transcribing = false;
+        textArea.setEditable(false);
+        clearValidationMessage();
+        hideSlashPopup();
+        hideDetachedPopups();
+        recordingPanel.startRecording();
+        recomputeComposerPresentation();
+    }
+
+    public void showTranscribingState() {
+        recording = false;
+        transcribing = true;
+        textArea.setEditable(false);
+        clearValidationMessage();
+        recordingPanel.setTranscribing();
+        recomputeComposerPresentation();
+    }
+
+    public void clearSpeechToTextState() {
+        recording = false;
+        transcribing = false;
+        textArea.setEditable(true);
+        recordingPanel.stop();
+        recomputeComposerPresentation();
+    }
+
+    public void updateSpeechToTextLevel(double rms, double peak) {
+        recordingPanel.addLevel(rms, peak);
+    }
+
+    private void hideDetachedPopups() {
+        webSearchMenu.setVisible(false);
+        reasoningLevelMenu.setVisible(false);
+    }
+
+    public boolean isRecordingOrTranscribing() {
+        return recording || transcribing;
+    }
+
+    public boolean isComposerMutable() {
+        return !isRecordingOrTranscribing();
+    }
+
+    public void appendTranscriptToRawSnapshot(String rawSnapshot, String transcript) {
+        String safeRaw = StringUtils.defaultString(rawSnapshot);
+        String safeTranscript = StringUtils.trimToEmpty(transcript);
+        if (safeTranscript.isBlank()) {
+            return;
+        }
+        String separator = safeRaw.isBlank() || Character.isWhitespace(safeRaw.charAt(safeRaw.length() - 1)) ? "" : "\n";
+        setText("%s%s%s".formatted(safeRaw, separator, safeTranscript));
+    }
+
+    public boolean isSendable() {
+        return normalComposeMode && !conversationBusy && !isRecordingOrTranscribing() && providerReady && !getComposerState().isEmpty();
+    }
+
+    private void recomputeComposerPresentation() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::recomputeComposerPresentation);
+            return;
+        }
+        boolean sttActive = isRecordingOrTranscribing();
+        actionsRow.setVisible(!sttActive);
+        recordingPanel.setVisible(sttActive);
+        micButton.setVisible(sttAvailable && normalComposeMode && !conversationBusy && !sttActive);
+        micButton.setEnabled(isEnabled() && micButton.isVisible());
+        sendButton.setVisible(isSendable());
+        sendButton.setEnabled(isSendable());
+        attachButton.setEnabled(isEnabled() && isComposerMutable());
+        commandCenterButton.setEnabled(isEnabled() && isComposerMutable());
+        thinkingButton.setEnabled(isEnabled() && isComposerMutable());
+        webSearchButton.setEnabled(isEnabled() && isComposerMutable() && webSearchAvailable);
+        agentModeButton.setEnabled(isEnabled() && isComposerMutable() && agentModeAvailable);
+        clearChatButton.setEnabled(isEnabled() && isComposerMutable());
+        updateProjectRootPresentation();
+        refreshChips();
+        revalidate();
+        repaint();
     }
 
     public void addReasoningLevelListener(Consumer<ReasoningLevel> listener) {
@@ -857,8 +1023,8 @@ public class InputBar extends JPanel {
         }
 
         boolean selected = isEnabled() && webSearchAvailable && webSearchEnabled;
-        webSearchButton.setVisible(webSearchAvailable);
-        webSearchButton.setEnabled(isEnabled() && webSearchAvailable);
+        webSearchButton.setVisible(webSearchAvailable && !isRecordingOrTranscribing());
+        webSearchButton.setEnabled(isEnabled() && webSearchAvailable && isComposerMutable());
         webSearchButton.setSelected(selected);
         applyToolbarToggleSelection(webSearchButton, selected);
         webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(isWebSearchEnabled())));
@@ -876,6 +1042,9 @@ public class InputBar extends JPanel {
     }
 
     private void onAgentModeButtonClicked() {
+        if (!isComposerMutable()) {
+            return;
+        }
         if (!agentModeAvailable) {
             setAgentModeEnabled(false);
             return;
@@ -904,6 +1073,9 @@ public class InputBar extends JPanel {
     }
 
     private void onProjectRootButtonClicked() {
+        if (!isComposerMutable()) {
+            return;
+        }
         if (!agentModeAvailable) {
             return;
         }
@@ -968,8 +1140,8 @@ public class InputBar extends JPanel {
         }
 
         boolean selected = isEnabled() && agentModeAvailable && agentModeEnabled;
-        agentModeButton.setVisible(agentModeAvailable);
-        agentModeButton.setEnabled(isEnabled() && agentModeAvailable);
+        agentModeButton.setVisible(agentModeAvailable && !isRecordingOrTranscribing());
+        agentModeButton.setEnabled(isEnabled() && agentModeAvailable && isComposerMutable());
         agentModeButton.setSelected(selected);
         applyToolbarToggleSelection(agentModeButton, selected);
         agentModeButton.setIcon(agentModeIcon(resolveInputIconTint(agentModeAvailable && agentModeEnabled)));
@@ -984,7 +1156,7 @@ public class InputBar extends JPanel {
             return;
         }
 
-        boolean showProjectRoot = agentModeAvailable && agentModeEnabled && agentProjectRoot != null;
+        boolean showProjectRoot = agentModeAvailable && agentModeEnabled && agentProjectRoot != null && isComposerMutable();
         if (!showProjectRoot) {
             if (projectRootRowPanel != null) {
                 projectRootRowPanel.setVisible(false);
@@ -1025,7 +1197,7 @@ public class InputBar extends JPanel {
         projectRootButton.setMinimumSize(new Dimension(PROJECT_ROOT_BUTTON_MIN_WIDTH, PROJECT_ROOT_BUTTON_HEIGHT));
         projectRootButton.setMaximumSize(new Dimension(maxButtonWidth, PROJECT_ROOT_BUTTON_HEIGHT));
         projectRootButton.setVisible(true);
-        projectRootButton.setEnabled(isEnabled() && agentModeAvailable);
+        projectRootButton.setEnabled(isEnabled() && agentModeAvailable && isComposerMutable());
 
         if (agentAccessLabel != null) {
             agentAccessLabel.setVisible(agentModeEnabled);
@@ -1141,12 +1313,16 @@ public class InputBar extends JPanel {
     }
 
     private void applyClearChatVisibility() {
-        clearChatButton.setVisible(clearChatAvailable && isEnabled());
+        clearChatButton.setVisible(clearChatAvailable && isEnabled() && !isRecordingOrTranscribing());
         revalidate();
         repaint();
     }
 
     private void fireSend() {
+        if (isRecordingOrTranscribing()) {
+            showValidationMessage("Finish or cancel transcription before sending.");
+            return;
+        }
         var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "send");
         for (ActionListener l : sendListeners) {
             l.actionPerformed(event);
@@ -1172,6 +1348,39 @@ public class InputBar extends JPanel {
         for (ActionListener l : cancelGenerationListeners) {
             l.actionPerformed(event);
         }
+    }
+
+    private void fireSttStart() {
+        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "speechToTextStart");
+        for (ActionListener listener : sttStartListeners) {
+            listener.actionPerformed(event);
+        }
+    }
+
+    private void fireSttStop() {
+        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "speechToTextStop");
+        for (ActionListener listener : sttStopListeners) {
+            listener.actionPerformed(event);
+        }
+    }
+
+    private void fireSttCancel() {
+        var event = new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "speechToTextCancel");
+        for (ActionListener listener : sttCancelListeners) {
+            listener.actionPerformed(event);
+        }
+    }
+
+    private void installSttEscapeBinding() {
+        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelSpeechToText");
+        getActionMap().put("cancelSpeechToText", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (isRecordingOrTranscribing()) {
+                    fireSttCancel();
+                }
+            }
+        });
     }
 
     private void notifyReasoningLevelChanged(ReasoningLevel level) {
@@ -1211,13 +1420,21 @@ public class InputBar extends JPanel {
     }
 
     public void requestAttachmentPicker() {
+        if (!isComposerMutable()) {
+            return;
+        }
         openAttachmentPicker();
     }
 
     private void onInputChanged() {
         adjustHeight();
         clearValidationMessage();
+        if (!isComposerMutable()) {
+            recomputeComposerPresentation();
+            return;
+        }
         updateSlashSuggestions();
+        recomputeComposerPresentation();
     }
 
     private void adjustHeight() {
@@ -1227,6 +1444,9 @@ public class InputBar extends JPanel {
     }
 
     private void openAttachmentPicker() {
+        if (!isComposerMutable()) {
+            return;
+        }
         SystemFileChooser chooser = new SystemFileChooser();
         chooser.setDialogTitle("Attach files");
         chooser.setMultiSelectionEnabled(true);
@@ -1254,6 +1474,9 @@ public class InputBar extends JPanel {
     }
 
     private void addAttachments(List<Path> candidatePaths) {
+        if (!isComposerMutable()) {
+            return;
+        }
         clearValidationMessage();
 
         candidatePaths.stream()
@@ -1465,7 +1688,12 @@ public class InputBar extends JPanel {
         remove.setIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveForeground()));
         remove.setRolloverIcon(svgIcon("/icons/input/x.svg", CHIP_ICON_SIZE, resolveChipRemoveHoverForeground()));
         remove.setToolTipText("Remove");
-        remove.addActionListener(e -> onRemove.run());
+        remove.setVisible(isComposerMutable());
+        remove.addActionListener(e -> {
+            if (isComposerMutable()) {
+                onRemove.run();
+            }
+        });
         return remove;
     }
 
@@ -1475,7 +1703,12 @@ public class InputBar extends JPanel {
         remove.setIcon(svgIcon("/icons/input/x.svg", 14, foreground));
         remove.setRolloverIcon(svgIcon("/icons/input/x.svg", 14, resolveSkillRemoveHoverForeground()));
         remove.setToolTipText("Remove skill");
-        remove.addActionListener(e -> onRemove.run());
+        remove.setVisible(isComposerMutable());
+        remove.addActionListener(e -> {
+            if (isComposerMutable()) {
+                onRemove.run();
+            }
+        });
         return remove;
     }
 
@@ -2101,6 +2334,14 @@ public class InputBar extends JPanel {
             clearChatButton.setForeground(tint);
             clearChatButton.setIcon(clearChatIcon(tint));
         }
+        if (micButton != null) {
+            micButton.setForeground(tint);
+            micButton.setIcon(micIcon(tint));
+        }
+        if (sendButton != null) {
+            sendButton.setForeground(tint);
+            sendButton.setIcon(sendIcon(tint));
+        }
         if (cancelGenerationButton != null) {
             Color cancelTint = enabledInputIconTint();
             cancelGenerationButton.setForeground(cancelTint);
@@ -2261,19 +2502,19 @@ public class InputBar extends JPanel {
     }
 
     private Color resolveSkillPopupTitleForeground(JList<?> list) {
-        Color foreground = list.getForeground();
-        if (foreground == null) {
-            foreground = UIManager.getColor("Label.foreground");
-        }
-        return foreground == null ? resolveContrastingForeground(resolveListBackground()) : foreground;
+        return ObjectUtils.firstNonNull(
+                list.getForeground(),
+                UIManager.getColor("Label.foreground"),
+                resolveContrastingForeground(resolveListBackground())
+        );
     }
 
     private Color resolveMutedForeground(JList<?> list) {
-        Color foreground = UIManager.getColor("Label.disabledForeground");
-        if (foreground == null) {
-            foreground = list.getForeground();
-        }
-        return foreground == null ? new Color(110, 110, 120) : foreground;
+        return ObjectUtils.firstNonNull(
+                UIManager.getColor("Label.disabledForeground"),
+                list.getForeground(),
+                new Color(110, 110, 120)
+        );
     }
 
     private Color resolveListBackground() {
@@ -2378,7 +2619,7 @@ public class InputBar extends JPanel {
 
         boolean reasoningEnabled = reasoningLevel.enabled();
 
-        thinkingButton.setVisible(thinkingAvailable);
+        thinkingButton.setVisible(thinkingAvailable && !isRecordingOrTranscribing());
         if (!thinkingAvailable) {
             thinkingButton.setSelected(false);
             applyToolbarToggleSelection(thinkingButton, false);
@@ -2390,7 +2631,7 @@ public class InputBar extends JPanel {
         }
 
         Color tint = resolveInputIconTint(reasoningEnabled);
-        boolean selected = isEnabled() && reasoningEnabled;
+        boolean selected = isEnabled() && isComposerMutable() && reasoningEnabled;
         thinkingButton.setSelected(selected);
         applyToolbarToggleSelection(thinkingButton, selected);
         thinkingButton.setIcon(thinkingIcon(tint));
@@ -2482,6 +2723,16 @@ public class InputBar extends JPanel {
     private Icon clearChatIcon(Color tint) {
         Icon icon = svgIcon("/icons/input/eraser.svg", CLEAR_CHAT_ICON_SIZE, tint);
         return icon != null ? icon : UIManager.getIcon("OptionPane.warningIcon");
+    }
+
+    private Icon micIcon(Color tint) {
+        Icon icon = svgIcon("/icons/chat/mic.svg", MIC_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
+    }
+
+    private Icon sendIcon(Color tint) {
+        Icon icon = svgIcon("/icons/chat/arrow-up.svg", SEND_ICON_SIZE, tint);
+        return icon != null ? icon : UIManager.getIcon("OptionPane.informationIcon");
     }
 
     private Icon stopIcon(Color tint) {

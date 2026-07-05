@@ -55,4 +55,15 @@ class StoragePathsTest {
         assertThat(subject.jcefBundleDirectory())
                 .isEqualTo(Path.of("/tmp/xdg").resolve("chat4j").resolve("jcef-bundle"));
     }
+
+    @Test
+    @DisplayName("Speech to Text directories are rooted under the application config directory")
+    void sttDirectories_whenResolved_useApplicationConfigDirectory() {
+        var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.sttModelsDirectory())
+                .isEqualTo(Path.of("/tmp/xdg").resolve("chat4j").resolve("stt").resolve("models"));
+        assertThat(subject.sttTempDirectory())
+                .isEqualTo(Path.of("/tmp/xdg").resolve("chat4j").resolve("stt").resolve("temp"));
+    }
 }

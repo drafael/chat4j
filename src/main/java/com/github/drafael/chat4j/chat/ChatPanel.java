@@ -58,6 +58,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
@@ -176,6 +177,7 @@ public class ChatPanel extends JPanel {
     private final SystemWebView systemWebView;
     private final JcefBrowserView jcefBrowserView;
     private final TextToSpeechService textToSpeechService;
+    private final SpeechToTextService speechToTextService;
     private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
     private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
     private volatile AgentOrchestrator agentOrchestrator;
@@ -200,6 +202,7 @@ public class ChatPanel extends JPanel {
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
     private EditingUserMessage editingUserMessage;
+    private ComposerState speechToTextComposerSnapshot = ComposerState.empty();
 
     private final List<Message> history = new ArrayList<>();
     private Map<String, ProviderRegistry.ProviderDef> providerMap = emptyMap();
@@ -279,7 +282,7 @@ public class ChatPanel extends JPanel {
             @NonNull ChatMessageViewFactory messageViewFactory,
             @NonNull WebViewEngine webViewEngine
     ) {
-        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, TextToSpeechService.disabled());
+        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, TextToSpeechService.disabled(), SpeechToTextService.disabled());
     }
 
     public ChatPanel(
@@ -289,11 +292,23 @@ public class ChatPanel extends JPanel {
             @NonNull WebViewEngine webViewEngine,
             @NonNull TextToSpeechService textToSpeechService
     ) {
+        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, textToSpeechService, SpeechToTextService.disabled());
+    }
+
+    public ChatPanel(
+            @NonNull ProviderModelCacheService modelCacheService,
+            @NonNull ModelFavoritesService modelFavoritesService,
+            @NonNull ChatMessageViewFactory messageViewFactory,
+            @NonNull WebViewEngine webViewEngine,
+            @NonNull TextToSpeechService textToSpeechService,
+            @NonNull SpeechToTextService speechToTextService
+    ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.messageViewFactory = messageViewFactory;
         this.webViewEngine = webViewEngine;
         this.textToSpeechService = textToSpeechService;
+        this.speechToTextService = speechToTextService;
         this.systemWebView = webViewEngine == WebViewEngine.SYSTEM ? new SystemWebView() : null;
         this.jcefBrowserView = webViewEngine == WebViewEngine.JCEF ? new JcefBrowserView() : null;
         if (this.systemWebView != null) {
@@ -339,6 +354,10 @@ public class ChatPanel extends JPanel {
         inputBar.addSendListener(e -> onSend());
         inputBar.addClearChatListener(e -> requestClearChat());
         inputBar.addCancelGenerationListener(e -> cancelStreamingAndMarkCancelled());
+        inputBar.addSpeechToTextStartListener(e -> startSpeechToTextRecording());
+        inputBar.addSpeechToTextStopListener(e -> speechToTextService.stopRecordingAndTranscribe());
+        inputBar.addSpeechToTextCancelListener(e -> cancelSpeechToText());
+        reloadSpeechToTextSettings();
         updateClearChatButtonVisibility();
 
         composerPanel = new ComposerPanel(inputBar);
@@ -519,6 +538,7 @@ public class ChatPanel extends JPanel {
 
     @Override
     public void removeNotify() {
+        speechToTextService.dispose();
         stopReadAloudPlayback();
         if (modelPopup != null) {
             modelPopup.dispose();
@@ -673,6 +693,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void toggleModelPopup() {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before changing models.");
+            return;
+        }
         Window owner = SwingUtilities.getWindowAncestor(this);
         ModelSelectorPopup popup = ensureModelPopup(owner);
         if (popup.isVisible()) {
@@ -740,6 +764,7 @@ public class ChatPanel extends JPanel {
             String modelId
     ) {
         currentProviderResolving = true;
+        refreshComposerAvailability();
         String providerNameSnapshot = providerDef.name();
         Thread.startVirtualThread(() -> {
             try {
@@ -777,6 +802,7 @@ public class ChatPanel extends JPanel {
         currentProvider = resolvedProvider;
         currentProviderApiKey = resolvedApiKey;
         currentProviderResolving = false;
+        refreshComposerAvailability();
     }
 
     private void applyProviderResolutionFailure(
@@ -792,12 +818,18 @@ public class ChatPanel extends JPanel {
         currentProvider = null;
         currentProviderApiKey = null;
         currentProviderResolving = false;
+        refreshComposerAvailability();
         log.warn("Failed to prepare provider {}::{}: {}", providerName, modelId, ExceptionUtils.getMessage(error));
     }
 
     private void onSend() {
         if (editingUserMessage != null) {
             saveEditedUserMessageAndRegenerate();
+            return;
+        }
+
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before sending.");
             return;
         }
 
@@ -2097,11 +2129,16 @@ public class ChatPanel extends JPanel {
 
     private boolean canReadAloud(ChatMessageView bubble, Role role) {
         return role == Role.ASSISTANT
+                && !speechToTextService.active()
                 && textToSpeechService.isReadAloudAvailable()
                 && StringUtils.isNotBlank(speakableText(bubble));
     }
 
     private void readBubbleAloud(ChatMessageView bubble) {
+        if (speechToTextService.active()) {
+            showReadAloudStatus("Finish or cancel transcription before using read aloud.");
+            return;
+        }
         textToSpeechService.readAloud(
                 swingReadAloudKey(bubble),
                 speakableText(bubble),
@@ -2226,6 +2263,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void startEditingUserMessage(ChatMessageView bubble) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before editing messages.");
+            return;
+        }
         if (isVisibleConversationBusy()) {
             return;
         }
@@ -2249,6 +2290,7 @@ public class ChatPanel extends JPanel {
                 this::saveEditedUserMessageAndRegenerate,
                 this::cancelEditingUserMessage
         ));
+        refreshComposerAvailability();
         inputBar.requestInputFocus();
     }
 
@@ -2270,6 +2312,7 @@ public class ChatPanel extends JPanel {
         editingUserMessage = null;
         composerPanel.setComposer(inputBar);
         inputBar.setComposerState(state.savedComposerState());
+        refreshComposerAvailability();
         inputBar.requestInputFocus();
     }
 
@@ -2372,6 +2415,7 @@ public class ChatPanel extends JPanel {
         editingUserMessage = null;
         composerPanel.setComposer(inputBar);
         inputBar.setComposerState(state.savedComposerState());
+        refreshComposerAvailability();
     }
 
     private boolean canRegenerateFrom(ChatMessageView bubble) {
@@ -2402,6 +2446,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void regenerateFromBubble(ChatMessageView bubble) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before regenerating.");
+            return;
+        }
         if (currentProviderResolving) {
             inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
             return;
@@ -2561,6 +2609,89 @@ public class ChatPanel extends JPanel {
         refreshWebTranscript(false, true);
     }
 
+    public void reloadSpeechToTextSettings() {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before reloading Speech to Text settings.");
+            return;
+        }
+        inputBar.setSpeechToTextAvailable(speechToTextService.available());
+        refreshComposerAvailability();
+    }
+
+    public boolean isSpeechToTextActive() {
+        return speechToTextService.active();
+    }
+
+    public void cancelSpeechToText() {
+        speechToTextService.cancel(speechToTextCallbacks());
+    }
+
+    private void startSpeechToTextRecording() {
+        if (editingUserMessage != null || conversationLoading || isVisibleConversationBusy() || currentProviderResolving || currentProvider == null) {
+            inputBar.showValidationMessage("Speech to Text is not available right now.");
+            return;
+        }
+        stopReadAloudPlayback();
+        speechToTextComposerSnapshot = inputBar.getComposerState();
+        inputBar.showRecordingState();
+        speechToTextService.startRecording(speechToTextCallbacks());
+        refreshBubbleActionBars();
+        refreshWebTranscript(false, true);
+    }
+
+    private SpeechToTextService.Callbacks speechToTextCallbacks() {
+        return new SpeechToTextService.Callbacks() {
+            @Override
+            public void stateChanged() {
+                if (speechToTextService.recording()) {
+                    inputBar.showRecordingState();
+                } else if (speechToTextService.transcribing()) {
+                    inputBar.showTranscribingState();
+                } else {
+                    inputBar.clearSpeechToTextState();
+                    refreshComposerAvailability();
+                }
+                refreshBubbleActionBars();
+                refreshWebTranscript(false, true);
+            }
+
+            @Override
+            public void status(String message) {
+                if (StringUtils.isNotBlank(message)) {
+                    inputBar.showValidationMessage(message);
+                }
+            }
+
+            @Override
+            public void error(String message) {
+                inputBar.setComposerState(speechToTextComposerSnapshot);
+                inputBar.clearSpeechToTextState();
+                inputBar.showValidationMessage(message);
+                refreshComposerAvailability();
+            }
+
+            @Override
+            public void transcript(String text) {
+                inputBar.setComposerState(speechToTextComposerSnapshot);
+                inputBar.appendTranscriptToRawSnapshot(speechToTextComposerSnapshot.text(), text);
+                inputBar.clearSpeechToTextState();
+                inputBar.requestInputFocus();
+                refreshComposerAvailability();
+            }
+
+            @Override
+            public void level(double rms, double peak) {
+                inputBar.updateSpeechToTextLevel(rms, peak);
+            }
+        };
+    }
+
+    private void refreshComposerAvailability() {
+        inputBar.setConversationBusy(conversationLoading || isVisibleConversationBusy() || currentProviderResolving);
+        inputBar.setProviderReady(currentProvider != null && !currentProviderResolving);
+        inputBar.setNormalComposeMode(editingUserMessage == null);
+    }
+
     private void refreshBubbleActionBars() {
         refreshBubbleActionBars(messagesPanel);
     }
@@ -2603,7 +2734,7 @@ public class ChatPanel extends JPanel {
                 .toList();
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
         boolean showJumpButton = streaming;
-        boolean readAloudAvailable = textToSpeechService.isReadAloudAvailable();
+        boolean readAloudAvailable = !speechToTextService.active() && textToSpeechService.isReadAloudAvailable();
         int activeReadAloudMessageIndex = activeWebReadAloudMessageIndex(entries);
         if (isSystemWebViewEnabled()) {
             systemWebView.setTranscript(entries, renderMode, detectDarkMode(), shouldScrollToBottom, showJumpButton, readAloudAvailable, activeReadAloudMessageIndex);
@@ -2754,13 +2885,21 @@ public class ChatPanel extends JPanel {
         return new ChatEmptyStatePanel(
                 promptQuickActions,
                 new EmptyStateActions(
-                        text -> inputBar.setText(text),
-                        () -> inputBar.requestAgentModeEnabled(true),
-                        () -> inputBar.requestAttachmentPicker(),
-                        () -> inputBar.requestWebSearchEnabled(true),
-                        () -> inputBar.requestInputFocus()
+                        text -> runEmptyStateAction(() -> inputBar.setText(text)),
+                        () -> runEmptyStateAction(() -> inputBar.requestAgentModeEnabled(true)),
+                        () -> runEmptyStateAction(() -> inputBar.requestAttachmentPicker()),
+                        () -> runEmptyStateAction(() -> inputBar.requestWebSearchEnabled(true)),
+                        () -> runEmptyStateAction(inputBar::requestInputFocus)
                 )
         );
+    }
+
+    private void runEmptyStateAction(Runnable action) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before using quick actions.");
+            return;
+        }
+        action.run();
     }
 
     private ChatMessageView createMessageView(Role role) {
@@ -3057,6 +3196,12 @@ public class ChatPanel extends JPanel {
                 copyTextToClipboard(text);
                 return;
             }
+            if (speechToTextService.active()) {
+                if (Strings.CS.equalsAny(action, "read-aloud", "regenerate", "open-attachment", "open-diagram-html")) {
+                    inputBar.showValidationMessage("Finish or cancel transcription before using this action.");
+                    return;
+                }
+            }
             if (Strings.CS.equals(action, "open-attachment")) {
                 openConversationAttachment(text);
                 return;
@@ -3090,6 +3235,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void readWebTranscriptAloud(int messageIndex, String text) {
+        if (speechToTextService.active()) {
+            showReadAloudStatus("Finish or cancel transcription before using read aloud.");
+            return;
+        }
         textToSpeechService.readAloud(
                 webReadAloudKey(messageIndex),
                 text,
@@ -3312,6 +3461,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void clearChat(boolean cancelActiveStream) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before clearing the chat.");
+            return;
+        }
         if (cancelActiveStream) {
             clearPendingAssistantRecovery(activeConversationId);
             cancelStreaming();
@@ -3383,11 +3536,19 @@ public class ChatPanel extends JPanel {
     }
 
     public void loadConversationHistory(UUID conversationId, List<Message> messages) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before switching conversations.");
+            return;
+        }
         setActiveConversationId(conversationId);
         loadHistory(messages);
     }
 
     public void loadHistory(List<Message> messages) {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before loading history.");
+            return;
+        }
         clearChatForHistoryLoad();
 
         batchMessageRefresh = true;
@@ -3471,6 +3632,10 @@ public class ChatPanel extends JPanel {
     }
 
     public void showModelPopupCentered() {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before changing models.");
+            return;
+        }
         Window owner = SwingUtilities.getWindowAncestor(this);
         if (owner == null) {
             return;
@@ -3603,16 +3768,23 @@ public class ChatPanel extends JPanel {
         if (visibleSession != null) {
             activeStreamSessionId = visibleSession.sessionId;
             setVisibleStreaming(true);
-            inputBar.setEnabled(false);
+            if (!speechToTextService.active()) {
+                inputBar.setEnabled(false);
+            }
         } else if (visiblePreparingJob != null) {
             activeStreamSessionId = -1L;
             setVisibleStreaming(true);
-            inputBar.setEnabled(false);
+            if (!speechToTextService.active()) {
+                inputBar.setEnabled(false);
+            }
         } else {
             activeStreamSessionId = -1L;
             setVisibleStreaming(false);
-            inputBar.setEnabled(!conversationLoading);
+            if (!speechToTextService.active()) {
+                inputBar.setEnabled(!conversationLoading);
+            }
         }
+        refreshComposerAvailability();
         updateGenerationIndicator();
     }
 
@@ -3743,6 +3915,10 @@ public class ChatPanel extends JPanel {
     }
 
     public void requestClearChat() {
+        if (speechToTextService.active()) {
+            inputBar.showValidationMessage("Finish or cancel transcription before clearing the chat.");
+            return;
+        }
         if (!canClearChat()) {
             return;
         }
@@ -3752,7 +3928,7 @@ public class ChatPanel extends JPanel {
     }
 
     public boolean canClearChat() {
-        return !history.isEmpty() && !isVisibleConversationBusy() && inputBar.isEnabled();
+        return !history.isEmpty() && !isVisibleConversationBusy() && inputBar.isEnabled() && !speechToTextService.active();
     }
 
     private void updateClearChatButtonVisibility() {

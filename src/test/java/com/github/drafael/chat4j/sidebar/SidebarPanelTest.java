@@ -369,6 +369,37 @@ class SidebarPanelTest {
     }
 
     @Test
+    @DisplayName("Blocked conversation selection restores the displayed conversation selection")
+    void selectionChanged_whenGuardBlocksSelection_restoresPreviousSelection() throws Exception {
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped(
+                "Today",
+                conversation(firstId, "Current conversation"),
+                conversation(secondId, "Blocked conversation")
+        ));
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var selectedCalls = new AtomicInteger();
+
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo);
+            panel.setOnConversationSelected(id -> selectedCalls.incrementAndGet());
+            panelRef.set(panel);
+        });
+        SidebarPanel subject = panelRef.get();
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Blocked conversation"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.selectConversation(firstId);
+            subject.setGuardedActionAllowed(() -> false);
+            readConversationList(subject).setSelectedIndex(conversationIndex(subject, secondId));
+        });
+
+        assertThat(selectedConversationId(subject)).isEqualTo(firstId);
+        assertThat(selectedCalls).hasValue(0);
+    }
+
+    @Test
     @DisplayName("Streaming state swaps the provider icon for a loading icon and restores it afterwards")
     void setConversationStreaming_whenStateChanges_swapsConversationIcon() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -394,6 +425,25 @@ class SidebarPanelTest {
         Icon restoredIcon = readConversationIcon(subject, conversationId);
 
         assertThat(restoredIcon).isSameAs(providerIcon);
+    }
+
+    private UUID selectedConversationId(SidebarPanel panel) throws Exception {
+        var idRef = new AtomicReference<UUID>();
+        SwingUtilities.invokeAndWait(() -> {
+            Object selected = readConversationList(panel).getSelectedValue();
+            if (selected instanceof ConversationItem conversation) {
+                idRef.set(conversation.id());
+            }
+        });
+        return idRef.get();
+    }
+
+    private int conversationIndex(SidebarPanel panel, UUID conversationId) {
+        DefaultListModel<?> model = readListModel(panel);
+        return IntStream.range(0, model.size())
+                .filter(index -> model.get(index) instanceof ConversationItem conversation && conversation.id().equals(conversationId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private List<String> conversationTitles(SidebarPanel panel) throws Exception {
