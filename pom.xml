@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.7.10</version>
+    <version>26.7.11</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -585,6 +585,7 @@
                                     <target>
                                         <delete dir="${chat4j.jpackage.input.dir}"/>
                                         <delete dir="${chat4j.jpackage.runtime.dir}"/>
+                                        <delete dir="${project.build.directory}/jpackage-resources/macos"/>
                                         <mkdir dir="${chat4j.jpackage.input.dir}"/>
                                         <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
                                         <copy file="${project.build.directory}/${project.build.finalName}.jar"

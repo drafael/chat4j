@@ -33,6 +33,33 @@ if [[ ! -e "$mount_point/Applications" ]]; then
   exit 1
 fi
 
+info_plist="$mount_point/$app_name.app/Contents/Info.plist"
+resources_dir="$mount_point/$app_name.app/Contents/Resources"
+if ! icon_file="$(plutil -extract CFBundleIconFile raw -o - "$info_plist" 2>/dev/null)"; then
+  icon_file=""
+fi
+if [[ -z "$icon_file" ]]; then
+  echo "DMG verification failed: missing CFBundleIconFile in $app_name.app Info.plist" >&2
+  exit 1
+fi
+if [[ ! -f "$resources_dir/$icon_file" && ! -f "$resources_dir/$icon_file.icns" ]]; then
+  echo "DMG verification failed: app icon resource not found for CFBundleIconFile=$icon_file" >&2
+  exit 1
+fi
+
+if ! microphone_usage="$(plutil -extract NSMicrophoneUsageDescription raw -o - "$info_plist" 2>/dev/null)"; then
+  microphone_usage=""
+fi
+expected_microphone_usage="Chat4J uses the microphone only when you press the Speech to Text recording button so your speech can be transcribed into the message composer."
+if [[ -z "$microphone_usage" ]]; then
+  echo "DMG verification failed: missing NSMicrophoneUsageDescription in $app_name.app Info.plist" >&2
+  exit 1
+fi
+if [[ "$microphone_usage" != "$expected_microphone_usage" ]]; then
+  echo "DMG verification failed: unexpected NSMicrophoneUsageDescription: $microphone_usage" >&2
+  exit 1
+fi
+
 if [[ ! -e "$mount_point/.DS_Store" ]]; then
   if [[ "${CHAT4J_REQUIRE_DMG_FINDER_LAYOUT:-false}" == "true" ]]; then
     echo "DMG verification failed: missing Finder layout metadata (.DS_Store)" >&2
