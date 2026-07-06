@@ -53,6 +53,7 @@ public final class SettingsKeys {
     public static final String STT_PROVIDER = "chat4j.stt.provider";
     public static final String STT_PROVIDER_OFF = "off";
     public static final String STT_PROVIDER_GROQ = "groq";
+    public static final String STT_PROVIDER_VOSK = "vosk";
     public static final String STT_PREFIX = "chat4j.stt.";
     public static final String STT_MODELS_DIR = "chat4j.stt.models.dir";
     public static final String STT_RECORDING_MAX_DURATION_SECONDS = "chat4j.stt.recording.maxDurationSeconds";

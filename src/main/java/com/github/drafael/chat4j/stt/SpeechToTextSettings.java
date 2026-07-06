@@ -11,6 +11,9 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
 import java.nio.file.Path;
 import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
@@ -25,6 +28,7 @@ public class SpeechToTextSettings {
     private final SpeechToTextProviderRegistry providerRegistry;
     private final CredentialSource credentialSource;
     private final SpeechToTextModelDirectory modelDirectory;
+    private final VoskModelManagementService voskModelManagementService;
 
     public SpeechToTextSettings(
             SettingsRepository settingsRepo,
@@ -32,10 +36,21 @@ public class SpeechToTextSettings {
             CredentialSource credentialSource,
             Path defaultModelDirectory
     ) {
+        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, null);
+    }
+
+    public SpeechToTextSettings(
+            SettingsRepository settingsRepo,
+            SpeechToTextProviderRegistry providerRegistry,
+            CredentialSource credentialSource,
+            Path defaultModelDirectory,
+            VoskModelManagementService voskModelManagementService
+    ) {
         this.settingsRepo = settingsRepo;
         this.providerRegistry = providerRegistry;
         this.credentialSource = credentialSource;
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
+        this.voskModelManagementService = voskModelManagementService;
     }
 
     public SpeechToTextSettingsSnapshot resolve() {
@@ -49,6 +64,9 @@ public class SpeechToTextSettings {
         if (provider == null) {
             return SpeechToTextSettingsSnapshot.off(maxDurationSeconds, directory);
         }
+        if (SettingsKeys.STT_PROVIDER_VOSK.equals(provider.id())) {
+            return resolveVosk(provider, maxDurationSeconds, directory);
+        }
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
         try {
@@ -60,6 +78,13 @@ public class SpeechToTextSettings {
         }
     }
 
+    public void validateSelectedVoskModelNow() {
+        if (voskModelManagementService == null) {
+            throw new IllegalStateException("Vosk model management is not available.");
+        }
+        voskModelManagementService.validateSelectedNow();
+    }
+
     public void saveProvider(String providerId) {
         settingsRepo.put(SettingsKeys.STT_PROVIDER, StringUtils.defaultIfBlank(normalizeProviderId(providerId), SettingsKeys.STT_PROVIDER_OFF));
     }
@@ -68,6 +93,13 @@ public class SpeechToTextSettings {
         settingsRepo.updateBatch(batch -> {
             batch.put(SettingsKeys.sttModelIdKey(providerId), model.id());
             batch.put(SettingsKeys.sttModelLabelKey(providerId), model.label());
+        });
+    }
+
+    public void clearModel(String providerId) {
+        settingsRepo.updateBatch(batch -> {
+            batch.remove(SettingsKeys.sttModelIdKey(providerId));
+            batch.remove(SettingsKeys.sttModelLabelKey(providerId));
         });
     }
 
@@ -103,8 +135,31 @@ public class SpeechToTextSettings {
         }
     }
 
+    private SpeechToTextSettingsSnapshot resolveVosk(SpeechToTextProvider provider, int maxDurationSeconds, Path directory) {
+        if (voskModelManagementService == null) {
+            return new SpeechToTextSettingsSnapshot(provider, null, false, maxDurationSeconds, directory, null, null, "Vosk model management is not available.");
+        }
+        VoskModelManagementSnapshot snapshot = voskModelManagementService.snapshot();
+        VoskInstalledModel selected = snapshot.selectedModel();
+        SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
+        return new SpeechToTextSettingsSnapshot(
+                provider,
+                model,
+                snapshot.readyToTranscribe(),
+                maxDurationSeconds,
+                directory,
+                null,
+                null,
+                snapshot.statusMessage(),
+                selected == null ? null : selected.reference()
+        );
+    }
+
     private SpeechToTextCatalogItem selectedModel(SpeechToTextProvider provider) {
         SpeechToTextCatalogItem fallback = provider.defaultModel();
+        if (fallback == null) {
+            return null;
+        }
         String id = StringUtils.defaultIfBlank(settingsRepo.get(SettingsKeys.sttModelIdKey(provider.id()), fallback.id()), fallback.id());
         String label = settingsRepo.get(SettingsKeys.sttModelLabelKey(provider.id()), fallback.label());
         return new SpeechToTextCatalogItem(id, label, fallback.description());

@@ -273,6 +273,25 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Preparing speech state uses cancel control instead of stop-transcribe")
+    void recordingPanelButton_whenPreparing_invokesCancelListener() throws Exception {
+        AtomicBoolean stopInvoked = new AtomicBoolean(false);
+        AtomicBoolean cancelInvoked = new AtomicBoolean(false);
+        var subject = new InputRecordingPanel(e -> stopInvoked.set(true), e -> cancelInvoked.set(true));
+        JButton stopButton = readStopButton(subject);
+        JLabel statusLabel = readStatusLabel(subject);
+
+        subject.startPreparing();
+        SwingUtilities.invokeAndWait(stopButton::doClick);
+
+        assertThat(stopInvoked).isFalse();
+        assertThat(cancelInvoked).isTrue();
+        assertThat(statusLabel.getText()).isEqualTo("Preparing speech model...");
+        assertThat(stopButton.getToolTipText()).isEqualTo("Cancel speech preparation");
+        assertThat(stopButton.getAccessibleContext().getAccessibleName()).isEqualTo("Cancel speech preparation");
+    }
+
+    @Test
     @DisplayName("Recording panel control cancels while transcribing")
     void recordingPanelButton_whenTranscribing_invokesCancelListener() throws Exception {
         AtomicBoolean stopInvoked = new AtomicBoolean(false);
@@ -464,6 +483,12 @@ class InputBarValidationTest {
         Field field = InputRecordingPanel.class.getDeclaredField("stopButton");
         field.setAccessible(true);
         return (JButton) field.get(panel);
+    }
+
+    private JLabel readStatusLabel(InputRecordingPanel panel) throws Exception {
+        Field field = InputRecordingPanel.class.getDeclaredField("statusLabel");
+        field.setAccessible(true);
+        return (JLabel) field.get(panel);
     }
 
     private String readSkillDescription(Object skillCommand) throws Exception {

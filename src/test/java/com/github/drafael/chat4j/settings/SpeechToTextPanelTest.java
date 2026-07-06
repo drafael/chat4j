@@ -8,6 +8,11 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskValidationStatus;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
@@ -15,7 +20,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextField;
@@ -24,6 +31,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SpeechToTextPanelTest {
@@ -87,6 +95,91 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Vosk local model table reports Boolean classes only for Boolean columns")
+    void refreshControlsFromSettings_whenVoskSelected_usesCorrectColumnClasses() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
+
+        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
+
+        assertThat(localModelsTable.getColumnClass(0)).isEqualTo(String.class);
+        assertThat(localModelsTable.getColumnClass(1)).isEqualTo(String.class);
+        assertThat(localModelsTable.getColumnClass(2)).isEqualTo(String.class);
+        assertThat(localModelsTable.getColumnClass(3)).isEqualTo(String.class);
+        assertThat(localModelsTable.getColumnClass(4)).isEqualTo(Boolean.class);
+        assertThat(localModelsTable.getColumnClass(5)).isEqualTo(Boolean.class);
+        assertThat(localModelsTable.getColumnClass(6)).isEqualTo(String.class);
+    }
+
+    @Test
+    @DisplayName("Plausible Vosk models appear in table but not dropdown")
+    void refreshControlsFromSettings_whenVoskModelIsPlausibleUnverified_excludesFromModelDropdown() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-plausible.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        Path models = tempDir.resolve("vosk-plausible-models");
+        Files.createDirectories(models.resolve("vosk").resolve("custom-plausible").resolve("am"));
+        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"));
+        voskModels.refreshAsync();
+        waitUntil(() -> !voskModels.snapshot().rows().isEmpty());
+
+        var subject = new SpeechToTextPanel(repo, models, voskModels);
+        @SuppressWarnings("unchecked")
+        JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
+
+        int plausibleRow = tableRowWithModel(localModelsTable, "custom-plausible");
+        assertThat(modelComboBox.getItemCount()).isZero();
+        assertThat(plausibleRow).isGreaterThanOrEqualTo(0);
+        assertThat(localModelsTable.getValueAt(plausibleRow, 4)).isEqualTo(Boolean.TRUE);
+        assertThat(localModelsTable.getValueAt(plausibleRow, 5)).isEqualTo(Boolean.FALSE);
+        voskModels.close();
+    }
+
+    @Test
+    @DisplayName("Vosk model directory changes are blocked while a model operation is active")
+    void saveModelDirectory_whenVoskOperationInProgress_rejectsDirectoryChange() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-busy.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        Path models = tempDir.resolve("busy-models");
+        Path requested = tempDir.resolve("other-models");
+        var voskModels = new BusyVoskModelManagementService(repo, models, tempDir.resolve("busy-temp"));
+        var subject = new SpeechToTextPanel(repo, models, voskModels);
+        JTextField modelDirectoryField = (JTextField) fieldValue(subject, "modelDirectoryField");
+        JButton browseButton = (JButton) fieldValue(subject, "modelDirectoryBrowseButton");
+
+        assertThat(modelDirectoryField.isEnabled()).isFalse();
+        assertThat(browseButton.isEnabled()).isFalse();
+
+        SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, requested));
+
+        assertThat(repo.get(SettingsKeys.STT_MODELS_DIR, "")).isBlank();
+        assertThat(modelDirectoryField.getText()).isEqualTo(models.toString());
+        voskModels.close();
+    }
+
+    @Test
+    @DisplayName("Vosk model selection starts an async operation instead of saving on the UI handler")
+    void onModelSelected_whenVoskModelSelected_startsAsyncSelectionOperation() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-select.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        Path models = tempDir.resolve("select-models");
+        var voskModels = new AsyncSelectionVoskModelManagementService(repo, models, tempDir.resolve("select-temp"));
+        var subject = new SpeechToTextPanel(repo, models, voskModels);
+        @SuppressWarnings("unchecked")
+        JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+        JButton refreshButton = (JButton) fieldValue(subject, "refreshButton");
+
+        SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "onModelSelected"));
+
+        assertThat(voskModels.selectedModelId()).isEqualTo("custom-ready");
+        assertThat(repo.get(SettingsKeys.sttModelIdKey(VoskModelManagementService.PROVIDER_ID), "")).isBlank();
+        assertThat(modelComboBox.isEnabled()).isFalse();
+        assertThat(refreshButton.isEnabled()).isFalse();
+        voskModels.close();
+    }
+
+    @Test
     @DisplayName("Local model controls show selectable models for local Speech to Text providers")
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
@@ -108,11 +201,30 @@ class SpeechToTextPanelTest {
         assertThat(downloadModelButton.isEnabled()).isTrue();
     }
 
+    private int tableRowWithModel(JTable table, String model) {
+        for (int row = 0; row < table.getRowCount(); row++) {
+            if (model.equals(table.getValueAt(row, 0))) {
+                return row;
+            }
+        }
+        return -1;
+    }
+
     private void setModelDirectoryAndSave(SpeechToTextPanel subject, Path path) {
         try {
             JTextField field = (JTextField) fieldValue(subject, "modelDirectoryField");
             field.setText(path.toString());
             Method method = SpeechToTextPanel.class.getDeclaredMethod("saveModelDirectory");
+            method.setAccessible(true);
+            method.invoke(subject);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private void invokePanelMethod(SpeechToTextPanel subject, String name) {
+        try {
+            Method method = SpeechToTextPanel.class.getDeclaredMethod(name);
             method.setAccessible(true);
             method.invoke(subject);
         } catch (Exception e) {
@@ -147,6 +259,130 @@ class SpeechToTextPanelTest {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
+    }
+
+    private static final class BusyVoskModelManagementService extends VoskModelManagementService {
+        private final VoskModelManagementSnapshot busySnapshot;
+
+        private BusyVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            busySnapshot = new VoskModelManagementSnapshot(
+                    modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                    tempRoot,
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    null,
+                    true,
+                    "Downloading Vosk model...",
+                    true,
+                    "Downloading Vosk model..."
+            );
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return busySnapshot;
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            listener.accept(busySnapshot);
+            return () -> {
+            };
+        }
+    }
+
+    private static final class AsyncSelectionVoskModelManagementService extends VoskModelManagementService {
+        private VoskModelManagementSnapshot currentSnapshot;
+        private Consumer<VoskModelManagementSnapshot> listener = snapshot -> {
+        };
+        private String selectedModelId = "";
+
+        private AsyncSelectionVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            Path root = modelRoot.resolve(VoskModelManagementService.PROVIDER_ID);
+            Path modelDirectory = root.resolve("custom-ready");
+            var installedModel = new VoskInstalledModel(
+                    "custom-ready",
+                    "Custom Ready",
+                    modelDirectory,
+                    modelDirectory,
+                    null,
+                    true,
+                    false,
+                    true,
+                    VoskValidationStatus.VALID,
+                    "Ready",
+                    "fingerprint"
+            );
+            var row = new VoskLocalModelRow(
+                    installedModel.id(),
+                    installedModel.label(),
+                    "Custom",
+                    "local",
+                    "",
+                    null,
+                    installedModel,
+                    false,
+                    false,
+                    true,
+                    false,
+                    "Ready"
+            );
+            currentSnapshot = new VoskModelManagementSnapshot(
+                    root,
+                    tempRoot,
+                    emptyList(),
+                    List.of(installedModel),
+                    List.of(row),
+                    null,
+                    true,
+                    "Select an installed Vosk model to enable transcription.",
+                    false,
+                    ""
+            );
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return currentSnapshot;
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            this.listener = listener;
+            listener.accept(currentSnapshot);
+            return () -> this.listener = snapshot -> {
+            };
+        }
+
+        @Override
+        public void selectModel(String modelId) {
+            throw new AssertionError("Vosk selection should use the async operation path.");
+        }
+
+        @Override
+        public void selectModelAsync(String modelId) {
+            selectedModelId = modelId;
+            currentSnapshot = new VoskModelManagementSnapshot(
+                    currentSnapshot.modelRoot(),
+                    currentSnapshot.tempRoot(),
+                    currentSnapshot.catalog(),
+                    currentSnapshot.installedModels(),
+                    currentSnapshot.rows(),
+                    currentSnapshot.selectedModel(),
+                    currentSnapshot.runtimeReady(),
+                    currentSnapshot.statusMessage(),
+                    true,
+                    "Selecting Custom Ready..."
+            );
+            listener.accept(currentSnapshot);
+        }
+
+        private String selectedModelId() {
+            return selectedModelId;
+        }
     }
 
     private static final class LocalTestSpeechToTextProvider implements SpeechToTextProvider {

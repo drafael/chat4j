@@ -6,9 +6,11 @@ import com.github.drafael.chat4j.stt.audio.CapturedAudio;
 import com.github.drafael.chat4j.stt.audio.MicrophoneAudioCapture;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
+import com.github.drafael.chat4j.stt.provider.LocalSpeechToTextModelReference;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,8 +64,17 @@ public class SpeechToTextService {
     }
 
     public static SpeechToTextService createDefault(SettingsRepository settingsRepo, Path sttModelsDirectory, Path sttTempDirectory) {
+        return createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, null);
+    }
+
+    public static SpeechToTextService createDefault(
+            SettingsRepository settingsRepo,
+            Path sttModelsDirectory,
+            Path sttTempDirectory,
+            VoskModelManagementService voskModelManagementService
+    ) {
         return new SpeechToTextService(
-                new SpeechToTextSettings(settingsRepo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, sttModelsDirectory),
+                new SpeechToTextSettings(settingsRepo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, sttModelsDirectory, voskModelManagementService),
                 new MicrophoneAudioCapture(sttTempDirectory)
         );
     }
@@ -124,14 +135,25 @@ public class SpeechToTextService {
             if (!settingsSnapshot.enabled()) {
                 throw new SpeechToTextException("Speech to Text is turned off.");
             }
+            if (VoskModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
+                settings.validateSelectedVoskModelNow();
+                settingsSnapshot = settings.resolve();
+                if (!settingsSnapshot.enabled()) {
+                    throw new SpeechToTextException("Speech to Text is turned off.");
+                }
+            }
             if (!settingsSnapshot.available()) {
                 throw new SpeechToTextException(StringUtils.defaultIfBlank(settingsSnapshot.statusMessage(), settingsSnapshot.provider().unavailableMessage()));
+            }
+            if (settingsSnapshot.model() == null) {
+                throw new SpeechToTextException(StringUtils.defaultIfBlank(settingsSnapshot.statusMessage(), "Select a Speech to Text model first."));
             }
             activeSnapshot = new SpeechToTextSessionSnapshot(
                     settingsSnapshot.providerId(),
                     settingsSnapshot.model().id(),
                     settingsSnapshot.baseUri(),
-                    settingsSnapshot.transcriptionUri()
+                    settingsSnapshot.transcriptionUri(),
+                    settingsSnapshot.localModelReference()
             );
             AudioCaptureSession session = capture.start(settingsSnapshot.maxDurationSeconds(), (rms, peak) -> runEdt(() -> callbacks.level(rms, peak)));
             if (isStale(sessionId)) {
@@ -216,7 +238,7 @@ public class SpeechToTextService {
             resetState(sessionId);
             runEdt(() -> {
                 callbacks.stateChanged();
-                callbacks.error("Recording is too large to upload.");
+                callbacks.error("Recording is too large to transcribe.");
             });
             return;
         }
@@ -236,14 +258,15 @@ public class SpeechToTextService {
             SpeechToTextSessionSnapshot snapshot = activeSnapshot;
             SpeechToTextSettingsSnapshot current = settings.resolve();
             if (!matchesSnapshot(snapshot, current)) {
-                throw new SpeechToTextException("Speech-to-text settings changed; recording was not uploaded.");
+                throw new SpeechToTextException("Speech-to-text settings changed; recording was not transcribed.");
             }
             SpeechToTextProviderContext context = new SpeechToTextProviderContext(
                     current.baseUri(),
                     current.transcriptionUri(),
                     CredentialSource.SYSTEM,
                     () -> isStale(sessionId),
-                    REQUEST_TIMEOUT
+                    REQUEST_TIMEOUT,
+                    current.localModelReference()
             );
             SpeechToTextResult result = current.provider().transcribe(
                     new SpeechToTextRequest(current.providerId(), current.model().id(), audio.path(), audio.durationMillis(), audio.sizeBytes()),
@@ -279,9 +302,11 @@ public class SpeechToTextService {
                 && current.enabled()
                 && current.available()
                 && Objects.equals(snapshot.providerId(), current.providerId())
+                && current.model() != null
                 && Objects.equals(snapshot.modelId(), current.model().id())
                 && Objects.equals(snapshot.baseUri(), current.baseUri())
-                && Objects.equals(snapshot.transcriptionUri(), current.transcriptionUri());
+                && Objects.equals(snapshot.transcriptionUri(), current.transcriptionUri())
+                && Objects.equals(snapshot.localModelReference(), current.localModelReference());
     }
 
     private boolean isStale(long sessionId) {
@@ -320,7 +345,13 @@ public class SpeechToTextService {
         }
     }
 
-    private record SpeechToTextSessionSnapshot(String providerId, String modelId, URI baseUri, URI transcriptionUri) {
+    private record SpeechToTextSessionSnapshot(
+            String providerId,
+            String modelId,
+            URI baseUri,
+            URI transcriptionUri,
+            LocalSpeechToTextModelReference localModelReference
+    ) {
     }
 
     public interface Callbacks {

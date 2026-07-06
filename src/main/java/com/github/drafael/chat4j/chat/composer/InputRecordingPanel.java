@@ -19,6 +19,7 @@ public class InputRecordingPanel extends JPanel {
     private final JButton stopButton = new JButton();
     private final ActionListener stopListener;
     private final ActionListener cancelListener;
+    private boolean preparing;
     private boolean transcribing;
     private long startedAtMillis;
     private final Timer timer;
@@ -63,7 +64,19 @@ public class InputRecordingPanel extends JPanel {
         }
     }
 
+    public void startPreparing() {
+        preparing = true;
+        transcribing = false;
+        timer.stop();
+        timerLabel.setText("");
+        statusLabel.setText("Preparing speech model...");
+        applyPreparingControlText();
+        waveform.clear();
+        setVisible(true);
+    }
+
     public void startRecording() {
+        preparing = false;
         transcribing = false;
         startedAtMillis = System.currentTimeMillis();
         timerLabel.setText("0:00");
@@ -75,6 +88,7 @@ public class InputRecordingPanel extends JPanel {
     }
 
     public void setTranscribing() {
+        preparing = false;
         transcribing = true;
         timer.stop();
         statusLabel.setText("Transcribing...");
@@ -83,6 +97,7 @@ public class InputRecordingPanel extends JPanel {
     }
 
     public void stop() {
+        preparing = false;
         transcribing = false;
         timer.stop();
         setVisible(false);
@@ -94,7 +109,7 @@ public class InputRecordingPanel extends JPanel {
     }
 
     private ActionListener activeControlListener() {
-        return transcribing ? cancelListener : stopListener;
+        return preparing || transcribing ? cancelListener : stopListener;
     }
 
     private void applyRecordingControlText() {
@@ -105,6 +120,11 @@ public class InputRecordingPanel extends JPanel {
     private void applyTranscribingControlText() {
         stopButton.setToolTipText("Cancel transcription");
         stopButton.getAccessibleContext().setAccessibleName("Cancel transcription");
+    }
+
+    private void applyPreparingControlText() {
+        stopButton.setToolTipText("Cancel speech preparation");
+        stopButton.getAccessibleContext().setAccessibleName("Cancel speech preparation");
     }
 
     private void updateTimer() {

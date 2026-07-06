@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.stt;
 import com.github.drafael.chat4j.stt.provider.JavaNetSttHttpTransport;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
@@ -17,7 +18,10 @@ public class SpeechToTextProviderRegistry {
     }
 
     public static SpeechToTextProviderRegistry createDefault() {
-        return new SpeechToTextProviderRegistry(List.of(new GroqSpeechToTextProvider(new JavaNetSttHttpTransport())));
+        return new SpeechToTextProviderRegistry(List.of(
+                new GroqSpeechToTextProvider(new JavaNetSttHttpTransport()),
+                new VoskSpeechToTextProvider()
+        ));
     }
 
     public List<SpeechToTextProvider> providers() {

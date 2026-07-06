@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.stt.provider.LocalSpeechToTextModelReference;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import java.net.URI;
@@ -14,8 +15,22 @@ public record SpeechToTextSettingsSnapshot(
         Path modelDirectory,
         URI baseUri,
         URI transcriptionUri,
-        String statusMessage
+        String statusMessage,
+        LocalSpeechToTextModelReference localModelReference
 ) {
+
+    public SpeechToTextSettingsSnapshot(
+            SpeechToTextProvider provider,
+            SpeechToTextCatalogItem model,
+            boolean available,
+            int maxDurationSeconds,
+            Path modelDirectory,
+            URI baseUri,
+            URI transcriptionUri,
+            String statusMessage
+    ) {
+        this(provider, model, available, maxDurationSeconds, modelDirectory, baseUri, transcriptionUri, statusMessage, null);
+    }
 
     public static SpeechToTextSettingsSnapshot off(int maxDurationSeconds, Path modelDirectory) {
         return new SpeechToTextSettingsSnapshot(null, null, false, maxDurationSeconds, modelDirectory, null, null, "Speech to Text is turned off.");
@@ -31,7 +46,7 @@ public record SpeechToTextSettingsSnapshot(
 
     @Override
     public String toString() {
-        return "SpeechToTextSettingsSnapshot[providerId=%s, model=%s, available=%s, maxDurationSeconds=%d, modelDirectory=****, baseUri=%s, transcriptionUri=%s]"
-                .formatted(providerId(), model, available, maxDurationSeconds, baseUri, transcriptionUri);
+        return "SpeechToTextSettingsSnapshot[providerId=%s, model=%s, available=%s, maxDurationSeconds=%d, modelDirectory=****, baseUri=%s, transcriptionUri=%s, localModelReference=%s]"
+                .formatted(providerId(), model, available, maxDurationSeconds, baseUri, transcriptionUri, localModelReference);
     }
 }

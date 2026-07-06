@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Chat4J bundles the following third-party browser assets for offline chat transcript rendering in System WebView and JCEF.
+Chat4J bundles the following third-party browser assets for offline chat transcript rendering in System WebView and JCEF, plus selected Java/native runtime dependencies used by desktop features.
 
 ## KaTeX 0.17.0
 
@@ -121,3 +121,17 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 - Notable transitive license: `org.graalvm.shadowed:icu4j` declares the Unicode/ICU License
 
 Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.
+
+## Vosk Java/native runtime 0.3.38
+
+- Project: https://alphacephei.com/vosk/
+- Source: https://github.com/alphacep/vosk-api
+- Maven coordinates: `com.alphacephei:vosk`
+- License: Apache License 2.0
+- Bundled runtime resources include platform native Vosk libraries from the Maven artifact for desktop local Speech to Text.
+
+Chat4J bundles the Vosk Java/native runtime only. Chat4J does **not** bundle Vosk speech models. Users download or import models themselves, and model licenses vary by model. See the official model page for model-specific details:
+
+```text
+https://alphacephei.com/vosk/models
+```

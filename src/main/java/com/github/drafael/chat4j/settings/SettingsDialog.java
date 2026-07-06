@@ -3,7 +3,9 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
+import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
@@ -31,6 +33,8 @@ public class SettingsDialog extends JDialog {
 
     private final Runnable exitAction;
     private final Path sttModelsDirectory;
+    private final VoskModelManagementService voskModelManagementService;
+    private final boolean ownsVoskModelManagementService;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
         this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
@@ -50,7 +54,7 @@ public class SettingsDialog extends JDialog {
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull Runnable exitAction
     ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, Path.of(System.getProperty("user.home"), ".config", "chat4j", "stt", "models"));
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, StoragePaths.defaultPaths().sttModelsDirectory(), StoragePaths.defaultPaths().sttTempDirectory());
     }
 
     public SettingsDialog(
@@ -60,9 +64,46 @@ public class SettingsDialog extends JDialog {
             @NonNull Runnable exitAction,
             @NonNull Path sttModelsDirectory
     ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, StoragePaths.defaultPaths().sttTempDirectory());
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull Path sttTempDirectory
+    ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory,
+                new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory), true);
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull VoskModelManagementService voskModelManagementService
+    ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, false);
+    }
+
+    private SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull VoskModelManagementService voskModelManagementService,
+            boolean ownsVoskModelManagementService
+    ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
         this.sttModelsDirectory = sttModelsDirectory;
+        this.voskModelManagementService = voskModelManagementService;
+        this.ownsVoskModelManagementService = ownsVoskModelManagementService;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -168,7 +209,7 @@ public class SettingsDialog extends JDialog {
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
                 new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
                 new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo)),
-                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory)),
+                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
@@ -203,6 +244,9 @@ public class SettingsDialog extends JDialog {
             @Override
             public void windowClosed(WindowEvent e) {
                 UIManager.removePropertyChangeListener(lafChangeListener);
+                if (ownsVoskModelManagementService) {
+                    voskModelManagementService.close();
+                }
             }
         });
     }

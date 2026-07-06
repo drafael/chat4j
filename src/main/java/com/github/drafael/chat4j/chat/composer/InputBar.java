@@ -151,6 +151,7 @@ public class InputBar extends JPanel {
     private int slashTokenStart = -1;
     private ProjectRootChooser projectRootChooser = parent -> showProjectRootChooser(parent, null);
     private boolean sttAvailable;
+    private boolean preparingSpeechToText;
     private boolean recording;
     private boolean transcribing;
     private boolean normalComposeMode = true;
@@ -553,7 +554,20 @@ public class InputBar extends JPanel {
         recomputeComposerPresentation();
     }
 
+    public void showPreparingSpeechToTextState() {
+        preparingSpeechToText = true;
+        recording = false;
+        transcribing = false;
+        textArea.setEditable(false);
+        clearValidationMessage();
+        hideSlashPopup();
+        hideDetachedPopups();
+        recordingPanel.startPreparing();
+        recomputeComposerPresentation();
+    }
+
     public void showRecordingState() {
+        preparingSpeechToText = false;
         recording = true;
         transcribing = false;
         textArea.setEditable(false);
@@ -565,6 +579,7 @@ public class InputBar extends JPanel {
     }
 
     public void showTranscribingState() {
+        preparingSpeechToText = false;
         recording = false;
         transcribing = true;
         textArea.setEditable(false);
@@ -574,6 +589,7 @@ public class InputBar extends JPanel {
     }
 
     public void clearSpeechToTextState() {
+        preparingSpeechToText = false;
         recording = false;
         transcribing = false;
         textArea.setEditable(true);
@@ -591,7 +607,7 @@ public class InputBar extends JPanel {
     }
 
     public boolean isRecordingOrTranscribing() {
-        return recording || transcribing;
+        return preparingSpeechToText || recording || transcribing;
     }
 
     public boolean isComposerMutable() {

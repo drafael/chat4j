@@ -2627,13 +2627,13 @@ public class ChatPanel extends JPanel {
     }
 
     private void startSpeechToTextRecording() {
-        if (editingUserMessage != null || conversationLoading || isVisibleConversationBusy() || currentProviderResolving || currentProvider == null) {
+        if (editingUserMessage != null || conversationLoading || isVisibleConversationBusy()) {
             inputBar.showValidationMessage("Speech to Text is not available right now.");
             return;
         }
         stopReadAloudPlayback();
         speechToTextComposerSnapshot = inputBar.getComposerState();
-        inputBar.showRecordingState();
+        inputBar.showPreparingSpeechToTextState();
         speechToTextService.startRecording(speechToTextCallbacks());
         refreshBubbleActionBars();
         refreshWebTranscript(false, true);
@@ -2687,7 +2687,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void refreshComposerAvailability() {
-        inputBar.setConversationBusy(conversationLoading || isVisibleConversationBusy() || currentProviderResolving);
+        inputBar.setConversationBusy(conversationLoading || isVisibleConversationBusy());
         inputBar.setProviderReady(currentProvider != null && !currentProviderResolving);
         inputBar.setNormalComposeMode(editingUserMessage == null);
     }
