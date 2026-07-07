@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -85,6 +86,43 @@ class SpeechToTextSettingsTest {
         assertThat(snapshot.enabled()).isTrue();
         assertThat(snapshot.available()).isFalse();
         assertThat(snapshot.statusMessage()).contains("ELEVENLABS_API_KEY");
+    }
+
+    @Test
+    @DisplayName("Deepgram resolves official endpoints and default model")
+    void resolve_whenDeepgramSelected_usesDeepgramEndpointsAndDefaultModel() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        assertThat(snapshot.available()).isTrue();
+        assertThat(snapshot.model().id()).isEqualTo("nova-3");
+        assertThat(snapshot.baseUri()).hasToString("https://api.deepgram.com");
+        assertThat(snapshot.transcriptionUri()).hasToString("https://api.deepgram.com/v1/listen");
+    }
+
+    @Test
+    @DisplayName("Saved Deepgram remains selected but unavailable without credentials")
+    void resolve_whenDeepgramMissingCredentials_remainsSelectedUnavailable() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-missing.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        assertThat(snapshot.enabled()).isTrue();
+        assertThat(snapshot.available()).isFalse();
+        assertThat(snapshot.statusMessage()).contains("DEEPGRAM_API_KEY");
+    }
+
+    @Test
+    @DisplayName("Credential resolver includes Deepgram API key")
+    void supportedProviderEnvVars_whenQueried_includesDeepgram() {
+        assertThat(CredentialResolver.supportedProviderEnvVars()).contains("DEEPGRAM_API_KEY");
     }
 
     @Test

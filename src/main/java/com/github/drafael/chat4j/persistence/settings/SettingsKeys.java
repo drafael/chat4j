@@ -54,6 +54,7 @@ public final class SettingsKeys {
     public static final String STT_PROVIDER_OFF = "off";
     public static final String STT_PROVIDER_GROQ = "groq";
     public static final String STT_PROVIDER_ELEVENLABS = "elevenlabs";
+    public static final String STT_PROVIDER_DEEPGRAM = "deepgram";
     public static final String STT_PROVIDER_VOSK = "vosk";
     public static final String STT_PREFIX = "chat4j.stt.";
     public static final String STT_MODELS_DIR = "chat4j.stt.models.dir";

@@ -6,6 +6,7 @@ Providers:
 
 - **Groq**: cloud transcription using Groq-compatible Whisper endpoints.
 - **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
+- **Deepgram**: cloud transcription using Deepgram pre-recorded STT models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
 
 Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Settings → Speech to Text**.
@@ -14,10 +15,11 @@ Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Setti
 
 Open **Settings → Speech to Text**.
 
-- **Provider**: `Off`, `Groq`, `ElevenLabs`, or `Vosk`.
+- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, or `Vosk`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
   - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
+  - Deepgram defaults to `nova-3` and can refresh batch-capable STT models from Deepgram.
   - Vosk shows only installed local models that are eligible for local transcription.
 - **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
 - **Max recording seconds**: valid range is 1–600 seconds.
@@ -53,6 +55,32 @@ https://api.elevenlabs.io/v1/models
 Chat4J filters the model list to batch-compatible Scribe speech-recognition models and falls back to bundled `scribe_v2` when no refreshed catalog is available. If a refresh fails, Chat4J preserves the previously cached ElevenLabs model catalog instead of replacing it with the fallback model.
 
 Advanced ElevenLabs options such as language code, diarization, keyterms, entity detection/redaction, no-verbatim, and webhook transcription are not exposed yet.
+
+## Deepgram credentials and models
+
+Deepgram Speech to Text requires `DEEPGRAM_API_KEY` in the process environment. Chat4J does not store the API key.
+
+Deepgram STT uses the official API base URL:
+
+```text
+https://api.deepgram.com
+```
+
+Batch transcription calls the pre-recorded endpoint:
+
+```text
+https://api.deepgram.com/v1/listen
+```
+
+Model refresh calls:
+
+```text
+https://api.deepgram.com/v1/models
+```
+
+Chat4J parses batch-capable STT models from the `stt` array, ignores non-STT families, and preserves the previously cached Deepgram model catalog if a refresh fails. The bundled fallback catalog contains `nova-3`, `nova-3-general`, and `nova-2-general`; the active Deepgram account/API may expose a different model set. Bare `nova-2` is not bundled unless Deepgram explicitly confirms it as a pre-recorded model ID.
+
+Advanced Deepgram options such as smart formatting, diarization, language selection, punctuation, numerals, utterances, keywords, search/replace, alternatives, callbacks/webhooks, and live streaming are not exposed yet.
 
 ## Vosk local transcription
 
@@ -114,6 +142,8 @@ Speech to Text is independent of chat-provider readiness: if STT is ready and th
 For Groq, finalized audio is sent to Groq for transcription.
 
 For ElevenLabs, finalized audio is sent to ElevenLabs for transcription. Chat4J does not send ElevenLabs `enable_logging=false` or zero-retention flags in this implementation; retention and logging behavior are governed by the user's ElevenLabs account and API terms.
+
+For Deepgram, finalized audio is sent to Deepgram for transcription. Chat4J does not claim local, offline, or zero-retention behavior for Deepgram; retention and logging behavior are governed by the user's Deepgram account and API terms.
 
 For Vosk, transcription runs locally after the model is installed. Catalog refresh and model downloads contact the official Vosk/Alpha Cephei model host, but recorded audio is not uploaded for Vosk transcription.
 

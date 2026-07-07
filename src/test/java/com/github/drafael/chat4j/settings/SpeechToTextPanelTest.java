@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextField;
@@ -182,17 +183,18 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Default Speech to Text providers include ElevenLabs in the intended order")
-    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersElevenLabsBetweenGroqAndVosk() throws Exception {
+    @DisplayName("Default Speech to Text providers include Deepgram in the intended order")
+    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersDeepgramBetweenElevenLabsAndVosk() throws Exception {
         var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-provider-order.properties")), tempDir.resolve("default-models"));
         @SuppressWarnings("unchecked")
         JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
 
-        assertThat(providerComboBox.getItemCount()).isEqualTo(4);
+        assertThat(providerComboBox.getItemCount()).isEqualTo(5);
         assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
         assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
         assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
-        assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("vosk");
+        assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
+        assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("vosk");
     }
 
     @Test
@@ -201,11 +203,14 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-refresh.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
         var provider = new CapturingElevenLabsProvider();
-        new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.elevenlabs.io");
         assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.elevenlabs.io/v1/speech-to-text");
+        subject.removeNotify();
     }
 
     @Test
@@ -222,10 +227,13 @@ class SpeechToTextPanelTest {
 
         SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "refreshCatalogs", true));
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
 
         assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
         assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
         waitUntil(() -> subject.statusLabel().getText().contains("Could not refresh ElevenLabs Speech to Text models."));
+        subject.removeNotify();
     }
 
     @Test
@@ -242,10 +250,90 @@ class SpeechToTextPanelTest {
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
 
         assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
         assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
         assertThat(subject.statusLabel().getText()).doesNotContain("Could not refresh ElevenLabs Speech to Text models.");
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("Deepgram catalog refresh uses Deepgram endpoint context")
+    void refreshCatalogs_whenDeepgramSelected_usesDeepgramEndpointContext() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-refresh.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        var provider = new CapturingDeepgramProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
+        assertThat(provider.context.get().baseUri()).hasToString("https://api.deepgram.com");
+        assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.deepgram.com/v1/listen");
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("Failed explicit Deepgram refresh preserves cached catalog")
+    void refreshCatalogs_whenDeepgramRefreshFails_preservesCachedCatalog() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-cache.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        var cached = List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"), SpeechToTextCatalogItem.of("nova-2-general", "Deepgram Nova 2 General"));
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, cached);
+        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        var provider = new FailingDeepgramProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "refreshCatalogs", true));
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
+
+        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalModels);
+        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalUpdatedAt);
+        waitUntil(() -> subject.statusLabel().getText().contains("Could not refresh Deepgram Speech to Text models."));
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("Failed automatic Deepgram refresh preserves cached catalog without noisy status")
+    void refreshControlsFromSettings_whenAutomaticDeepgramRefreshFails_preservesCacheQuietly() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-auto-cache.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        var cached = List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"), SpeechToTextCatalogItem.of("nova-2-general", "Deepgram Nova 2 General"));
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, cached);
+        repo.put(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "2000-01-01T00:00:00Z");
+        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        var provider = new FailingDeepgramProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+        });
+
+        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalModels);
+        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalUpdatedAt);
+        assertThat(subject.statusLabel().getText()).doesNotContain("Could not refresh Deepgram Speech to Text models.");
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("Deepgram helper copy explains cloud upload and key storage")
+    void updateAvailability_whenDeepgramAvailable_showsDeepgramPrivacyCopy() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-helper.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new DeepgramTestProvider())));
+        SwingUtilities.invokeAndWait(() -> {
+        });
+        var helperLabel = (JLabel) fieldValue(subject, "helperLabel");
+
+        assertThat(helperLabel.getText()).isEqualTo("Recorded audio is sent to Deepgram for transcription. No API key is stored by Chat4J.");
+        subject.removeNotify();
     }
 
     @Test
@@ -521,6 +609,66 @@ class SpeechToTextPanelTest {
     }
 
     private static final class FailingElevenLabsProvider extends ElevenLabsTestProvider {
+        private final CountDownLatch refreshed = new CountDownLatch(1);
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            refreshed.countDown();
+            throw new IllegalStateException("catalog unavailable");
+        }
+    }
+
+    private static class DeepgramTestProvider implements SpeechToTextProvider {
+
+        @Override
+        public String id() {
+            return SettingsKeys.STT_PROVIDER_DEEPGRAM;
+        }
+
+        @Override
+        public String displayName() {
+            return "Deepgram";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return "";
+        }
+
+        @Override
+        public SpeechToTextCatalogItem defaultModel() {
+            return SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3");
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> bundledModels() {
+            return List.of(defaultModel());
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            return bundledModels();
+        }
+
+        @Override
+        public SpeechToTextResult transcribe(SpeechToTextRequest request, SpeechToTextProviderContext context) {
+            return new SpeechToTextResult("test");
+        }
+    }
+
+    private static final class CapturingDeepgramProvider extends DeepgramTestProvider {
+        private final CountDownLatch refreshed = new CountDownLatch(1);
+        private final AtomicReference<SpeechToTextProviderContext> context = new AtomicReference<>();
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) {
+            this.context.set(context);
+            refreshed.countDown();
+            return List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"));
+        }
+    }
+
+    private static final class FailingDeepgramProvider extends DeepgramTestProvider {
         private final CountDownLatch refreshed = new CountDownLatch(1);
 
         @Override

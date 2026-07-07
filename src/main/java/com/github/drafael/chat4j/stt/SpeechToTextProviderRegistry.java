@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.stt.provider.JavaNetSttHttpTransport;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
@@ -23,6 +24,7 @@ public class SpeechToTextProviderRegistry {
         return new SpeechToTextProviderRegistry(List.of(
                 new GroqSpeechToTextProvider(transport),
                 new ElevenLabsSpeechToTextProvider(transport),
+                new DeepgramSpeechToTextProvider(transport),
                 new VoskSpeechToTextProvider()
         ));
     }
