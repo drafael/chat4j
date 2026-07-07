@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
+import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
@@ -20,6 +21,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -180,6 +182,73 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Default Speech to Text providers include ElevenLabs in the intended order")
+    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersElevenLabsBetweenGroqAndVosk() throws Exception {
+        var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-provider-order.properties")), tempDir.resolve("default-models"));
+        @SuppressWarnings("unchecked")
+        JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
+
+        assertThat(providerComboBox.getItemCount()).isEqualTo(4);
+        assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
+        assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
+        assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
+        assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("vosk");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs catalog refresh uses ElevenLabs endpoint context")
+    void refreshCatalogs_whenElevenLabsSelected_usesElevenLabsEndpointContext() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-refresh.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var provider = new CapturingElevenLabsProvider();
+        new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(provider.context.get().baseUri()).hasToString("https://api.elevenlabs.io");
+        assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.elevenlabs.io/v1/speech-to-text");
+    }
+
+    @Test
+    @DisplayName("Failed explicit ElevenLabs refresh preserves cached catalog")
+    void refreshCatalogs_whenElevenLabsRefreshFails_preservesCachedCatalog() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-cache.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var cached = List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"), SpeechToTextCatalogItem.of("scribe_v1", "Scribe v1 (deprecated)"));
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ELEVENLABS, cached);
+        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        var provider = new FailingElevenLabsProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "refreshCatalogs", true));
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
+        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
+        waitUntil(() -> subject.statusLabel().getText().contains("Could not refresh ElevenLabs Speech to Text models."));
+    }
+
+    @Test
+    @DisplayName("Failed automatic ElevenLabs refresh preserves cached catalog without noisy status")
+    void refreshControlsFromSettings_whenAutomaticElevenLabsRefreshFails_preservesCacheQuietly() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-auto-cache.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var cached = List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"), SpeechToTextCatalogItem.of("scribe_v1", "Scribe v1 (deprecated)"));
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ELEVENLABS, cached);
+        repo.put(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "2000-01-01T00:00:00Z");
+        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        var provider = new FailingElevenLabsProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
+        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
+        assertThat(subject.statusLabel().getText()).doesNotContain("Could not refresh ElevenLabs Speech to Text models.");
+    }
+
+    @Test
     @DisplayName("Local model controls show selectable models for local Speech to Text providers")
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
@@ -230,6 +299,22 @@ class SpeechToTextPanelTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private void invokePanelMethod(SpeechToTextPanel subject, String name, boolean argument) {
+        try {
+            Method method = SpeechToTextPanel.class.getDeclaredMethod(name, boolean.class);
+            method.setAccessible(true);
+            method.invoke(subject, argument);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private String providerId(Object providerOption) throws Exception {
+        Method method = providerOption.getClass().getDeclaredMethod("providerId");
+        method.setAccessible(true);
+        return (String) method.invoke(providerOption);
     }
 
     private void scheduleSave(SpeechToTextPanel subject, ThrowingAction action, Runnable onSuccess) throws Exception {
@@ -382,6 +467,66 @@ class SpeechToTextPanelTest {
 
         private String selectedModelId() {
             return selectedModelId;
+        }
+    }
+
+    private static class ElevenLabsTestProvider implements SpeechToTextProvider {
+
+        @Override
+        public String id() {
+            return SettingsKeys.STT_PROVIDER_ELEVENLABS;
+        }
+
+        @Override
+        public String displayName() {
+            return "ElevenLabs";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return "";
+        }
+
+        @Override
+        public SpeechToTextCatalogItem defaultModel() {
+            return SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2");
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> bundledModels() {
+            return List.of(defaultModel());
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            return bundledModels();
+        }
+
+        @Override
+        public SpeechToTextResult transcribe(SpeechToTextRequest request, SpeechToTextProviderContext context) {
+            return new SpeechToTextResult("test");
+        }
+    }
+
+    private static final class CapturingElevenLabsProvider extends ElevenLabsTestProvider {
+        private final CountDownLatch refreshed = new CountDownLatch(1);
+        private final AtomicReference<SpeechToTextProviderContext> context = new AtomicReference<>();
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) {
+            this.context.set(context);
+            refreshed.countDown();
+            return List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"));
+        }
+    }
+
+    private static final class FailingElevenLabsProvider extends ElevenLabsTestProvider {
+        private final CountDownLatch refreshed = new CountDownLatch(1);
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            refreshed.countDown();
+            throw new IllegalStateException("catalog unavailable");
         }
     }
 

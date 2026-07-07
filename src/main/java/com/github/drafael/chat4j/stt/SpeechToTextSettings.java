@@ -9,11 +9,14 @@ import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
@@ -69,8 +72,12 @@ public class SpeechToTextSettings {
         }
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
+        if (provider.supportsLocalModels()) {
+            String status = available ? provider.availableMessage() : provider.unavailableMessage();
+            return new SpeechToTextSettingsSnapshot(provider, model, available, maxDurationSeconds, directory, null, null, status);
+        }
         try {
-            GroqSttEndpointResolver.Endpoint endpoint = resolveEndpoint(provider);
+            SttEndpoint endpoint = resolveEndpoint(provider);
             String status = available ? provider.availableMessage() : provider.unavailableMessage();
             return new SpeechToTextSettingsSnapshot(provider, model, available, maxDurationSeconds, directory, endpoint.baseUri(), endpoint.transcriptionUri(), status);
         } catch (SpeechToTextException e) {
@@ -172,16 +179,24 @@ public class SpeechToTextSettings {
                 .orElse(SettingsKeys.STT_PROVIDER_OFF);
     }
 
-    private GroqSttEndpointResolver.Endpoint resolveEndpoint(SpeechToTextProvider provider) throws SpeechToTextException {
+    private SttEndpoint resolveEndpoint(SpeechToTextProvider provider) throws SpeechToTextException {
         if (GroqSpeechToTextProvider.ID.equals(provider.id())) {
             String configured = ProviderRegistry.allProviders().stream()
                     .filter(def -> "Groq".equals(def.name()))
                     .findFirst()
                     .map(def -> new ProviderRuntimeSettingsResolver(settingsRepo).resolve(def).baseUrl())
                     .orElse(GroqSttEndpointResolver.DEFAULT_BASE_URL);
-            return GroqSttEndpointResolver.resolve(configured);
+            GroqSttEndpointResolver.Endpoint endpoint = GroqSttEndpointResolver.resolve(configured);
+            return new SttEndpoint(endpoint.baseUri(), endpoint.transcriptionUri());
         }
-        return GroqSttEndpointResolver.resolve(GroqSttEndpointResolver.DEFAULT_BASE_URL);
+        if (ElevenLabsSpeechToTextProvider.ID.equals(provider.id())) {
+            ElevenLabsSttEndpointResolver.Endpoint endpoint = ElevenLabsSttEndpointResolver.resolve(ElevenLabsSttEndpointResolver.DEFAULT_BASE_URL);
+            return new SttEndpoint(endpoint.baseUri(), endpoint.transcriptionUri());
+        }
+        throw new SpeechToTextException("%s Speech to Text endpoints are not configured.".formatted(provider.displayName()));
+    }
+
+    private record SttEndpoint(URI baseUri, URI transcriptionUri) {
     }
 
     private static String normalizeProviderId(String providerId) {

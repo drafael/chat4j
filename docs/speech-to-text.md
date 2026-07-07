@@ -5,6 +5,7 @@ Chat4J supports batch Speech to Text (STT): it records a temporary WAV file, the
 Providers:
 
 - **Groq**: cloud transcription using Groq-compatible Whisper endpoints.
+- **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
 
 Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Settings → Speech to Text**.
@@ -13,9 +14,10 @@ Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Setti
 
 Open **Settings → Speech to Text**.
 
-- **Provider**: `Off`, `Groq`, or `Vosk`.
+- **Provider**: `Off`, `Groq`, `ElevenLabs`, or `Vosk`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
+  - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
   - Vosk shows only installed local models that are eligible for local transcription.
 - **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
 - **Max recording seconds**: valid range is 1–600 seconds.
@@ -31,6 +33,26 @@ https://api.groq.com/openai/v1
 ```
 
 Custom Groq-compatible endpoints are supported when the configured URL is an absolute `http` or `https` URL with a host. Invalid, relative, hostless, or unsafe schemes are rejected before any request is sent.
+
+## ElevenLabs credentials and models
+
+ElevenLabs Speech to Text requires `ELEVENLABS_API_KEY` in the process environment. Chat4J does not store the API key.
+
+ElevenLabs STT uses the official API base URL:
+
+```text
+https://api.elevenlabs.io
+```
+
+Model refresh calls:
+
+```text
+https://api.elevenlabs.io/v1/models
+```
+
+Chat4J filters the model list to batch-compatible Scribe speech-recognition models and falls back to bundled `scribe_v2` when no refreshed catalog is available. If a refresh fails, Chat4J preserves the previously cached ElevenLabs model catalog instead of replacing it with the fallback model.
+
+Advanced ElevenLabs options such as language code, diarization, keyterms, entity detection/redaction, no-verbatim, and webhook transcription are not exposed yet.
 
 ## Vosk local transcription
 
@@ -90,6 +112,8 @@ Speech to Text is independent of chat-provider readiness: if STT is ready and th
 ## Privacy and errors
 
 For Groq, finalized audio is sent to Groq for transcription.
+
+For ElevenLabs, finalized audio is sent to ElevenLabs for transcription. Chat4J does not send ElevenLabs `enable_logging=false` or zero-retention flags in this implementation; retention and logging behavior are governed by the user's ElevenLabs account and API terms.
 
 For Vosk, transcription runs locally after the model is installed. Catalog refresh and model downloads contact the official Vosk/Alpha Cephei model host, but recorded audio is not uploaded for Vosk transcription.
 

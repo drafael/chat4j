@@ -57,6 +57,37 @@ class SpeechToTextSettingsTest {
     }
 
     @Test
+    @DisplayName("ElevenLabs resolves official endpoints and default model")
+    void resolve_whenElevenLabsSelected_usesElevenLabsEndpointsAndDefaultModel() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        assertThat(snapshot.available()).isTrue();
+        assertThat(snapshot.model().id()).isEqualTo("scribe_v2");
+        assertThat(snapshot.baseUri()).hasToString("https://api.elevenlabs.io");
+        assertThat(snapshot.transcriptionUri()).hasToString("https://api.elevenlabs.io/v1/speech-to-text");
+    }
+
+    @Test
+    @DisplayName("Saved ElevenLabs remains selected but unavailable without credentials")
+    void resolve_whenElevenLabsMissingCredentials_remainsSelectedUnavailable() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-missing.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        assertThat(snapshot.enabled()).isTrue();
+        assertThat(snapshot.available()).isFalse();
+        assertThat(snapshot.statusMessage()).contains("ELEVENLABS_API_KEY");
+    }
+
+    @Test
     @DisplayName("Invalid persisted max duration resolves to default")
     void resolveMaxDurationSeconds_whenPersistedInvalid_returnsDefault() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));

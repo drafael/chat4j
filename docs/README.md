@@ -20,7 +20,7 @@ Use this page as the canonical entry point for implementation and operational de
   - Read aloud architecture, provider settings, credentials, playback, UI behavior, and testing expectations.
 
 - [speech-to-text.md](speech-to-text.md)
-  - Speech to Text settings, Groq transcription, Vosk local model management/transcription, recording UX, privacy, and cancellation.
+  - Speech to Text settings, Groq and ElevenLabs cloud transcription, Vosk local model management/transcription, recording UX, privacy, and cancellation.
 
 - [configurable-web-view-engine.md](configurable-web-view-engine.md)
   - Short architecture note for the configurable WebView boundary.

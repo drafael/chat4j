@@ -14,8 +14,8 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
+import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
-import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
@@ -519,10 +519,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         Thread.startVirtualThread(() -> {
             try {
-                GroqSttEndpointResolver.Endpoint endpoint = GroqSttEndpointResolver.resolve(snapshot.baseUri().toString());
                 SpeechToTextProviderContext context = new SpeechToTextProviderContext(
-                        endpoint.baseUri(),
-                        endpoint.transcriptionUri(),
+                        snapshot.baseUri(),
+                        snapshot.transcriptionUri(),
                         CredentialSource.SYSTEM,
                         () -> refreshId != refreshCounter.get(),
                         Duration.ofSeconds(45)
@@ -532,7 +531,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 SwingUtilities.invokeLater(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {
-                    if (refreshId == refreshCounter.get()) {
+                    if (refreshId == refreshCounter.get() && explicit) {
                         setStatusError("Could not refresh %s Speech to Text models.".formatted(snapshot.provider().displayName()));
                     }
                 });
@@ -915,6 +914,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
         } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
             helperLabel.setText("Recorded audio is sent to Groq for transcription. No API key is stored by Chat4J.");
+        } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            helperLabel.setText("Recorded audio is sent to ElevenLabs for transcription. No API key is stored by Chat4J.");
         } else {
             helperLabel.setText(snapshot.provider().availableMessage());
         }
