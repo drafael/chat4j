@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.stt.provider.LocalSpeechToTextModelReference;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import java.net.URI;
 import java.nio.file.Files;
@@ -37,6 +38,7 @@ public class SpeechToTextService {
 
     private final SpeechToTextSettings settings;
     private final MicrophoneAudioCapture capture;
+    private final Path tempDirectory;
     private final ExecutorService executor;
     private final boolean disabled;
     private final AtomicLong sessionCounter = new AtomicLong();
@@ -50,12 +52,13 @@ public class SpeechToTextService {
             @NonNull SpeechToTextSettings settings,
             @NonNull MicrophoneAudioCapture capture
     ) {
-        this(settings, capture, Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()), false);
+        this(settings, capture, null, Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()), false);
     }
 
-    private SpeechToTextService(SpeechToTextSettings settings, MicrophoneAudioCapture capture, ExecutorService executor, boolean disabled) {
+    private SpeechToTextService(SpeechToTextSettings settings, MicrophoneAudioCapture capture, Path tempDirectory, ExecutorService executor, boolean disabled) {
         this.settings = settings;
         this.capture = capture;
+        this.tempDirectory = tempDirectory;
         this.executor = executor;
         this.disabled = disabled;
         if (!disabled) {
@@ -64,7 +67,7 @@ public class SpeechToTextService {
     }
 
     public static SpeechToTextService createDefault(SettingsRepository settingsRepo, Path sttModelsDirectory, Path sttTempDirectory) {
-        return createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, null);
+        return createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, null, null);
     }
 
     public static SpeechToTextService createDefault(
@@ -73,9 +76,29 @@ public class SpeechToTextService {
             Path sttTempDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
+        return createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, voskModelManagementService, null);
+    }
+
+    public static SpeechToTextService createDefault(
+            SettingsRepository settingsRepo,
+            Path sttModelsDirectory,
+            Path sttTempDirectory,
+            VoskModelManagementService voskModelManagementService,
+            Sphinx4ModelManagementService sphinx4ModelManagementService
+    ) {
         return new SpeechToTextService(
-                new SpeechToTextSettings(settingsRepo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, sttModelsDirectory, voskModelManagementService),
-                new MicrophoneAudioCapture(sttTempDirectory)
+                new SpeechToTextSettings(
+                        settingsRepo,
+                        SpeechToTextProviderRegistry.createDefault(),
+                        CredentialSource.SYSTEM,
+                        sttModelsDirectory,
+                        voskModelManagementService,
+                        sphinx4ModelManagementService
+                ),
+                new MicrophoneAudioCapture(sttTempDirectory),
+                sttTempDirectory,
+                Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()),
+                false
         );
     }
 
@@ -137,6 +160,13 @@ public class SpeechToTextService {
             }
             if (VoskModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
                 settings.validateSelectedVoskModelNow();
+                settingsSnapshot = settings.resolve();
+                if (!settingsSnapshot.enabled()) {
+                    throw new SpeechToTextException("Speech to Text is turned off.");
+                }
+            }
+            if (Sphinx4ModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
+                settings.validateSelectedSphinx4ModelNow();
                 settingsSnapshot = settings.resolve();
                 if (!settingsSnapshot.enabled()) {
                     throw new SpeechToTextException("Speech to Text is turned off.");
@@ -266,7 +296,8 @@ public class SpeechToTextService {
                     CredentialSource.SYSTEM,
                     () -> isStale(sessionId),
                     REQUEST_TIMEOUT,
-                    current.localModelReference()
+                    current.localModelReference(),
+                    tempDirectory
             );
             SpeechToTextResult result = current.provider().transcribe(
                     new SpeechToTextRequest(current.providerId(), current.model().id(), audio.path(), audio.durationMillis(), audio.sizeBytes()),
@@ -392,7 +423,7 @@ public class SpeechToTextService {
 
     private static final class DisabledSpeechToTextService extends SpeechToTextService {
         private DisabledSpeechToTextService() {
-            super(null, null, null, true);
+            super(null, null, null, null, true);
         }
 
         @Override

@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.7.14</version>
+    <version>26.7.15</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -29,6 +29,9 @@
         <swingwebview.version>1.0.7</swingwebview.version>
         <jna.version>5.17.0</jna.version>
         <vosk.version>0.3.38</vosk.version>
+        <sphinx4.version>5prealpha</sphinx4.version>
+        <commons-compress.version>1.28.0</commons-compress.version>
+        <xz.version>1.10</xz.version>
         <jcefmaven.version>146.0.10</jcefmaven.version>
         <graaljs.version>25.0.3</graaljs.version>
         <h2.version>2.3.232</h2.version>
@@ -142,6 +145,16 @@
             <version>${jackson.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>${commons-compress.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.tukaani</groupId>
+            <artifactId>xz</artifactId>
+            <version>${xz.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.zeroturnaround</groupId>
             <artifactId>zt-exec</artifactId>
             <version>${zt-exec.version}</version>
@@ -186,6 +199,11 @@
                     <artifactId>jna</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>net.sf.phat</groupId>
+            <artifactId>sphinx4-core</artifactId>
+            <version>${sphinx4.version}</version>
         </dependency>
         <dependency>
             <groupId>org.graalvm.polyglot</groupId>

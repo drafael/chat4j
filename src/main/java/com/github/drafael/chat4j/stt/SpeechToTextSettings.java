@@ -15,6 +15,9 @@ import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextP
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4InstalledModel;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
@@ -34,6 +37,7 @@ public class SpeechToTextSettings {
     private final CredentialSource credentialSource;
     private final SpeechToTextModelDirectory modelDirectory;
     private final VoskModelManagementService voskModelManagementService;
+    private final Sphinx4ModelManagementService sphinx4ModelManagementService;
 
     public SpeechToTextSettings(
             SettingsRepository settingsRepo,
@@ -41,7 +45,7 @@ public class SpeechToTextSettings {
             CredentialSource credentialSource,
             Path defaultModelDirectory
     ) {
-        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, null);
+        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, null, null);
     }
 
     public SpeechToTextSettings(
@@ -51,11 +55,23 @@ public class SpeechToTextSettings {
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
+        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, voskModelManagementService, null);
+    }
+
+    public SpeechToTextSettings(
+            SettingsRepository settingsRepo,
+            SpeechToTextProviderRegistry providerRegistry,
+            CredentialSource credentialSource,
+            Path defaultModelDirectory,
+            VoskModelManagementService voskModelManagementService,
+            Sphinx4ModelManagementService sphinx4ModelManagementService
+    ) {
         this.settingsRepo = settingsRepo;
         this.providerRegistry = providerRegistry;
         this.credentialSource = credentialSource;
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
         this.voskModelManagementService = voskModelManagementService;
+        this.sphinx4ModelManagementService = sphinx4ModelManagementService;
     }
 
     public SpeechToTextSettingsSnapshot resolve() {
@@ -71,6 +87,9 @@ public class SpeechToTextSettings {
         }
         if (SettingsKeys.STT_PROVIDER_VOSK.equals(provider.id())) {
             return resolveVosk(provider, maxDurationSeconds, directory);
+        }
+        if (SettingsKeys.STT_PROVIDER_SPHINX4.equals(provider.id())) {
+            return resolveSphinx4(provider, maxDurationSeconds, directory);
         }
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
@@ -92,6 +111,13 @@ public class SpeechToTextSettings {
             throw new IllegalStateException("Vosk model management is not available.");
         }
         voskModelManagementService.validateSelectedNow();
+    }
+
+    public void validateSelectedSphinx4ModelNow() {
+        if (sphinx4ModelManagementService == null) {
+            throw new IllegalStateException("Sphinx4 model management is not available.");
+        }
+        sphinx4ModelManagementService.validateSelectedNow();
     }
 
     public void saveProvider(String providerId) {
@@ -150,6 +176,26 @@ public class SpeechToTextSettings {
         }
         VoskModelManagementSnapshot snapshot = voskModelManagementService.snapshot();
         VoskInstalledModel selected = snapshot.selectedModel();
+        SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
+        return new SpeechToTextSettingsSnapshot(
+                provider,
+                model,
+                snapshot.readyToTranscribe(),
+                maxDurationSeconds,
+                directory,
+                null,
+                null,
+                snapshot.statusMessage(),
+                selected == null ? null : selected.reference()
+        );
+    }
+
+    private SpeechToTextSettingsSnapshot resolveSphinx4(SpeechToTextProvider provider, int maxDurationSeconds, Path directory) {
+        if (sphinx4ModelManagementService == null) {
+            return new SpeechToTextSettingsSnapshot(provider, null, false, maxDurationSeconds, directory, null, null, "Sphinx4 model management is not available.");
+        }
+        Sphinx4ModelManagementSnapshot snapshot = sphinx4ModelManagementService.snapshot();
+        Sphinx4InstalledModel selected = snapshot.selectedModel();
         SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
         return new SpeechToTextSettingsSnapshot(
                 provider,

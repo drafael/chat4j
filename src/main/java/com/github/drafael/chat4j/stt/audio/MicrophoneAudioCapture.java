@@ -27,6 +27,7 @@ public class MicrophoneAudioCapture {
     public static final long MAX_CAPTURED_WAV_BYTES = 24L * 1024L * 1024L;
     public static final Duration STALE_TEMP_AGE = Duration.ofHours(24);
     private static final String TEMP_PREFIX = "chat4j-stt-";
+    private static final String SPHINX4_CONVERTED_TEMP_PREFIX = "chat4j-sphinx4-converted-";
     private static final String TEMP_SUFFIX = ".wav";
 
     private final Path tempDirectory;
@@ -40,6 +41,9 @@ public class MicrophoneAudioCapture {
             Files.createDirectories(tempDirectory);
             Instant cutoff = Instant.now().minus(STALE_TEMP_AGE);
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(tempDirectory, "%s*%s".formatted(TEMP_PREFIX, TEMP_SUFFIX))) {
+                stream.forEach(path -> deleteIfStale(path, cutoff));
+            }
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(tempDirectory, "%s*%s".formatted(SPHINX4_CONVERTED_TEMP_PREFIX, TEMP_SUFFIX))) {
                 stream.forEach(path -> deleteIfStale(path, cutoff));
             }
         } catch (Exception ignored) {

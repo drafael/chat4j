@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.stt.provider;
 
 import java.net.URI;
+import java.nio.file.Path;
 import java.time.Duration;
 import lombok.NonNull;
 
@@ -10,7 +11,8 @@ public record SpeechToTextProviderContext(
         @NonNull CredentialSource credentialSource,
         @NonNull CancellationToken cancellationToken,
         @NonNull Duration timeout,
-        LocalSpeechToTextModelReference localModelReference
+        LocalSpeechToTextModelReference localModelReference,
+        Path tempDirectory
 ) {
 
     public SpeechToTextProviderContext(
@@ -20,7 +22,18 @@ public record SpeechToTextProviderContext(
             @NonNull CancellationToken cancellationToken,
             @NonNull Duration timeout
     ) {
-        this(baseUri, transcriptionUri, credentialSource, cancellationToken, timeout, null);
+        this(baseUri, transcriptionUri, credentialSource, cancellationToken, timeout, null, null);
+    }
+
+    public SpeechToTextProviderContext(
+            URI baseUri,
+            URI transcriptionUri,
+            @NonNull CredentialSource credentialSource,
+            @NonNull CancellationToken cancellationToken,
+            @NonNull Duration timeout,
+            LocalSpeechToTextModelReference localModelReference
+    ) {
+        this(baseUri, transcriptionUri, credentialSource, cancellationToken, timeout, localModelReference, null);
     }
 
     public boolean cancelled() {

@@ -17,6 +17,10 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4InstalledModel;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4LocalModelRow;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
@@ -31,6 +35,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -53,7 +58,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private final SpeechToTextCatalogStore catalogStore;
     private final SpeechToTextModelDownloader modelDownloader;
     private final VoskModelManagementService voskModelManagementService;
+    private final Sphinx4ModelManagementService sphinx4ModelManagementService;
     private final boolean ownsVoskModelManagementService;
+    private final boolean ownsSphinx4ModelManagementService;
+    private final AtomicBoolean disposed = new AtomicBoolean();
     private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong saveCounter = new AtomicLong();
 
@@ -75,16 +83,29 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private boolean updatingLocalModels;
     private List<SpeechToTextCatalogItem> localModelItems = emptyList();
     private List<VoskLocalModelRow> voskRows = emptyList();
+    private List<Sphinx4LocalModelRow> sphinx4Rows = emptyList();
     private boolean voskOperationInProgress;
+    private boolean sphinx4OperationInProgress;
     private String voskOperationSuccessMessage = "";
+    private String sphinx4OperationSuccessMessage = "";
     private Runnable voskUnsubscribe = () -> {
+    };
+    private Runnable sphinx4Unsubscribe = () -> {
     };
     private final List<CompletableFuture<Boolean>> pendingSaves = new CopyOnWriteArrayList<>();
     private volatile String lastSaveError = "";
 
     public SpeechToTextPanel(SettingsRepository settingsRepo, Path defaultModelDirectory) {
-        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(),
-                new UnavailableSpeechToTextModelDownloader(), new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), true);
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                SpeechToTextProviderRegistry.createDefault(),
+                new UnavailableSpeechToTextModelDownloader(),
+                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                new Sphinx4ModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                true,
+                true
+        );
     }
 
     public SpeechToTextPanel(
@@ -92,13 +113,39 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                SpeechToTextProviderRegistry.createDefault(),
+                new UnavailableSpeechToTextModelDownloader(),
+                voskModelManagementService,
+                new Sphinx4ModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                false,
+                true
+        );
+    }
+
+    public SpeechToTextPanel(
+            SettingsRepository settingsRepo,
+            Path defaultModelDirectory,
+            VoskModelManagementService voskModelManagementService,
+            Sphinx4ModelManagementService sphinx4ModelManagementService
+    ) {
         this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(),
-                new UnavailableSpeechToTextModelDownloader(), voskModelManagementService, false);
+                new UnavailableSpeechToTextModelDownloader(), voskModelManagementService, sphinx4ModelManagementService, false, false);
     }
 
     SpeechToTextPanel(SettingsRepository settingsRepo, Path defaultModelDirectory, SpeechToTextProviderRegistry providerRegistry) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, new UnavailableSpeechToTextModelDownloader(),
-                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), true);
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                providerRegistry,
+                new UnavailableSpeechToTextModelDownloader(),
+                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                new Sphinx4ModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                true,
+                true
+        );
     }
 
     SpeechToTextPanel(
@@ -107,8 +154,16 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             SpeechToTextProviderRegistry providerRegistry,
             SpeechToTextModelDownloader modelDownloader
     ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader,
-                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), true);
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                providerRegistry,
+                modelDownloader,
+                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                new Sphinx4ModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                true,
+                true
+        );
     }
 
     SpeechToTextPanel(
@@ -118,7 +173,16 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             SpeechToTextModelDownloader modelDownloader,
             VoskModelManagementService voskModelManagementService
     ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader, voskModelManagementService, false);
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                providerRegistry,
+                modelDownloader,
+                voskModelManagementService,
+                new Sphinx4ModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
+                false,
+                true
+        );
     }
 
     private SpeechToTextPanel(
@@ -127,24 +191,43 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             SpeechToTextProviderRegistry providerRegistry,
             SpeechToTextModelDownloader modelDownloader,
             VoskModelManagementService voskModelManagementService,
-            boolean ownsVoskModelManagementService
+            Sphinx4ModelManagementService sphinx4ModelManagementService,
+            boolean ownsVoskModelManagementService,
+            boolean ownsSphinx4ModelManagementService
     ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
         this.voskModelManagementService = voskModelManagementService;
+        this.sphinx4ModelManagementService = sphinx4ModelManagementService;
         this.ownsVoskModelManagementService = ownsVoskModelManagementService;
-        this.settings = new SpeechToTextSettings(settingsRepo, providerRegistry, CredentialSource.SYSTEM, defaultModelDirectory, voskModelManagementService);
+        this.ownsSphinx4ModelManagementService = ownsSphinx4ModelManagementService;
+        this.settings = new SpeechToTextSettings(
+                settingsRepo,
+                providerRegistry,
+                CredentialSource.SYSTEM,
+                defaultModelDirectory,
+                voskModelManagementService,
+                sphinx4ModelManagementService
+        );
         this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
         this.modelDownloader = modelDownloader;
         buildUi();
-        voskUnsubscribe = voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> handleVoskModelSnapshot(snapshot)));
+        voskUnsubscribe = voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
+            if (!disposed.get()) {
+                handleVoskModelSnapshot(snapshot);
+            }
+        }));
+        sphinx4Unsubscribe = sphinx4ModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
+            if (!disposed.get()) {
+                handleSphinx4ModelSnapshot(snapshot);
+            }
+        }));
     }
 
     @Override
     public boolean savePendingChanges() {
-        if (VoskModelManagementService.PROVIDER_ID.equals(settings.resolve().providerId())
-                && voskModelManagementService.snapshot().operationInProgress()) {
-            lastSaveError = "A Vosk model operation is still in progress.";
+        if (anyLocalOperationInProgress()) {
+            lastSaveError = "A local speech model operation is still in progress.";
             return false;
         }
         try {
@@ -171,10 +254,15 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     @Override
     public void removeNotify() {
+        disposed.set(true);
         refreshCounter.incrementAndGet();
         voskUnsubscribe.run();
+        sphinx4Unsubscribe.run();
         if (ownsVoskModelManagementService) {
             voskModelManagementService.close();
+        }
+        if (ownsSphinx4ModelManagementService) {
+            sphinx4ModelManagementService.close();
         }
         super.removeNotify();
     }
@@ -263,8 +351,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             @Override
             public boolean isCellEditable(int row, int column) {
                 SpeechToTextSettingsSnapshot snapshot = settings.resolve();
-                return isVosk(snapshot)
-                        ? column == 5 && !voskModelManagementService.snapshot().operationInProgress()
+                return isManagedLocalProvider(snapshot)
+                        ? column == 5 && !localOperationInProgress(snapshot)
                         : column == 1;
             }
         };
@@ -279,7 +367,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 return;
             }
             SpeechToTextSettingsSnapshot snapshot = settings.resolve();
-            int selectedColumn = isVosk(snapshot) ? 5 : 1;
+            int selectedColumn = isManagedLocalProvider(snapshot) ? 5 : 1;
             if (event.getColumn() != selectedColumn) {
                 return;
             }
@@ -314,9 +402,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         deleteModelButton.getAccessibleContext().setAccessibleName("Delete selected speech model");
         deleteModelButton.addActionListener(e -> deleteSelectedLocalModel());
         importModelButton = new JButton("Add Folder…");
-        importModelButton.setToolTipText("Copy an existing unzipped Vosk model into Chat4J's managed model folder");
-        importModelButton.getAccessibleContext().setAccessibleName("Add existing Vosk model folder");
-        importModelButton.addActionListener(e -> importExistingVoskModel());
+        importModelButton.setToolTipText("Copy an existing local speech model into Chat4J's managed model folder");
+        importModelButton.getAccessibleContext().setAccessibleName("Add existing local speech model folder");
+        importModelButton.addActionListener(e -> importExistingLocalModel());
         actionButtons.add(downloadModelButton);
         actionButtons.add(deleteModelButton);
         actionButtons.add(importModelButton);
@@ -350,6 +438,31 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         voskOperationSuccessMessage = "";
     }
 
+    private void handleSphinx4ModelSnapshot(Sphinx4ModelManagementSnapshot snapshot) {
+        boolean completed = sphinx4OperationInProgress && !snapshot.operationInProgress();
+        sphinx4OperationInProgress = snapshot.operationInProgress();
+        if (localModelsPanel != null && isShowing()) {
+            refreshControlsFromSettings(false);
+        }
+        if (completed) {
+            applyCompletedSphinx4OperationStatus(snapshot);
+        }
+    }
+
+    private void applyCompletedSphinx4OperationStatus(Sphinx4ModelManagementSnapshot snapshot) {
+        if (StringUtils.isNotBlank(snapshot.operationStatus())) {
+            if (StringUtils.startsWith(snapshot.operationStatus(), "Imported ")
+                    && !snapshot.operationStatus().contains("but it is not selectable")) {
+                setStatusInfo(snapshot.operationStatus());
+            } else {
+                setStatusError(snapshot.operationStatus());
+            }
+        } else if (StringUtils.isNotBlank(sphinx4OperationSuccessMessage)) {
+            setStatusInfo(sphinx4OperationSuccessMessage);
+        }
+        sphinx4OperationSuccessMessage = "";
+    }
+
     private void reloadProviderOptions() {
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
         DefaultComboBoxModel<ProviderOption> model = new DefaultComboBoxModel<>();
@@ -376,6 +489,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 models = voskInstalledCatalogItems();
                 updateModelCombo(models);
                 selectCatalogItem(snapshot.model());
+            } else if (isSphinx4(snapshot)) {
+                models = sphinx4InstalledCatalogItems();
+                updateModelCombo(models);
+                selectCatalogItem(snapshot.model());
             } else {
                 models = catalogStore.models(snapshot.provider(), snapshot.model());
                 updateModelCombo(models);
@@ -386,7 +503,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         updateLocalModels(snapshot, models);
         updateAvailability(snapshot);
-        if (refreshCatalogs && snapshot.enabled() && !isVosk(snapshot) && snapshot.available() && catalogStore.stale(snapshot.providerId())) {
+        if (refreshCatalogs
+                && snapshot.enabled()
+                && !snapshot.provider().supportsLocalModels()
+                && snapshot.available()
+                && catalogStore.stale(snapshot.providerId())) {
             refreshCatalogs(false);
         }
     }
@@ -397,6 +518,13 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         Object selected = providerComboBox.getSelectedItem();
         if (!(selected instanceof ProviderOption option)) {
+            return;
+        }
+        if (anyLocalOperationInProgress()) {
+            updating = true;
+            providerComboBox.setSelectedItem(findProviderOption(settings.resolve().providerId()));
+            updating = false;
+            setStatusError("Finish the current local speech model operation before changing providers.");
             return;
         }
         scheduleSave(() -> settings.saveProvider(option.providerId()), () -> {
@@ -415,6 +543,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         if (snapshot.enabled() && selected instanceof SpeechToTextCatalogItem item) {
             if (isVosk(snapshot)) {
                 selectVoskModel(item.id(), item.label());
+                return;
+            }
+            if (isSphinx4(snapshot)) {
+                selectSphinx4Model(item.id(), item.label());
                 return;
             }
             scheduleSave(() -> settings.saveModel(snapshot.providerId(), item), () -> {
@@ -439,7 +571,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void browseModelDirectory() {
-        if (voskOperationBlocksModelDirectoryChange()) {
+        if (localOperationBlocksModelDirectoryChange()) {
             return;
         }
         SystemFileChooser chooser = new SystemFileChooser();
@@ -465,7 +597,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void saveModelDirectory() {
-        if (voskOperationBlocksModelDirectoryChange()) {
+        if (localOperationBlocksModelDirectoryChange()) {
             return;
         }
         String rawPath = modelDirectoryField.getText();
@@ -476,22 +608,26 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 modelDirectoryField.setText(path.toString());
                 localModelsHintLabel.setText("Stored under %s".formatted(compactPath(path)));
                 voskModelManagementService.refreshAsync();
+                sphinx4ModelManagementService.refreshAsync();
             }
             setStatusInfo(STATUS_SAVED);
         });
     }
 
-    private boolean voskOperationBlocksModelDirectoryChange() {
+    private boolean localOperationBlocksModelDirectoryChange() {
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
-        if (!isVosk(snapshot) || !voskModelManagementService.snapshot().operationInProgress()) {
+        if (!anyLocalOperationInProgress()) {
             return false;
         }
         modelDirectoryField.setText(snapshot.modelDirectory().toString());
-        setStatusError("Finish the current Vosk model operation before changing the models folder.");
+        setStatusError("Finish the current local speech model operation before changing the models folder.");
         return true;
     }
 
     private void refreshCatalogs(boolean explicit) {
+        if (disposed.get()) {
+            return;
+        }
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
         if (!snapshot.enabled()) {
             updateAvailability(snapshot);
@@ -507,6 +643,19 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             } catch (Exception e) {
                 voskOperationSuccessMessage = "";
                 setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not refresh Vosk model catalog."));
+            }
+            return;
+        }
+        if (isSphinx4(snapshot)) {
+            if (explicit) {
+                sphinx4OperationSuccessMessage = "Sphinx4 model catalog refreshed.";
+                setStatusInfo("Refreshing Sphinx4 model catalog...");
+            }
+            try {
+                sphinx4ModelManagementService.refreshCatalogAsync();
+            } catch (Exception e) {
+                sphinx4OperationSuccessMessage = "";
+                setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not refresh Sphinx4 model catalog."));
             }
             return;
         }
@@ -528,11 +677,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                         Duration.ofSeconds(45)
                 );
                 List<SpeechToTextCatalogItem> models = snapshot.provider().fetchModels(context);
+                if (disposed.get() || refreshId != refreshCounter.get()) {
+                    return;
+                }
                 catalogStore.saveModels(snapshot.providerId(), models);
+                if (disposed.get() || refreshId != refreshCounter.get()) {
+                    return;
+                }
                 SwingUtilities.invokeLater(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {
-                    if (refreshId == refreshCounter.get() && explicit) {
+                    if (!disposed.get() && refreshId == refreshCounter.get() && explicit) {
                         setStatusError("Could not refresh %s Speech to Text models.".formatted(snapshot.provider().displayName()));
                     }
                 });
@@ -541,7 +696,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void applyCatalogRefresh(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
-        if (refreshId != refreshCounter.get()) {
+        if (disposed.get() || refreshId != refreshCounter.get()) {
             return;
         }
         SpeechToTextSettingsSnapshot current = settings.resolve();
@@ -585,17 +740,23 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private void updateLocalModels(SpeechToTextSettingsSnapshot snapshot, List<SpeechToTextCatalogItem> models) {
         boolean visible = localModelsVisible(snapshot);
         localModelsPanel.setVisible(visible);
-        importModelButton.setVisible(isVosk(snapshot));
+        importModelButton.setVisible(isManagedLocalProvider(snapshot));
+        updateLocalModelActionText(snapshot);
         updateModelDirectoryControls(snapshot);
         if (!visible) {
             localModelItems = emptyList();
             voskRows = emptyList();
+            sphinx4Rows = emptyList();
             updateLocalModelRows(snapshot, emptyList());
             updateLocalModelButtons(snapshot);
             return;
         }
         if (isVosk(snapshot)) {
             updateVoskLocalModels(snapshot);
+            return;
+        }
+        if (isSphinx4(snapshot)) {
+            updateSphinx4LocalModels(snapshot);
             return;
         }
 
@@ -607,37 +768,61 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void updateModelDirectoryControls(SpeechToTextSettingsSnapshot snapshot) {
-        boolean enabled = !isVosk(snapshot) || !voskModelManagementService.snapshot().operationInProgress();
+        boolean enabled = !localOperationInProgress(snapshot);
         modelDirectoryField.setEnabled(enabled);
         if (modelDirectoryBrowseButton != null) {
             modelDirectoryBrowseButton.setEnabled(enabled);
         }
     }
 
+    private void updateLocalModelActionText(SpeechToTextSettingsSnapshot snapshot) {
+        if (isSphinx4(snapshot)) {
+            downloadModelButton.setToolTipText("Download the selected verified Sphinx4 catalog model");
+            importModelButton.setToolTipText("Copy an existing Sphinx4 model into Chat4J's managed model folder");
+            importModelButton.getAccessibleContext().setAccessibleName("Add existing Sphinx4 model folder");
+            return;
+        }
+        if (isVosk(snapshot)) {
+            downloadModelButton.setToolTipText("Download the selected Vosk catalog model");
+            importModelButton.setToolTipText("Copy an existing unzipped Vosk model into Chat4J's managed model folder");
+            importModelButton.getAccessibleContext().setAccessibleName("Add existing Vosk model folder");
+        }
+    }
+
     private void updateVoskLocalModels(SpeechToTextSettingsSnapshot snapshot) {
         VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
         voskRows = List.copyOf(voskSnapshot.rows());
+        updateManagedLocalRows(voskRows.stream()
+                .map(row -> new Object[] {row.label(), row.language(), row.type(), row.sizeLabel(), row.installed(), row.selected(), row.actionStatus()})
+                .toList());
+        localModelsHintLabel.setText(voskSnapshot.operationInProgress()
+                ? voskSnapshot.operationStatus()
+                : "Vosk root: %s".formatted(compactPath(voskSnapshot.modelRoot())));
+        updateLocalModelButtons(snapshot);
+    }
+
+    private void updateSphinx4LocalModels(SpeechToTextSettingsSnapshot snapshot) {
+        Sphinx4ModelManagementSnapshot sphinx4Snapshot = sphinx4ModelManagementService.snapshot();
+        sphinx4Rows = List.copyOf(sphinx4Snapshot.rows());
+        updateManagedLocalRows(sphinx4Rows.stream()
+                .map(row -> new Object[] {row.label(), row.language(), row.type(), row.sizeLabel(), row.installed(), row.selected(), row.actionStatus()})
+                .toList());
+        localModelsHintLabel.setText(sphinx4Snapshot.operationInProgress()
+                ? sphinx4Snapshot.operationStatus()
+                : "Sphinx4 root: %s".formatted(compactPath(sphinx4Snapshot.modelRoot())));
+        updateLocalModelButtons(snapshot);
+    }
+
+    private void updateManagedLocalRows(List<Object[]> rows) {
         updatingLocalModels = true;
         try {
             localModelsTableModel.setColumnIdentifiers(new Object[] {"Model", "Language", "Type", "Size", "Installed", "Selected", "Status"});
             configureVoskLocalModelColumns();
             localModelsTableModel.setRowCount(0);
-            voskRows.forEach(row -> localModelsTableModel.addRow(new Object[] {
-                    row.label(),
-                    row.language(),
-                    row.type(),
-                    row.sizeLabel(),
-                    row.installed(),
-                    row.selected(),
-                    row.actionStatus()
-            }));
+            rows.forEach(localModelsTableModel::addRow);
         } finally {
             updatingLocalModels = false;
         }
-        localModelsHintLabel.setText(voskSnapshot.operationInProgress()
-                ? voskSnapshot.operationStatus()
-                : "Vosk root: %s".formatted(compactPath(voskSnapshot.modelRoot())));
-        updateLocalModelButtons(snapshot);
     }
 
     private void updateLocalModelRows(SpeechToTextSettingsSnapshot snapshot, List<SpeechToTextCatalogItem> models) {
@@ -684,6 +869,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             updateVoskLocalModels(snapshot);
             return;
         }
+        if (isSphinx4(snapshot)) {
+            updateSphinx4LocalModels(snapshot);
+            return;
+        }
         updatingLocalModels = true;
         try {
             for (int row = 0; row < localModelItems.size(); row++) {
@@ -709,6 +898,19 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
     }
 
+    private void selectSphinx4Model(String modelId, String label) {
+        try {
+            sphinx4OperationSuccessMessage = STATUS_SAVED;
+            setStatusInfo("Selecting %s...".formatted(StringUtils.defaultIfBlank(label, "Sphinx4 model")));
+            sphinx4ModelManagementService.selectModelAsync(modelId);
+            refreshControlsFromSettings(false);
+        } catch (Exception e) {
+            sphinx4OperationSuccessMessage = "";
+            refreshControlsFromSettings(false);
+            setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not select Sphinx4 model."));
+        }
+    }
+
     private void selectLocalModel(int row) {
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
         if (!localModelsVisible(snapshot)) {
@@ -721,6 +923,15 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 return;
             }
             selectVoskModel(voskRow.id(), voskRow.label());
+            return;
+        }
+        if (isSphinx4(snapshot)) {
+            Sphinx4LocalModelRow sphinx4Row = sphinx4RowAt(row);
+            if (sphinx4Row == null || !sphinx4Row.selectable()) {
+                refreshLocalModelSelection(snapshot);
+                return;
+            }
+            selectSphinx4Model(sphinx4Row.id(), sphinx4Row.label());
             return;
         }
         if (row < 0 || row >= localModelItems.size()) {
@@ -739,6 +950,15 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
             VoskLocalModelRow selected = selectedVoskRow();
             boolean idle = !voskSnapshot.operationInProgress();
+            downloadModelButton.setEnabled(idle && selected != null && selected.downloadable());
+            deleteModelButton.setEnabled(idle && selected != null && selected.deleteable());
+            importModelButton.setEnabled(idle);
+            return;
+        }
+        if (isSphinx4(snapshot)) {
+            Sphinx4ModelManagementSnapshot sphinx4Snapshot = sphinx4ModelManagementService.snapshot();
+            Sphinx4LocalModelRow selected = selectedSphinx4Row();
+            boolean idle = !sphinx4Snapshot.operationInProgress();
             downloadModelButton.setEnabled(idle && selected != null && selected.downloadable());
             deleteModelButton.setEnabled(idle && selected != null && selected.deleteable());
             importModelButton.setEnabled(idle);
@@ -786,6 +1006,22 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             }
             return;
         }
+        if (isSphinx4(snapshot)) {
+            Sphinx4LocalModelRow selected = selectedSphinx4Row();
+            if (selected == null || !selected.downloadable()) {
+                setStatusError(selected == null ? "Select a Sphinx4 catalog row first." : selected.actionStatus());
+                return;
+            }
+            sphinx4OperationSuccessMessage = "Downloaded %s".formatted(selected.label());
+            setStatusInfo("Downloading %s...".formatted(selected.label()));
+            try {
+                sphinx4ModelManagementService.downloadAsync(selected.id());
+            } catch (Exception e) {
+                sphinx4OperationSuccessMessage = "";
+                setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not download Sphinx4 model."));
+            }
+            return;
+        }
         SpeechToTextCatalogItem selected = selectedLocalModel();
         if (!localModelsVisible(snapshot) || selected == null) {
             return;
@@ -818,6 +1054,20 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             }
             return;
         }
+        if (isSphinx4(snapshot)) {
+            Sphinx4LocalModelRow selected = selectedSphinx4Row();
+            if (selected == null || !selected.deleteable()) {
+                return;
+            }
+            sphinx4OperationSuccessMessage = "Deleted %s".formatted(selected.label());
+            try {
+                sphinx4ModelManagementService.deleteAsync(selected.id());
+            } catch (Exception e) {
+                sphinx4OperationSuccessMessage = "";
+                setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not delete Sphinx4 model."));
+            }
+            return;
+        }
         SpeechToTextCatalogItem selected = selectedLocalModel();
         if (!localModelsVisible(snapshot) || selected == null) {
             return;
@@ -833,24 +1083,42 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         });
     }
 
-    private void importExistingVoskModel() {
+    private void importExistingLocalModel() {
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
-        if (!isVosk(snapshot)) {
+        if (!isManagedLocalProvider(snapshot)) {
             return;
         }
         SystemFileChooser chooser = new SystemFileChooser();
-        chooser.setDialogTitle("Select existing Vosk model folder");
+        chooser.setDialogTitle(isSphinx4(snapshot) ? "Select existing Sphinx4 model folder" : "Select existing Vosk model folder");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setMultiSelectionEnabled(false);
         chooser.setAcceptAllFileFilterUsed(false);
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
-            try {
-                voskOperationSuccessMessage = "Imported %s".formatted(chooser.getSelectedFile().getName());
-                voskModelManagementService.importAsync(chooser.getSelectedFile().toPath());
-            } catch (Exception e) {
-                voskOperationSuccessMessage = "";
-                setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not import Vosk model."));
+            if (isSphinx4(snapshot)) {
+                importExistingSphinx4Model(chooser.getSelectedFile().toPath(), chooser.getSelectedFile().getName());
+            } else {
+                importExistingVoskModel(chooser.getSelectedFile().toPath(), chooser.getSelectedFile().getName());
             }
+        }
+    }
+
+    private void importExistingVoskModel(Path source, String name) {
+        try {
+            voskOperationSuccessMessage = "Imported %s".formatted(name);
+            voskModelManagementService.importAsync(source);
+        } catch (Exception e) {
+            voskOperationSuccessMessage = "";
+            setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not import Vosk model."));
+        }
+    }
+
+    private void importExistingSphinx4Model(Path source, String name) {
+        try {
+            sphinx4OperationSuccessMessage = "Imported %s".formatted(name);
+            sphinx4ModelManagementService.importAsync(source);
+        } catch (Exception e) {
+            sphinx4OperationSuccessMessage = "";
+            setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not import Sphinx4 model."));
         }
     }
 
@@ -877,9 +1145,38 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         return snapshot != null && VoskModelManagementService.PROVIDER_ID.equals(snapshot.providerId());
     }
 
+    private boolean isSphinx4(SpeechToTextSettingsSnapshot snapshot) {
+        return snapshot != null && Sphinx4ModelManagementService.PROVIDER_ID.equals(snapshot.providerId());
+    }
+
+    private boolean isManagedLocalProvider(SpeechToTextSettingsSnapshot snapshot) {
+        return isVosk(snapshot) || isSphinx4(snapshot);
+    }
+
+    private boolean anyLocalOperationInProgress() {
+        return voskModelManagementService.snapshot().operationInProgress() || sphinx4ModelManagementService.snapshot().operationInProgress();
+    }
+
+    private boolean localOperationInProgress(SpeechToTextSettingsSnapshot snapshot) {
+        if (isVosk(snapshot)) {
+            return voskModelManagementService.snapshot().operationInProgress();
+        }
+        if (isSphinx4(snapshot)) {
+            return sphinx4ModelManagementService.snapshot().operationInProgress();
+        }
+        return false;
+    }
+
     private List<SpeechToTextCatalogItem> voskInstalledCatalogItems() {
         return voskModelManagementService.snapshot().installedModels().stream()
                 .filter(model -> model.eligible())
+                .map(model -> SpeechToTextCatalogItem.of(model.id(), model.label(), model.validationMessage()))
+                .toList();
+    }
+
+    private List<SpeechToTextCatalogItem> sphinx4InstalledCatalogItems() {
+        return sphinx4ModelManagementService.snapshot().installedModels().stream()
+                .filter(Sphinx4InstalledModel::eligible)
                 .map(model -> SpeechToTextCatalogItem.of(model.id(), model.label(), model.validationMessage()))
                 .toList();
     }
@@ -899,18 +1196,35 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         return modelRow >= 0 && modelRow < voskRows.size() ? voskRows.get(modelRow) : null;
     }
 
+    private Sphinx4LocalModelRow selectedSphinx4Row() {
+        int row = localModelsTable == null ? -1 : localModelsTable.getSelectedRow();
+        if (row >= 0) {
+            return sphinx4RowAt(localModelsTable.convertRowIndexToModel(row));
+        }
+        return sphinx4Rows.stream()
+                .filter(Sphinx4LocalModelRow::selected)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Sphinx4LocalModelRow sphinx4RowAt(int modelRow) {
+        return modelRow >= 0 && modelRow < sphinx4Rows.size() ? sphinx4Rows.get(modelRow) : null;
+    }
+
     private boolean localModelsVisible(SpeechToTextSettingsSnapshot snapshot) {
         return snapshot.enabled() && snapshot.provider() != null && snapshot.provider().supportsLocalModels();
     }
 
     private void updateAvailability(SpeechToTextSettingsSnapshot snapshot) {
-        boolean voskBusy = isVosk(snapshot) && voskModelManagementService.snapshot().operationInProgress();
-        modelComboBox.setEnabled(snapshot.enabled() && (!isVosk(snapshot) || modelComboBox.getItemCount() > 0 && !voskBusy));
-        refreshButton.setEnabled(snapshot.enabled() && (isVosk(snapshot) ? !voskBusy : snapshot.available()));
+        boolean localBusy = localOperationInProgress(snapshot);
+        modelComboBox.setEnabled(snapshot.enabled() && (!isManagedLocalProvider(snapshot) || modelComboBox.getItemCount() > 0 && !localBusy));
+        refreshButton.setEnabled(snapshot.enabled() && (isManagedLocalProvider(snapshot) ? !localBusy : snapshot.available()));
         if (!snapshot.enabled()) {
             helperLabel.setText("Speech to Text is off.");
         } else if (isVosk(snapshot)) {
             helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), "Download or add a Vosk model to enable transcription."));
+        } else if (isSphinx4(snapshot)) {
+            helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), "Download or add a Sphinx4 model to enable transcription."));
         } else if (!snapshot.available()) {
             helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
         } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {

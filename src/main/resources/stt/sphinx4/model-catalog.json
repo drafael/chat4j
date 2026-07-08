@@ -1,0 +1,698 @@
+[
+  {
+    "id": "cmusphinx-es-mx",
+    "label": "Mexican Spanish",
+    "language": "Mexican Spanish",
+    "description": "CMU Sphinx Mexican Spanish model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 159596225,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Mexican%20Spanish/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Mexican Spanish language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "ciempiess_spanish_models_581h",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Mexican%20Spanish/CIEMPIESS_Spanish_Models_581h.zip/download",
+        "expectedSizeBytes": 159596225,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "zip",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "Models/581HCDCONT10000SPA",
+      "dictionaryPath": "Models/581HCDCONT10000SPA.dic",
+      "languageModelPath": "Models/581HCDCONT10000SPA.lm.bin",
+      "requiredFiles": [
+        "Models/581HCDCONT10000SPA/mdef",
+        "Models/581HCDCONT10000SPA/means",
+        "Models/581HCDCONT10000SPA/variances",
+        "Models/581HCDCONT10000SPA/transition_matrices",
+        "Models/581HCDCONT10000SPA.dic",
+        "Models/581HCDCONT10000SPA.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-pt",
+    "label": "Portuguese",
+    "language": "Portuguese",
+    "description": "CMU Sphinx Portuguese model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 2703332,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Portuguese/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Portuguese language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-pt-br-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Portuguese/cmusphinx-pt-br-5.2.tar.gz/download",
+        "expectedSizeBytes": 1029865,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      },
+      {
+        "artifactId": "br-pt-dic",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Portuguese/br-pt.dic/download",
+        "expectedSizeBytes": 1673467,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "raw-file",
+        "extractTo": "",
+        "targetPath": "br-pt.dic",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": ".",
+      "dictionaryPath": "br-pt.dic",
+      "languageModelPath": "br-pt-unigram.lm",
+      "requiredFiles": [
+        "mdef",
+        "means",
+        "variances",
+        "transition_matrices",
+        "br-pt.dic",
+        "br-pt-unigram.lm"
+      ],
+      "generateUnigramLanguageModel": true
+    }
+  },
+  {
+    "id": "cmusphinx-zh-cn",
+    "label": "Mandarin",
+    "language": "Mandarin",
+    "description": "CMU Sphinx Mandarin model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 54020208,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Mandarin/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Mandarin language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-zh-cn-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Mandarin/cmusphinx-zh-cn-5.2.tar.gz/download",
+        "expectedSizeBytes": 54020208,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "zh_cn.cd_cont_5000",
+      "dictionaryPath": "zh_cn.dic",
+      "languageModelPath": "zh_cn.lm.bin",
+      "requiredFiles": [
+        "zh_cn.cd_cont_5000/mdef",
+        "zh_cn.cd_cont_5000/means",
+        "zh_cn.cd_cont_5000/variances",
+        "zh_cn.cd_cont_5000/transition_matrices",
+        "zh_cn.dic",
+        "zh_cn.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-en-in",
+    "label": "Indian English",
+    "language": "Indian English",
+    "description": "CMU Sphinx Indian English model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 69758852,
+    "sampleRateHz": 8000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Indian%20English/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Indian English language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-en-in-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Indian%20English/cmusphinx-en-in-5.2.tar.gz/download",
+        "expectedSizeBytes": 69758852,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "en_in.cd_cont_5000",
+      "dictionaryPath": "en_in.dic",
+      "languageModelPath": "en-us.lm.bin",
+      "requiredFiles": [
+        "en_in.cd_cont_5000/mdef",
+        "en_in.cd_cont_5000/means",
+        "en_in.cd_cont_5000/variances",
+        "en_in.cd_cont_5000/transition_matrices",
+        "en_in.dic",
+        "en-us.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-ca",
+    "label": "Catalan",
+    "language": "Catalan",
+    "description": "CMU Sphinx Catalan model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 93591752,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Catalan/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Catalan language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "ca-es-models-v0-4-0",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Catalan/ca-es-models-v0.4.0.zip/download",
+        "expectedSizeBytes": 93591752,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "zip",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "acoustic-model",
+      "dictionaryPath": "pronounciation-dictionary.dict",
+      "languageModelPath": "language-model.lm.bin",
+      "requiredFiles": [
+        "acoustic-model/mdef",
+        "acoustic-model/means",
+        "acoustic-model/variances",
+        "acoustic-model/transition_matrices",
+        "pronounciation-dictionary.dict",
+        "language-model.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-de",
+    "label": "German",
+    "language": "German",
+    "description": "CMU Sphinx German model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 43532224,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/German/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx German language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-de-voxforge-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/German/cmusphinx-de-voxforge-5.2.tar.gz/download",
+        "expectedSizeBytes": 43532224,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.xz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "model_parameters/voxforge.cd_cont_6000",
+      "dictionaryPath": "etc/voxforge.dic",
+      "languageModelPath": "etc/voxforge.lm.bin",
+      "requiredFiles": [
+        "model_parameters/voxforge.cd_cont_6000/mdef",
+        "model_parameters/voxforge.cd_cont_6000/means",
+        "model_parameters/voxforge.cd_cont_6000/variances",
+        "model_parameters/voxforge.cd_cont_6000/transition_matrices",
+        "etc/voxforge.dic",
+        "etc/voxforge.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-el",
+    "label": "Greek",
+    "language": "Greek",
+    "description": "CMU Sphinx Greek model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 102370049,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Greek/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Greek language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-el-gr-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Greek/cmusphinx-el-gr-5.2.tar.gz/download",
+        "expectedSizeBytes": 102370049,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "el-gr.cd_cont_5000",
+      "dictionaryPath": "el-gr.dic",
+      "languageModelPath": "el-gr.lm.bin",
+      "requiredFiles": [
+        "el-gr.cd_cont_5000/mdef",
+        "el-gr.cd_cont_5000/means",
+        "el-gr.cd_cont_5000/variances",
+        "el-gr.cd_cont_5000/transition_matrices",
+        "el-gr.dic",
+        "el-gr.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-fr",
+    "label": "French",
+    "language": "French",
+    "description": "CMU Sphinx French model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 29309258,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/French/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx French language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-fr-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/French/cmusphinx-fr-5.2.tar.gz/download",
+        "expectedSizeBytes": 4364750,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      },
+      {
+        "artifactId": "fr-dict",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/French/fr.dict/download",
+        "expectedSizeBytes": 3260818,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "raw-file",
+        "extractTo": "",
+        "targetPath": "fr.dict",
+        "stripTopLevelDirectory": true,
+        "required": true
+      },
+      {
+        "artifactId": "fr-small-lm",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/French/fr-small.lm.gz/download",
+        "expectedSizeBytes": 21683690,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "raw-gzip",
+        "extractTo": "",
+        "targetPath": "fr-small.lm",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": ".",
+      "dictionaryPath": "fr.dict",
+      "languageModelPath": "fr-small.lm",
+      "requiredFiles": [
+        "mdef",
+        "means",
+        "variances",
+        "transition_matrices",
+        "fr.dict",
+        "fr-small.lm"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-nl",
+    "label": "Dutch",
+    "language": "Dutch",
+    "description": "CMU Sphinx Dutch model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 36501438,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Dutch/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Dutch language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-nl-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Dutch/cmusphinx-nl-5.2.tar.gz/download",
+        "expectedSizeBytes": 36501438,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "model_parameters/voxforge_nl_sphinx.cd_cont_2000",
+      "dictionaryPath": "etc/voxforge_nl_sphinx.dic",
+      "languageModelPath": "etc/voxforge_nl_sphinx.lm.bin",
+      "requiredFiles": [
+        "model_parameters/voxforge_nl_sphinx.cd_cont_2000/mdef",
+        "model_parameters/voxforge_nl_sphinx.cd_cont_2000/means",
+        "model_parameters/voxforge_nl_sphinx.cd_cont_2000/variances",
+        "model_parameters/voxforge_nl_sphinx.cd_cont_2000/transition_matrices",
+        "etc/voxforge_nl_sphinx.dic",
+        "etc/voxforge_nl_sphinx.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-en-us",
+    "label": "US English",
+    "language": "US English",
+    "description": "CMU Sphinx US English model data from the Sphinx4 5prealpha SourceForge source package. Downloads the source ZIP and installs the bundled en-us acoustic model, CMUdict, and language model resources into Chat4J managed storage.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": true,
+    "sizeBytes": 41256644,
+    "sampleRateHz": 16000,
+    "licenseName": "BSD-style CMU Sphinx license",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/sphinx4/5prealpha/",
+    "sourceNotes": "Verified from SourceForge sphinx4/5prealpha/sphinx4-5prealpha-src.zip. The recipe extracts Sphinx4 data resources from the downloaded source archive; Chat4J does not bundle these model files.",
+    "artifacts": [
+      {
+        "artifactId": "sphinx4-5prealpha-source-data",
+        "role": "supplemental",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/sphinx4/5prealpha/sphinx4-5prealpha-src.zip/download",
+        "expectedSizeBytes": 41256644,
+        "expectedUncompressedBytes": 48902526,
+        "sha256": "6c17507925b379e51cd8af904dcc77a088f1fa74b41b772bdf4e2a370be2d9a9",
+        "archiveFormat": "zip",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us",
+      "dictionaryPath": "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/cmudict-en-us.dict",
+      "languageModelPath": "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us.lm.bin",
+      "requiredFiles": [
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us/mdef",
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us/means",
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us/variances",
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us/transition_matrices",
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/cmudict-en-us.dict",
+        "sphinx4-data/src/main/resources/edu/cmu/sphinx/models/en-us/en-us.lm.bin"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-es",
+    "label": "Spanish",
+    "language": "Spanish",
+    "description": "CMU Sphinx Spanish model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 57111280,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Spanish/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Spanish language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-es-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Spanish/cmusphinx-es-5.2.tar.gz/download",
+        "expectedSizeBytes": 32986312,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      },
+      {
+        "artifactId": "es-dict",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Spanish/es.dict/download",
+        "expectedSizeBytes": 601223,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "raw-file",
+        "extractTo": "",
+        "targetPath": "es.dict",
+        "stripTopLevelDirectory": true,
+        "required": true
+      },
+      {
+        "artifactId": "es-20k-lm",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Spanish/es-20k.lm.gz/download",
+        "expectedSizeBytes": 23523745,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "raw-gzip",
+        "extractTo": "",
+        "targetPath": "es-20k.lm",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "model_parameters/voxforge_es_sphinx.cd_ptm_4000",
+      "dictionaryPath": "es.dict",
+      "languageModelPath": "es-20k.lm",
+      "requiredFiles": [
+        "model_parameters/voxforge_es_sphinx.cd_ptm_4000/mdef",
+        "model_parameters/voxforge_es_sphinx.cd_ptm_4000/means",
+        "model_parameters/voxforge_es_sphinx.cd_ptm_4000/variances",
+        "model_parameters/voxforge_es_sphinx.cd_ptm_4000/transition_matrices",
+        "es.dict",
+        "es-20k.lm"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-it",
+    "label": "Italian",
+    "language": "Italian",
+    "description": "CMU Sphinx Italian model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 9739924,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Italian/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Italian language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-it-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Italian/cmusphinx-it-5.2.tar.gz/download",
+        "expectedSizeBytes": 9739924,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "model_parameters/voxforge_it_sphinx.cd_cont_2000",
+      "dictionaryPath": "etc/voxforge_it_sphinx.dic",
+      "languageModelPath": "etc/voxforge_it_sphinx.lm",
+      "requiredFiles": [
+        "model_parameters/voxforge_it_sphinx.cd_cont_2000/mdef",
+        "model_parameters/voxforge_it_sphinx.cd_cont_2000/means",
+        "model_parameters/voxforge_it_sphinx.cd_cont_2000/variances",
+        "model_parameters/voxforge_it_sphinx.cd_cont_2000/transition_matrices",
+        "etc/voxforge_it_sphinx.dic",
+        "etc/voxforge_it_sphinx.lm"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-hi",
+    "label": "Hindi",
+    "language": "Hindi",
+    "description": "CMU Sphinx Hindi model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 3475885,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Hindi/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Hindi language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-hi-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Hindi/cmusphinx-hi-5.2.tar.gz/download",
+        "expectedSizeBytes": 3475885,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "hindi.cd_cont_1000",
+      "dictionaryPath": "hindi.dic",
+      "languageModelPath": "hindi.lm",
+      "requiredFiles": [
+        "hindi.cd_cont_1000/mdef",
+        "hindi.cd_cont_1000/means",
+        "hindi.cd_cont_1000/variances",
+        "hindi.cd_cont_1000/transition_matrices",
+        "hindi.dic",
+        "hindi.lm"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-kk",
+    "label": "Kazakh",
+    "language": "Kazakh",
+    "description": "CMU Sphinx Kazakh model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 37393919,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Kazakh/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Kazakh language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-kz-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Kazakh/cmusphinx-kz-5.2.tar.gz/download",
+        "expectedSizeBytes": 37393919,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": "model_parameters/kz.cd_cont_200",
+      "dictionaryPath": "etc/kz.dic",
+      "languageModelPath": "etc/kz.ug.lm",
+      "requiredFiles": [
+        "model_parameters/kz.cd_cont_200/mdef",
+        "model_parameters/kz.cd_cont_200/means",
+        "model_parameters/kz.cd_cont_200/variances",
+        "model_parameters/kz.cd_cont_200/transition_matrices",
+        "etc/kz.dic",
+        "etc/kz.ug.lm"
+      ]
+    }
+  },
+  {
+    "id": "cmusphinx-ru",
+    "label": "Russian",
+    "language": "Russian",
+    "description": "CMU Sphinx Russian model catalog entry. Chat4J downloads the listed SourceForge package files and validates the assembled model locally before selection.",
+    "catalogOnly": false,
+    "downloadable": true,
+    "verifiedDownload": false,
+    "sizeBytes": 157684182,
+    "sampleRateHz": 16000,
+    "licenseName": "Varies by upstream package",
+    "licenseUrl": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Russian/",
+    "sourceNotes": "Bundled SourceForge download metadata and Chat4J recipe paths for the CMU Sphinx Russian language folder. Downloaded files are validated locally before selection.",
+    "artifacts": [
+      {
+        "artifactId": "cmusphinx-ru-5-2",
+        "role": "model",
+        "url": "https://sourceforge.net/projects/cmusphinx/files/Acoustic%20and%20Language%20Models/Russian/cmusphinx-ru-5.2.tar.gz/download",
+        "expectedSizeBytes": 157684182,
+        "expectedUncompressedBytes": 0,
+        "sha256": "",
+        "archiveFormat": "tar.gz",
+        "extractTo": "",
+        "targetPath": "",
+        "stripTopLevelDirectory": true,
+        "required": true
+      }
+    ],
+    "recipe": {
+      "acousticModelPath": ".",
+      "dictionaryPath": "ru.dic",
+      "languageModelPath": "ru.lm",
+      "requiredFiles": [
+        "mdef",
+        "means",
+        "variances",
+        "transition_matrices",
+        "ru.dic",
+        "ru.lm"
+      ]
+    }
+  }
+]

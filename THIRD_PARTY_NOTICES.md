@@ -135,3 +135,30 @@ Chat4J bundles the Vosk Java/native runtime only. Chat4J does **not** bundle Vos
 ```text
 https://alphacephei.com/vosk/models
 ```
+
+## CMU Sphinx4 runtime 5prealpha
+
+- Project: https://cmusphinx.github.io/
+- Source: https://sourceforge.net/projects/cmusphinx/
+- Maven coordinates: `net.sf.phat:sphinx4-core`
+- License declared by the Maven artifact: BSD-style CMU Sphinx license
+
+Chat4J bundles the Sphinx4 Java runtime only. Chat4J does **not** bundle Sphinx4 acoustic models, pronunciation dictionaries, or language models. Users may download catalog entries or import models themselves, and model licenses vary by package. The bundled Sphinx4 catalog is metadata only, including recipe paths for user-triggered SourceForge downloads that run only when the user starts a download.
+
+## Apache Commons Compress
+
+- Project: https://commons.apache.org/proper/commons-compress/
+- Source: https://github.com/apache/commons-compress
+- Maven coordinates: `org.apache.commons:commons-compress`
+- License: Apache License 2.0
+
+Chat4J uses Commons Compress to safely inspect and extract Sphinx4 ZIP, TAR/GZIP, and TAR/XZ model archives during user-triggered Sphinx4 model downloads.
+
+## XZ for Java
+
+- Project: https://tukaani.org/xz/java.html
+- Source: https://github.com/tukaani-project/xz-java
+- Maven coordinates: `org.tukaani:xz`
+- License: Public domain
+
+Chat4J uses XZ for Java through Commons Compress to extract the German Sphinx4 catalog archive, which is distributed by SourceForge as XZ-compressed TAR data.

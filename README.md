@@ -112,6 +112,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - Streaming assistant responses
 - Local history/settings persistence (SQLite by default, optional H2, Flyway migrations)
 - Agent Mode with local workspace tools
+- Speech-to-text dictation with cloud providers and local Vosk/Sphinx4 model management
 
 ## Supported providers
 

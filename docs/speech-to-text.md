@@ -8,6 +8,7 @@ Providers:
 - **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
 - **Deepgram**: cloud transcription using Deepgram pre-recorded STT models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
+- **Sphinx4**: local transcription using the bundled CMU Sphinx4 Java runtime and user-installed Sphinx4 acoustic/dictionary/language model folders.
 
 Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Settings → Speech to Text**.
 
@@ -15,12 +16,13 @@ Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Setti
 
 Open **Settings → Speech to Text**.
 
-- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, or `Vosk`.
+- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, `Vosk`, or `Sphinx4`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
   - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
   - Deepgram defaults to `nova-3` and can refresh batch-capable STT models from Deepgram.
   - Vosk shows only installed local models that are eligible for local transcription.
+  - Sphinx4 shows only installed local models that pass structural and Sphinx4 recognizer-construction validation.
 - **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
 - **Max recording seconds**: valid range is 1–600 seconds.
 
@@ -123,6 +125,36 @@ Model licenses vary. Chat4J does not bundle model license texts because models a
 https://alphacephei.com/vosk/models
 ```
 
+## Sphinx4 local transcription
+
+Chat4J bundles the Sphinx4 Java runtime, but **does not bundle Sphinx4 acoustic models, dictionaries, or language models**. Users download catalog entries or add existing Sphinx4 model folders through Settings. The Sphinx4 catalog is a bundled curated snapshot of CMU Sphinx SourceForge language folders with recipe metadata for each bundled row; catalog refresh reloads that bundled snapshot, while model downloads fetch only the selected SourceForge files when the user starts a download.
+
+The effective Sphinx4 model root is:
+
+```text
+<configured-stt-model-dir>/sphinx4
+```
+
+With default paths, that is under:
+
+```text
+<app-config>/stt/models/sphinx4
+```
+
+Sphinx4 model behavior:
+
+- the model dropdown contains installed local models only;
+- the local model table shows the full curated non-Archive language catalog plus imported folders;
+- catalog rows are downloadable and include bundled recipe paths for acoustic model, dictionary, language model, required files, and sample rate;
+- US English has a verified one-click recipe based on the Sphinx4 5prealpha SourceForge source package data resources;
+- non-US rows use bundled SourceForge artifact metadata and recipe paths, then must still pass local Sphinx4 recognizer-construction validation before selection;
+- the upstream Portuguese folder does not publish a language model, so Chat4J generates a simple unigram language model from the downloaded dictionary during installation;
+- imported folders are copied into Chat4J's managed Sphinx4 root and must include safe metadata or an unambiguous acoustic model, pronunciation dictionary, language model, and sample-rate configuration;
+- a model is selectable only after Sphinx4 can construct a recognizer for its acoustic/dictionary/language-model paths;
+- quality and speed vary significantly and may be weaker than Vosk or cloud providers.
+
+Sphinx4 supports older CMU Sphinx model formats. Some upstream assets are old, and model licenses vary by package. Chat4J does not bundle model license texts because models are imported or downloaded by the user.
+
 ## Recording UX
 
 When Speech to Text is enabled and available, a microphone button appears in the input bar while normal composing is possible. During recording:
@@ -131,7 +163,7 @@ When Speech to Text is enabled and available, a microphone button appears in the
 - composer mutation controls are hidden/blocked;
 - the waveform/timer and stop-square are shown inline;
 - clicking the stop-square finalizes the WAV and transcribes;
-- pressing Escape cancels recording or an in-flight transcription.
+- pressing Escape cancels recording or an in-flight transcription. For Sphinx4, cancellation may wait for a blocking recognizer call to return before the transcription fully stops.
 
 Successful transcripts are appended to the preserved raw composer text. Attachments and active skills are preserved.
 
@@ -147,6 +179,8 @@ For Deepgram, finalized audio is sent to Deepgram for transcription. Chat4J does
 
 For Vosk, transcription runs locally after the model is installed. Catalog refresh and model downloads contact the official Vosk/Alpha Cephei model host, but recorded audio is not uploaded for Vosk transcription.
 
-Temp WAV files are created under Chat4J's app-controlled STT temp directory, cleaned up after success/failure/cancel, and stale STT-owned files older than 24 hours are removed on service startup. Vosk download ZIPs and partial install folders use separate Chat4J-owned temp/staging paths and are cleaned conservatively after failures or crashes.
+For Sphinx4, transcription runs locally after the model is installed and validated. Sphinx4 catalog refresh reloads Chat4J's bundled curated snapshot; model downloads contact SourceForge/CMU Sphinx only after the user starts a download. Recorded audio is not uploaded for Sphinx4 transcription. If a Sphinx4 model requires audio conversion, Chat4J writes a temporary converted WAV under its STT temp directory and deletes it after transcription; stale converted files are cleaned on service startup.
+
+Temp WAV files are created under Chat4J's app-controlled STT temp directory, cleaned up after success/failure/cancel, and stale STT-owned files older than 24 hours are removed on service startup. Vosk and Sphinx4 download/import partials use separate Chat4J-owned temp/staging paths and are cleaned conservatively after failures or crashes.
 
 Chat4J avoids transcribing recordings shorter than 500 ms, oversized captures, or audio whose STT settings/model changed before transcription.

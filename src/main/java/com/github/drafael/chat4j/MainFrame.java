@@ -136,6 +136,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
@@ -225,6 +226,7 @@ public class MainFrame extends JFrame {
     private final Path sttModelsDirectory;
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
+    private final Sphinx4ModelManagementService sphinx4ModelManagementService;
     private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
     private final ProviderModelsResolver providerModelsResolver;
     private final ProviderFavoritesResolver providerFavoritesResolver;
@@ -406,6 +408,7 @@ public class MainFrame extends JFrame {
         this.sttModelsDirectory = storagePaths.sttModelsDirectory();
         this.sttTempDirectory = storagePaths.sttTempDirectory();
         this.voskModelManagementService = new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory);
+        this.sphinx4ModelManagementService = new Sphinx4ModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory);
         this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
         if (chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.SYSTEM
                 || chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.JCEF
@@ -531,7 +534,13 @@ public class MainFrame extends JFrame {
                 chatPanel.reloadSpeechToTextSettings();
             }
         }));
+        sphinx4ModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
+            if (!chatPanel.isSpeechToTextActive()) {
+                chatPanel.reloadSpeechToTextSettings();
+            }
+        }));
         voskModelManagementService.refreshAsync();
+        sphinx4ModelManagementService.refreshAsync();
         applyProviderSettings();
         applyGeneralSettings();
         UIManager.addPropertyChangeListener(lookAndFeelListener);
@@ -604,7 +613,7 @@ public class MainFrame extends JFrame {
                 new ChatMessageViewFactory(),
                 chatWebViewRuntimeStatus.activeEngine(),
                 TextToSpeechService.createDefault(settingsRepo),
-                SpeechToTextService.createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, voskModelManagementService)
+                SpeechToTextService.createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, voskModelManagementService, sphinx4ModelManagementService)
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -1005,6 +1014,7 @@ public class MainFrame extends JFrame {
                             UIManager.removePropertyChangeListener(lookAndFeelListener);
                             chatPanel.cancelSpeechToText();
                             voskModelManagementService.close();
+                            sphinx4ModelManagementService.close();
                             chatPanel.cancelStreaming();
                             saveWindowState();
                         } catch (Exception e) {
@@ -1325,7 +1335,8 @@ public class MainFrame extends JFrame {
                         chatWebViewRuntimeStatus,
                         this::requestWindowClose,
                         sttModelsDirectory,
-                        voskModelManagementService
+                        voskModelManagementService,
+                        sphinx4ModelManagementService
                 )),
                 () -> {
                     applyProviderSettings();

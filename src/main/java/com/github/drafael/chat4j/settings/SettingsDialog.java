@@ -5,6 +5,7 @@ import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.persistence.db.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import java.awt.*;
 import java.awt.event.ActionEvent;
@@ -34,7 +35,9 @@ public class SettingsDialog extends JDialog {
     private final Runnable exitAction;
     private final Path sttModelsDirectory;
     private final VoskModelManagementService voskModelManagementService;
+    private final Sphinx4ModelManagementService sphinx4ModelManagementService;
     private final boolean ownsVoskModelManagementService;
+    private final boolean ownsSphinx4ModelManagementService;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
         this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
@@ -75,8 +78,17 @@ public class SettingsDialog extends JDialog {
             @NonNull Path sttModelsDirectory,
             @NonNull Path sttTempDirectory
     ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory,
-                new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory), true);
+        this(
+                owner,
+                settingsRepo,
+                chatWebViewRuntimeStatus,
+                exitAction,
+                sttModelsDirectory,
+                new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory),
+                new Sphinx4ModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory),
+                true,
+                true
+        );
     }
 
     public SettingsDialog(
@@ -87,7 +99,29 @@ public class SettingsDialog extends JDialog {
             @NonNull Path sttModelsDirectory,
             @NonNull VoskModelManagementService voskModelManagementService
     ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, false);
+        this(
+                owner,
+                settingsRepo,
+                chatWebViewRuntimeStatus,
+                exitAction,
+                sttModelsDirectory,
+                voskModelManagementService,
+                new Sphinx4ModelManagementService(settingsRepo, sttModelsDirectory, StoragePaths.defaultPaths().sttTempDirectory()),
+                false,
+                true
+        );
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull VoskModelManagementService voskModelManagementService,
+            @NonNull Sphinx4ModelManagementService sphinx4ModelManagementService
+    ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, sphinx4ModelManagementService, false, false);
     }
 
     private SettingsDialog(
@@ -97,13 +131,17 @@ public class SettingsDialog extends JDialog {
             @NonNull Runnable exitAction,
             @NonNull Path sttModelsDirectory,
             @NonNull VoskModelManagementService voskModelManagementService,
-            boolean ownsVoskModelManagementService
+            @NonNull Sphinx4ModelManagementService sphinx4ModelManagementService,
+            boolean ownsVoskModelManagementService,
+            boolean ownsSphinx4ModelManagementService
     ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
         this.sttModelsDirectory = sttModelsDirectory;
         this.voskModelManagementService = voskModelManagementService;
+        this.sphinx4ModelManagementService = sphinx4ModelManagementService;
         this.ownsVoskModelManagementService = ownsVoskModelManagementService;
+        this.ownsSphinx4ModelManagementService = ownsSphinx4ModelManagementService;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -209,7 +247,7 @@ public class SettingsDialog extends JDialog {
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
                 new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
                 new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo)),
-                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService)),
+                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService, sphinx4ModelManagementService)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
@@ -246,6 +284,9 @@ public class SettingsDialog extends JDialog {
                 UIManager.removePropertyChangeListener(lafChangeListener);
                 if (ownsVoskModelManagementService) {
                     voskModelManagementService.close();
+                }
+                if (ownsSphinx4ModelManagementService) {
+                    sphinx4ModelManagementService.close();
                 }
             }
         });

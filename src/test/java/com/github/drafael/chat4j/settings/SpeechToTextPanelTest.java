@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
+import com.github.drafael.chat4j.stt.provider.sphinx4.Sphinx4ModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
@@ -183,18 +184,57 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Default Speech to Text providers include Deepgram in the intended order")
-    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersDeepgramBetweenElevenLabsAndVosk() throws Exception {
+    @DisplayName("Sphinx4 catalog rows route to Sphinx4-specific download and import button state")
+    void refreshControlsFromSettings_whenSphinx4Selected_showsDownloadableAndCatalogOnlyRows() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-sphinx4-panel.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_SPHINX4);
+        Path models = tempDir.resolve("sphinx4-panel-models");
+        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("vosk-panel-temp"));
+        var sphinx4Models = new Sphinx4ModelManagementService(repo, models, tempDir.resolve("sphinx4-panel-temp"));
+        sphinx4Models.refreshCatalogAsync();
+        waitUntil(() -> sphinx4Models.snapshot().rows().size() == 15);
+        var subject = new SpeechToTextPanel(repo, models, voskModels, sphinx4Models);
+        JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
+        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
+        JButton downloadModelButton = (JButton) fieldValue(subject, "downloadModelButton");
+        JButton importModelButton = (JButton) fieldValue(subject, "importModelButton");
+
+        int usEnglishRow = tableRowWithModel(localModelsTable, "US English");
+        int spanishRow = tableRowWithModel(localModelsTable, "Spanish");
+        assertThat(localModelsPanel.isVisible()).isTrue();
+        assertThat(localModelsTable.getRowCount()).isEqualTo(15);
+        assertThat(usEnglishRow).isGreaterThanOrEqualTo(0);
+        assertThat(spanishRow).isGreaterThanOrEqualTo(0);
+        SwingUtilities.invokeAndWait(() -> localModelsTable.getSelectionModel().setSelectionInterval(usEnglishRow, usEnglishRow));
+        assertThat(localModelsTable.getValueAt(usEnglishRow, 4)).isEqualTo(Boolean.FALSE);
+        assertThat(downloadModelButton.isEnabled()).isTrue();
+        assertThat(importModelButton.isEnabled()).isTrue();
+        assertThat(downloadModelButton.getToolTipText()).contains("Sphinx4");
+        assertThat(importModelButton.getToolTipText()).contains("Sphinx4");
+
+        SwingUtilities.invokeAndWait(() -> localModelsTable.getSelectionModel().setSelectionInterval(spanishRow, spanishRow));
+        assertThat((String) localModelsTable.getValueAt(spanishRow, 6)).contains("Available to download");
+        assertThat(downloadModelButton.isEnabled()).isTrue();
+
+        subject.removeNotify();
+        voskModels.close();
+        sphinx4Models.close();
+    }
+
+    @Test
+    @DisplayName("Default Speech to Text providers include Deepgram and Sphinx4 in the intended order")
+    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersCloudProvidersBeforeLocalProviders() throws Exception {
         var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-provider-order.properties")), tempDir.resolve("default-models"));
         @SuppressWarnings("unchecked")
         JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
 
-        assertThat(providerComboBox.getItemCount()).isEqualTo(5);
+        assertThat(providerComboBox.getItemCount()).isEqualTo(6);
         assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
         assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
         assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
         assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
         assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("vosk");
+        assertThat(providerId(providerComboBox.getItemAt(5))).isEqualTo("sphinx4");
     }
 
     @Test
@@ -272,6 +312,9 @@ class SpeechToTextPanelTest {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.deepgram.com");
         assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.deepgram.com/v1/listen");
+        waitUntil(() -> repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "").contains("nova-3"));
+        SwingUtilities.invokeAndWait(() -> {
+        });
         subject.removeNotify();
     }
 
@@ -356,6 +399,7 @@ class SpeechToTextPanelTest {
         assertThat(localModelsTable.getValueAt(0, 0)).isEqualTo("Local Tiny");
         assertThat(localModelsTable.getValueAt(0, 1)).isEqualTo(Boolean.TRUE);
         assertThat(downloadModelButton.isEnabled()).isTrue();
+        subject.removeNotify();
     }
 
     private int tableRowWithModel(JTable table, String model) {
