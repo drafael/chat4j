@@ -218,8 +218,12 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
 
     private String safeFileName(Path audioFile) {
         String name = audioFile == null || audioFile.getFileName() == null ? "recording.wav" : audioFile.getFileName().toString();
-        String sanitized = StringUtils.defaultIfBlank(name.replaceAll("[\\r\\n\"]", "_"), "recording.wav");
-        return sanitized.endsWith(".wav") ? sanitized : "%s.wav".formatted(sanitized);
+        return safeFileName(name);
+    }
+
+    static String safeFileName(String name) {
+        String sanitized = StringUtils.defaultIfBlank(StringUtils.defaultString(name).replaceAll("[\\r\\n\"\\\\]", "_"), "recording.wav");
+        return Strings.CI.endsWith(sanitized, ".wav") ? sanitized : "%s.wav".formatted(sanitized);
     }
 
     private Map<String, String> multipartHeaders(SpeechToTextProviderContext context, String boundary) {

@@ -54,7 +54,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private final SpeechToTextModelDownloader modelDownloader;
     private final VoskModelManagementService voskModelManagementService;
     private final boolean ownsVoskModelManagementService;
-    private final AtomicLong refreshCounter = new AtomicLong();
+    private long refreshCounter;
+    private final Object refreshLock = new Object();
     private final AtomicLong saveCounter = new AtomicLong();
 
     private JComboBox<ProviderOption> providerComboBox;
@@ -171,7 +172,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     @Override
     public void removeNotify() {
-        refreshCounter.incrementAndGet();
+        cancelCatalogRefreshes();
         voskUnsubscribe.run();
         if (ownsVoskModelManagementService) {
             voskModelManagementService.close();
@@ -514,7 +515,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             updateAvailability(snapshot);
             return;
         }
-        long refreshId = refreshCounter.incrementAndGet();
+        long refreshId = nextCatalogRefreshId();
         if (explicit) {
             setStatusInfo("Refreshing Speech to Text catalogs...");
         }
@@ -524,15 +525,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                         snapshot.baseUri(),
                         snapshot.transcriptionUri(),
                         CredentialSource.SYSTEM,
-                        () -> refreshId != refreshCounter.get(),
+                        () -> !catalogRefreshCurrent(refreshId),
                         Duration.ofSeconds(45)
                 );
                 List<SpeechToTextCatalogItem> models = snapshot.provider().fetchModels(context);
-                catalogStore.saveModels(snapshot.providerId(), models);
+                if (!saveCatalogModelsIfCurrent(refreshId, snapshot.providerId(), models)) {
+                    return;
+                }
                 SwingUtilities.invokeLater(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {
-                    if (refreshId == refreshCounter.get() && explicit) {
+                    if (catalogRefreshCurrent(refreshId) && explicit) {
                         setStatusError("Could not refresh %s Speech to Text models.".formatted(snapshot.provider().displayName()));
                     }
                 });
@@ -540,8 +543,36 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         });
     }
 
+    private long nextCatalogRefreshId() {
+        synchronized (refreshLock) {
+            return ++refreshCounter;
+        }
+    }
+
+    private void cancelCatalogRefreshes() {
+        synchronized (refreshLock) {
+            refreshCounter++;
+        }
+    }
+
+    private boolean catalogRefreshCurrent(long refreshId) {
+        synchronized (refreshLock) {
+            return refreshId == refreshCounter;
+        }
+    }
+
+    private boolean saveCatalogModelsIfCurrent(long refreshId, String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
+        synchronized (refreshLock) {
+            if (refreshId != refreshCounter) {
+                return false;
+            }
+            catalogStore.saveModels(providerId, models);
+            return true;
+        }
+    }
+
     private void applyCatalogRefresh(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
-        if (refreshId != refreshCounter.get()) {
+        if (!catalogRefreshCurrent(refreshId)) {
             return;
         }
         SpeechToTextSettingsSnapshot current = settings.resolve();

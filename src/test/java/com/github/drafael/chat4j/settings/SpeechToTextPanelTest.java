@@ -206,11 +206,34 @@ class SpeechToTextPanelTest {
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        waitUntil(() -> repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "").contains("scribe_v2"));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.elevenlabs.io");
         assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.elevenlabs.io/v1/speech-to-text");
         subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("In-flight ElevenLabs catalog refresh does not persist after panel removal")
+    void refreshCatalogs_whenPanelRemovedBeforeElevenLabsRefreshCompletes_doesNotPersistCatalog() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-stale-refresh.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        var provider = new BlockingElevenLabsProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        assertThat(provider.started.await(2, TimeUnit.SECONDS)).isTrue();
+        subject.removeNotify();
+        provider.release.countDown();
+        Thread refreshThread = provider.refreshThread.get();
+        assertThat(refreshThread).isNotNull();
+        refreshThread.join(2_000);
+        assertThat(refreshThread.isAlive()).isFalse();
+        SwingUtilities.invokeAndWait(() -> {
+        });
+
+        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isBlank();
+        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isBlank();
     }
 
     @Test
@@ -268,6 +291,7 @@ class SpeechToTextPanelTest {
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        waitUntil(() -> repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "").contains("nova-3"));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.deepgram.com");
@@ -346,16 +370,19 @@ class SpeechToTextPanelTest {
                 tempDir.resolve("default-models"),
                 new SpeechToTextProviderRegistry(List.of(new LocalTestSpeechToTextProvider()))
         );
+        try {
+            JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
+            JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
+            JButton downloadModelButton = (JButton) fieldValue(subject, "downloadModelButton");
 
-        JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
-        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
-        JButton downloadModelButton = (JButton) fieldValue(subject, "downloadModelButton");
-
-        assertThat(localModelsPanel.isVisible()).isTrue();
-        assertThat(localModelsTable.getRowCount()).isEqualTo(2);
-        assertThat(localModelsTable.getValueAt(0, 0)).isEqualTo("Local Tiny");
-        assertThat(localModelsTable.getValueAt(0, 1)).isEqualTo(Boolean.TRUE);
-        assertThat(downloadModelButton.isEnabled()).isTrue();
+            assertThat(localModelsPanel.isVisible()).isTrue();
+            assertThat(localModelsTable.getRowCount()).isEqualTo(2);
+            assertThat(localModelsTable.getValueAt(0, 0)).isEqualTo("Local Tiny");
+            assertThat(localModelsTable.getValueAt(0, 1)).isEqualTo(Boolean.TRUE);
+            assertThat(downloadModelButton.isEnabled()).isTrue();
+        } finally {
+            subject.removeNotify();
+        }
     }
 
     private int tableRowWithModel(JTable table, String model) {
@@ -605,6 +632,22 @@ class SpeechToTextPanelTest {
             this.context.set(context);
             refreshed.countDown();
             return List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"));
+        }
+    }
+
+    private static final class BlockingElevenLabsProvider extends ElevenLabsTestProvider {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            refreshThread.set(Thread.currentThread());
+            started.countDown();
+            if (!release.await(2, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to release catalog refresh.");
+            }
+            return List.of(SpeechToTextCatalogItem.of("stale-scribe", "Stale Scribe"));
         }
     }
 

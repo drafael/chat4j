@@ -133,7 +133,7 @@ class ElevenLabsSpeechToTextProviderTest {
     @Test
     @DisplayName("ElevenLabs transcription sends ElevenLabs multipart request")
     void transcribe_whenResponseSuccessful_sendsMultipartRequest() throws Exception {
-        Path audio = tempDir.resolve("bad\"name.wav");
+        Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
         var transport = new CapturingTransport(success("{\"text\":\" hello world \"}"));
         var subject = new ElevenLabsSpeechToTextProvider(transport);
@@ -148,11 +148,17 @@ class ElevenLabsSpeechToTextProviderTest {
         assertThat(transport.request.headers()).doesNotContainKey("Authorization");
         assertThat(body).contains("name=\"model_id\"");
         assertThat(body).contains("scribe_v2");
-        assertThat(body).contains("name=\"file\"; filename=\"bad_name.wav\"");
+        assertThat(body).contains("name=\"file\"; filename=\"recording.wav\"");
         assertThat(body).contains("Content-Type: audio/wav");
         assertThat(body).doesNotContain("name=\"model\"");
         assertThat(body).doesNotContain("response_format");
         assertThat(body).endsWith("--\r\n");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs multipart file names replace unsafe characters")
+    void safeFileName_whenFileNameContainsHeaderUnsafeCharacters_replacesUnsafeCharacters() {
+        assertThat(ElevenLabsSpeechToTextProvider.safeFileName("bad\"name\\test.WAV")).isEqualTo("bad_name_test.WAV");
     }
 
     @Test
