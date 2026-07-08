@@ -14,6 +14,7 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
+import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
@@ -950,6 +951,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             helperLabel.setText("Recorded audio is sent to ElevenLabs for transcription. No API key is stored by Chat4J.");
         } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
             helperLabel.setText("Recorded audio is sent to Deepgram for transcription. No API key is stored by Chat4J.");
+        } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            helperLabel.setText("Recorded audio is sent to AssemblyAI for transcription. No API key is stored by Chat4J.");
         } else {
             helperLabel.setText(snapshot.provider().availableMessage());
         }

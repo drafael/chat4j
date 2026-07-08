@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -25,6 +26,11 @@ public class SpeechToTextCatalogStore {
     }
 
     public List<SpeechToTextCatalogItem> models(SpeechToTextProvider provider, SpeechToTextCatalogItem selected) {
+        if (AssemblyAiSpeechToTextProvider.ID.equals(provider.id())) {
+            return provider.bundledModels().stream()
+                    .filter(item -> AssemblyAiSpeechToTextProvider.isBundledModelId(item.id()))
+                    .toList();
+        }
         return mergeWithSelected(cachedModels(provider.id()), provider.bundledModels(), selected);
     }
 

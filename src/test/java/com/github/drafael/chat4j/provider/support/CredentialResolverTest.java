@@ -77,6 +77,16 @@ class CredentialResolverTest {
     }
 
     @Test
+    @DisplayName("Provider credential presence check includes AssemblyAI")
+    void hasAnyProviderCredentials_whenAssemblyAiKeyExists_returnsTrue() {
+        CredentialResolver.init(Map.of("ASSEMBLYAI_API_KEY", "assemblyai-test"));
+
+        var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
+
+        assertThat(hasCredentials).isTrue();
+    }
+
+    @Test
     @DisplayName("Required credentials check returns true when no environment variable is required")
     void hasRequiredCredentials_whenEnvVarIsNull_returnsTrue() {
         var hasCredentials = CredentialResolver.hasRequiredCredentials(null);

@@ -7,6 +7,7 @@ Providers:
 - **Groq**: cloud transcription using Groq-compatible Whisper endpoints.
 - **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
 - **Deepgram**: cloud transcription using Deepgram pre-recorded STT models.
+- **AssemblyAI**: cloud transcription using AssemblyAI prerecorded Universal models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
 
 Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Settings → Speech to Text**.
@@ -15,11 +16,12 @@ Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Setti
 
 Open **Settings → Speech to Text**.
 
-- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, or `Vosk`.
+- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, `AssemblyAI`, or `Vosk`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
   - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
   - Deepgram defaults to `nova-3` and can refresh batch-capable STT models from Deepgram.
+  - AssemblyAI defaults to automatic model selection, which omits `speech_models` so AssemblyAI can use Universal-3.5 Pro with Universal-2 fallback. Specific `universal-3-5-pro` and `universal-2` choices are also bundled.
   - Vosk shows only installed local models that are eligible for local transcription.
 - **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
 - **Max recording seconds**: valid range is 1–600 seconds.
@@ -81,6 +83,26 @@ https://api.deepgram.com/v1/models
 Chat4J parses batch-capable STT models from the `stt` array, ignores non-STT families, and preserves the previously cached Deepgram model catalog if a refresh fails. The bundled fallback catalog contains `nova-3`, `nova-3-general`, and `nova-2-general`; the active Deepgram account/API may expose a different model set. Bare `nova-2` is not bundled unless Deepgram explicitly confirms it as a pre-recorded model ID.
 
 Advanced Deepgram options such as smart formatting, diarization, language selection, punctuation, numerals, utterances, keywords, search/replace, alternatives, callbacks/webhooks, and live streaming are not exposed yet.
+
+## AssemblyAI credentials and models
+
+AssemblyAI Speech to Text requires `ASSEMBLYAI_API_KEY` in the process environment. Chat4J does not store the API key.
+
+AssemblyAI STT uses the official API base URL:
+
+```text
+https://api.assemblyai.com
+```
+
+The transcription flow uploads the finalized WAV file, submits a transcript job, polls until completion, and then attempts best-effort deletion of the transcript record after Chat4J receives the text or no longer needs the job.
+
+Bundled model choices:
+
+- `assemblyai-auto`: automatic/default behavior; Chat4J omits `speech_models`, allowing AssemblyAI to use Universal-3.5 Pro with Universal-2 fallback;
+- `universal-3-5-pro`: AssemblyAI Universal-3.5 Pro;
+- `universal-2`: AssemblyAI Universal-2.
+
+Advanced AssemblyAI options such as diarization, language detection, PII redaction, summaries, keyterms, webhooks, and region selection are not exposed yet.
 
 ## Vosk local transcription
 
@@ -144,6 +166,8 @@ For Groq, finalized audio is sent to Groq for transcription.
 For ElevenLabs, finalized audio is sent to ElevenLabs for transcription. Chat4J does not send ElevenLabs `enable_logging=false` or zero-retention flags in this implementation; retention and logging behavior are governed by the user's ElevenLabs account and API terms.
 
 For Deepgram, finalized audio is sent to Deepgram for transcription. Chat4J does not claim local, offline, or zero-retention behavior for Deepgram; retention and logging behavior are governed by the user's Deepgram account and API terms.
+
+For AssemblyAI, finalized audio is sent to AssemblyAI for transcription. Chat4J attempts best-effort transcript deletion once the transcript is no longer needed, but retention, logging, and privacy behavior are governed by the user's AssemblyAI account and API terms.
 
 For Vosk, transcription runs locally after the model is installed. Catalog refresh and model downloads contact the official Vosk/Alpha Cephei model host, but recorded audio is not uploaded for Vosk transcription.
 

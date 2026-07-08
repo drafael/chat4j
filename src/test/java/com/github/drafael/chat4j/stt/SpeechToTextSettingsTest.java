@@ -120,9 +120,51 @@ class SpeechToTextSettingsTest {
     }
 
     @Test
-    @DisplayName("Credential resolver includes Deepgram API key")
-    void supportedProviderEnvVars_whenQueried_includesDeepgram() {
-        assertThat(CredentialResolver.supportedProviderEnvVars()).contains("DEEPGRAM_API_KEY");
+    @DisplayName("AssemblyAI resolves official endpoints and default automatic model")
+    void resolve_whenAssemblyAiSelected_usesAssemblyAiEndpointsAndDefaultModel() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        assertThat(snapshot.available()).isTrue();
+        assertThat(snapshot.model().id()).isEqualTo("assemblyai-auto");
+        assertThat(snapshot.baseUri()).hasToString("https://api.assemblyai.com");
+        assertThat(snapshot.transcriptionUri()).hasToString("https://api.assemblyai.com/v2/transcript");
+    }
+
+    @Test
+    @DisplayName("Saved AssemblyAI remains selected but unavailable without credentials")
+    void resolve_whenAssemblyAiMissingCredentials_remainsSelectedUnavailable() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-missing.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        var snapshot = subject.resolve();
+
+        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        assertThat(snapshot.enabled()).isTrue();
+        assertThat(snapshot.available()).isFalse();
+        assertThat(snapshot.statusMessage()).contains("ASSEMBLYAI_API_KEY");
+    }
+
+    @Test
+    @DisplayName("Unknown persisted AssemblyAI model falls back to automatic model")
+    void resolve_whenAssemblyAiPersistedModelUnknown_usesDefaultModel() {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-model.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        repo.put(SettingsKeys.sttModelIdKey(SettingsKeys.STT_PROVIDER_ASSEMBLYAI), "stale-model");
+        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+
+        assertThat(subject.resolve().model().id()).isEqualTo("assemblyai-auto");
+    }
+
+    @Test
+    @DisplayName("Credential resolver includes STT API keys")
+    void supportedProviderEnvVars_whenQueried_includesSttProviders() {
+        assertThat(CredentialResolver.supportedProviderEnvVars()).contains("DEEPGRAM_API_KEY", "ASSEMBLYAI_API_KEY");
     }
 
     @Test

@@ -9,6 +9,8 @@ import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
@@ -197,6 +199,10 @@ public class SpeechToTextSettings {
         }
         if (DeepgramSpeechToTextProvider.ID.equals(provider.id())) {
             DeepgramSttEndpointResolver.Endpoint endpoint = DeepgramSttEndpointResolver.resolve();
+            return new SttEndpoint(endpoint.baseUri(), endpoint.transcriptionUri());
+        }
+        if (AssemblyAiSpeechToTextProvider.ID.equals(provider.id())) {
+            AssemblyAiSttEndpointResolver.Endpoint endpoint = AssemblyAiSttEndpointResolver.resolve(AssemblyAiSttEndpointResolver.DEFAULT_BASE_URL);
             return new SttEndpoint(endpoint.baseUri(), endpoint.transcriptionUri());
         }
         throw new SpeechToTextException("%s Speech to Text endpoints are not configured.".formatted(provider.displayName()));

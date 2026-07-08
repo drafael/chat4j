@@ -18,6 +18,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -180,18 +181,19 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Default Speech to Text providers include Deepgram in the intended order")
-    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersDeepgramBetweenElevenLabsAndVosk() throws Exception {
+    @DisplayName("Default Speech to Text providers include AssemblyAI before Vosk")
+    void reloadProviderOptions_whenDefaultRegistryLoaded_ordersAssemblyAiBeforeVosk() throws Exception {
         var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-provider-order.properties")), tempDir.resolve("default-models"));
         @SuppressWarnings("unchecked")
         JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
 
-        assertThat(providerComboBox.getItemCount()).isEqualTo(5);
+        assertThat(providerComboBox.getItemCount()).isEqualTo(6);
         assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
         assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
         assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
         assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
-        assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("vosk");
+        assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("assemblyai");
+        assertThat(providerId(providerComboBox.getItemAt(5))).isEqualTo("vosk");
     }
 
     @Test
@@ -358,6 +360,58 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("AssemblyAI catalog refresh uses AssemblyAI endpoint context")
+    void refreshCatalogs_whenAssemblyAiSelected_usesAssemblyAiEndpointContext() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-refresh.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ASSEMBLYAI, List.of(SpeechToTextCatalogItem.of("assemblyai-auto", "AssemblyAI Automatic")));
+        var provider = new CapturingAssemblyAiProvider();
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
+
+        SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "refreshCatalogs", true));
+        assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+        waitUntil(() -> subject.statusLabel().getText().contains("Speech to Text catalogs refreshed"));
+        SwingUtilities.invokeAndWait(() -> {
+        });
+        assertThat(provider.context.get().baseUri()).hasToString("https://api.assemblyai.com");
+        assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.assemblyai.com/v2/transcript");
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("AssemblyAI helper copy explains cloud upload and key storage")
+    void updateAvailability_whenAssemblyAiAvailable_showsAssemblyAiPrivacyCopy() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-helper.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider())));
+        SwingUtilities.invokeAndWait(() -> {
+        });
+        var helperLabel = (JLabel) fieldValue(subject, "helperLabel");
+
+        assertThat(helperLabel.getText()).isEqualTo("Recorded audio is sent to AssemblyAI for transcription. No API key is stored by Chat4J.");
+        subject.removeNotify();
+    }
+
+    @Test
+    @DisplayName("AssemblyAI ignores stale cached catalog entries")
+    void refreshControlsFromSettings_whenAssemblyAiCacheContainsUnknownModels_showsBundledModelsOnly() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-stale-cache.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ASSEMBLYAI, List.of(
+                SpeechToTextCatalogItem.of("assemblyai-auto", "Automatic"),
+                SpeechToTextCatalogItem.of("stale-model", "Stale Model"),
+                SpeechToTextCatalogItem.of("bad\tmodel", "Bad Model")
+        ));
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider())));
+        @SuppressWarnings("unchecked")
+        JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+
+        assertThat(modelComboBox.getItemCount()).isEqualTo(3);
+        assertThat(comboModelIds(modelComboBox)).containsExactly("assemblyai-auto", "universal-3-5-pro", "universal-2");
+        subject.removeNotify();
+    }
+
+    @Test
     @DisplayName("Local model controls show selectable models for local Speech to Text providers")
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
@@ -380,6 +434,14 @@ class SpeechToTextPanelTest {
         } finally {
             subject.removeNotify();
         }
+    }
+
+    private List<String> comboModelIds(JComboBox<SpeechToTextCatalogItem> comboBox) {
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < comboBox.getItemCount(); i++) {
+            ids.add(comboBox.getItemAt(i).id());
+        }
+        return ids;
     }
 
     private int tableRowWithModel(JTable table, String model) {
@@ -776,6 +838,60 @@ class SpeechToTextPanelTest {
         public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
             refreshed.countDown();
             throw new IllegalStateException("catalog unavailable");
+        }
+    }
+
+    private static class AssemblyAiTestProvider implements SpeechToTextProvider {
+
+        @Override
+        public String id() {
+            return SettingsKeys.STT_PROVIDER_ASSEMBLYAI;
+        }
+
+        @Override
+        public String displayName() {
+            return "AssemblyAI";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return "";
+        }
+
+        @Override
+        public SpeechToTextCatalogItem defaultModel() {
+            return SpeechToTextCatalogItem.of("assemblyai-auto", "AssemblyAI Automatic (Universal-3.5 Pro → Universal-2)");
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> bundledModels() {
+            return List.of(
+                    defaultModel(),
+                    SpeechToTextCatalogItem.of("universal-3-5-pro", "AssemblyAI Universal-3.5 Pro"),
+                    SpeechToTextCatalogItem.of("universal-2", "AssemblyAI Universal-2")
+            );
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            return bundledModels();
+        }
+
+        @Override
+        public SpeechToTextResult transcribe(SpeechToTextRequest request, SpeechToTextProviderContext context) {
+            return new SpeechToTextResult("test");
+        }
+    }
+
+    private static final class CapturingAssemblyAiProvider extends AssemblyAiTestProvider {
+        private final CountDownLatch refreshed = new CountDownLatch(1);
+        private final AtomicReference<SpeechToTextProviderContext> context = new AtomicReference<>();
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) {
+            this.context.set(context);
+            refreshed.countDown();
+            return bundledModels();
         }
     }
 

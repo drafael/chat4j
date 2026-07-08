@@ -22,6 +22,7 @@ public final class CredentialResolver {
         "GROQ_API_KEY",
         "ELEVENLABS_API_KEY",
         "DEEPGRAM_API_KEY",
+        "ASSEMBLYAI_API_KEY",
         "DEEPSEEK_API_KEY",
         "MISTRAL_API_KEY",
         "XAI_API_KEY",
