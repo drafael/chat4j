@@ -121,10 +121,7 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-plausible.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("vosk-plausible-models");
-        Files.createDirectories(models.resolve("vosk").resolve("custom-plausible").resolve("am"));
-        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"));
-        voskModels.refreshAsync();
-        waitUntil(() -> !voskModels.snapshot().rows().isEmpty());
+        var voskModels = new PlausibleVoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"));
 
         var subject = new SpeechToTextPanel(repo, models, voskModels);
         @SuppressWarnings("unchecked")
@@ -459,6 +456,67 @@ class SpeechToTextPanelTest {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
+    }
+
+    private static final class PlausibleVoskModelManagementService extends VoskModelManagementService {
+        private final VoskModelManagementSnapshot plausibleSnapshot;
+
+        private PlausibleVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            Path root = modelRoot.resolve(VoskModelManagementService.PROVIDER_ID);
+            Path modelDirectory = root.resolve("custom-plausible");
+            var installedModel = new VoskInstalledModel(
+                    "local:custom-plausible",
+                    "custom-plausible",
+                    modelDirectory,
+                    modelDirectory,
+                    null,
+                    true,
+                    false,
+                    true,
+                    VoskValidationStatus.PLAUSIBLE_UNVERIFIED,
+                    "Model layout looks plausible but needs validation before recording.",
+                    "fingerprint"
+            );
+            var row = new VoskLocalModelRow(
+                    installedModel.id(),
+                    installedModel.label(),
+                    "Custom",
+                    "local",
+                    "",
+                    null,
+                    installedModel,
+                    false,
+                    false,
+                    true,
+                    false,
+                    installedModel.validationMessage()
+            );
+            plausibleSnapshot = new VoskModelManagementSnapshot(
+                    root,
+                    tempRoot,
+                    emptyList(),
+                    List.of(installedModel),
+                    List.of(row),
+                    null,
+                    true,
+                    "Select an installed Vosk model to enable transcription.",
+                    false,
+                    ""
+            );
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return plausibleSnapshot;
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            listener.accept(plausibleSnapshot);
+            return () -> {
+            };
+        }
     }
 
     private static final class BusyVoskModelManagementService extends VoskModelManagementService {
