@@ -14,6 +14,12 @@ import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskValidationStatus;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperBinding;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperContextHandle;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
+import io.github.freshsupasulley.whisperjni.WhisperFullParams;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
@@ -187,13 +193,14 @@ class SpeechToTextPanelTest {
         @SuppressWarnings("unchecked")
         JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
 
-        assertThat(providerComboBox.getItemCount()).isEqualTo(6);
+        assertThat(providerComboBox.getItemCount()).isEqualTo(7);
         assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
         assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
         assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
         assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
         assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("assemblyai");
-        assertThat(providerId(providerComboBox.getItemAt(5))).isEqualTo("vosk");
+        assertThat(providerId(providerComboBox.getItemAt(5))).isEqualTo("whisper");
+        assertThat(providerId(providerComboBox.getItemAt(6))).isEqualTo("vosk");
     }
 
     @Test
@@ -412,6 +419,31 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Whisper local model controls hide Vosk-only import action")
+    void refreshControlsFromSettings_whenWhisperSelected_hidesImportButton() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-whisper-import.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
+        Path defaultModels = tempDir.resolve("default-models");
+        var subject = new SpeechToTextPanel(
+                repo,
+                defaultModels,
+                new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp")),
+                new WhisperModelManagementService(repo, defaultModels, tempDir.resolve("whisper-temp"), fakeWhisperRuntime(), new WhisperModelUsageTracker())
+        );
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+            });
+            JButton importModelButton = (JButton) fieldValue(subject, "importModelButton");
+
+            assertThat(importModelButton.isVisible()).isFalse();
+            assertThat(importModelButton.getToolTipText()).isNull();
+            assertThat(importModelButton.getAccessibleContext().getAccessibleName()).isBlank();
+        } finally {
+            subject.removeNotify();
+        }
+    }
+
+    @Test
     @DisplayName("Local model controls show selectable models for local Speech to Text providers")
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
@@ -518,6 +550,34 @@ class SpeechToTextPanelTest {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
+    }
+
+    private WhisperNativeRuntime fakeWhisperRuntime() {
+        return new WhisperNativeRuntime(() -> new WhisperBinding() {
+            @Override
+            public void loadLibrary() {
+            }
+
+            @Override
+            public WhisperContextHandle init(Path modelFile) {
+                return null;
+            }
+
+            @Override
+            public int full(WhisperContextHandle context, WhisperFullParams params, float[] samples, int numSamples) {
+                return 0;
+            }
+
+            @Override
+            public int fullNSegments(WhisperContextHandle context) {
+                return 0;
+            }
+
+            @Override
+            public String fullGetSegmentText(WhisperContextHandle context, int index) {
+                return "";
+            }
+        });
     }
 
     private static final class PlausibleVoskModelManagementService extends VoskModelManagementService {

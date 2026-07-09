@@ -20,6 +20,9 @@ import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperInstalledModel;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.Locale;
@@ -36,6 +39,7 @@ public class SpeechToTextSettings {
     private final CredentialSource credentialSource;
     private final SpeechToTextModelDirectory modelDirectory;
     private final VoskModelManagementService voskModelManagementService;
+    private final WhisperModelManagementService whisperModelManagementService;
 
     public SpeechToTextSettings(
             SettingsRepository settingsRepo,
@@ -43,7 +47,7 @@ public class SpeechToTextSettings {
             CredentialSource credentialSource,
             Path defaultModelDirectory
     ) {
-        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, null);
+        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, null, null);
     }
 
     public SpeechToTextSettings(
@@ -53,11 +57,23 @@ public class SpeechToTextSettings {
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
+        this(settingsRepo, providerRegistry, credentialSource, defaultModelDirectory, voskModelManagementService, null);
+    }
+
+    public SpeechToTextSettings(
+            SettingsRepository settingsRepo,
+            SpeechToTextProviderRegistry providerRegistry,
+            CredentialSource credentialSource,
+            Path defaultModelDirectory,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService
+    ) {
         this.settingsRepo = settingsRepo;
         this.providerRegistry = providerRegistry;
         this.credentialSource = credentialSource;
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
         this.voskModelManagementService = voskModelManagementService;
+        this.whisperModelManagementService = whisperModelManagementService;
     }
 
     public SpeechToTextSettingsSnapshot resolve() {
@@ -73,6 +89,9 @@ public class SpeechToTextSettings {
         }
         if (SettingsKeys.STT_PROVIDER_VOSK.equals(provider.id())) {
             return resolveVosk(provider, maxDurationSeconds, directory);
+        }
+        if (SettingsKeys.STT_PROVIDER_WHISPER.equals(provider.id())) {
+            return resolveWhisper(provider, maxDurationSeconds, directory);
         }
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
@@ -94,6 +113,13 @@ public class SpeechToTextSettings {
             throw new IllegalStateException("Vosk model management is not available.");
         }
         voskModelManagementService.validateSelectedNow();
+    }
+
+    public void validateSelectedWhisperModelNow() {
+        if (whisperModelManagementService == null) {
+            throw new IllegalStateException("Whisper.cpp model management is not available.");
+        }
+        whisperModelManagementService.validateSelectedNow();
     }
 
     public void saveProvider(String providerId) {
@@ -152,6 +178,26 @@ public class SpeechToTextSettings {
         }
         VoskModelManagementSnapshot snapshot = voskModelManagementService.snapshot();
         VoskInstalledModel selected = snapshot.selectedModel();
+        SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
+        return new SpeechToTextSettingsSnapshot(
+                provider,
+                model,
+                snapshot.readyToTranscribe(),
+                maxDurationSeconds,
+                directory,
+                null,
+                null,
+                snapshot.statusMessage(),
+                selected == null ? null : selected.reference()
+        );
+    }
+
+    private SpeechToTextSettingsSnapshot resolveWhisper(SpeechToTextProvider provider, int maxDurationSeconds, Path directory) {
+        if (whisperModelManagementService == null) {
+            return new SpeechToTextSettingsSnapshot(provider, null, false, maxDurationSeconds, directory, null, null, "Whisper.cpp model management is not available.");
+        }
+        WhisperModelManagementSnapshot snapshot = whisperModelManagementService.snapshot();
+        WhisperInstalledModel selected = snapshot.selectedModel();
         SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
         return new SpeechToTextSettingsSnapshot(
                 provider,

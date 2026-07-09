@@ -7,6 +7,8 @@ import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvi
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperEngine;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
@@ -21,12 +23,21 @@ public class SpeechToTextProviderRegistry {
     }
 
     public static SpeechToTextProviderRegistry createDefault() {
+        return createDefault(new WhisperSpeechToTextProvider());
+    }
+
+    public static SpeechToTextProviderRegistry createDefault(WhisperEngine whisperEngine) {
+        return createDefault(new WhisperSpeechToTextProvider(whisperEngine));
+    }
+
+    public static SpeechToTextProviderRegistry createDefault(WhisperSpeechToTextProvider whisperProvider) {
         JavaNetSttHttpTransport transport = new JavaNetSttHttpTransport();
         return new SpeechToTextProviderRegistry(List.of(
                 new GroqSpeechToTextProvider(transport),
                 new ElevenLabsSpeechToTextProvider(transport),
                 new DeepgramSpeechToTextProvider(transport),
                 new AssemblyAiSpeechToTextProvider(transport),
+                whisperProvider,
                 new VoskSpeechToTextProvider()
         ));
     }

@@ -112,6 +112,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - Streaming assistant responses
 - Local history/settings persistence (SQLite by default, optional H2, Flyway migrations)
 - Agent Mode with local workspace tools
+- Speech to Text with cloud providers plus local Whisper.cpp/Vosk model management
 
 ## Supported providers
 
@@ -129,6 +130,8 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
+
+Whisper.cpp local speech-to-text does not require an API key after downloading a local model.
 
 ### Setting environment variables
 

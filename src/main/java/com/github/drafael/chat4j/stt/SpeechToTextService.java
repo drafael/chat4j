@@ -11,6 +11,8 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,25 +41,29 @@ public class SpeechToTextService {
     private final MicrophoneAudioCapture capture;
     private final ExecutorService executor;
     private final boolean disabled;
+    private final WhisperModelManagementService whisperModelManagementService;
     private final AtomicLong sessionCounter = new AtomicLong();
     private final AtomicBoolean active = new AtomicBoolean();
     private volatile AudioCaptureSession activeCapture;
     private volatile SpeechToTextSessionSnapshot activeSnapshot;
     private volatile boolean recording;
     private volatile boolean transcribing;
+    private volatile AtomicBoolean activeCancellation = new AtomicBoolean();
+    private volatile WhisperModelUsageTracker.Lease activeWhisperLease;
 
     public SpeechToTextService(
             @NonNull SpeechToTextSettings settings,
             @NonNull MicrophoneAudioCapture capture
     ) {
-        this(settings, capture, Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()), false);
+        this(settings, capture, Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()), false, null);
     }
 
-    private SpeechToTextService(SpeechToTextSettings settings, MicrophoneAudioCapture capture, ExecutorService executor, boolean disabled) {
+    private SpeechToTextService(SpeechToTextSettings settings, MicrophoneAudioCapture capture, ExecutorService executor, boolean disabled, WhisperModelManagementService whisperModelManagementService) {
         this.settings = settings;
         this.capture = capture;
         this.executor = executor;
         this.disabled = disabled;
+        this.whisperModelManagementService = whisperModelManagementService;
         if (!disabled) {
             Thread.startVirtualThread(capture::cleanupStaleTempFiles);
         }
@@ -73,9 +79,22 @@ public class SpeechToTextService {
             Path sttTempDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
+        return createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, voskModelManagementService, null);
+    }
+
+    public static SpeechToTextService createDefault(
+            SettingsRepository settingsRepo,
+            Path sttModelsDirectory,
+            Path sttTempDirectory,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService
+    ) {
         return new SpeechToTextService(
-                new SpeechToTextSettings(settingsRepo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, sttModelsDirectory, voskModelManagementService),
-                new MicrophoneAudioCapture(sttTempDirectory)
+                new SpeechToTextSettings(settingsRepo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, sttModelsDirectory, voskModelManagementService, whisperModelManagementService),
+                new MicrophoneAudioCapture(sttTempDirectory),
+                Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-stt-", 0).factory()),
+                false,
+                whisperModelManagementService
         );
     }
 
@@ -115,6 +134,7 @@ public class SpeechToTextService {
         }
 
         long sessionId = sessionCounter.incrementAndGet();
+        activeCancellation = new AtomicBoolean();
         try {
             CompletableFuture.runAsync(() -> prepareAndStartRecording(sessionId, callbacks), executor);
         } catch (RejectedExecutionException e) {
@@ -142,6 +162,14 @@ public class SpeechToTextService {
                     throw new SpeechToTextException("Speech to Text is turned off.");
                 }
             }
+            if (WhisperModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
+                runEdt(() -> callbacks.status("Validating Whisper.cpp model..."));
+                settings.validateSelectedWhisperModelNow();
+                settingsSnapshot = settings.resolve();
+                if (!settingsSnapshot.enabled()) {
+                    throw new SpeechToTextException("Speech to Text is turned off.");
+                }
+            }
             if (!settingsSnapshot.available()) {
                 throw new SpeechToTextException(StringUtils.defaultIfBlank(settingsSnapshot.statusMessage(), settingsSnapshot.provider().unavailableMessage()));
             }
@@ -155,6 +183,7 @@ public class SpeechToTextService {
                     settingsSnapshot.transcriptionUri(),
                     settingsSnapshot.localModelReference()
             );
+            acquireWhisperLease(settingsSnapshot);
             AudioCaptureSession session = capture.start(settingsSnapshot.maxDurationSeconds(), (rms, peak) -> runEdt(() -> callbacks.level(rms, peak)));
             if (isStale(sessionId)) {
                 session.cancel();
@@ -187,6 +216,15 @@ public class SpeechToTextService {
 
     public void cancel(Callbacks callbacks) {
         boolean wasTranscribing = transcribing;
+        boolean whisperTranscribing = wasTranscribing && activeSnapshot != null && WhisperModelManagementService.PROVIDER_ID.equals(activeSnapshot.providerId());
+        activeCancellation.set(true);
+        if (whisperTranscribing) {
+            runEdt(() -> {
+                callbacks.status("Finishing Whisper.cpp cancellation...");
+                callbacks.stateChanged();
+            });
+            return;
+        }
         long sessionId = sessionCounter.incrementAndGet();
         AudioCaptureSession session = activeCapture;
         resetState(sessionId);
@@ -257,6 +295,11 @@ public class SpeechToTextService {
         try {
             SpeechToTextSessionSnapshot snapshot = activeSnapshot;
             SpeechToTextSettingsSnapshot current = settings.resolve();
+            if (snapshot != null && WhisperModelManagementService.PROVIDER_ID.equals(snapshot.providerId())) {
+                runEdt(() -> callbacks.status("Validating Whisper.cpp model..."));
+                settings.validateSelectedWhisperModelNow();
+                current = settings.resolve();
+            }
             if (!matchesSnapshot(snapshot, current)) {
                 throw new SpeechToTextException("Speech-to-text settings changed; recording was not transcribed.");
             }
@@ -264,7 +307,7 @@ public class SpeechToTextService {
                     current.baseUri(),
                     current.transcriptionUri(),
                     CredentialSource.SYSTEM,
-                    () -> isStale(sessionId),
+                    () -> isStale(sessionId) || activeCancellation.get(),
                     REQUEST_TIMEOUT,
                     current.localModelReference()
             );
@@ -290,6 +333,24 @@ public class SpeechToTextService {
             }
         } finally {
             deleteAudio(audio);
+        }
+    }
+
+    private void acquireWhisperLease(SpeechToTextSettingsSnapshot settingsSnapshot) {
+        if (!WhisperModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())
+                || settingsSnapshot.localModelReference() == null
+                || whisperModelManagementService == null) {
+            return;
+        }
+        releaseWhisperLease();
+        activeWhisperLease = whisperModelManagementService.usageTracker().acquire(settingsSnapshot.localModelReference().modelId());
+    }
+
+    private void releaseWhisperLease() {
+        WhisperModelUsageTracker.Lease lease = activeWhisperLease;
+        activeWhisperLease = null;
+        if (lease != null) {
+            lease.close();
         }
     }
 
@@ -320,6 +381,8 @@ public class SpeechToTextService {
         transcribing = false;
         activeCapture = null;
         activeSnapshot = null;
+        activeCancellation = new AtomicBoolean();
+        releaseWhisperLease();
     }
 
     private void deleteAudio(CapturedAudio audio) {
@@ -392,7 +455,7 @@ public class SpeechToTextService {
 
     private static final class DisabledSpeechToTextService extends SpeechToTextService {
         private DisabledSpeechToTextService() {
-            super(null, null, null, true);
+            super(null, null, null, true, null);
         }
 
         @Override

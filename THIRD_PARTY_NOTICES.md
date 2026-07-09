@@ -122,6 +122,31 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 
 Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.
 
+## whisper-jni / whisper.cpp runtime 0.5.5
+
+- Project: https://github.com/FreshSupaSulley/whisper-jni
+- Upstream native engine: https://github.com/ggml-org/whisper.cpp
+- Maven coordinates: `io.github.freshsupasulley:whisper-jni`
+- Licenses declared by the wrapper/upstream projects: MIT
+- Bundled runtime resources include platform native whisper.cpp/ggml libraries from the Maven artifact for desktop local Speech to Text.
+- The `whisper-jni` Maven artifact also bundles `ggml-silero-v5.1.2.bin`, a ggml-converted Silero VAD model asset from the `ggml-org/whisper-vad` Hugging Face repository (`license: mit`) derived from Silero VAD (MIT License). Chat4J does not expose this bundled VAD asset as a selectable transcription model.
+
+Chat4J bundles the Whisper.cpp Java/native runtime only. Chat4J does **not** bundle Whisper transcription models. Users download official whisper.cpp ggml model files from Hugging Face through Chat4J's model manager. Model files derive from OpenAI Whisper distribution and Hugging Face-hosted artifacts; model terms may vary by artifact/source repository.
+
+Most model downloads use:
+
+```text
+https://huggingface.co/ggerganov/whisper.cpp
+```
+
+The `small.en-tdrz` entry follows the upstream whisper.cpp script exception:
+
+```text
+https://huggingface.co/akashmjn/tinydiarize-whisper.cpp
+```
+
+The bundled `ggml-silero-v5.1.2.bin` VAD asset is treated as a dependency runtime asset and is not exposed as a Chat4J Whisper transcription model in v1.
+
 ## Vosk Java/native runtime 0.3.38
 
 - Project: https://alphacephei.com/vosk/

@@ -8,6 +8,7 @@ Providers:
 - **ElevenLabs**: cloud transcription using ElevenLabs Scribe models.
 - **Deepgram**: cloud transcription using Deepgram pre-recorded STT models.
 - **AssemblyAI**: cloud transcription using AssemblyAI prerecorded Universal models.
+- **Whisper.cpp**: local/offline transcription using the bundled whisper.cpp JNI/native runtime and Chat4J-managed downloaded ggml models.
 - **Vosk**: local transcription using the bundled Vosk Java/native runtime and user-installed Vosk model folders.
 
 Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Settings → Speech to Text**.
@@ -16,12 +17,13 @@ Chat4J never auto-enables cloud STT. Selecting a provider is explicit in **Setti
 
 Open **Settings → Speech to Text**.
 
-- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, `AssemblyAI`, or `Vosk`.
+- **Provider**: `Off`, `Groq`, `ElevenLabs`, `Deepgram`, `AssemblyAI`, `Whisper.cpp`, or `Vosk`.
 - **Model**:
   - Groq defaults to `whisper-large-v3-turbo`.
   - ElevenLabs defaults to `scribe_v2` and can refresh available Scribe models from ElevenLabs.
   - Deepgram defaults to `nova-3` and can refresh batch-capable STT models from Deepgram.
   - AssemblyAI defaults to automatic model selection, which omits `speech_models` so AssemblyAI can use Universal-3.5 Pro with Universal-2 fallback. Specific `universal-3-5-pro` and `universal-2` choices are also bundled.
+  - Whisper.cpp shows only installed Chat4J-managed local models that are eligible for local transcription. Downloadable official ggml models are shown in the local model table.
   - Vosk shows only installed local models that are eligible for local transcription.
 - **Local models directory**: base directory for local STT models. The default is under the app config directory at `stt/models`.
 - **Max recording seconds**: valid range is 1–600 seconds.
@@ -104,6 +106,48 @@ Bundled model choices:
 
 Advanced AssemblyAI options such as diarization, language detection, PII redaction, summaries, keyterms, webhooks, and region selection are not exposed yet.
 
+## Whisper.cpp local transcription
+
+Chat4J bundles the whisper.cpp JNI/native runtime through `io.github.freshsupasulley:whisper-jni`, but **does not bundle Whisper transcription models**. Users download models through **Settings → Speech to Text**.
+
+Whisper.cpp downloads use the official ggml model list from whisper.cpp. Most models are downloaded from:
+
+```text
+https://huggingface.co/ggerganov/whisper.cpp
+```
+
+The `small.en-tdrz` catalog entry follows the upstream whisper.cpp script exception and downloads from:
+
+```text
+https://huggingface.co/akashmjn/tinydiarize-whisper.cpp
+```
+
+Chat4J v1 returns plain transcript text for `small.en-tdrz`; it does not expose speaker diarization output.
+
+The effective Whisper.cpp model root is:
+
+```text
+<configured-stt-model-dir>/whisper
+```
+
+With default paths, that is under:
+
+```text
+<app-config>/stt/models/whisper
+```
+
+Whisper.cpp model behavior:
+
+- no API key is required;
+- transcription runs locally after a model is installed, and recorded audio is not uploaded;
+- the model dropdown contains installed eligible Whisper.cpp models only;
+- the local model table contains the full official downloadable catalog;
+- v1 supports Chat4J-managed downloads only, not arbitrary `.bin` import or auto-adoption;
+- downloads can be large, and medium/large model families may require substantial disk, RAM, and CPU;
+- cancellation during native model initialization/transcription may only finish after the current native call returns.
+
+For official catalog downloads, Chat4J validates HTTPS Hugging Face URLs and redirects, streams to staged files, checks exact byte size, and verifies the pinned SHA-1 before publishing a model. SHA-1 is an integrity check for the official model artifact.
+
 ## Vosk local transcription
 
 Chat4J bundles the Vosk Java/native runtime, but **does not bundle speech models**. Users download models through Settings or add an existing unzipped Vosk model folder.
@@ -169,8 +213,10 @@ For Deepgram, finalized audio is sent to Deepgram for transcription. Chat4J does
 
 For AssemblyAI, finalized audio is sent to AssemblyAI for transcription. Chat4J attempts best-effort transcript deletion once the transcript is no longer needed, but retention, logging, and privacy behavior are governed by the user's AssemblyAI account and API terms.
 
+For Whisper.cpp, transcription runs locally after the model is installed. Model downloads contact Hugging Face for official whisper.cpp ggml model files, but recorded audio is not uploaded for Whisper.cpp transcription.
+
 For Vosk, transcription runs locally after the model is installed. Catalog refresh and model downloads contact the official Vosk/Alpha Cephei model host, but recorded audio is not uploaded for Vosk transcription.
 
-Temp WAV files are created under Chat4J's app-controlled STT temp directory, cleaned up after success/failure/cancel, and stale STT-owned files older than 24 hours are removed on service startup. Vosk download ZIPs and partial install folders use separate Chat4J-owned temp/staging paths and are cleaned conservatively after failures or crashes.
+Temp WAV files are created under Chat4J's app-controlled STT temp directory, cleaned up after success/failure/cancel, and stale STT-owned files older than 24 hours are removed on service startup. Whisper.cpp downloads and Vosk download ZIPs/partial install folders use separate Chat4J-owned temp/staging paths and are cleaned conservatively after failures or crashes.
 
 Chat4J avoids transcribing recordings shorter than 500 ms, oversized captures, or audio whose STT settings/model changed before transcription.
