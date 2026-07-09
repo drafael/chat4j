@@ -25,6 +25,8 @@ import java.util.Enumeration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -45,6 +47,8 @@ public class VoskModelInstaller {
     private final VoskModelValidator validator;
     private final DiskSpaceChecker diskSpaceChecker;
     private final FileMover fileMover;
+    private volatile CompletableFuture<? extends HttpResponse<InputStream>> activeDownloadRequest;
+    private volatile InputStream activeDownloadStream;
 
     public VoskModelInstaller(VoskModelValidator validator) {
         this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).followRedirects(HttpClient.Redirect.NEVER).build(), validator);
@@ -177,6 +181,20 @@ public class VoskModelInstaller {
         deleteTree(directory);
     }
 
+    public void abortActiveDownload() {
+        CompletableFuture<? extends HttpResponse<InputStream>> request = activeDownloadRequest;
+        if (request != null) {
+            request.cancel(true);
+        }
+        InputStream input = activeDownloadStream;
+        if (input != null) {
+            try {
+                input.close();
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     public void cleanupStalePartials(Path voskRoot, Path tempRoot) {
         cleanupRoot(voskRoot, "chat4j-vosk-install-");
         cleanupRoot(voskRoot, "chat4j-vosk-import-");
@@ -222,7 +240,7 @@ public class VoskModelInstaller {
                 .GET()
                 .timeout(DOWNLOAD_TIMEOUT)
                 .build();
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        HttpResponse<InputStream> response = sendCancellable(request);
         if (response.statusCode() >= 300 && response.statusCode() < 400) {
             URI redirected = response.headers().firstValue("location")
                     .map(URI.create(entry.url())::resolve)
@@ -232,17 +250,26 @@ public class VoskModelInstaller {
                 throw new SpeechToTextException("Vosk model redirect was missing a destination.");
             }
             validateModelDownloadUri(entry, redirected);
-            response = httpClient.send(HttpRequest.newBuilder(redirected).GET().timeout(DOWNLOAD_TIMEOUT).build(), HttpResponse.BodyHandlers.ofInputStream());
+            response = sendCancellable(HttpRequest.newBuilder(redirected).GET().timeout(DOWNLOAD_TIMEOUT).build());
         }
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             closeResponseBody(response);
             throw new SpeechToTextException("Vosk model download failed: HTTP %d".formatted(response.statusCode()));
         }
-        try (InputStream input = response.body(); OutputStream output = Files.newOutputStream(zipFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+        InputStream body = response.body();
+        activeDownloadStream = body;
+        try (InputStream input = body; OutputStream output = Files.newOutputStream(zipFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             byte[] buffer = new byte[BUFFER_SIZE];
             long total = 0;
             int read;
-            while ((read = input.read(buffer)) != -1) {
+            while (true) {
+                if (cancellationToken != null && cancellationToken.cancelled()) {
+                    throw new SpeechToTextException("Vosk model download canceled.");
+                }
+                read = input.read(buffer);
+                if (read == -1) {
+                    break;
+                }
                 if (cancellationToken != null && cancellationToken.cancelled()) {
                     throw new SpeechToTextException("Vosk model download canceled.");
                 }
@@ -257,6 +284,35 @@ public class VoskModelInstaller {
             }
             if (entry.size() > 0 && total != entry.size()) {
                 throw new SpeechToTextException("Vosk model download size did not match the catalog.");
+            }
+        } finally {
+            if (activeDownloadStream == body) {
+                activeDownloadStream = null;
+            }
+        }
+    }
+
+    private HttpResponse<InputStream> sendCancellable(HttpRequest request) throws Exception {
+        CompletableFuture<HttpResponse<InputStream>> future = httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
+        activeDownloadRequest = future;
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            throw new SpeechToTextException("Vosk model download canceled.", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception exception) {
+                throw exception;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new SpeechToTextException("Vosk model download failed.", cause);
+        } finally {
+            if (activeDownloadRequest == future) {
+                activeDownloadRequest = null;
             }
         }
     }

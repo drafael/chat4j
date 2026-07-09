@@ -157,6 +157,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.*;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -1004,6 +1006,7 @@ public class MainFrame extends JFrame {
     }
 
     private void runShutdownFlow(Runnable finishAction) {
+        AtomicReference<CompletableFuture<Void>> modelServicesClose = new AtomicReference<>(CompletableFuture.completedFuture(null));
         try {
             shutdownFlowCoordinator.request(
                     shutdownState::shutdownInProgress,
@@ -1013,15 +1016,14 @@ public class MainFrame extends JFrame {
                         try {
                             UIManager.removePropertyChangeListener(lookAndFeelListener);
                             chatPanel.cancelSpeechToText();
-                            voskModelManagementService.close();
-                            whisperModelManagementService.close();
+                            modelServicesClose.set(closeSttModelManagementServicesAsync());
                             chatPanel.cancelStreaming();
                             saveWindowState();
                         } catch (Exception e) {
                             warnWithoutStack("Failed during pre-shutdown actions", e);
                         }
                     },
-                    this::createShutdownSaveAction,
+                    () -> createShutdownSaveActionAfterModelServicesClose(modelServicesClose.get()),
                     finishAction,
                     () -> log.warn("Timed out persisting current conversation during shutdown"),
                     error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
@@ -1031,6 +1033,21 @@ public class MainFrame extends JFrame {
             warnWithoutStack("Shutdown flow setup failed, exiting without persistence", e);
             finishAction.run();
         }
+    }
+
+    private CompletableFuture<Void> closeSttModelManagementServicesAsync() {
+        return CompletableFuture.runAsync(() -> {
+            voskModelManagementService.close();
+            whisperModelManagementService.close();
+        }, command -> Thread.ofVirtual().name("chat4j-main-stt-model-services-close-").start(command));
+    }
+
+    private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveActionAfterModelServicesClose(CompletableFuture<Void> modelServicesClose) {
+        ShutdownSaveDispatchCoordinator.SaveAction saveAction = createShutdownSaveAction();
+        return () -> {
+            modelServicesClose.join();
+            saveAction.save();
+        };
     }
 
     private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveAction() {

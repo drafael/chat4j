@@ -265,14 +265,28 @@ public class SettingsDialog extends JDialog {
             @Override
             public void windowClosed(WindowEvent e) {
                 UIManager.removePropertyChangeListener(lafChangeListener);
-                if (ownsVoskModelManagementService) {
-                    voskModelManagementService.close();
-                }
-                if (ownsWhisperModelManagementService) {
-                    whisperModelManagementService.close();
-                }
+                closeOwnedModelManagementServices();
             }
         });
+    }
+
+    private void closeOwnedModelManagementServices() {
+        if (!ownsVoskModelManagementService && !ownsWhisperModelManagementService) {
+            return;
+        }
+        Runnable closeServices = () -> {
+            if (ownsVoskModelManagementService) {
+                voskModelManagementService.close();
+            }
+            if (ownsWhisperModelManagementService) {
+                whisperModelManagementService.close();
+            }
+        };
+        if (EventQueue.isDispatchThread()) {
+            Thread.ofVirtual().name("chat4j-settings-stt-model-services-close-").start(closeServices);
+            return;
+        }
+        closeServices.run();
     }
 
     @Override

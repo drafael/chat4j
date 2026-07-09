@@ -216,13 +216,27 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         cancelCatalogRefreshes();
         voskUnsubscribe.run();
         whisperUnsubscribe.run();
-        if (ownsVoskModelManagementService) {
-            voskModelManagementService.close();
-        }
-        if (ownsWhisperModelManagementService) {
-            whisperModelManagementService.close();
-        }
+        closeOwnedModelManagementServices();
         super.removeNotify();
+    }
+
+    private void closeOwnedModelManagementServices() {
+        if (!ownsVoskModelManagementService && !ownsWhisperModelManagementService) {
+            return;
+        }
+        Runnable closeServices = () -> {
+            if (ownsVoskModelManagementService) {
+                voskModelManagementService.close();
+            }
+            if (ownsWhisperModelManagementService) {
+                whisperModelManagementService.close();
+            }
+        };
+        if (EventQueue.isDispatchThread()) {
+            Thread.ofVirtual().name("chat4j-stt-model-services-close-").start(closeServices);
+            return;
+        }
+        closeServices.run();
     }
 
     private void buildUi() {

@@ -15,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import lombok.NonNull;
@@ -25,6 +26,7 @@ import org.vosk.LogLevel;
 public class VoskModelManagementService implements AutoCloseable {
 
     public static final String PROVIDER_ID = "vosk";
+    private static final long CLOSE_WAIT_POLL_SECONDS = 1;
 
     private final SettingsRepository settingsRepo;
     private final SpeechToTextModelDirectory modelDirectory;
@@ -40,6 +42,7 @@ public class VoskModelManagementService implements AutoCloseable {
     private final AtomicBoolean disposed = new AtomicBoolean();
     private volatile VoskModelManagementSnapshot snapshot;
     private volatile Future<?> activeOperation;
+    private volatile Thread activeOperationThread;
     private volatile boolean runtimeReady;
     private volatile String runtimeStatusMessage = "Checking Vosk native runtime...";
 
@@ -195,12 +198,34 @@ public class VoskModelManagementService implements AutoCloseable {
     @Override
     public void close() {
         if (disposed.compareAndSet(false, true)) {
+            installer.abortActiveDownload();
             Future<?> operation = activeOperation;
             if (operation != null) {
                 operation.cancel(true);
             }
             executor.shutdownNow();
+            if (Thread.currentThread() != activeOperationThread) {
+                awaitExecutorTermination();
+            }
             listeners.clear();
+        }
+    }
+
+    private void awaitExecutorTermination() {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                if (executor.awaitTermination(CLOSE_WAIT_POLL_SECONDS, TimeUnit.SECONDS)) {
+                    break;
+                }
+                executor.shutdownNow();
+            } catch (InterruptedException e) {
+                interrupted = true;
+                executor.shutdownNow();
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -213,15 +238,23 @@ public class VoskModelManagementService implements AutoCloseable {
                 throw new IllegalStateException("Another Vosk model operation is already in progress.");
             }
             publish(snapshotWithOperation(snapshot, true, status));
+            if (disposed.get()) {
+                return;
+            }
             activeOperation = executor.submit(() -> {
+                activeOperationThread = Thread.currentThread();
                 try {
-                    installer.cleanupStalePartials(voskRoot(), tempDirectory);
-                    action.run();
-                } catch (Exception e) {
-                    publish(snapshotWithOperation(snapshot, false, StringUtils.defaultIfBlank(e.getMessage(), "Vosk model operation failed.")));
-                    return;
+                    try {
+                        installer.cleanupStalePartials(voskRoot(), tempDirectory);
+                        action.run();
+                    } catch (Exception e) {
+                        publish(snapshotWithOperation(snapshot, false, StringUtils.defaultIfBlank(e.getMessage(), "Vosk model operation failed.")));
+                        return;
+                    }
+                    publish(snapshotWithOperation(snapshot, false, ""));
+                } finally {
+                    activeOperationThread = null;
                 }
-                publish(snapshotWithOperation(snapshot, false, ""));
             });
         }
     }
@@ -249,7 +282,7 @@ public class VoskModelManagementService implements AutoCloseable {
     private List<VoskModelCatalogEntry> catalog(boolean online) throws Exception {
         if (online) {
             try {
-                String json = catalogClient.fetchRawJson(SpeechToTextProviderContext.CancellationToken.never());
+                String json = catalogClient.fetchRawJson(disposed::get);
                 catalogCache.saveRawJson(json);
                 return catalogClient.parse(json);
             } catch (Exception ignored) {

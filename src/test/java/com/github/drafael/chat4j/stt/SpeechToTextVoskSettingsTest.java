@@ -24,17 +24,17 @@ class SpeechToTextVoskSettingsTest {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("models");
-        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"));
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+        try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
 
-        var snapshot = subject.resolve();
+            var snapshot = subject.resolve();
 
-        assertThat(snapshot.enabled()).isTrue();
-        assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_VOSK);
-        assertThat(snapshot.available()).isFalse();
-        assertThat(snapshot.model()).isNull();
-        assertThat(snapshot.statusMessage()).contains("Download or add");
-        voskModels.close();
+            assertThat(snapshot.enabled()).isTrue();
+            assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_VOSK);
+            assertThat(snapshot.available()).isFalse();
+            assertThat(snapshot.model()).isNull();
+            assertThat(snapshot.statusMessage()).contains("Download or add");
+        }
     }
 
     @Test
@@ -45,27 +45,27 @@ class SpeechToTextVoskSettingsTest {
         Path models = tempDir.resolve("plausible-models");
         Path plausibleModel = models.resolve("vosk").resolve("custom-plausible");
         Files.createDirectories(plausibleModel.resolve("am"));
-        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("plausible-temp"));
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
-        voskModels.refreshAsync();
-        waitUntil(() -> !voskModels.snapshot().installedModels().isEmpty());
+        try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("plausible-temp"))) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+            voskModels.refreshAsync();
+            waitUntil(() -> !voskModels.snapshot().installedModels().isEmpty());
 
-        var snapshot = subject.resolve();
+            var snapshot = subject.resolve();
 
-        assertThat(snapshot.available()).isFalse();
-        assertThat(snapshot.model()).isNull();
-        assertThat(voskModels.snapshot().rows())
-                .filteredOn(row -> "local:custom-plausible".equals(row.id()))
-                .singleElement()
-                .satisfies(row -> {
-                    assertThat(row.installed()).isTrue();
-                    assertThat(row.selectable()).isFalse();
-                    assertThat(row.actionStatus()).contains("plausible");
-                });
-        assertThatThrownBy(() -> voskModels.selectModel("local:custom-plausible"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Select an installed Vosk model first");
-        voskModels.close();
+            assertThat(snapshot.available()).isFalse();
+            assertThat(snapshot.model()).isNull();
+            assertThat(voskModels.snapshot().rows())
+                    .filteredOn(row -> "local:custom-plausible".equals(row.id()))
+                    .singleElement()
+                    .satisfies(row -> {
+                        assertThat(row.installed()).isTrue();
+                        assertThat(row.selectable()).isFalse();
+                        assertThat(row.actionStatus()).contains("plausible");
+                    });
+            assertThatThrownBy(() -> voskModels.selectModel("local:custom-plausible"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Select an installed Vosk model first");
+        }
     }
 
     @Test
@@ -75,19 +75,19 @@ class SpeechToTextVoskSettingsTest {
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("models");
         createValidModel(models.resolve("vosk").resolve("vosk-model-small-en-us-0.15"));
-        var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"));
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
-        voskModels.refreshAsync();
-        waitUntil(() -> subject.resolve().model() != null);
+        try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+            voskModels.refreshAsync();
+            waitUntil(() -> subject.resolve().model() != null);
 
-        var snapshot = subject.resolve();
+            var snapshot = subject.resolve();
 
-        assertThat(snapshot.enabled()).isTrue();
-        assertThat(snapshot.model().id()).isEqualTo("vosk-model-small-en-us-0.15");
-        assertThat(snapshot.baseUri()).isNull();
-        assertThat(snapshot.transcriptionUri()).isNull();
-        assertThat(snapshot.localModelReference()).isNotNull();
-        voskModels.close();
+            assertThat(snapshot.enabled()).isTrue();
+            assertThat(snapshot.model().id()).isEqualTo("vosk-model-small-en-us-0.15");
+            assertThat(snapshot.baseUri()).isNull();
+            assertThat(snapshot.transcriptionUri()).isNull();
+            assertThat(snapshot.localModelReference()).isNotNull();
+        }
     }
 
     private void waitUntil(Condition condition) throws Exception {

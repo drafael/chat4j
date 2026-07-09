@@ -14,6 +14,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import lombok.NonNull;
@@ -24,6 +25,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     public static final String PROVIDER_ID = WhisperSpeechToTextProvider.ID;
     private static final String FINGERPRINT_KEY = SettingsKeys.STT_PREFIX + "whisper.model.fingerprint";
     private static final String ROOT_KEY = SettingsKeys.STT_PREFIX + "whisper.model.root";
+    private static final long CLOSE_WAIT_POLL_SECONDS = 1;
 
     private final SettingsRepository settingsRepo;
     private final SpeechToTextModelDirectory modelDirectory;
@@ -37,6 +39,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     private final AtomicBoolean disposed = new AtomicBoolean();
     private volatile WhisperModelManagementSnapshot snapshot;
     private volatile Future<?> activeOperation;
+    private volatile Thread activeOperationThread;
     private volatile OperationCancellation activeCancellation;
     private volatile boolean runtimeReady = true;
     private volatile String runtimeStatusMessage = "Whisper.cpp native runtime has not been checked yet.";
@@ -198,7 +201,28 @@ public class WhisperModelManagementService implements AutoCloseable {
                 operation.cancel(true);
             }
             executor.shutdownNow();
+            if (Thread.currentThread() != activeOperationThread) {
+                awaitExecutorTermination();
+            }
             listeners.clear();
+        }
+    }
+
+    private void awaitExecutorTermination() {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                if (executor.awaitTermination(CLOSE_WAIT_POLL_SECONDS, TimeUnit.SECONDS)) {
+                    break;
+                }
+                executor.shutdownNow();
+            } catch (InterruptedException e) {
+                interrupted = true;
+                executor.shutdownNow();
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -213,20 +237,28 @@ public class WhisperModelManagementService implements AutoCloseable {
             OperationCancellation cancellation = new OperationCancellation();
             activeCancellation = cancellation;
             publish(snapshotWithOperation(snapshot, true, false, status, 0, totalBytes, cancelable, operationType, modelId, modelLabel));
+            if (disposed.get()) {
+                activeCancellation = null;
+                return;
+            }
             activeOperation = executor.submit(() -> {
+                activeOperationThread = Thread.currentThread();
                 try {
-                    installer.cleanupStalePartials(whisperRoot(), tempDirectory);
-                    action.run();
-                } catch (Exception e) {
-                    String message = cancellation.cancelled()
-                            ? "Whisper.cpp model operation canceled."
-                            : StringUtils.defaultIfBlank(e.getMessage(), "Whisper.cpp model operation failed.");
-                    publish(snapshotWithOperation(snapshot, false, false, message, snapshot.bytesDownloaded(), snapshot.totalBytes(), false));
-                    return;
+                    try {
+                        installer.cleanupStalePartials(whisperRoot(), tempDirectory);
+                        action.run();
+                    } catch (Exception e) {
+                        String message = cancellation.cancelled()
+                                ? "Whisper.cpp model operation canceled."
+                                : StringUtils.defaultIfBlank(e.getMessage(), "Whisper.cpp model operation failed.");
+                        publish(snapshotWithOperation(snapshot, false, false, message, snapshot.bytesDownloaded(), snapshot.totalBytes(), false));
+                        return;
+                    }
+                    publish(snapshotWithOperation(snapshot, false, false, "", 0, 0, false));
                 } finally {
                     activeCancellation = null;
+                    activeOperationThread = null;
                 }
-                publish(snapshotWithOperation(snapshot, false, false, "", 0, 0, false));
             });
         }
     }

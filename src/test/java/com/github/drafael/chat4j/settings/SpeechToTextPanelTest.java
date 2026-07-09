@@ -128,19 +128,22 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-plausible.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("vosk-plausible-models");
-        var voskModels = new PlausibleVoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"));
+        try (var voskModels = new PlausibleVoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
 
-        var subject = new SpeechToTextPanel(repo, models, voskModels);
-        @SuppressWarnings("unchecked")
-        JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
-        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
-
-        int plausibleRow = tableRowWithModel(localModelsTable, "custom-plausible");
-        assertThat(modelComboBox.getItemCount()).isZero();
-        assertThat(plausibleRow).isGreaterThanOrEqualTo(0);
-        assertThat(localModelsTable.getValueAt(plausibleRow, 4)).isEqualTo(Boolean.TRUE);
-        assertThat(localModelsTable.getValueAt(plausibleRow, 5)).isEqualTo(Boolean.FALSE);
-        voskModels.close();
+                int plausibleRow = tableRowWithModel(localModelsTable, "custom-plausible");
+                assertThat(modelComboBox.getItemCount()).isZero();
+                assertThat(plausibleRow).isGreaterThanOrEqualTo(0);
+                assertThat(localModelsTable.getValueAt(plausibleRow, 4)).isEqualTo(Boolean.TRUE);
+                assertThat(localModelsTable.getValueAt(plausibleRow, 5)).isEqualTo(Boolean.FALSE);
+            } finally {
+                subject.removeNotify();
+            }
+        }
     }
 
     @Test
@@ -150,19 +153,23 @@ class SpeechToTextPanelTest {
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("busy-models");
         Path requested = tempDir.resolve("other-models");
-        var voskModels = new BusyVoskModelManagementService(repo, models, tempDir.resolve("busy-temp"));
-        var subject = new SpeechToTextPanel(repo, models, voskModels);
-        JTextField modelDirectoryField = (JTextField) fieldValue(subject, "modelDirectoryField");
-        JButton browseButton = (JButton) fieldValue(subject, "modelDirectoryBrowseButton");
+        try (var voskModels = new BusyVoskModelManagementService(repo, models, tempDir.resolve("busy-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                JTextField modelDirectoryField = (JTextField) fieldValue(subject, "modelDirectoryField");
+                JButton browseButton = (JButton) fieldValue(subject, "modelDirectoryBrowseButton");
 
-        assertThat(modelDirectoryField.isEnabled()).isFalse();
-        assertThat(browseButton.isEnabled()).isFalse();
+                assertThat(modelDirectoryField.isEnabled()).isFalse();
+                assertThat(browseButton.isEnabled()).isFalse();
 
-        SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, requested));
+                SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, requested));
 
-        assertThat(repo.get(SettingsKeys.STT_MODELS_DIR, "")).isBlank();
-        assertThat(modelDirectoryField.getText()).isEqualTo(models.toString());
-        voskModels.close();
+                assertThat(repo.get(SettingsKeys.STT_MODELS_DIR, "")).isBlank();
+                assertThat(modelDirectoryField.getText()).isEqualTo(models.toString());
+            } finally {
+                subject.removeNotify();
+            }
+        }
     }
 
     @Test
@@ -171,19 +178,23 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-select.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         Path models = tempDir.resolve("select-models");
-        var voskModels = new AsyncSelectionVoskModelManagementService(repo, models, tempDir.resolve("select-temp"));
-        var subject = new SpeechToTextPanel(repo, models, voskModels);
-        @SuppressWarnings("unchecked")
-        JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
-        JButton refreshButton = (JButton) fieldValue(subject, "refreshButton");
+        try (var voskModels = new AsyncSelectionVoskModelManagementService(repo, models, tempDir.resolve("select-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox = (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                JButton refreshButton = (JButton) fieldValue(subject, "refreshButton");
 
-        SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "onModelSelected"));
+                SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "onModelSelected"));
 
-        assertThat(voskModels.selectedModelId()).isEqualTo("custom-ready");
-        assertThat(repo.get(SettingsKeys.sttModelIdKey(VoskModelManagementService.PROVIDER_ID), "")).isBlank();
-        assertThat(modelComboBox.isEnabled()).isFalse();
-        assertThat(refreshButton.isEnabled()).isFalse();
-        voskModels.close();
+                assertThat(voskModels.selectedModelId()).isEqualTo("custom-ready");
+                assertThat(repo.get(SettingsKeys.sttModelIdKey(VoskModelManagementService.PROVIDER_ID), "")).isBlank();
+                assertThat(modelComboBox.isEnabled()).isFalse();
+                assertThat(refreshButton.isEnabled()).isFalse();
+            } finally {
+                subject.removeNotify();
+            }
+        }
     }
 
     @Test
@@ -424,22 +435,22 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-whisper-import.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
         Path defaultModels = tempDir.resolve("default-models");
-        var subject = new SpeechToTextPanel(
-                repo,
-                defaultModels,
-                new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp")),
-                new WhisperModelManagementService(repo, defaultModels, tempDir.resolve("whisper-temp"), fakeWhisperRuntime(), new WhisperModelUsageTracker())
-        );
-        try {
-            SwingUtilities.invokeAndWait(() -> {
-            });
-            JButton importModelButton = (JButton) fieldValue(subject, "importModelButton");
+        try (
+                var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp"));
+                var whisperModels = new WhisperModelManagementService(repo, defaultModels, tempDir.resolve("whisper-temp"), fakeWhisperRuntime(), new WhisperModelUsageTracker())
+        ) {
+            var subject = new SpeechToTextPanel(repo, defaultModels, voskModels, whisperModels);
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                });
+                JButton importModelButton = (JButton) fieldValue(subject, "importModelButton");
 
-            assertThat(importModelButton.isVisible()).isFalse();
-            assertThat(importModelButton.getToolTipText()).isNull();
-            assertThat(importModelButton.getAccessibleContext().getAccessibleName()).isBlank();
-        } finally {
-            subject.removeNotify();
+                assertThat(importModelButton.isVisible()).isFalse();
+                assertThat(importModelButton.getToolTipText()).isNull();
+                assertThat(importModelButton.getAccessibleContext().getAccessibleName()).isBlank();
+            } finally {
+                subject.removeNotify();
+            }
         }
     }
 
@@ -454,6 +465,8 @@ class SpeechToTextPanelTest {
                 new SpeechToTextProviderRegistry(List.of(new LocalTestSpeechToTextProvider()))
         );
         try {
+            SwingUtilities.invokeAndWait(() -> {
+            });
             JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
             JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
             JButton downloadModelButton = (JButton) fieldValue(subject, "downloadModelButton");

@@ -30,15 +30,16 @@ class SpeechToTextWhisperSettingsTest {
     void resolve_whenWhisperSnapshotReady_returnsLocalReference() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
-        var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), true);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
+        try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), true)) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
 
-        SpeechToTextSettingsSnapshot snapshot = subject.resolve();
+            SpeechToTextSettingsSnapshot snapshot = subject.resolve();
 
-        assertThat(snapshot.providerId()).isEqualTo("whisper");
-        assertThat(snapshot.available()).isTrue();
-        assertThat(snapshot.localModelReference()).isNotNull();
-        assertThat(snapshot.localModelReference().modelId()).isEqualTo("tiny.en");
+            assertThat(snapshot.providerId()).isEqualTo("whisper");
+            assertThat(snapshot.available()).isTrue();
+            assertThat(snapshot.localModelReference()).isNotNull();
+            assertThat(snapshot.localModelReference().modelId()).isEqualTo("tiny.en");
+        }
     }
 
     @Test
@@ -49,17 +50,17 @@ class SpeechToTextWhisperSettingsTest {
         Path models = tempDir.resolve("real-models");
         var entry = WhisperModelCatalog.find("tiny.en").orElseThrow();
         createInstalledModel(models.resolve("whisper").resolve("tiny.en"), entry);
-        var service = new WhisperModelManagementService(repo, models, tempDir.resolve("real-temp"));
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, models, null, service);
+        try (var service = new WhisperModelManagementService(repo, models, tempDir.resolve("real-temp"))) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, models, null, service);
 
-        service.refreshAsync(false);
-        waitUntil(() -> !service.snapshot().installedModels().isEmpty());
-        SpeechToTextSettingsSnapshot snapshot = subject.resolve();
+            service.refreshAsync(false);
+            waitUntil(() -> !service.snapshot().installedModels().isEmpty());
+            SpeechToTextSettingsSnapshot snapshot = subject.resolve();
 
-        assertThat(snapshot.available()).isFalse();
-        assertThat(snapshot.model()).isNull();
-        assertThat(snapshot.statusMessage()).contains("Select an installed Whisper.cpp model");
-        service.close();
+            assertThat(snapshot.available()).isFalse();
+            assertThat(snapshot.model()).isNull();
+            assertThat(snapshot.statusMessage()).contains("Select an installed Whisper.cpp model");
+        }
     }
 
     @Test
@@ -67,13 +68,14 @@ class SpeechToTextWhisperSettingsTest {
     void resolve_whenWhisperRuntimeUnavailable_returnsUnavailableStatus() {
         var repo = new SettingsRepository(tempDir.resolve("settings-unavailable.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
-        var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), false);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
+        try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), false)) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
 
-        SpeechToTextSettingsSnapshot snapshot = subject.resolve();
+            SpeechToTextSettingsSnapshot snapshot = subject.resolve();
 
-        assertThat(snapshot.available()).isFalse();
-        assertThat(snapshot.statusMessage()).isEqualTo("Whisper.cpp native runtime is unavailable on this platform.");
+            assertThat(snapshot.available()).isFalse();
+            assertThat(snapshot.statusMessage()).isEqualTo("Whisper.cpp native runtime is unavailable on this platform.");
+        }
     }
 
     private void createInstalledModel(Path directory, com.github.drafael.chat4j.stt.provider.whisper.WhisperModelCatalogEntry entry) throws Exception {
