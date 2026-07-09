@@ -24,8 +24,12 @@
     }
     function dispatchTranscriptAction(action, messageIndex, text) {
         var payloadText = text || '';
-        if (window.chat4jTranscriptAction && (messageIndex >= 0 || payloadText.length > 0)) {
-            window.chat4jTranscriptAction(action, String(messageIndex), payloadText);
+        var normalizedMessageIndex = Number(messageIndex);
+        if (!isFinite(normalizedMessageIndex)) {
+            normalizedMessageIndex = -1;
+        }
+        if (window.chat4jTranscriptAction && (normalizedMessageIndex >= 0 || payloadText.length > 0)) {
+            window.chat4jTranscriptAction(JSON.stringify({args: [String(action || ''), normalizedMessageIndex, payloadText]}));
         }
     }
     window.chat4jDispatchTranscriptAction = dispatchTranscriptAction;

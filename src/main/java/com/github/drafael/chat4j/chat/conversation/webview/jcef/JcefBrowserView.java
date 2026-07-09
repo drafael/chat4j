@@ -437,9 +437,27 @@ public final class JcefBrowserView {
                         }
                     };
                     window.chat4jTranscriptAction = function(action, messageIndex, text) {
-                        if (window.chat4jJcefQuery) {
-                            window.chat4jJcefQuery({request: JSON.stringify({type: 'transcript-action', args: [String(action || ''), Number(messageIndex || -1), String(text || '')]})});
+                        if (!window.chat4jJcefQuery) {
+                            return;
                         }
+                        var args = null;
+                        if (arguments.length === 1) {
+                            try {
+                                var payload = JSON.parse(String(action || ''));
+                                if (payload && Array.isArray(payload.args)) {
+                                    args = payload.args;
+                                }
+                            } catch (ignored) {
+                            }
+                        }
+                        if (!args) {
+                            var normalizedMessageIndex = Number(messageIndex);
+                            if (!isFinite(normalizedMessageIndex)) {
+                                normalizedMessageIndex = -1;
+                            }
+                            args = [String(action || ''), normalizedMessageIndex, String(text || '')];
+                        }
+                        window.chat4jJcefQuery({request: JSON.stringify({type: 'transcript-action', args: args})});
                     };
                 })();
                 """;

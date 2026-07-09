@@ -42,16 +42,29 @@ public final class TranscriptCallbackPayloads {
         }
 
         try {
-            JsonNode node = OBJECT_MAPPER.readTree(value);
-            JsonNode args = node.has("args") && node.get("args").isArray() ? node.get("args") : node;
-            if (args.isArray() && args.size() >= 2) {
-                String text = args.size() >= 3 ? args.get(2).asText("") : "";
-                return new TranscriptAction(args.get(0).asText(""), args.get(1).asInt(-1), text);
-            }
+            return transcriptAction(OBJECT_MAPPER.readTree(value), 0);
         } catch (Exception ignored) {
             // Ignore malformed callback payloads.
         }
 
+        return null;
+    }
+
+    private static TranscriptAction transcriptAction(JsonNode node, int depth) throws Exception {
+        if (node == null || depth > 2) {
+            return null;
+        }
+        JsonNode args = node.has("args") && node.get("args").isArray() ? node.get("args") : node;
+        if (args.isArray() && args.size() >= 2) {
+            String text = args.size() >= 3 ? args.get(2).asText("") : "";
+            return new TranscriptAction(args.get(0).asText(""), args.get(1).asInt(-1), text);
+        }
+        if (args.isArray() && args.size() == 1) {
+            return transcriptAction(args.get(0), depth + 1);
+        }
+        if (node.isTextual() && StringUtils.isNotBlank(node.asText())) {
+            return transcriptAction(OBJECT_MAPPER.readTree(node.asText()), depth + 1);
+        }
         return null;
     }
 

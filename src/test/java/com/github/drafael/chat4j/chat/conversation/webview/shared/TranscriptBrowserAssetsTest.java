@@ -262,6 +262,7 @@ class TranscriptBrowserAssetsTest {
 
         assertThat(script)
                 .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
+                .contains("window.chat4jTranscriptAction(JSON.stringify({args:")
                 .contains("dispatchMessageActionButton(actionButton, event)")
                 .contains("messageActionText(button)")
                 .contains("player-stop")
@@ -284,11 +285,17 @@ class TranscriptBrowserAssetsTest {
         TranscriptCallbackPayloads.TranscriptAction action = TranscriptCallbackPayloads.transcriptAction(
                 "{\"args\":[\"copy\",7,\"secret text\"]}"
         );
+        TranscriptCallbackPayloads.TranscriptAction systemWebViewAction = TranscriptCallbackPayloads.transcriptAction(
+                "[\"{\\\"args\\\":[\\\"read-aloud\\\",1,\\\"assistant text\\\"]}\"]"
+        );
 
         assertThat(action.action()).isEqualTo("copy");
         assertThat(action.messageIndex()).isEqualTo(7);
         assertThat(action.text()).isEqualTo("secret text");
         assertThat(action).hasToString("TranscriptAction[action=copy, messageIndex=7, text=<masked>]");
+        assertThat(systemWebViewAction.action()).isEqualTo("read-aloud");
+        assertThat(systemWebViewAction.messageIndex()).isEqualTo(1);
+        assertThat(systemWebViewAction.text()).isEqualTo("assistant text");
     }
 
     @Test

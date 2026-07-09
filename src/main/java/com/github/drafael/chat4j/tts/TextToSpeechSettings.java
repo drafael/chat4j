@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.Locale;

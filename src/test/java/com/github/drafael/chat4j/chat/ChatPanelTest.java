@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat;
 
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
 import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
@@ -32,8 +33,8 @@ import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.tts.AudioPlaybackService;
-import com.github.drafael.chat4j.tts.TextToSpeechAudio;
+import com.github.drafael.chat4j.tts.audio.AudioPlaybackService;
+import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;

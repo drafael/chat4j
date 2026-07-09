@@ -1,5 +1,11 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.net.URI;

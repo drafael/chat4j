@@ -1,5 +1,10 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
+import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;

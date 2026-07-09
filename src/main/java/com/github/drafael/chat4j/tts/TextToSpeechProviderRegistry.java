@@ -1,5 +1,11 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.tts.provider.JavaNetTtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.List;
 import java.util.Optional;
 

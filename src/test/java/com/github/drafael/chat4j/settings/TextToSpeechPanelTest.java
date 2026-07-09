@@ -1,9 +1,9 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.tts.TextToSpeechAudio;
-import com.github.drafael.chat4j.tts.TextToSpeechCatalogItem;
-import com.github.drafael.chat4j.tts.TextToSpeechProvider;
-import com.github.drafael.chat4j.tts.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

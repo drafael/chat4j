@@ -1,5 +1,12 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
@@ -108,14 +115,49 @@ class TextToSpeechSettingsTest {
     }
 
     private static TextToSpeechProviderRegistry registryWithSystem(boolean available) {
-        return new TextToSpeechProviderRegistry(List.of(new SystemTextToSpeechProvider(new FakeSystemBackend(available))));
+        return new TextToSpeechProviderRegistry(List.of(new FakeSystemProvider(available)));
     }
 
-    private static final class FakeSystemBackend implements SystemTtsBackend {
+    private static final class FakeSystemProvider implements TextToSpeechProvider {
         private final boolean available;
 
-        private FakeSystemBackend(boolean available) {
+        private FakeSystemProvider(boolean available) {
             this.available = available;
+        }
+
+        @Override
+        public String id() {
+            return SettingsKeys.TTS_PROVIDER_SYSTEM;
+        }
+
+        @Override
+        public String displayName() {
+            return "System";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return null;
+        }
+
+        @Override
+        public TextToSpeechCatalogItem defaultModel() {
+            return TextToSpeechCatalogItem.of("system", "System TTS");
+        }
+
+        @Override
+        public TextToSpeechCatalogItem defaultVoice() {
+            return TextToSpeechCatalogItem.of("system-default", "System Default");
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> bundledModels() {
+            return List.of(defaultModel());
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> bundledVoices() {
+            return List.of(defaultVoice());
         }
 
         @Override
@@ -124,18 +166,8 @@ class TextToSpeechSettingsTest {
         }
 
         @Override
-        public String unavailableMessage() {
-            return "System unavailable.";
-        }
-
-        @Override
-        public String availableMessage() {
-            return "System available.";
-        }
-
-        @Override
-        public String defaultResponseFormat() {
-            return "wav";
+        public List<TextToSpeechCatalogItem> fetchModels() {
+            return emptyList();
         }
 
         @Override
@@ -145,7 +177,7 @@ class TextToSpeechSettingsTest {
 
         @Override
         public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
-            return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+            throw new UnsupportedOperationException();
         }
     }
 }
