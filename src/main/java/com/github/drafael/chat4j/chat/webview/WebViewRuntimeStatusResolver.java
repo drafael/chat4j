@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.chat.webview;
 import ca.weblite.webview.swing.WebViewComponent;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefRuntime;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -120,7 +119,7 @@ public final class WebViewRuntimeStatusResolver {
 
     private WebViewEngine resolveConfiguredEngine() {
         try {
-            String configuredValue = settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE, "");
+            String configuredValue = settingsRepo.get(WebViewSettings.ENGINE_KEY, "");
             return WebViewEngine.fromSettingValue(configuredValue, platformFallbackChain().getFirst());
         } catch (Exception e) {
             return platformFallbackChain().getFirst();

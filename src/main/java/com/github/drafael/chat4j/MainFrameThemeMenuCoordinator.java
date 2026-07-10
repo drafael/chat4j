@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
-import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
+import com.github.drafael.chat4j.settings.ThemeSettings;
 import lombok.NonNull;
 
 public class MainFrameThemeMenuCoordinator {
@@ -63,7 +63,7 @@ public class MainFrameThemeMenuCoordinator {
                 context.menuItemsState().themeMenuItemsByName(),
                 context.themeMenuState().lastMenuSelectedTheme(),
                 context.themeMenuState().themesMenuBuilt(),
-                ThemeSettingsResolver.DEFAULT_THEME,
+                ThemeSettings.DEFAULT_THEME,
                 context.themeMenuState()::setLastMenuSelectedTheme
         );
     }

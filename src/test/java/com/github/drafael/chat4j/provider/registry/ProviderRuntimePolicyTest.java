@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.function.UnaryOperator;
 
 import static java.util.Collections.emptyList;
@@ -82,6 +83,36 @@ class ProviderRuntimePolicyTest {
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
     }
 
+    @Test
+    @DisplayName("Effective base URL trims runtime override whitespace")
+    void effectiveBaseUrl_whenRuntimeBaseUrlHasWhitespace_returnsTrimmedValue() {
+        var subject = new ProviderRuntimePolicy();
+        ProviderDefinition providerDefinition = envVarProvider("Ollama", "http://localhost:11434/v1");
+        subject.applyRuntimeConfig(Map.of(
+                "Ollama",
+                new ProviderRuntimePolicy.RuntimeConfig(true, "  http://127.0.0.1:11434/v1  ")
+        ));
+
+        String baseUrl = subject.effectiveBaseUrl(providerDefinition);
+
+        assertThat(baseUrl).isEqualTo("http://127.0.0.1:11434/v1");
+    }
+
+    @Test
+    @DisplayName("Effective base URL falls back to provider default for blank runtime override")
+    void effectiveBaseUrl_whenRuntimeBaseUrlIsBlank_returnsProviderDefault() {
+        var subject = new ProviderRuntimePolicy();
+        ProviderDefinition providerDefinition = envVarProvider("Ollama", "http://localhost:11434/v1");
+        subject.applyRuntimeConfig(Map.of(
+                "Ollama",
+                new ProviderRuntimePolicy.RuntimeConfig(true, "   ")
+        ));
+
+        String baseUrl = subject.effectiveBaseUrl(providerDefinition);
+
+        assertThat(baseUrl).isEqualTo("http://localhost:11434/v1");
+    }
+
     private ProviderDefinition copilotAuthProvider(String name) {
         var descriptor = new ProviderDescriptor(
                 name,
@@ -114,6 +145,21 @@ class ProviderRuntimePolicyTest {
         return new ProviderDefinition(descriptor, module);
     }
 
+    private ProviderDefinition envVarProvider(String name, String baseUrl) {
+        var descriptor = new ProviderDescriptor(
+                name,
+                AuthType.ENV_VAR,
+                "API_KEY",
+                null,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                UnaryOperator.identity()
+        );
+
+        return providerDefinition(descriptor);
+    }
+
     private ProviderDefinition codexAuthProvider(String name) {
         var descriptor = new ProviderDescriptor(
                 name,
@@ -126,6 +172,10 @@ class ProviderRuntimePolicyTest {
                 UnaryOperator.identity()
         );
 
+        return providerDefinition(descriptor);
+    }
+
+    private ProviderDefinition providerDefinition(ProviderDescriptor descriptor) {
         ProviderModule module = new ProviderModule() {
             @Override
             public ProviderDescriptor descriptor() {

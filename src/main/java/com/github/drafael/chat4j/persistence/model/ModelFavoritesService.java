@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence.model;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsKeySlugs;
 import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.net.URLDecoder;
@@ -107,7 +108,7 @@ public class ModelFavoritesService {
             return null;
         }
 
-        String normalizedProvider = SettingsKeys.providerSlug(providerName);
+        String normalizedProvider = SettingsKeySlugs.providerSlug(providerName);
         String normalizedModel = modelId.trim();
         if (normalizedProvider.isEmpty() || normalizedModel.isEmpty()) {
             return null;

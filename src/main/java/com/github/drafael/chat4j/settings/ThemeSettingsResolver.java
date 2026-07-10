@@ -1,14 +1,12 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 public class ThemeSettingsResolver {
 
-    public static final String DEFAULT_THEME = "Material Lighter";
-    private static final String KEY_THEME = SettingsKeys.THEME_NAME;
+    public static final String DEFAULT_THEME = ThemeSettings.DEFAULT_THEME;
 
     private final SettingsRepository settingsRepo;
 
@@ -19,15 +17,15 @@ public class ThemeSettingsResolver {
     public String resolveSelectedTheme(String defaultTheme) {
         Validate.notBlank(defaultTheme, "defaultTheme must not be blank");
 
-        try {
-            return settingsRepo.get(KEY_THEME, defaultTheme);
-        } catch (Exception e) {
-            return defaultTheme;
-        }
+        return themeSettings().selectedTheme(defaultTheme);
     }
 
     public void persistSelectedTheme(String themeName) {
         Validate.notBlank(themeName, "themeName must not be blank");
-        settingsRepo.put(KEY_THEME, themeName);
+        themeSettings().persistSelectedTheme(themeName);
+    }
+
+    private ThemeSettings themeSettings() {
+        return new ThemeSettings(settingsRepo);
     }
 }

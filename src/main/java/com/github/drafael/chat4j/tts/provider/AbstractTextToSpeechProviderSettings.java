@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.tts.provider;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.persistence.settings.SettingsKeySlugs;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 
@@ -86,6 +86,6 @@ public abstract class AbstractTextToSpeechProviderSettings implements TextToSpee
     }
 
     protected String providerSlug() {
-        return SettingsKeys.providerSlug(providerId);
+        return SettingsKeySlugs.providerSlug(providerId);
     }
 }

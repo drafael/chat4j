@@ -52,6 +52,24 @@ class ProviderRegistryTest {
     }
 
     @Test
+    @DisplayName("Runtime config base URL override is trimmed before provider and factory use")
+    void availableProviders_whenBaseUrlOverrideHasWhitespace_returnsTrimmedProviderAndFactoryBaseUrl() throws Exception {
+        String overriddenBaseUrl = "http://127.0.0.1:22445/v1";
+        ProviderRegistry.applyRuntimeConfig(Map.of(
+                "Ollama",
+                new ProviderRegistry.ProviderRuntimeConfig(true, "  %s  ".formatted(overriddenBaseUrl))
+        ));
+
+        ProviderRegistry.ProviderDef ollama = ProviderRegistry.availableProviders().stream()
+                .filter(providerDef -> "Ollama".equals(providerDef.name()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(ollama.baseUrl()).isEqualTo(overriddenBaseUrl);
+        assertThat(readProviderBaseUrl(ollama.factory().create("llama3.2:latest"))).isEqualTo(overriddenBaseUrl);
+    }
+
+    @Test
     @DisplayName("Anthropic provider definition uses root API URL without v1 suffix")
     void availableProviders_whenAnthropicIsAvailable_returnsAnthropicWithRootApiUrl() {
         assertThat(ProviderRegistry.allProviders())

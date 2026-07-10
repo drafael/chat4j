@@ -15,11 +15,10 @@ import com.github.drafael.chat4j.persistence.migration.PersistenceBackendMigrati
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.AppearancePanel;
-import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
+import com.github.drafael.chat4j.settings.ThemeSettings;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -132,11 +131,11 @@ public final class ApplicationBootstrap {
         return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService, storagePaths);
     }
 
-    private void applySavedAppearance(SettingsRepository settingsRepo) {
+    void applySavedAppearance(SettingsRepository settingsRepo) {
         try {
             AppearancePanel.restoreAccentColor(settingsRepo);
 
-            String themeName = settingsRepo.get(SettingsKeys.THEME_NAME, ThemeSettingsResolver.DEFAULT_THEME);
+            String themeName = settingsRepo.get(ThemeSettings.THEME_NAME_KEY, ThemeSettings.DEFAULT_THEME);
             String className = AppearancePanel.classNameForTheme(themeName);
             if (className != null) {
                 UIManager.setLookAndFeel(className);

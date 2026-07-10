@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.chat.webview;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -101,7 +100,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("Invalid configured engine uses the macOS platform default")
     void resolve_whenInvalidEngineConfiguredOnMacOs_usesPlatformDefault() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "invalid");
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, "invalid");
         var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -115,7 +114,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("Obsolete engine setting uses the macOS platform default")
     void resolve_whenObsoleteEngineConfiguredOnMacOs_usesPlatformDefault() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "obsolete-webview");
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, "obsolete-webview");
         var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -129,7 +128,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("Invalid configured engine uses the non-system platform default")
     void resolve_whenInvalidEngineConfiguredOutsideMacOsAndWindows_usesPlatformDefault() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, "invalid");
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, "invalid");
         var subject = resolver(settingsRepo, false, false, nativeAvailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -143,7 +142,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("System WebView setting uses System WebView when available")
     void resolve_whenSystemWebViewConfigured_usesSystemWebViewWhenAvailable() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, WebViewEngine.SYSTEM.settingValue());
         var subject = resolver(settingsRepo, false, false, nativeAvailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -158,7 +157,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("System WebView setting falls back through platform chain when unavailable")
     void resolve_whenSystemWebViewConfiguredAndUnavailable_usesPlatformFallbackChain() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.SYSTEM.settingValue());
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, WebViewEngine.SYSTEM.settingValue());
         var subject = resolver(settingsRepo, true, false, nativeUnavailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -173,7 +172,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("JCEF setting uses JCEF when runtime is available")
     void resolve_whenJcefConfiguredAndAvailable_usesJcef() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JCEF.settingValue());
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, WebViewEngine.JCEF.settingValue());
         var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefAvailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -189,7 +188,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("JCEF setting falls back to System WebView on macOS when JCEF is unavailable")
     void resolve_whenJcefConfiguredAndUnavailableOnMacOs_usesPlatformFallbackChain() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JCEF.settingValue());
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, WebViewEngine.JCEF.settingValue());
         var subject = resolver(settingsRepo, true, false, nativeAvailable(), jcefUnavailable());
 
         WebViewRuntimeStatus result = subject.resolve();
@@ -204,7 +203,7 @@ class WebViewRuntimeStatusResolverTest {
     @DisplayName("JCEF setting falls back to JEditorPane on Linux when JCEF is unavailable")
     void resolve_whenJcefConfiguredAndUnavailableOutsideMacOsAndWindows_usesJEditorPaneFallback() throws Exception {
         SettingsRepository settingsRepo = settingsRepo();
-        settingsRepo.put(SettingsKeys.WEBVIEW_ENGINE, WebViewEngine.JCEF.settingValue());
+        settingsRepo.put(WebViewSettings.ENGINE_KEY, WebViewEngine.JCEF.settingValue());
         var subject = resolver(settingsRepo, false, false, nativeAvailable(), jcefUnavailable());
 
         WebViewRuntimeStatus result = subject.resolve();

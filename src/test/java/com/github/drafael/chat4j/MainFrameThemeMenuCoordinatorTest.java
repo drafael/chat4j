@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.settings.ThemeMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionFlowCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
-import com.github.drafael.chat4j.settings.ThemeSettingsResolver;
+import com.github.drafael.chat4j.settings.ThemeSettings;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -70,7 +70,7 @@ class MainFrameThemeMenuCoordinatorTest {
                 eq(menuItemsState.themeMenuItemsByName()),
                 eq(null),
                 eq(true),
-                eq(ThemeSettingsResolver.DEFAULT_THEME),
+                eq(ThemeSettings.DEFAULT_THEME),
                 any()
         );
         doAnswer(invocation -> {
@@ -127,7 +127,7 @@ class MainFrameThemeMenuCoordinatorTest {
                 eq(context.menuItemsState().themeMenuItemsByName()),
                 eq("Dracula"),
                 eq(true),
-                eq(ThemeSettingsResolver.DEFAULT_THEME),
+                eq(ThemeSettings.DEFAULT_THEME),
                 any()
         );
     }

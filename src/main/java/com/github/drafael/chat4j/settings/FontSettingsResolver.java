@@ -13,16 +13,16 @@ public class FontSettingsResolver {
     }
 
     public String resolveAppFontFamilySetting() {
-        return readString(AppearancePanel.KEY_APP_FONT, AppearancePanel.DEFAULT_APP_FONT);
+        return fontSettings().appFontFamily(FontSettings.DEFAULT_APP_FONT);
     }
 
     public String resolveCodeFontFamilySetting() {
-        return readString(AppearancePanel.KEY_CODE_FONT, AppearancePanel.DEFAULT_CODE_FONT);
+        return fontSettings().codeFontFamily(FontSettings.DEFAULT_CODE_FONT);
     }
 
     public int resolveAppFontSizeSetting() {
         int defaultSize = AppearancePanel.defaultAppFontSize();
-        String value = readString(AppearancePanel.KEY_APP_FONT_SIZE, String.valueOf(defaultSize));
+        String value = fontSettings().appFontSize(String.valueOf(defaultSize));
         try {
             return AppearancePanel.normalizeAppFontSize(Integer.parseInt(value));
         } catch (Exception e) {
@@ -38,7 +38,7 @@ public class FontSettingsResolver {
 
         String appFontFamily = resolveAppFontFamilySetting();
         if (!availableAppFontFamilies.contains(appFontFamily)) {
-            appFontFamily = AppearancePanel.DEFAULT_APP_FONT;
+            appFontFamily = FontSettings.DEFAULT_APP_FONT;
         }
 
         int appFontSize = resolveAppFontSizeSetting();
@@ -48,18 +48,14 @@ public class FontSettingsResolver {
 
         String codeFontFamily = resolveCodeFontFamilySetting();
         if (!availableCodeFontFamilies.contains(codeFontFamily)) {
-            codeFontFamily = AppearancePanel.DEFAULT_CODE_FONT;
+            codeFontFamily = FontSettings.DEFAULT_CODE_FONT;
         }
 
         return new FontMenuSelection(appFontFamily, appFontSize, codeFontFamily);
     }
 
-    private String readString(String key, String defaultValue) {
-        try {
-            return settingsRepo.get(key, defaultValue);
-        } catch (Exception e) {
-            return defaultValue;
-        }
+    private FontSettings fontSettings() {
+        return new FontSettings(settingsRepo);
     }
 
     public record FontMenuSelection(String appFontFamily, int appFontSize, String codeFontFamily) {

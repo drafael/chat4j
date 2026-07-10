@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
@@ -12,6 +15,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,10 +53,50 @@ class ProviderAvailabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Model selection for local providers uses configured base URL")
+    void isModelSelectionEnabled_whenProviderBaseUrlConfigured_usesConfiguredUrlForReachability() throws Exception {
+        SettingsRepository settingsRepo = settingsRepo("provider-availability-local-configured");
+        settingsRepo.put(ProviderRuntimeSettings.forProvider(settingsRepo, "Ollama").baseUrlKey(), "http://127.0.0.1:11434/v1");
+        var probe = new FakeLocalServiceHealthProbe();
+        probe.nonBlockingResultByUrl.put("http://127.0.0.1:11434/v1", true);
+        var subject = new ProviderAvailabilityResolver(settingsRepo, probe);
+
+        boolean enabled = subject.isModelSelectionEnabled(provider("Ollama", "http://localhost:11434/v1"));
+
+        assertThat(enabled).isTrue();
+        assertThat(probe.nonBlockingCalls).containsExactly("http://127.0.0.1:11434/v1");
+    }
+
+    @Test
+    @DisplayName("Local provider availability warns and falls back to default URL when settings read fails")
+    void isModelSelectionEnabled_whenSettingsReadFails_logsWarningAndUsesDefaultBaseUrl() {
+        var probe = new FakeLocalServiceHealthProbe();
+        probe.nonBlockingResultByUrl.put("http://localhost:11434/v1", true);
+        var subject = new ProviderAvailabilityResolver(new ThrowingSettingsRepo(), probe);
+        ListAppender<ILoggingEvent> appender = attachLogAppender();
+
+        boolean enabled;
+        try {
+            enabled = subject.isModelSelectionEnabled(provider("Ollama", "http://localhost:11434/v1"));
+        } finally {
+            detachLogAppender(appender);
+        }
+
+        assertThat(enabled).isTrue();
+        assertThat(probe.nonBlockingCalls).containsExactly("http://localhost:11434/v1");
+        assertThat(appender.list)
+                .anySatisfy(event -> {
+                    assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                    assertThat(event.getFormattedMessage())
+                            .contains("Failed to resolve configured base URL for Ollama", "forced failure");
+                });
+    }
+
+    @Test
     @DisplayName("Menu availability uses configured base URLs for local providers")
     void resolveMenuAvailability_whenBaseUrlConfigured_usesConfiguredUrlForReachability() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("provider-availability-configured");
-        settingsRepo.put(SettingsKeys.providerBaseUrlKey("Ollama"), "http://127.0.0.1:11434/v1");
+        settingsRepo.put(ProviderRuntimeSettings.forProvider(settingsRepo, "Ollama").baseUrlKey(), "http://127.0.0.1:11434/v1");
 
         var probe = new FakeLocalServiceHealthProbe();
         probe.blockingResultByUrl.put("http://127.0.0.1:11434/v1", true);
@@ -75,7 +119,7 @@ class ProviderAvailabilityResolverTest {
     @DisplayName("Menu availability falls back to default base URL when configured value is blank")
     void resolveMenuAvailability_whenConfiguredBaseUrlBlank_usesDefaultBaseUrl() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("provider-availability-blank");
-        settingsRepo.put(SettingsKeys.providerBaseUrlKey("LM Studio"), "   ");
+        settingsRepo.put(ProviderRuntimeSettings.forProvider(settingsRepo, "LM Studio").baseUrlKey(), "   ");
 
         var probe = new FakeLocalServiceHealthProbe();
         probe.blockingResultByUrl.put("http://localhost:1234/v1", true);
@@ -106,6 +150,33 @@ class ProviderAvailabilityResolverTest {
                 model -> null,
                 () -> emptyList()
         );
+    }
+
+    private ListAppender<ILoggingEvent> attachLogAppender() {
+        Logger logger = (Logger) LoggerFactory.getLogger(ProviderAvailabilityResolver.class);
+        logger.setLevel(Level.WARN);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.setContext(logger.getLoggerContext());
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private void detachLogAppender(ListAppender<ILoggingEvent> appender) {
+        Logger logger = (Logger) LoggerFactory.getLogger(ProviderAvailabilityResolver.class);
+        logger.detachAppender(appender);
+    }
+
+    private static class ThrowingSettingsRepo extends SettingsRepository {
+
+        private ThrowingSettingsRepo() {
+            super(Path.of("unused-provider-availability.properties"));
+        }
+
+        @Override
+        public String get(String key, String defaultValue) {
+            throw new IllegalStateException("forced failure");
+        }
     }
 
     private static class FakeLocalServiceHealthProbe implements ProviderAvailabilityResolver.LocalServiceHealthProbe {

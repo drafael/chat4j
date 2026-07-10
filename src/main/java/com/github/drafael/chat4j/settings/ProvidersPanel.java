@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.settings;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
@@ -11,6 +10,7 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
+import com.github.drafael.chat4j.provider.support.ProviderRuntimeSettings;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
@@ -216,7 +216,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         row = addCheckBoxRow(panel, gbc, row + 1, enabled, "Enable this provider");
         bindCheckBox(enabled, providerEnabledKey(name), true, null);
 
-        String configuredBaseUrl = readString(providerBaseUrlKey(name), info.defaultBaseUrl());
+        String configuredBaseUrl = configuredProviderBaseUrl(name, info);
         boolean localReachable = info.authType() == AuthType.ENV_VAR
                 && info.envVar() == null
                 && LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
@@ -1246,7 +1246,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
 
         if (info.envVar() == null) {
-            String configuredBaseUrl = readString(providerBaseUrlKey(providerName), info.defaultBaseUrl());
+            String configuredBaseUrl = configuredProviderBaseUrl(providerName, info);
             return LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
         }
 
@@ -1336,12 +1336,25 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         return statusPanel;
     }
 
+    String configuredProviderBaseUrl(String providerName, ProviderInfo info) {
+        String value = readString(providerBaseUrlKey(providerName), info.defaultBaseUrl());
+        return fallbackBlankProviderBaseUrl(value, info.defaultBaseUrl());
+    }
+
+    static String fallbackBlankProviderBaseUrl(String configuredValue, String defaultBaseUrl) {
+        return StringUtils.isBlank(configuredValue) ? defaultBaseUrl : configuredValue;
+    }
+
     private String providerBaseUrlKey(String providerName) {
-        return SettingsKeys.providerBaseUrlKey(providerName);
+        return providerRuntimeSettings(providerName).baseUrlKey();
     }
 
     private String providerEnabledKey(String providerName) {
-        return SettingsKeys.providerEnabledKey(providerName);
+        return providerRuntimeSettings(providerName).enabledKey();
+    }
+
+    private ProviderRuntimeSettings providerRuntimeSettings(String providerName) {
+        return ProviderRuntimeSettings.forProvider(settingsRepo(), providerName);
     }
 
     private JComponent wrapLeading(JComponent component) {

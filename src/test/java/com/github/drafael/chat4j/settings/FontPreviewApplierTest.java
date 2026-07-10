@@ -12,14 +12,14 @@ class FontPreviewApplierTest {
     @Test
     @DisplayName("Apply app font delegates to appearance font application without throwing")
     void applyAppFont_whenCalled_delegatesWithoutThrowing() {
-        assertThatCode(() -> subject.applyAppFont(AppearancePanel.DEFAULT_APP_FONT, AppearancePanel.defaultAppFontSize()))
+        assertThatCode(() -> subject.applyAppFont(FontSettings.DEFAULT_APP_FONT, AppearancePanel.defaultAppFontSize()))
                 .doesNotThrowAnyException();
     }
 
     @Test
     @DisplayName("Apply code font delegates to appearance code font application without throwing")
     void applyCodeFont_whenCalled_delegatesWithoutThrowing() {
-        assertThatCode(() -> subject.applyCodeFont(AppearancePanel.DEFAULT_CODE_FONT))
+        assertThatCode(() -> subject.applyCodeFont(FontSettings.DEFAULT_CODE_FONT))
                 .doesNotThrowAnyException();
     }
 }

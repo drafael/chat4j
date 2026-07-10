@@ -21,8 +21,8 @@ class FontSettingsPersisterTest {
 
         subject.persistAppFontSelection("Inter", 16);
 
-        assertThat(settingsRepo.get(AppearancePanel.KEY_APP_FONT)).contains("Inter");
-        assertThat(settingsRepo.get(AppearancePanel.KEY_APP_FONT_SIZE)).contains("16");
+        assertThat(settingsRepo.get(FontSettings.APP_FONT_FAMILY_KEY)).contains("Inter");
+        assertThat(settingsRepo.get(FontSettings.APP_FONT_SIZE_KEY)).contains("16");
     }
 
     @Test
@@ -33,7 +33,7 @@ class FontSettingsPersisterTest {
 
         subject.persistCodeFontFamily("JetBrains Mono");
 
-        assertThat(settingsRepo.get(AppearancePanel.KEY_CODE_FONT)).contains("JetBrains Mono");
+        assertThat(settingsRepo.get(FontSettings.CODE_FONT_FAMILY_KEY)).contains("JetBrains Mono");
     }
 
     private SettingsRepository settingsRepo(String name) {

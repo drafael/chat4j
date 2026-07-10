@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import java.util.LinkedHashMap;
@@ -47,7 +46,8 @@ public class ProviderAvailabilityResolver {
             return true;
         }
 
-        return localServiceHealthProbe.isReachableNonBlocking(providerDef.baseUrl());
+        String configuredBaseUrl = readConfiguredProviderBaseUrl(providerDef.name(), providerDef.baseUrl());
+        return localServiceHealthProbe.isReachableNonBlocking(configuredBaseUrl);
     }
 
     public Map<String, Boolean> resolveMenuAvailability(@NonNull List<ProviderRegistry.ProviderDef> providers) {
@@ -72,7 +72,8 @@ public class ProviderAvailabilityResolver {
 
     private String readConfiguredProviderBaseUrl(String providerName, String defaultBaseUrl) {
         try {
-            String value = settingsRepo.get(SettingsKeys.providerBaseUrlKey(providerName), defaultBaseUrl);
+            ProviderRuntimeSettings settings = ProviderRuntimeSettings.forProvider(settingsRepo, providerName);
+            String value = settingsRepo.get(settings.baseUrlKey(), defaultBaseUrl);
             return StringUtils.isBlank(value) ? defaultBaseUrl : value;
         } catch (Exception e) {
             log.warn("Failed to resolve configured base URL for {}: {}", providerName, ExceptionUtils.getMessage(e));

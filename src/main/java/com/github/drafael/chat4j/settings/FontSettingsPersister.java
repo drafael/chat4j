@@ -15,13 +15,16 @@ public class FontSettingsPersister {
     public void persistAppFontSelection(String family, int size) {
         Validate.notBlank(family, "family must not be blank");
 
-        settingsRepo.put(AppearancePanel.KEY_APP_FONT, family);
-        settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, String.valueOf(size));
+        fontSettings().persistAppFontSelection(family, size);
     }
 
     public void persistCodeFontFamily(String family) {
         Validate.notBlank(family, "family must not be blank");
 
-        settingsRepo.put(AppearancePanel.KEY_CODE_FONT, family);
+        fontSettings().persistCodeFontFamily(family);
+    }
+
+    private FontSettings fontSettings() {
+        return new FontSettings(settingsRepo);
     }
 }

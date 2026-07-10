@@ -21,42 +21,42 @@ class FontSettingsResolverTest {
         var subject = new FontSettingsResolver(settingsRepo);
 
         FontSettingsResolver.FontMenuSelection selection = subject.resolveMenuSelection(
-                Set.of(AppearancePanel.DEFAULT_APP_FONT),
+                Set.of(FontSettings.DEFAULT_APP_FONT),
                 Set.of(AppearancePanel.defaultAppFontSize()),
-                Set.of(AppearancePanel.DEFAULT_CODE_FONT)
+                Set.of(FontSettings.DEFAULT_CODE_FONT)
         );
 
-        assertThat(selection.appFontFamily()).isEqualTo(AppearancePanel.DEFAULT_APP_FONT);
+        assertThat(selection.appFontFamily()).isEqualTo(FontSettings.DEFAULT_APP_FONT);
         assertThat(selection.appFontSize()).isEqualTo(AppearancePanel.defaultAppFontSize());
-        assertThat(selection.codeFontFamily()).isEqualTo(AppearancePanel.DEFAULT_CODE_FONT);
+        assertThat(selection.codeFontFamily()).isEqualTo(FontSettings.DEFAULT_CODE_FONT);
     }
 
     @Test
     @DisplayName("Resolve menu selection falls back for unavailable font families")
     void resolveMenuSelection_whenConfiguredFamiliesAreUnavailable_fallsBackToDefaults() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("font-settings-family-fallback");
-        settingsRepo.put(AppearancePanel.KEY_APP_FONT, "Unavailable UI Font");
-        settingsRepo.put(AppearancePanel.KEY_CODE_FONT, "Unavailable Code Font");
-        settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, "18");
+        settingsRepo.put(FontSettings.APP_FONT_FAMILY_KEY, "Unavailable UI Font");
+        settingsRepo.put(FontSettings.CODE_FONT_FAMILY_KEY, "Unavailable Code Font");
+        settingsRepo.put(FontSettings.APP_FONT_SIZE_KEY, "18");
 
         var subject = new FontSettingsResolver(settingsRepo);
 
         FontSettingsResolver.FontMenuSelection selection = subject.resolveMenuSelection(
-                Set.of(AppearancePanel.DEFAULT_APP_FONT, "Inter"),
+                Set.of(FontSettings.DEFAULT_APP_FONT, "Inter"),
                 Set.of(14, 16, 18),
-                Set.of(AppearancePanel.DEFAULT_CODE_FONT, "JetBrains Mono")
+                Set.of(FontSettings.DEFAULT_CODE_FONT, "JetBrains Mono")
         );
 
-        assertThat(selection.appFontFamily()).isEqualTo(AppearancePanel.DEFAULT_APP_FONT);
+        assertThat(selection.appFontFamily()).isEqualTo(FontSettings.DEFAULT_APP_FONT);
         assertThat(selection.appFontSize()).isEqualTo(18);
-        assertThat(selection.codeFontFamily()).isEqualTo(AppearancePanel.DEFAULT_CODE_FONT);
+        assertThat(selection.codeFontFamily()).isEqualTo(FontSettings.DEFAULT_CODE_FONT);
     }
 
     @Test
     @DisplayName("Resolve app font size falls back to default when value is invalid")
     void resolveAppFontSizeSetting_whenValueIsInvalid_returnsDefaultNormalizedSize() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("font-settings-size-invalid");
-        settingsRepo.put(AppearancePanel.KEY_APP_FONT_SIZE, "not-a-number");
+        settingsRepo.put(FontSettings.APP_FONT_SIZE_KEY, "not-a-number");
 
         var subject = new FontSettingsResolver(settingsRepo);
 
@@ -71,8 +71,8 @@ class FontSettingsResolverTest {
         SettingsRepository failingRepo = new ThrowingSettingsRepo();
         var subject = new FontSettingsResolver(failingRepo);
 
-        assertThat(subject.resolveAppFontFamilySetting()).isEqualTo(AppearancePanel.DEFAULT_APP_FONT);
-        assertThat(subject.resolveCodeFontFamilySetting()).isEqualTo(AppearancePanel.DEFAULT_CODE_FONT);
+        assertThat(subject.resolveAppFontFamilySetting()).isEqualTo(FontSettings.DEFAULT_APP_FONT);
+        assertThat(subject.resolveCodeFontFamilySetting()).isEqualTo(FontSettings.DEFAULT_CODE_FONT);
         assertThat(subject.resolveAppFontSizeSetting())
                 .isEqualTo(AppearancePanel.normalizeAppFontSize(AppearancePanel.defaultAppFontSize()));
     }

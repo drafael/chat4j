@@ -3,6 +3,7 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
+import com.github.drafael.chat4j.settings.FontSettings;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuReadyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuSelectionFlowCoordinator;
@@ -126,7 +127,7 @@ public class MainFrameFontMenuCoordinator {
     }
 
     public boolean restoreAppFont(@NonNull FontMenuContext context) {
-        return applyAppFontSelection(context, AppearancePanel.DEFAULT_APP_FONT, AppearancePanel.defaultAppFontSize());
+        return applyAppFontSelection(context, FontSettings.DEFAULT_APP_FONT, AppearancePanel.defaultAppFontSize());
     }
 
     public int adjustAppFontSize(@NonNull FontMenuContext context, boolean increase) {

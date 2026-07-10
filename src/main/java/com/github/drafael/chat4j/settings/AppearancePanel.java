@@ -10,7 +10,7 @@ import com.formdev.flatlaf.util.ColorFunctions;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.chat.webview.WebViewSettings;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
@@ -34,15 +34,15 @@ import static java.util.stream.Collectors.toSet;
 
 public class AppearancePanel extends AbstractSettingsPanel {
 
-    private static final String KEY_THEME = SettingsKeys.THEME_NAME;
-    private static final String KEY_ACCENT_COLOR = SettingsKeys.THEME_ACCENT;
-    public static final String KEY_APP_FONT = SettingsKeys.APP_FONT_FAMILY;
-    public static final String KEY_APP_FONT_SIZE = SettingsKeys.APP_FONT_SIZE;
-    public static final String KEY_CODE_FONT = SettingsKeys.CODE_FONT_FAMILY;
+    private static final String KEY_THEME = ThemeSettings.THEME_NAME_KEY;
+    private static final String KEY_ACCENT_COLOR = ThemeSettings.THEME_ACCENT_KEY;
+    private static final String KEY_APP_FONT = FontSettings.APP_FONT_FAMILY_KEY;
+    private static final String KEY_APP_FONT_SIZE = FontSettings.APP_FONT_SIZE_KEY;
+    private static final String KEY_CODE_FONT = FontSettings.CODE_FONT_FAMILY_KEY;
 
-    private static final String DEFAULT_THEME = ThemeSettingsResolver.DEFAULT_THEME;
-    public static final String DEFAULT_APP_FONT = "System Default";
-    public static final String DEFAULT_CODE_FONT = "Monospaced";
+    private static final String DEFAULT_THEME = ThemeSettings.DEFAULT_THEME;
+    private static final String DEFAULT_APP_FONT = FontSettings.DEFAULT_APP_FONT;
+    private static final String DEFAULT_CODE_FONT = FontSettings.DEFAULT_CODE_FONT;
     private static final int FALLBACK_FONT_SIZE = Fonts.SIZE_BODY;
     private static final int[] APP_FONT_SIZE_OPTIONS = {
             Fonts.SIZE_COMPACT,
@@ -170,6 +170,10 @@ public class AppearancePanel extends AbstractSettingsPanel {
         } catch (Exception e) {
             accentColor = null;
         }
+    }
+
+    static Color currentAccentColor() {
+        return accentColor;
     }
 
     public static void applySavedFonts(SettingsRepository settings) {
@@ -397,12 +401,12 @@ public class AppearancePanel extends AbstractSettingsPanel {
         engineComboBox.setRenderer(new EngineRenderer());
         addRow(form, gbc, row++, "Engine", engineComboBox);
         currentWebViewEngineSettingValue = WebViewEngine.fromSettingValue(
-                readString(SettingsKeys.WEBVIEW_ENGINE, runtimeStatus.configuredEngine().settingValue()),
+                readString(WebViewSettings.ENGINE_KEY, runtimeStatus.configuredEngine().settingValue()),
                 runtimeStatus.configuredEngine()
         ).settingValue();
         bindComboBox(
                 engineComboBox,
-                SettingsKeys.WEBVIEW_ENGINE,
+                WebViewSettings.ENGINE_KEY,
                 runtimeStatus.configuredEngine().settingValue(),
                 engineValidator(),
                 value -> handleWebViewEngineApplied(engineComboBox, value)
@@ -414,7 +418,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         row = addFullWidthRow(form, gbc, row, createWebViewHealthPanel());
 
         refreshDiagnostics(readString(
-                SettingsKeys.WEBVIEW_ENGINE,
+                WebViewSettings.ENGINE_KEY,
                 runtimeStatus.configuredEngine().settingValue()
         ));
         return row;
@@ -458,7 +462,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private void restoreWebViewEngineSelection(JComboBox<String> engineComboBox, String value) {
-        writeSetting(SettingsKeys.WEBVIEW_ENGINE, value);
+        writeSetting(WebViewSettings.ENGINE_KEY, value);
         restoringWebViewEngineSelection = true;
         try {
             engineComboBox.setSelectedItem(value);
@@ -791,7 +795,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
     }
 
-    private void applyAccentSelection(Color color, String hex) {
+    void applyAccentSelection(Color color, String hex) {
         accentColor = color;
 
         if (hex != null) {

@@ -30,6 +30,24 @@ class ModelFavoritesServiceTest {
     }
 
     @Test
+    @DisplayName("Favorite keys preserve provider slug and URL-encoded model ID format")
+    void setFavorite_whenCalled_persistsBackwardCompatibleKeys() {
+        var settingsRepo = new InMemorySettingsRepo();
+        var subject = new ModelFavoritesService(settingsRepo);
+
+        subject.setFavorite("OpenAI", "gpt-4.1", true);
+        subject.setFavorite("LM Studio", "qwen3:14b", true);
+        subject.setFavorite("   ", "unknown-model", true);
+
+        assertThat(settingsRepo.findByPrefix(SettingsKeys.MODEL_FAVORITE_PREFIX).keySet())
+                .containsExactlyInAnyOrder(
+                        "chat4j.models.favorite.openai::gpt-4.1",
+                        "chat4j.models.favorite.lm-studio::qwen3%3A14b",
+                        "chat4j.models.favorite.unknown::unknown-model"
+                );
+    }
+
+    @Test
     @DisplayName("Toggling a favorite persists add and remove operations")
     void toggleFavorite_whenCalledTwice_addsThenRemovesFavorite() {
         var settingsRepo = new InMemorySettingsRepo();

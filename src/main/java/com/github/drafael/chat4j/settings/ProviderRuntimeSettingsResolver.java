@@ -1,14 +1,13 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.ProviderRuntimeSettings;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyMap;
 
@@ -32,26 +31,9 @@ public class ProviderRuntimeSettingsResolver {
 
     public ProviderRegistry.ProviderRuntimeConfig resolve(@NonNull ProviderRegistry.ProviderDef providerDef) {
 
-        boolean enabled = true;
-        String baseUrl = providerDef.baseUrl();
-
-        try {
-            enabled = Boolean.parseBoolean(
-                    settingsRepo.get(SettingsKeys.providerEnabledKey(providerDef.name()), "true")
-            );
-        } catch (Exception e) {
-            enabled = true;
-        }
-
-        try {
-            baseUrl = settingsRepo.get(SettingsKeys.providerBaseUrlKey(providerDef.name()), providerDef.baseUrl());
-        } catch (Exception e) {
-            baseUrl = providerDef.baseUrl();
-        }
-
-        if (StringUtils.isBlank(baseUrl)) {
-            baseUrl = providerDef.baseUrl();
-        }
+        ProviderRuntimeSettings settings = ProviderRuntimeSettings.forProvider(settingsRepo, providerDef.name());
+        boolean enabled = settings.enabled(true);
+        String baseUrl = settings.baseUrl(providerDef.baseUrl());
 
         return new ProviderRegistry.ProviderRuntimeConfig(enabled, baseUrl);
     }

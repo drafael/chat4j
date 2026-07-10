@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.bootstrap;
 import ca.weblite.webview.swing.WebViewComponent;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.chat.webview.WebViewSettings;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -52,7 +52,7 @@ final class JcefStartupInitializationDecider {
 
     private WebViewEngine resolveConfiguredEngine(SettingsRepository settingsRepo) {
         try {
-            String configuredValue = settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE, "");
+            String configuredValue = settingsRepo.get(WebViewSettings.ENGINE_KEY, "");
             return WebViewEngine.fromSettingValue(configuredValue, platformFallbackChain().getFirst());
         } catch (Exception e) {
             log.warn("Failed to resolve configured web-view engine for JCEF startup decision: {}", ExceptionUtils.getMessage(e));

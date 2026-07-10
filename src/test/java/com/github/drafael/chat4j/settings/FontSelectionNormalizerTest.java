@@ -33,7 +33,7 @@ class FontSelectionNormalizerTest {
                 Set.of("System Default", "Inter")
         );
 
-        assertThat(selection.family()).isEqualTo(AppearancePanel.DEFAULT_APP_FONT);
+        assertThat(selection.family()).isEqualTo(FontSettings.DEFAULT_APP_FONT);
         assertThat(selection.size()).isEqualTo(AppearancePanel.normalizeAppFontSize(16));
     }
 
@@ -42,6 +42,6 @@ class FontSelectionNormalizerTest {
     void normalizeCodeFamily_whenFamilyUnavailable_usesDefaultFamily() {
         String family = subject.normalizeCodeFamily("Missing", Set.of("Monospaced", "JetBrains Mono"));
 
-        assertThat(family).isEqualTo(AppearancePanel.DEFAULT_CODE_FONT);
+        assertThat(family).isEqualTo(FontSettings.DEFAULT_CODE_FONT);
     }
 }

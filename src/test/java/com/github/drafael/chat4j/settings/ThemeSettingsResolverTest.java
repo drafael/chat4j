@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -20,20 +19,20 @@ class ThemeSettingsResolverTest {
         SettingsRepository settingsRepo = settingsRepo("theme-settings-default");
         var subject = new ThemeSettingsResolver(settingsRepo);
 
-        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettings.DEFAULT_THEME);
 
-        assertThat(selectedTheme).isEqualTo(ThemeSettingsResolver.DEFAULT_THEME);
+        assertThat(selectedTheme).isEqualTo(ThemeSettings.DEFAULT_THEME);
     }
 
     @Test
     @DisplayName("Resolve selected theme returns stored value when configured")
     void resolveSelectedTheme_whenStoredValueExists_returnsStoredTheme() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("theme-settings-stored");
-        settingsRepo.put(SettingsKeys.THEME_NAME, "Solarized Dark");
+        settingsRepo.put(ThemeSettings.THEME_NAME_KEY, "Solarized Dark");
 
         var subject = new ThemeSettingsResolver(settingsRepo);
 
-        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettings.DEFAULT_THEME);
 
         assertThat(selectedTheme).isEqualTo("Solarized Dark");
     }
@@ -43,9 +42,9 @@ class ThemeSettingsResolverTest {
     void resolveSelectedTheme_whenSettingsAccessFails_returnsDefaultTheme() {
         var subject = new ThemeSettingsResolver(new ThrowingSettingsRepo());
 
-        String selectedTheme = subject.resolveSelectedTheme(ThemeSettingsResolver.DEFAULT_THEME);
+        String selectedTheme = subject.resolveSelectedTheme(ThemeSettings.DEFAULT_THEME);
 
-        assertThat(selectedTheme).isEqualTo(ThemeSettingsResolver.DEFAULT_THEME);
+        assertThat(selectedTheme).isEqualTo(ThemeSettings.DEFAULT_THEME);
     }
 
     @Test
@@ -56,7 +55,7 @@ class ThemeSettingsResolverTest {
 
         subject.persistSelectedTheme("GitHub Dark");
 
-        assertThat(settingsRepo.get(SettingsKeys.THEME_NAME)).contains("GitHub Dark");
+        assertThat(settingsRepo.get(ThemeSettings.THEME_NAME_KEY)).contains("GitHub Dark");
     }
 
     private SettingsRepository settingsRepo(String testName) {

@@ -3,7 +3,7 @@ package com.github.drafael.chat4j;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.chat.webview.WebViewSettings;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.BorderLayout;
@@ -250,12 +250,12 @@ public final class AboutDialog {
         return "%s selected, %s active until restart".formatted(selectedEngine.displayName(), activeEngine.displayName());
     }
 
-    private static WebViewEngine selectedWebViewEngine(SettingsRepository settingsRepo, WebViewRuntimeStatus status) {
+    static WebViewEngine selectedWebViewEngine(SettingsRepository settingsRepo, WebViewRuntimeStatus status) {
         if (settingsRepo == null) {
             return status.configuredEngine();
         }
         try {
-            String value = settingsRepo.get(SettingsKeys.WEBVIEW_ENGINE, status.configuredEngine().settingValue());
+            String value = settingsRepo.get(WebViewSettings.ENGINE_KEY, status.configuredEngine().settingValue());
             return WebViewEngine.fromSettingValue(value);
         } catch (Exception e) {
             return status.configuredEngine();

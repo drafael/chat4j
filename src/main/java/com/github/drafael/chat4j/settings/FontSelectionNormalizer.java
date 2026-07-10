@@ -10,7 +10,7 @@ public class FontSelectionNormalizer {
 
         String family = availableFamilies.contains(requestedFamily)
                 ? requestedFamily
-                : AppearancePanel.DEFAULT_APP_FONT;
+                : FontSettings.DEFAULT_APP_FONT;
         int size = AppearancePanel.normalizeAppFontSize(requestedSize);
 
         return new AppFontSelection(family, size);
@@ -20,7 +20,7 @@ public class FontSelectionNormalizer {
 
         return availableFamilies.contains(requestedFamily)
                 ? requestedFamily
-                : AppearancePanel.DEFAULT_CODE_FONT;
+                : FontSettings.DEFAULT_CODE_FONT;
     }
 
     public record AppFontSelection(String family, int size) {
