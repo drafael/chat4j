@@ -296,9 +296,10 @@ public class TextToSpeechService {
         if (maxEnd >= text.length()) {
             return text.length();
         }
+        int searchEnd = maxEnd - 1;
         int punctuation = Math.max(
-                Math.max(text.lastIndexOf('.', maxEnd), text.lastIndexOf('!', maxEnd)),
-                text.lastIndexOf('?', maxEnd)
+                Math.max(text.lastIndexOf('.', searchEnd), text.lastIndexOf('!', searchEnd)),
+                text.lastIndexOf('?', searchEnd)
         );
         if (punctuation > start) {
             return punctuation + 1;

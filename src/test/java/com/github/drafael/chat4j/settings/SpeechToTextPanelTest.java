@@ -147,6 +147,59 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Vosk refresh operations do not block closing Speech to Text settings")
+    void savePendingChanges_whenVoskRefreshInProgress_allowsClose() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-scan.properties"));
+        Path models = tempDir.resolve("scan-models");
+        try (var voskModels = new RefreshingVoskModelManagementService(
+                repo,
+                models,
+                tempDir.resolve("scan-temp"),
+                VoskModelManagementService.SCAN_OPERATION_STATUS
+        )) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                assertThat(subject.savePendingChanges()).isTrue();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+        try (var voskModels = new RefreshingVoskModelManagementService(
+                repo,
+                models,
+                tempDir.resolve("catalog-temp"),
+                VoskModelManagementService.CATALOG_REFRESH_OPERATION_STATUS
+        )) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                assertThat(subject.savePendingChanges()).isTrue();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Resolved Vosk operations do not keep blocking Speech to Text settings close")
+    void savePendingChanges_whenVoskOperationFinishes_allowsClose() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-resolved.properties"));
+        Path models = tempDir.resolve("resolved-models");
+        try (var voskModels = new RecoveringBusyVoskModelManagementService(repo, models, tempDir.resolve("resolved-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                assertThat(subject.savePendingChanges()).isFalse();
+
+                voskModels.finishOperation();
+
+                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(subject.lastSaveError()).isBlank();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Vosk model directory changes are blocked while a model operation is active")
     void saveModelDirectory_whenVoskOperationInProgress_rejectsDirectoryChange() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-busy.properties"));
@@ -654,12 +707,12 @@ class SpeechToTextPanelTest {
         }
     }
 
-    private static final class BusyVoskModelManagementService extends VoskModelManagementService {
-        private final VoskModelManagementSnapshot busySnapshot;
+    private static final class RefreshingVoskModelManagementService extends VoskModelManagementService {
+        private final VoskModelManagementSnapshot refreshingSnapshot;
 
-        private BusyVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+        private RefreshingVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot, String status) {
             super(settingsRepo, modelRoot, tempRoot);
-            busySnapshot = new VoskModelManagementSnapshot(
+            refreshingSnapshot = new VoskModelManagementSnapshot(
                     modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
                     tempRoot,
                     emptyList(),
@@ -667,10 +720,56 @@ class SpeechToTextPanelTest {
                     emptyList(),
                     null,
                     true,
-                    "Downloading Vosk model...",
+                    status,
                     true,
-                    "Downloading Vosk model..."
+                    status
             );
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return refreshingSnapshot;
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            listener.accept(refreshingSnapshot);
+            return () -> {
+            };
+        }
+    }
+
+    private static final class RecoveringBusyVoskModelManagementService extends VoskModelManagementService {
+        private volatile VoskModelManagementSnapshot currentSnapshot;
+
+        private RecoveringBusyVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            currentSnapshot = newBusySnapshot(modelRoot, tempRoot);
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return currentSnapshot;
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            listener.accept(currentSnapshot);
+            return () -> {
+            };
+        }
+
+        private void finishOperation() {
+            currentSnapshot = VoskModelManagementSnapshot.empty(currentSnapshot.modelRoot(), currentSnapshot.tempRoot());
+        }
+    }
+
+    private static final class BusyVoskModelManagementService extends VoskModelManagementService {
+        private final VoskModelManagementSnapshot busySnapshot;
+
+        private BusyVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            busySnapshot = newBusySnapshot(modelRoot, tempRoot);
         }
 
         @Override
@@ -684,6 +783,21 @@ class SpeechToTextPanelTest {
             return () -> {
             };
         }
+    }
+
+    private static VoskModelManagementSnapshot newBusySnapshot(Path modelRoot, Path tempRoot) {
+        return new VoskModelManagementSnapshot(
+                modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                tempRoot,
+                emptyList(),
+                emptyList(),
+                emptyList(),
+                null,
+                true,
+                "Downloading Vosk model...",
+                true,
+                "Downloading Vosk model..."
+        );
     }
 
     private static final class AsyncSelectionVoskModelManagementService extends VoskModelManagementService {

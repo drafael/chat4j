@@ -48,6 +48,32 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Read aloud does not exceed provider limit when punctuation is at split boundary")
+    void readAloud_whenPunctuationIsAtSplitBoundary_keepsChunksWithinLimit() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        var provider = new FakeProvider();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                executor
+        );
+
+        subject.readAloud("message", "abcdefghij. next", error -> {
+        });
+        executor.shutdown();
+        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(provider.requests)
+                .extracting(request -> request.text().length())
+                .allMatch(length -> length <= provider.maxInputCharacters());
+        assertThat(provider.requests)
+                .extracting(TextToSpeechRequest::text)
+                .containsExactly("abcdefghij", ". next");
+    }
+
+    @Test
     @DisplayName("Read aloud toggles active message and stops on second click")
     void readAloud_whenSameMessageClickedAgain_stopsActivePlayback() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));

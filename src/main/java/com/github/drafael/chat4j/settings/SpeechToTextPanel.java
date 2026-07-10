@@ -41,6 +41,7 @@ import java.util.stream.Stream;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import static java.util.Collections.emptyList;
 
@@ -51,6 +52,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private static final int LOCAL_MODELS_TABLE_HEIGHT = 230;
     private static final int LOCAL_MODELS_ROW_GAP = 6;
     private static final int LOCAL_MODELS_COLUMN_GAP = 12;
+    private static final String VOSK_OPERATION_IN_PROGRESS_ERROR = "A Vosk model operation is still in progress.";
+    private static final String WHISPER_OPERATION_IN_PROGRESS_ERROR = "A Whisper.cpp model operation is still in progress.";
 
     private final SpeechToTextProviderRegistry providerRegistry;
     private final SpeechToTextSettings settings;
@@ -180,15 +183,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     @Override
     public boolean savePendingChanges() {
-        if (voskModelManagementService.snapshot().operationInProgress()) {
-            lastSaveError = "A Vosk model operation is still in progress.";
+        VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
+        if (voskModelOperationBlocksClose(voskSnapshot)) {
+            lastSaveError = VOSK_OPERATION_IN_PROGRESS_ERROR;
             return false;
         }
         WhisperModelManagementSnapshot whisperSnapshot = whisperModelManagementService.snapshot();
         if (whisperSnapshot.operationInProgress() && !"refresh".equals(whisperSnapshot.operationType())) {
-            lastSaveError = "A Whisper.cpp model operation is still in progress.";
+            lastSaveError = WHISPER_OPERATION_IN_PROGRESS_ERROR;
             return false;
         }
+        clearResolvedOperationError();
         try {
             boolean saved = true;
             for (CompletableFuture<Boolean> pendingSave : List.copyOf(pendingSaves)) {
@@ -198,6 +203,21 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         } catch (Exception e) {
             lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
             return false;
+        }
+    }
+
+    private boolean voskModelOperationBlocksClose(VoskModelManagementSnapshot snapshot) {
+        return snapshot.operationInProgress()
+                && !Strings.CS.equalsAny(
+                        snapshot.operationStatus(),
+                        VoskModelManagementService.SCAN_OPERATION_STATUS,
+                        VoskModelManagementService.CATALOG_REFRESH_OPERATION_STATUS
+                );
+    }
+
+    private void clearResolvedOperationError() {
+        if (Strings.CS.equalsAny(lastSaveError, VOSK_OPERATION_IN_PROGRESS_ERROR, WHISPER_OPERATION_IN_PROGRESS_ERROR)) {
+            lastSaveError = "";
         }
     }
 

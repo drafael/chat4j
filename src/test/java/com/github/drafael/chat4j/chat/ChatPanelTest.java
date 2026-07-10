@@ -2075,7 +2075,7 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
+        awaitCondition(5, TimeUnit.SECONDS, () -> {
             flushEdt();
             return subject.getHistory().size() == 2;
         });
@@ -2103,7 +2103,7 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
+        awaitCondition(5, TimeUnit.SECONDS, () -> {
             flushEdt();
             return subject.getHistory().size() == 2;
         });

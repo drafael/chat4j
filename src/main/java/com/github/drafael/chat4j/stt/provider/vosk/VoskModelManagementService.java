@@ -26,6 +26,8 @@ import org.vosk.LogLevel;
 public class VoskModelManagementService implements AutoCloseable {
 
     public static final String PROVIDER_ID = "vosk";
+    public static final String SCAN_OPERATION_STATUS = "Scanning Vosk models...";
+    public static final String CATALOG_REFRESH_OPERATION_STATUS = "Refreshing Vosk catalog...";
     private static final long CLOSE_WAIT_POLL_SECONDS = 1;
 
     private final SettingsRepository settingsRepo;
@@ -75,7 +77,7 @@ public class VoskModelManagementService implements AutoCloseable {
 
     public void refreshAsync() {
         try {
-            submit("Scanning Vosk models...", () -> {
+            submit(SCAN_OPERATION_STATUS, () -> {
                 probeRuntime();
                 refreshSnapshot(false);
             });
@@ -85,7 +87,7 @@ public class VoskModelManagementService implements AutoCloseable {
 
     public void refreshCatalogAsync() {
         try {
-            submit("Refreshing Vosk catalog...", () -> {
+            submit(CATALOG_REFRESH_OPERATION_STATUS, () -> {
                 probeRuntime();
                 refreshSnapshot(true);
             });
