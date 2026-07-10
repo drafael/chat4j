@@ -142,7 +142,7 @@ class ChatPanelTest {
         subject.setOnVisibleStreamingChanged(observedStates::add);
         setField(subject, "selectedProviderName", "OpenAI");
         setField(subject, "selectedModelId", "gpt-5-mini");
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -514,7 +514,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Send is blocked when agent mode is enabled without a valid project folder")
     void onSend_whenAgentModeEnabledWithoutProjectFolder_showsValidationAndSkipsSend() throws Exception {
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
         subject.getInputBar().setAgentModeAvailable(true);
 
         Field enabledField = InputBar.class.getDeclaredField("agentModeEnabled");
@@ -563,7 +563,7 @@ class ChatPanelTest {
 
         setField(subject, "selectedProviderName", "OpenAI");
         setField(subject, "selectedModelId", "gpt-5-mini");
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -650,7 +650,7 @@ class ChatPanelTest {
 
         setField(subject, "selectedProviderName", "OpenAI");
         setField(subject, "selectedModelId", "gpt-5-mini");
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -751,7 +751,7 @@ class ChatPanelTest {
 
         setField(subject, "selectedProviderName", "OpenAI");
         setField(subject, "selectedModelId", "gpt-5-mini");
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -769,7 +769,7 @@ class ChatPanelTest {
     @DisplayName("Conversation loading blocks sends until history is applied")
     void onSend_whenConversationIsLoading_doesNotStartSend() throws Exception {
         var providerCalls = new AtomicInteger();
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -836,7 +836,7 @@ class ChatPanelTest {
         var releaseStream = new CountDownLatch(1);
         var providerCancels = new AtomicInteger();
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -903,7 +903,7 @@ class ChatPanelTest {
             return Message.user(composerState.text());
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -939,7 +939,7 @@ class ChatPanelTest {
             return Message.user(composerState.text());
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -967,7 +967,7 @@ class ChatPanelTest {
             throw new IOException("Failed to stage attachment: boom");
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -1399,7 +1399,7 @@ class ChatPanelTest {
                 Message.user("question"),
                 Message.assistant("old answer")
         ));
-        setField(subject, "currentProvider", immediateProvider("new answer"));
+        setCurrentProvider(subject, immediateProvider("new answer"));
         flushEdt();
 
         assertThat(subject.canRegenerateRecentResponse()).isTrue();
@@ -1430,7 +1430,7 @@ class ChatPanelTest {
                 activityOnlyAssistant,
                 Message.user("second question")
         ));
-        setField(subject, "currentProvider", immediateProvider("second answer"));
+        setCurrentProvider(subject, immediateProvider("second answer"));
         flushEdt();
 
         assertThat(subject.canRegenerateRecentResponse()).isTrue();
@@ -1519,7 +1519,7 @@ class ChatPanelTest {
             callbacks.countDown();
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -1546,7 +1546,7 @@ class ChatPanelTest {
             callbacks.countDown();
         });
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -1592,7 +1592,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking bubble is created only when thinking tokens are emitted")
     void onSend_whenProviderDoesNotEmitThinking_doesNotRenderActivityBubble() throws Exception {
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -1717,7 +1717,7 @@ class ChatPanelTest {
         subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -1869,7 +1869,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Thinking tokens are ignored when thinking toggle is off")
     void onSend_whenThinkingToggleIsOff_ignoresThinkingTokens() throws Exception {
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -1924,7 +1924,7 @@ class ChatPanelTest {
         subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -1982,7 +1982,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Assistant response is persisted only once even when provider emits late error after complete")
     void onSend_whenProviderSignalsCompleteThenError_persistsAssistantOnce() throws Exception {
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2038,7 +2038,7 @@ class ChatPanelTest {
         subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2097,7 +2097,7 @@ class ChatPanelTest {
     void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersActivityBubble() throws Exception {
         subject.getInputBar().setThinkingAvailable(false);
         subject.getInputBar().setThinkingEnabled(false);
-        setField(subject, "currentProvider", immediateProvider("<think>hidden reasoning</think>visible answer"));
+        setCurrentProvider(subject, immediateProvider("<think>hidden reasoning</think>visible answer"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
@@ -2126,7 +2126,7 @@ class ChatPanelTest {
         subject.getInputBar().setThinkingAvailable(true);
         subject.getInputBar().setThinkingEnabled(true);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2196,7 +2196,7 @@ class ChatPanelTest {
             return true;
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -2225,7 +2225,7 @@ class ChatPanelTest {
             }
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -2276,7 +2276,7 @@ class ChatPanelTest {
             return Message.user(composerState.text());
         });
 
-        setField(subject, "currentProvider", immediateProvider("pong"));
+        setCurrentProvider(subject, immediateProvider("pong"));
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
@@ -2370,7 +2370,7 @@ class ChatPanelTest {
         subject.setActiveConversationId(originalConversationId);
         subject.setConversationIdSupplier(() -> originalConversationId);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2445,7 +2445,7 @@ class ChatPanelTest {
         subject.setActiveConversationId(originalConversationId);
         subject.setConversationIdSupplier(() -> originalConversationId);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2531,7 +2531,7 @@ class ChatPanelTest {
             return true;
         });
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2616,7 +2616,7 @@ class ChatPanelTest {
             return true;
         });
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2691,7 +2691,7 @@ class ChatPanelTest {
         subject.setActiveConversationId(originalConversationId);
         subject.setConversationIdSupplier(() -> originalConversationId);
 
-        setField(subject, "currentProvider", new ProviderService() {
+        setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
                     List<Message> history,
@@ -2798,6 +2798,12 @@ class ChatPanelTest {
 
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
         return readField(chatPanel, "currentProvider");
+    }
+
+    private static void setCurrentProvider(ChatPanel chatPanel, ProviderService provider) throws Exception {
+        setField(chatPanel, "currentProvider", provider);
+        // Direct provider injection represents a ready provider; constructor-started async model resolution may still be running.
+        setField(chatPanel, "currentProviderResolving", false);
     }
 
     private static void awaitProviderResolved(ChatPanel chatPanel) throws Exception {
