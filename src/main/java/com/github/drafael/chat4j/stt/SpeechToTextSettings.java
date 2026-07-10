@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.stt;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.settings.ProviderRuntimeSettingsResolver;
@@ -9,6 +8,8 @@ import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderSettings;
+import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderSettingsFactory;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
@@ -20,9 +21,11 @@ import com.github.drafael.chat4j.stt.provider.groq.GroqSttEndpointResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperInstalledModel;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.Locale;
@@ -30,6 +33,9 @@ import org.apache.commons.lang3.StringUtils;
 
 public class SpeechToTextSettings {
 
+    public static final String PROVIDER_KEY = "chat4j.stt.provider";
+    public static final String PROVIDER_OFF = "off";
+    public static final String RECORDING_MAX_DURATION_SECONDS_KEY = "chat4j.stt.recording.maxDurationSeconds";
     public static final int DEFAULT_MAX_DURATION_SECONDS = 600;
     public static final int MIN_MAX_DURATION_SECONDS = 1;
     public static final int MAX_MAX_DURATION_SECONDS = 600;
@@ -80,31 +86,39 @@ public class SpeechToTextSettings {
         int maxDurationSeconds = resolveMaxDurationSeconds();
         Path directory = modelDirectory.resolve();
         String providerId = resolveProviderId();
-        if (SettingsKeys.STT_PROVIDER_OFF.equals(providerId)) {
+        if (PROVIDER_OFF.equals(providerId)) {
             return SpeechToTextSettingsSnapshot.off(maxDurationSeconds, directory);
         }
         SpeechToTextProvider provider = providerRegistry.find(providerId).orElse(null);
         if (provider == null) {
             return SpeechToTextSettingsSnapshot.off(maxDurationSeconds, directory);
         }
-        if (SettingsKeys.STT_PROVIDER_VOSK.equals(provider.id())) {
+        if (VoskSpeechToTextProvider.ID.equals(provider.id())) {
             return resolveVosk(provider, maxDurationSeconds, directory);
         }
-        if (SettingsKeys.STT_PROVIDER_WHISPER.equals(provider.id())) {
+        if (WhisperSpeechToTextProvider.ID.equals(provider.id())) {
             return resolveWhisper(provider, maxDurationSeconds, directory);
         }
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
         if (provider.supportsLocalModels()) {
             String status = available ? provider.availableMessage() : provider.unavailableMessage();
-            return new SpeechToTextSettingsSnapshot(provider, model, available, maxDurationSeconds, directory, null, null, status);
+            return snapshotBuilder(provider, model, available, maxDurationSeconds, directory)
+                    .statusMessage(status)
+                    .build();
         }
         try {
             SttEndpoint endpoint = resolveEndpoint(provider);
             String status = available ? provider.availableMessage() : provider.unavailableMessage();
-            return new SpeechToTextSettingsSnapshot(provider, model, available, maxDurationSeconds, directory, endpoint.baseUri(), endpoint.transcriptionUri(), status);
+            return snapshotBuilder(provider, model, available, maxDurationSeconds, directory)
+                    .baseUri(endpoint.baseUri())
+                    .transcriptionUri(endpoint.transcriptionUri())
+                    .statusMessage(status)
+                    .build();
         } catch (SpeechToTextException e) {
-            return new SpeechToTextSettingsSnapshot(provider, model, false, maxDurationSeconds, directory, null, null, e.getMessage());
+            return snapshotBuilder(provider, model, false, maxDurationSeconds, directory)
+                    .statusMessage(e.getMessage())
+                    .build();
         }
     }
 
@@ -123,26 +137,20 @@ public class SpeechToTextSettings {
     }
 
     public void saveProvider(String providerId) {
-        settingsRepo.put(SettingsKeys.STT_PROVIDER, StringUtils.defaultIfBlank(normalizeProviderId(providerId), SettingsKeys.STT_PROVIDER_OFF));
+        settingsRepo.put(PROVIDER_KEY, StringUtils.defaultIfBlank(normalizeProviderId(providerId), PROVIDER_OFF));
     }
 
     public void saveModel(String providerId, SpeechToTextCatalogItem model) {
-        settingsRepo.updateBatch(batch -> {
-            batch.put(SettingsKeys.sttModelIdKey(providerId), model.id());
-            batch.put(SettingsKeys.sttModelLabelKey(providerId), model.label());
-        });
+        provider(providerId).saveModel(model);
     }
 
     public void clearModel(String providerId) {
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(SettingsKeys.sttModelIdKey(providerId));
-            batch.remove(SettingsKeys.sttModelLabelKey(providerId));
-        });
+        provider(providerId).clearModel();
     }
 
     public void saveMaxDurationSeconds(int seconds) {
         validateMaxDurationSeconds(seconds);
-        settingsRepo.put(SettingsKeys.STT_RECORDING_MAX_DURATION_SECONDS, Integer.toString(seconds));
+        settingsRepo.put(RECORDING_MAX_DURATION_SECONDS_KEY, Integer.toString(seconds));
     }
 
     public Path saveModelDirectory(String rawPath) throws Exception {
@@ -153,8 +161,12 @@ public class SpeechToTextSettings {
         return modelDirectory;
     }
 
+    public SpeechToTextProviderSettings provider(String providerId) {
+        return SpeechToTextProviderSettingsFactory.forProvider(settingsRepo, providerId);
+    }
+
     public int resolveMaxDurationSeconds() {
-        String value = settingsRepo.get(SettingsKeys.STT_RECORDING_MAX_DURATION_SECONDS, "");
+        String value = settingsRepo.get(RECORDING_MAX_DURATION_SECONDS_KEY, "");
         if (StringUtils.isBlank(value)) {
             return DEFAULT_MAX_DURATION_SECONDS;
         }
@@ -174,59 +186,58 @@ public class SpeechToTextSettings {
 
     private SpeechToTextSettingsSnapshot resolveVosk(SpeechToTextProvider provider, int maxDurationSeconds, Path directory) {
         if (voskModelManagementService == null) {
-            return new SpeechToTextSettingsSnapshot(provider, null, false, maxDurationSeconds, directory, null, null, "Vosk model management is not available.");
+            return snapshotBuilder(provider, null, false, maxDurationSeconds, directory)
+                    .statusMessage("Vosk model management is not available.")
+                    .build();
         }
         VoskModelManagementSnapshot snapshot = voskModelManagementService.snapshot();
         VoskInstalledModel selected = snapshot.selectedModel();
         SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
-        return new SpeechToTextSettingsSnapshot(
-                provider,
-                model,
-                snapshot.readyToTranscribe(),
-                maxDurationSeconds,
-                directory,
-                null,
-                null,
-                snapshot.statusMessage(),
-                selected == null ? null : selected.reference()
-        );
+        return snapshotBuilder(provider, model, snapshot.readyToTranscribe(), maxDurationSeconds, directory)
+                .statusMessage(snapshot.statusMessage())
+                .localModelReference(selected == null ? null : selected.reference())
+                .build();
     }
 
     private SpeechToTextSettingsSnapshot resolveWhisper(SpeechToTextProvider provider, int maxDurationSeconds, Path directory) {
         if (whisperModelManagementService == null) {
-            return new SpeechToTextSettingsSnapshot(provider, null, false, maxDurationSeconds, directory, null, null, "Whisper.cpp model management is not available.");
+            return snapshotBuilder(provider, null, false, maxDurationSeconds, directory)
+                    .statusMessage("Whisper.cpp model management is not available.")
+                    .build();
         }
         WhisperModelManagementSnapshot snapshot = whisperModelManagementService.snapshot();
         WhisperInstalledModel selected = snapshot.selectedModel();
         SpeechToTextCatalogItem model = selected == null ? null : SpeechToTextCatalogItem.of(selected.id(), selected.label(), selected.validationMessage());
-        return new SpeechToTextSettingsSnapshot(
-                provider,
-                model,
-                snapshot.readyToTranscribe(),
-                maxDurationSeconds,
-                directory,
-                null,
-                null,
-                snapshot.statusMessage(),
-                selected == null ? null : selected.reference()
-        );
+        return snapshotBuilder(provider, model, snapshot.readyToTranscribe(), maxDurationSeconds, directory)
+                .statusMessage(snapshot.statusMessage())
+                .localModelReference(selected == null ? null : selected.reference())
+                .build();
+    }
+
+    private SpeechToTextSettingsSnapshot.SpeechToTextSettingsSnapshotBuilder snapshotBuilder(
+            SpeechToTextProvider provider,
+            SpeechToTextCatalogItem model,
+            boolean available,
+            int maxDurationSeconds,
+            Path directory
+    ) {
+        return SpeechToTextSettingsSnapshot.builder()
+                .provider(provider)
+                .model(model)
+                .available(available)
+                .maxDurationSeconds(maxDurationSeconds)
+                .modelDirectory(directory);
     }
 
     private SpeechToTextCatalogItem selectedModel(SpeechToTextProvider provider) {
-        SpeechToTextCatalogItem fallback = provider.defaultModel();
-        if (fallback == null) {
-            return null;
-        }
-        String id = StringUtils.defaultIfBlank(settingsRepo.get(SettingsKeys.sttModelIdKey(provider.id()), fallback.id()), fallback.id());
-        String label = settingsRepo.get(SettingsKeys.sttModelLabelKey(provider.id()), fallback.label());
-        return new SpeechToTextCatalogItem(id, label, fallback.description());
+        return provider(provider.id()).selectedModel(provider.defaultModel());
     }
 
     private String resolveProviderId() {
-        return settingsRepo.get(SettingsKeys.STT_PROVIDER)
+        return settingsRepo.get(PROVIDER_KEY)
                 .map(SpeechToTextSettings::normalizeProviderId)
                 .filter(StringUtils::isNotBlank)
-                .orElse(SettingsKeys.STT_PROVIDER_OFF);
+                .orElse(PROVIDER_OFF);
     }
 
     private SttEndpoint resolveEndpoint(SpeechToTextProvider provider) throws SpeechToTextException {

@@ -1,24 +1,31 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
+import com.github.drafael.chat4j.stt.SpeechToTextSettings;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
+import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
+import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
+import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskInstalledModel;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskValidationStatus;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperBinding;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperContextHandle;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import io.github.freshsupasulley.whisperjni.WhisperFullParams;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -86,14 +93,14 @@ class SpeechToTextPanelTest {
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
 
         try {
-            SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_GROQ));
+            SwingUtilities.invokeAndWait(() -> selectProvider(subject, GroqSpeechToTextProvider.ID));
             assertThat(repo.firstProviderSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
-            SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_DEEPGRAM));
+            SwingUtilities.invokeAndWait(() -> selectProvider(subject, DeepgramSpeechToTextProvider.ID));
             repo.releaseFirstProviderSave.countDown();
 
             assertThat(subject.savePendingChanges()).isTrue();
-            assertThat(repo.get(SettingsKeys.STT_PROVIDER)).contains(SettingsKeys.STT_PROVIDER_DEEPGRAM);
+            assertThat(repo.get(SpeechToTextSettings.PROVIDER_KEY)).contains(DeepgramSpeechToTextProvider.ID);
         } finally {
             repo.releaseFirstProviderSave.countDown();
             subject.removeNotify();
@@ -108,10 +115,32 @@ class SpeechToTextPanelTest {
         try (var voskModels = new RefreshCountingVoskModelManagementService(repo, models, tempDir.resolve("vosk-select-refresh-temp"))) {
             var subject = new SpeechToTextPanel(repo, models, voskModels);
             try {
-                SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_VOSK));
+                SwingUtilities.invokeAndWait(() -> selectProvider(subject, VoskSpeechToTextProvider.ID));
 
                 assertThat(subject.savePendingChanges()).isTrue();
                 assertThat(voskModels.refreshRequested.await(2, TimeUnit.SECONDS)).isTrue();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Selecting Whisper refreshes local models")
+    void onProviderSelected_whenWhisperSelected_refreshesLocalModels() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-whisper-select-refresh.properties"));
+        Path models = tempDir.resolve("whisper-select-refresh-models");
+        try (
+                var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("vosk-select-refresh-temp"));
+                var whisperModels = new RefreshCountingWhisperModelManagementService(repo, models, tempDir.resolve("whisper-select-refresh-temp"), fakeWhisperRuntime())
+        ) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels, whisperModels);
+            try {
+                SwingUtilities.invokeAndWait(() -> selectProvider(subject, WhisperSpeechToTextProvider.ID));
+
+                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(whisperModels.refreshRequested.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThat(whisperModels.probeRuntime).isTrue();
             } finally {
                 subject.removeNotify();
             }
@@ -126,10 +155,10 @@ class SpeechToTextPanelTest {
         try (var voskModels = new ThrowingRefreshVoskModelManagementService(repo, models, tempDir.resolve("vosk-refresh-fails-temp"))) {
             var subject = new SpeechToTextPanel(repo, models, voskModels);
             try {
-                SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_VOSK));
+                SwingUtilities.invokeAndWait(() -> selectProvider(subject, VoskSpeechToTextProvider.ID));
 
                 assertThat(subject.savePendingChanges()).isTrue();
-                assertThat(repo.get(SettingsKeys.STT_PROVIDER)).contains(SettingsKeys.STT_PROVIDER_VOSK);
+                assertThat(repo.get(SpeechToTextSettings.PROVIDER_KEY)).contains(VoskSpeechToTextProvider.ID);
                 assertThat(subject.lastSaveError()).isBlank();
             } finally {
                 subject.removeNotify();
@@ -141,7 +170,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Queued Vosk completion callbacks skip UI updates after panel removal")
     void handleVoskModelSnapshot_whenPanelRemovedBeforeCallback_skipsStatusUpdate() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-removed-callback.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("vosk-removed-callback-models");
         try (var voskModels = new CompletingVoskModelManagementService(repo, models, tempDir.resolve("vosk-removed-callback-temp"))) {
             var subject = new SpeechToTextPanel(repo, models, voskModels);
@@ -229,7 +258,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Local model controls are hidden for cloud Speech to Text providers")
     void refreshControlsFromSettings_whenProviderDoesNotSupportLocalModels_hidesLocalModelControls() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_GROQ);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, GroqSpeechToTextProvider.ID);
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
         try {
             JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
@@ -244,7 +273,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Vosk local model table reports Boolean classes only for Boolean columns")
     void refreshControlsFromSettings_whenVoskSelected_usesCorrectColumnClasses() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
         try {
             JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
@@ -265,7 +294,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Plausible Vosk models appear in table but not dropdown")
     void refreshControlsFromSettings_whenVoskModelIsPlausibleUnverified_excludesFromModelDropdown() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-plausible.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("vosk-plausible-models");
         try (var voskModels = new PlausibleVoskModelManagementService(repo, models, tempDir.resolve("vosk-plausible-temp"))) {
             var subject = new SpeechToTextPanel(repo, models, voskModels);
@@ -342,7 +371,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Vosk model directory changes are blocked while a model operation is active")
     void saveModelDirectory_whenVoskOperationInProgress_rejectsDirectoryChange() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-busy.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("busy-models");
         Path requested = tempDir.resolve("other-models");
         try (var voskModels = new BusyVoskModelManagementService(repo, models, tempDir.resolve("busy-temp"))) {
@@ -356,7 +385,7 @@ class SpeechToTextPanelTest {
 
                 SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, requested));
 
-                assertThat(repo.get(SettingsKeys.STT_MODELS_DIR, "")).isBlank();
+                assertThat(repo.get(SpeechToTextModelDirectory.SETTINGS_KEY, "")).isBlank();
                 assertThat(modelDirectoryField.getText()).isEqualTo(models.toString());
             } finally {
                 subject.removeNotify();
@@ -368,7 +397,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Vosk model selection starts an async operation instead of saving on the UI handler")
     void onModelSelected_whenVoskModelSelected_startsAsyncSelectionOperation() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-vosk-select.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("select-models");
         try (var voskModels = new AsyncSelectionVoskModelManagementService(repo, models, tempDir.resolve("select-temp"))) {
             var subject = new SpeechToTextPanel(repo, models, voskModels);
@@ -380,7 +409,7 @@ class SpeechToTextPanelTest {
                 SwingUtilities.invokeAndWait(() -> invokePanelMethod(subject, "onModelSelected"));
 
                 assertThat(voskModels.selectedModelId()).isEqualTo("custom-ready");
-                assertThat(repo.get(SettingsKeys.sttModelIdKey(VoskModelManagementService.PROVIDER_ID), "")).isBlank();
+                assertThat(repo.get(sttModelIdKey(VoskSpeechToTextProvider.ID), "")).isBlank();
                 assertThat(modelComboBox.isEnabled()).isFalse();
                 assertThat(refreshButton.isEnabled()).isFalse();
             } finally {
@@ -414,12 +443,12 @@ class SpeechToTextPanelTest {
     @DisplayName("ElevenLabs catalog refresh uses ElevenLabs endpoint context")
     void refreshCatalogs_whenElevenLabsSelected_usesElevenLabsEndpointContext() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-refresh.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
         var provider = new CapturingElevenLabsProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
-        waitUntil(() -> repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "").contains("scribe_v2"));
+        waitUntil(() -> repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "").contains("scribe_v2"));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.elevenlabs.io");
@@ -431,7 +460,7 @@ class SpeechToTextPanelTest {
     @DisplayName("In-flight ElevenLabs catalog refresh does not persist after panel removal")
     void refreshCatalogs_whenPanelRemovedBeforeElevenLabsRefreshCompletes_doesNotPersistCatalog() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-stale-refresh.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
         var provider = new BlockingElevenLabsProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -445,19 +474,19 @@ class SpeechToTextPanelTest {
         SwingUtilities.invokeAndWait(() -> {
         });
 
-        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isBlank();
-        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isBlank();
+        assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
+        assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
     }
 
     @Test
     @DisplayName("Failed explicit ElevenLabs refresh preserves cached catalog")
     void refreshCatalogs_whenElevenLabsRefreshFails_preservesCachedCatalog() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-cache.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
         var cached = List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"), SpeechToTextCatalogItem.of("scribe_v1", "Scribe v1 (deprecated)"));
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ELEVENLABS, cached);
-        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
-        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        new SpeechToTextCatalogStore(repo).saveModels(ElevenLabsSpeechToTextProvider.ID, cached);
+        String originalModels = repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "");
+        String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "");
         var provider = new FailingElevenLabsProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -466,8 +495,8 @@ class SpeechToTextPanelTest {
         SwingUtilities.invokeAndWait(() -> {
         });
 
-        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
-        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
+        assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).isEqualTo(originalModels);
+        assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isEqualTo(originalUpdatedAt);
         waitUntil(() -> subject.statusLabel().getText().contains("Could not refresh ElevenLabs Speech to Text models."));
         subject.removeNotify();
     }
@@ -476,12 +505,12 @@ class SpeechToTextPanelTest {
     @DisplayName("Failed automatic ElevenLabs refresh preserves cached catalog without noisy status")
     void refreshControlsFromSettings_whenAutomaticElevenLabsRefreshFails_preservesCacheQuietly() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-auto-cache.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ELEVENLABS);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
         var cached = List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"), SpeechToTextCatalogItem.of("scribe_v1", "Scribe v1 (deprecated)"));
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ELEVENLABS, cached);
-        repo.put(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "2000-01-01T00:00:00Z");
-        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
-        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "");
+        new SpeechToTextCatalogStore(repo).saveModels(ElevenLabsSpeechToTextProvider.ID, cached);
+        repo.put(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "2000-01-01T00:00:00Z");
+        String originalModels = repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "");
+        String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "");
         var provider = new FailingElevenLabsProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -489,8 +518,8 @@ class SpeechToTextPanelTest {
         SwingUtilities.invokeAndWait(() -> {
         });
 
-        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalModels);
-        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_ELEVENLABS), "")).isEqualTo(originalUpdatedAt);
+        assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).isEqualTo(originalModels);
+        assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isEqualTo(originalUpdatedAt);
         assertThat(subject.statusLabel().getText()).doesNotContain("Could not refresh ElevenLabs Speech to Text models.");
         subject.removeNotify();
     }
@@ -499,12 +528,12 @@ class SpeechToTextPanelTest {
     @DisplayName("Deepgram catalog refresh uses Deepgram endpoint context")
     void refreshCatalogs_whenDeepgramSelected_usesDeepgramEndpointContext() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-refresh.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         var provider = new CapturingDeepgramProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
-        waitUntil(() -> repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "").contains("nova-3"));
+        waitUntil(() -> repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "").contains("nova-3"));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.deepgram.com");
@@ -516,11 +545,11 @@ class SpeechToTextPanelTest {
     @DisplayName("Failed explicit Deepgram refresh preserves cached catalog")
     void refreshCatalogs_whenDeepgramRefreshFails_preservesCachedCatalog() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-cache.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         var cached = List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"), SpeechToTextCatalogItem.of("nova-2-general", "Deepgram Nova 2 General"));
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, cached);
-        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
-        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, cached);
+        String originalModels = repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "");
+        String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "");
         var provider = new FailingDeepgramProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -529,8 +558,8 @@ class SpeechToTextPanelTest {
         SwingUtilities.invokeAndWait(() -> {
         });
 
-        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalModels);
-        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalUpdatedAt);
+        assertThat(repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "")).isEqualTo(originalModels);
+        assertThat(repo.get(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "")).isEqualTo(originalUpdatedAt);
         waitUntil(() -> subject.statusLabel().getText().contains("Could not refresh Deepgram Speech to Text models."));
         subject.removeNotify();
     }
@@ -539,12 +568,12 @@ class SpeechToTextPanelTest {
     @DisplayName("Failed automatic Deepgram refresh preserves cached catalog without noisy status")
     void refreshControlsFromSettings_whenAutomaticDeepgramRefreshFails_preservesCacheQuietly() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-auto-cache.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         var cached = List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"), SpeechToTextCatalogItem.of("nova-2-general", "Deepgram Nova 2 General"));
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, cached);
-        repo.put(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "2000-01-01T00:00:00Z");
-        String originalModels = repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
-        String originalUpdatedAt = repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "");
+        new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, cached);
+        repo.put(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "2000-01-01T00:00:00Z");
+        String originalModels = repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "");
+        String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "");
         var provider = new FailingDeepgramProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -552,8 +581,8 @@ class SpeechToTextPanelTest {
         SwingUtilities.invokeAndWait(() -> {
         });
 
-        assertThat(repo.get(SettingsKeys.sttCatalogModelsKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalModels);
-        assertThat(repo.get(SettingsKeys.sttCatalogUpdatedAtKey(SettingsKeys.STT_PROVIDER_DEEPGRAM), "")).isEqualTo(originalUpdatedAt);
+        assertThat(repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "")).isEqualTo(originalModels);
+        assertThat(repo.get(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "")).isEqualTo(originalUpdatedAt);
         assertThat(subject.statusLabel().getText()).doesNotContain("Could not refresh Deepgram Speech to Text models.");
         subject.removeNotify();
     }
@@ -562,8 +591,8 @@ class SpeechToTextPanelTest {
     @DisplayName("Deepgram helper copy explains cloud upload and key storage")
     void updateAvailability_whenDeepgramAvailable_showsDeepgramPrivacyCopy() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-helper.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_DEEPGRAM);
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_DEEPGRAM, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
+        new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new DeepgramTestProvider())));
         SwingUtilities.invokeAndWait(() -> {
         });
@@ -577,8 +606,8 @@ class SpeechToTextPanelTest {
     @DisplayName("AssemblyAI catalog refresh uses AssemblyAI endpoint context")
     void refreshCatalogs_whenAssemblyAiSelected_usesAssemblyAiEndpointContext() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-refresh.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ASSEMBLYAI, List.of(SpeechToTextCatalogItem.of("assemblyai-auto", "AssemblyAI Automatic")));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
+        new SpeechToTextCatalogStore(repo).saveModels(AssemblyAiSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("assemblyai-auto", "AssemblyAI Automatic")));
         var provider = new CapturingAssemblyAiProvider();
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider)));
 
@@ -596,7 +625,7 @@ class SpeechToTextPanelTest {
     @DisplayName("AssemblyAI helper copy explains cloud upload and key storage")
     void updateAvailability_whenAssemblyAiAvailable_showsAssemblyAiPrivacyCopy() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-helper.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider())));
         SwingUtilities.invokeAndWait(() -> {
         });
@@ -610,8 +639,8 @@ class SpeechToTextPanelTest {
     @DisplayName("AssemblyAI ignores stale cached catalog entries")
     void refreshControlsFromSettings_whenAssemblyAiCacheContainsUnknownModels_showsBundledModelsOnly() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-stale-cache.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_ASSEMBLYAI);
-        new SpeechToTextCatalogStore(repo).saveModels(SettingsKeys.STT_PROVIDER_ASSEMBLYAI, List.of(
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
+        new SpeechToTextCatalogStore(repo).saveModels(AssemblyAiSpeechToTextProvider.ID, List.of(
                 SpeechToTextCatalogItem.of("assemblyai-auto", "Automatic"),
                 SpeechToTextCatalogItem.of("stale-model", "Stale Model"),
                 SpeechToTextCatalogItem.of("bad\tmodel", "Bad Model")
@@ -629,7 +658,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Whisper local model controls hide Vosk-only import action")
     void refreshControlsFromSettings_whenWhisperSelected_hidesImportButton() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-whisper-import.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         Path defaultModels = tempDir.resolve("default-models");
         try (
                 var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp"));
@@ -654,7 +683,7 @@ class SpeechToTextPanelTest {
     @DisplayName("Local model controls show selectable models for local Speech to Text providers")
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, "local-test");
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, "local-test");
         var subject = new SpeechToTextPanel(
                 repo,
                 tempDir.resolve("default-models"),
@@ -675,6 +704,18 @@ class SpeechToTextPanelTest {
         } finally {
             subject.removeNotify();
         }
+    }
+
+    private String sttModelIdKey(String providerId) {
+        return "chat4j.stt.%s.model.id".formatted(providerId);
+    }
+
+    private String sttCatalogModelsKey(String providerId) {
+        return "chat4j.stt.catalog.%s.models".formatted(providerId);
+    }
+
+    private String sttCatalogUpdatedAtKey(String providerId) {
+        return "chat4j.stt.catalog.%s.updatedAt".formatted(providerId);
     }
 
     private List<String> comboModelIds(JComboBox<SpeechToTextCatalogItem> comboBox) {
@@ -817,7 +858,7 @@ class SpeechToTextPanelTest {
 
         @Override
         public void put(String key, String value) {
-            if (SettingsKeys.STT_PROVIDER.equals(key) && SettingsKeys.STT_PROVIDER_GROQ.equals(value) && !blockedFirstProviderSave) {
+            if (SpeechToTextSettings.PROVIDER_KEY.equals(key) && GroqSpeechToTextProvider.ID.equals(value) && !blockedFirstProviderSave) {
                 blockedFirstProviderSave = true;
                 firstProviderSaveStarted.countDown();
                 try {
@@ -840,6 +881,26 @@ class SpeechToTextPanelTest {
 
         @Override
         public void refreshAsync() {
+            refreshRequested.countDown();
+        }
+    }
+
+    private static final class RefreshCountingWhisperModelManagementService extends WhisperModelManagementService {
+        private final CountDownLatch refreshRequested = new CountDownLatch(1);
+        private boolean probeRuntime;
+
+        private RefreshCountingWhisperModelManagementService(
+                SettingsRepository settingsRepo,
+                Path modelRoot,
+                Path tempRoot,
+                WhisperNativeRuntime nativeRuntime
+        ) {
+            super(settingsRepo, modelRoot, tempRoot, nativeRuntime, new WhisperModelUsageTracker());
+        }
+
+        @Override
+        public void refreshAsync(boolean probeRuntime) {
+            this.probeRuntime = probeRuntime;
             refreshRequested.countDown();
         }
     }
@@ -882,7 +943,7 @@ class SpeechToTextPanelTest {
 
         private void completeWithStatus(String status) {
             listener.accept(new VoskModelManagementSnapshot(
-                    modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                    modelRoot.resolve(VoskSpeechToTextProvider.ID),
                     tempRoot,
                     emptyList(),
                     emptyList(),
@@ -901,7 +962,7 @@ class SpeechToTextPanelTest {
 
         private PlausibleVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
             super(settingsRepo, modelRoot, tempRoot);
-            Path root = modelRoot.resolve(VoskModelManagementService.PROVIDER_ID);
+            Path root = modelRoot.resolve(VoskSpeechToTextProvider.ID);
             Path modelDirectory = root.resolve("custom-plausible");
             var installedModel = new VoskInstalledModel(
                     "local:custom-plausible",
@@ -963,7 +1024,7 @@ class SpeechToTextPanelTest {
         private RefreshingVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot, String status) {
             super(settingsRepo, modelRoot, tempRoot);
             refreshingSnapshot = new VoskModelManagementSnapshot(
-                    modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                    modelRoot.resolve(VoskSpeechToTextProvider.ID),
                     tempRoot,
                     emptyList(),
                     emptyList(),
@@ -1037,7 +1098,7 @@ class SpeechToTextPanelTest {
 
     private static VoskModelManagementSnapshot newBusySnapshot(Path modelRoot, Path tempRoot) {
         return new VoskModelManagementSnapshot(
-                modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                modelRoot.resolve(VoskSpeechToTextProvider.ID),
                 tempRoot,
                 emptyList(),
                 emptyList(),
@@ -1058,7 +1119,7 @@ class SpeechToTextPanelTest {
 
         private AsyncSelectionVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
             super(settingsRepo, modelRoot, tempRoot);
-            Path root = modelRoot.resolve(VoskModelManagementService.PROVIDER_ID);
+            Path root = modelRoot.resolve(VoskSpeechToTextProvider.ID);
             Path modelDirectory = root.resolve("custom-ready");
             var installedModel = new VoskInstalledModel(
                     "custom-ready",
@@ -1146,7 +1207,7 @@ class SpeechToTextPanelTest {
 
         @Override
         public String id() {
-            return SettingsKeys.STT_PROVIDER_ELEVENLABS;
+            return ElevenLabsSpeechToTextProvider.ID;
         }
 
         @Override
@@ -1222,7 +1283,7 @@ class SpeechToTextPanelTest {
 
         @Override
         public String id() {
-            return SettingsKeys.STT_PROVIDER_DEEPGRAM;
+            return DeepgramSpeechToTextProvider.ID;
         }
 
         @Override
@@ -1282,7 +1343,7 @@ class SpeechToTextPanelTest {
 
         @Override
         public String id() {
-            return SettingsKeys.STT_PROVIDER_ASSEMBLYAI;
+            return AssemblyAiSpeechToTextProvider.ID;
         }
 
         @Override

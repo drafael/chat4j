@@ -1,12 +1,12 @@
 package com.github.drafael.chat4j.stt;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperInstalledModel;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelCatalog;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperValidationStatus;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
@@ -29,7 +29,7 @@ class SpeechToTextWhisperSettingsTest {
     @DisplayName("Whisper settings resolve available from management snapshot without native work")
     void resolve_whenWhisperSnapshotReady_returnsLocalReference() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), true)) {
             var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
 
@@ -46,7 +46,7 @@ class SpeechToTextWhisperSettingsTest {
     @DisplayName("Whisper settings require an explicit persisted local model selection")
     void resolve_whenWhisperInstalledButNotSelected_returnsUnavailable() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-no-selection.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         Path models = tempDir.resolve("real-models");
         var entry = WhisperModelCatalog.find("tiny.en").orElseThrow();
         createInstalledModel(models.resolve("whisper").resolve("tiny.en"), entry);
@@ -67,7 +67,7 @@ class SpeechToTextWhisperSettingsTest {
     @DisplayName("Whisper settings report native runtime failure before model readiness")
     void resolve_whenWhisperRuntimeUnavailable_returnsUnavailableStatus() {
         var repo = new SettingsRepository(tempDir.resolve("settings-unavailable.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_WHISPER);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), false)) {
             var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
 
@@ -125,25 +125,20 @@ class SpeechToTextWhisperSettingsTest {
                     "Installed",
                     "fingerprint"
             );
-            this.snapshot = new WhisperModelManagementSnapshot(
-                    models.resolve("whisper"),
-                    temp,
-                    WhisperModelCatalog.entries(),
-                    List.of(installed),
-                    emptyList(),
-                    installed,
-                    runtimeReady,
-                    runtimeReady ? "Using Whisper.cpp model Whisper tiny.en locally." : "Whisper.cpp native runtime is unavailable on this platform.",
-                    false,
-                    "",
-                    "",
-                    "",
-                    0,
-                    0,
-                    false,
-                    false,
-                    ""
-            );
+            this.snapshot = WhisperModelManagementSnapshot.builder()
+                    .modelRoot(models.resolve("whisper"))
+                    .tempRoot(temp)
+                    .catalog(WhisperModelCatalog.entries())
+                    .installedModels(List.of(installed))
+                    .rows(emptyList())
+                    .selectedModel(installed)
+                    .runtimeReady(runtimeReady)
+                    .statusMessage(runtimeReady ? "Using Whisper.cpp model Whisper tiny.en locally." : "Whisper.cpp native runtime is unavailable on this platform.")
+                    .operationType("")
+                    .operationModelId("")
+                    .operationModelLabel("")
+                    .operationStatus("")
+                    .build();
         }
 
         @Override

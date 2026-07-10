@@ -11,7 +11,9 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import java.net.URI;
 import java.nio.file.Files;
@@ -155,14 +157,14 @@ public class SpeechToTextService {
             if (!settingsSnapshot.enabled()) {
                 throw new SpeechToTextException("Speech to Text is turned off.");
             }
-            if (VoskModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
+            if (VoskSpeechToTextProvider.ID.equals(settingsSnapshot.providerId())) {
                 settings.validateSelectedVoskModelNow();
                 settingsSnapshot = settings.resolve();
                 if (!settingsSnapshot.enabled()) {
                     throw new SpeechToTextException("Speech to Text is turned off.");
                 }
             }
-            if (WhisperModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())) {
+            if (WhisperSpeechToTextProvider.ID.equals(settingsSnapshot.providerId())) {
                 runEdt(() -> callbacks.status("Validating Whisper.cpp model..."));
                 settings.validateSelectedWhisperModelNow();
                 settingsSnapshot = settings.resolve();
@@ -216,7 +218,7 @@ public class SpeechToTextService {
 
     public void cancel(Callbacks callbacks) {
         boolean wasTranscribing = transcribing;
-        boolean whisperTranscribing = wasTranscribing && activeSnapshot != null && WhisperModelManagementService.PROVIDER_ID.equals(activeSnapshot.providerId());
+        boolean whisperTranscribing = wasTranscribing && activeSnapshot != null && WhisperSpeechToTextProvider.ID.equals(activeSnapshot.providerId());
         activeCancellation.set(true);
         if (whisperTranscribing) {
             runEdt(() -> {
@@ -295,7 +297,7 @@ public class SpeechToTextService {
         try {
             SpeechToTextSessionSnapshot snapshot = activeSnapshot;
             SpeechToTextSettingsSnapshot current = settings.resolve();
-            if (snapshot != null && WhisperModelManagementService.PROVIDER_ID.equals(snapshot.providerId())) {
+            if (snapshot != null && WhisperSpeechToTextProvider.ID.equals(snapshot.providerId())) {
                 runEdt(() -> callbacks.status("Validating Whisper.cpp model..."));
                 settings.validateSelectedWhisperModelNow();
                 current = settings.resolve();
@@ -337,7 +339,7 @@ public class SpeechToTextService {
     }
 
     private void acquireWhisperLease(SpeechToTextSettingsSnapshot settingsSnapshot) {
-        if (!WhisperModelManagementService.PROVIDER_ID.equals(settingsSnapshot.providerId())
+        if (!WhisperSpeechToTextProvider.ID.equals(settingsSnapshot.providerId())
                 || settingsSnapshot.localModelReference() == null
                 || whisperModelManagementService == null) {
             return;

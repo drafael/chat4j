@@ -5,7 +5,6 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -28,7 +27,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud chunks provider-limited text before synthesis")
     void readAloud_providerHasInputLimit_synthesizesChunks() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         var provider = new FakeProvider();
         var playback = new RecordingPlaybackService();
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -51,7 +50,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud does not exceed provider limit when punctuation is at split boundary")
     void readAloud_whenPunctuationIsAtSplitBoundary_keepsChunksWithinLimit() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         var provider = new FakeProvider();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var subject = new TextToSpeechService(
@@ -77,7 +76,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud toggles active message and stops on second click")
     void readAloud_whenSameMessageClickedAgain_stopsActivePlayback() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var playback = new BlockingPlaybackService();
         var subject = new TextToSpeechService(
@@ -107,7 +106,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud strips markdown syntax before synthesis")
     void readAloud_markdownText_synthesizesPlainSpeechText() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         FakeProvider provider = new LargeInputProvider();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var subject = new TextToSpeechService(
@@ -129,7 +128,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud uses provider default response format")
     void readAloud_providerDefaultResponseFormat_sendsProviderFormat() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         var provider = new FakeProvider();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var subject = new TextToSpeechService(
@@ -150,7 +149,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud uses provider unavailable message")
     void readAloud_providerUnavailable_reportsProviderMessage() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "unavailable");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "unavailable");
         var error = new AtomicReference<String>();
         var subject = new TextToSpeechService(
                 new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(new UnavailableProvider()))),
@@ -168,7 +167,7 @@ class TextToSpeechServiceTest {
     @DisplayName("Read aloud reports when the executor has already been disposed")
     void readAloud_executorDisposed_reportsError() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
         ExecutorService executor = Executors.newSingleThreadExecutor();
         var subject = new TextToSpeechService(
                 new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(new FakeProvider()))),

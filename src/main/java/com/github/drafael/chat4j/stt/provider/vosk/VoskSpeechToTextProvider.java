@@ -26,7 +26,7 @@ import static java.util.Collections.emptyList;
 
 public class VoskSpeechToTextProvider implements SpeechToTextProvider {
 
-    public static final String ID = VoskModelManagementService.PROVIDER_ID;
+    public static final String ID = "vosk";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @Override

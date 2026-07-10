@@ -1,9 +1,9 @@
 package com.github.drafael.chat4j.stt;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -22,7 +22,7 @@ class SpeechToTextVoskSettingsTest {
     @DisplayName("Vosk stays selectable but unavailable when no model is installed")
     void resolve_whenVoskHasNoInstalledModel_isSelectableUnavailable() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("models");
         try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {
             var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
@@ -30,7 +30,7 @@ class SpeechToTextVoskSettingsTest {
             var snapshot = subject.resolve();
 
             assertThat(snapshot.enabled()).isTrue();
-            assertThat(snapshot.providerId()).isEqualTo(SettingsKeys.STT_PROVIDER_VOSK);
+            assertThat(snapshot.providerId()).isEqualTo(VoskSpeechToTextProvider.ID);
             assertThat(snapshot.available()).isFalse();
             assertThat(snapshot.model()).isNull();
             assertThat(snapshot.statusMessage()).contains("Download or add");
@@ -41,7 +41,7 @@ class SpeechToTextVoskSettingsTest {
     @DisplayName("Plausible Vosk layouts stay visible but are not selectable or ready")
     void resolve_whenVoskModelIsPlausibleUnverified_keepsVisibleButUnavailable() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-plausible.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("plausible-models");
         Path plausibleModel = models.resolve("vosk").resolve("custom-plausible");
         Files.createDirectories(plausibleModel.resolve("am"));
@@ -72,7 +72,7 @@ class SpeechToTextVoskSettingsTest {
     @DisplayName("Vosk resolves installed model without requiring a cloud endpoint")
     void resolve_whenVoskHasInstalledModel_usesLocalReference() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("models");
         createValidModel(models.resolve("vosk").resolve("vosk-model-small-en-us-0.15"));
         try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {

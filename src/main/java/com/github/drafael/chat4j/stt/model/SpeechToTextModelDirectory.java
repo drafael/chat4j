@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.stt.model;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -11,6 +10,8 @@ import org.apache.commons.lang3.StringUtils;
 
 public class SpeechToTextModelDirectory {
 
+    public static final String SETTINGS_KEY = "chat4j.stt.models.dir";
+
     private final SettingsRepository settingsRepo;
     private final Path defaultDirectory;
 
@@ -20,7 +21,7 @@ public class SpeechToTextModelDirectory {
     }
 
     public Path resolve() {
-        String saved = settingsRepo.get(SettingsKeys.STT_MODELS_DIR, "");
+        String saved = settingsRepo.get(SETTINGS_KEY, "");
         return StringUtils.isBlank(saved) ? defaultDirectory.toAbsolutePath().normalize() : normalize(saved);
     }
 
@@ -33,7 +34,7 @@ public class SpeechToTextModelDirectory {
         if (!Files.isDirectory(normalized) || !Files.isWritable(normalized)) {
             throw new IllegalArgumentException("Speech-to-text model directory is not writable.");
         }
-        settingsRepo.put(SettingsKeys.STT_MODELS_DIR, normalized.toString());
+        settingsRepo.put(SETTINGS_KEY, normalized.toString());
         return normalized;
     }
 

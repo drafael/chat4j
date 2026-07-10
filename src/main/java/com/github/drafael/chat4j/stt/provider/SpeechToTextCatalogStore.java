@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.stt.provider;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import java.time.Duration;
@@ -35,22 +34,23 @@ public class SpeechToTextCatalogStore {
     }
 
     public List<SpeechToTextCatalogItem> cachedModels(String providerId) {
-        return settingsRepo.get(SettingsKeys.sttCatalogModelsKey(providerId))
+        return settingsRepo.get(settings(providerId).catalogModelsKey())
                 .map(this::deserialize)
                 .orElse(emptyList());
     }
 
     public boolean stale(String providerId) {
-        return settingsRepo.get(SettingsKeys.sttCatalogUpdatedAtKey(providerId))
+        return settingsRepo.get(settings(providerId).catalogUpdatedAtKey())
                 .map(this::isStaleTimestamp)
                 .orElse(true);
     }
 
     public void saveModels(String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
+        SpeechToTextProviderSettings providerSettings = settings(providerId);
         settingsRepo.updateBatch(batch -> {
             try {
-                batch.put(SettingsKeys.sttCatalogModelsKey(providerId), OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models));
-                batch.put(SettingsKeys.sttCatalogUpdatedAtKey(providerId), Instant.now().toString());
+                batch.put(providerSettings.catalogModelsKey(), OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models));
+                batch.put(providerSettings.catalogUpdatedAtKey(), Instant.now().toString());
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
@@ -86,6 +86,10 @@ public class SpeechToTextCatalogStore {
         } catch (Exception e) {
             return true;
         }
+    }
+
+    private SpeechToTextProviderSettings settings(String providerId) {
+        return SpeechToTextProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 
     private static void addAll(Map<String, SpeechToTextCatalogItem> target, List<SpeechToTextCatalogItem> items) {

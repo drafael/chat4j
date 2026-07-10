@@ -1,13 +1,18 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettings;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettingsFactory;
+import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
 
 public class TextToSpeechSettings {
+
+    public static final String PROVIDER_KEY = "chat4j.tts.provider";
+    public static final String PROVIDER_OFF = "off";
 
     private final SettingsRepository settingsRepo;
     private final TextToSpeechProviderRegistry providerRegistry;
@@ -19,69 +24,53 @@ public class TextToSpeechSettings {
 
     public Selection resolve() {
         String providerId = resolveProviderId();
-        if (SettingsKeys.TTS_PROVIDER_OFF.equals(providerId)) {
+        if (PROVIDER_OFF.equals(providerId)) {
             return Selection.off();
         }
         TextToSpeechProvider provider = providerRegistry.find(providerId).orElse(null);
         if (provider == null) {
             return Selection.off();
         }
-        TextToSpeechCatalogItem model = selectedItem(
-                SettingsKeys.ttsModelIdKey(provider.id()),
-                SettingsKeys.ttsModelLabelKey(provider.id()),
-                provider.defaultModel()
-        );
-        TextToSpeechCatalogItem voice = selectedItem(
-                SettingsKeys.ttsVoiceIdKey(provider.id()),
-                SettingsKeys.ttsVoiceLabelKey(provider.id()),
-                provider.defaultVoice()
-        );
-        model = provider.normalizeModelSelection(model);
-        voice = provider.normalizeVoiceSelection(voice);
+        TextToSpeechProviderSettings providerSettings = provider(provider.id());
+        TextToSpeechCatalogItem model = provider.normalizeModelSelection(providerSettings.selectedModel(provider.defaultModel()));
+        TextToSpeechCatalogItem voice = provider.normalizeVoiceSelection(providerSettings.selectedVoice(provider.defaultVoice()));
         return new Selection(provider, model, voice, provider.available());
     }
 
     public boolean isProviderUnsetOrBlank() {
-        return settingsRepo.get(SettingsKeys.TTS_PROVIDER)
+        return settingsRepo.get(PROVIDER_KEY)
                 .map(StringUtils::isBlank)
                 .orElse(true);
     }
 
     public void saveProvider(String providerId) {
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, StringUtils.defaultIfBlank(normalizeProviderId(providerId), SettingsKeys.TTS_PROVIDER_OFF));
+        settingsRepo.put(PROVIDER_KEY, StringUtils.defaultIfBlank(normalizeProviderId(providerId), PROVIDER_OFF));
     }
 
     public void saveModel(String providerId, TextToSpeechCatalogItem model) {
-        saveItem(SettingsKeys.ttsModelIdKey(providerId), SettingsKeys.ttsModelLabelKey(providerId), model);
+        provider(providerId).saveModel(model);
     }
 
     public void saveVoice(String providerId, TextToSpeechCatalogItem voice) {
-        saveItem(SettingsKeys.ttsVoiceIdKey(providerId), SettingsKeys.ttsVoiceLabelKey(providerId), voice);
+        provider(providerId).saveVoice(voice);
     }
 
-    private TextToSpeechCatalogItem selectedItem(String idKey, String labelKey, TextToSpeechCatalogItem fallback) {
-        String id = settingsRepo.get(idKey, fallback.id());
-        String label = settingsRepo.get(labelKey, fallback.label());
-        return new TextToSpeechCatalogItem(id, label, fallback.description());
-    }
-
-    private void saveItem(String idKey, String labelKey, TextToSpeechCatalogItem item) {
-        settingsRepo.put(idKey, item.id());
-        settingsRepo.put(labelKey, item.label());
+    public TextToSpeechProviderSettings provider(String providerId) {
+        return TextToSpeechProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 
     private String resolveProviderId() {
-        return settingsRepo.get(SettingsKeys.TTS_PROVIDER)
+        return settingsRepo.get(PROVIDER_KEY)
                 .map(TextToSpeechSettings::normalizeProviderId)
                 .filter(StringUtils::isNotBlank)
                 .orElseGet(this::defaultProviderId);
     }
 
     private String defaultProviderId() {
-        return providerRegistry.find(SettingsKeys.TTS_PROVIDER_SYSTEM)
+        return providerRegistry.find(SystemTextToSpeechProvider.ID)
                 .filter(TextToSpeechProvider::available)
                 .map(TextToSpeechProvider::id)
-                .orElse(SettingsKeys.TTS_PROVIDER_OFF);
+                .orElse(PROVIDER_OFF);
     }
 
     private static String normalizeProviderId(String providerId) {
@@ -99,7 +88,7 @@ public class TextToSpeechSettings {
         }
 
         public String providerId() {
-            return provider == null ? SettingsKeys.TTS_PROVIDER_OFF : provider.id();
+            return provider == null ? PROVIDER_OFF : provider.id();
         }
 
         @Override

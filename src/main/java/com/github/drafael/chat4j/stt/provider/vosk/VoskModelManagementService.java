@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.stt.provider.vosk;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
@@ -25,12 +24,11 @@ import org.vosk.LogLevel;
 
 public class VoskModelManagementService implements AutoCloseable {
 
-    public static final String PROVIDER_ID = "vosk";
     public static final String SCAN_OPERATION_STATUS = "Scanning Vosk models...";
     public static final String CATALOG_REFRESH_OPERATION_STATUS = "Refreshing Vosk catalog...";
     private static final long CLOSE_WAIT_POLL_SECONDS = 1;
 
-    private final SettingsRepository settingsRepo;
+    private final VoskSpeechToTextSettings settings;
     private final SpeechToTextModelDirectory modelDirectory;
     private final Path tempDirectory;
     private final VoskModelCatalogClient catalogClient;
@@ -53,7 +51,7 @@ public class VoskModelManagementService implements AutoCloseable {
             @NonNull Path defaultModelDirectory,
             @NonNull Path tempDirectory
     ) {
-        this.settingsRepo = settingsRepo;
+        this.settings = new VoskSpeechToTextSettings(settingsRepo);
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
         this.tempDirectory = tempDirectory;
         this.catalogClient = new VoskModelCatalogClient();
@@ -143,12 +141,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void clearSelection() throws Exception {
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(SettingsKeys.sttModelIdKey(PROVIDER_ID));
-            batch.remove(SettingsKeys.sttModelLabelKey(PROVIDER_ID));
-            batch.remove(SettingsKeys.STT_PREFIX + "vosk.model.fingerprint");
-            batch.remove(SettingsKeys.STT_PREFIX + "vosk.model.root");
-        });
+        settings.clearSelectedModel();
         refreshSnapshot(false);
     }
 
@@ -165,12 +158,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     private void persistSelectedModel(VoskInstalledModel model) {
-        settingsRepo.updateBatch(batch -> {
-            batch.put(SettingsKeys.sttModelIdKey(PROVIDER_ID), model.id());
-            batch.put(SettingsKeys.sttModelLabelKey(PROVIDER_ID), model.label());
-            batch.put(SettingsKeys.STT_PREFIX + "vosk.model.fingerprint", model.fingerprint());
-            batch.put(SettingsKeys.STT_PREFIX + "vosk.model.root", voskRoot().toAbsolutePath().normalize().toString());
-        });
+        settings.saveSelectedModel(model, voskRoot().toAbsolutePath().normalize());
     }
 
     public void validateAsync(String modelId) {
@@ -194,7 +182,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public Path voskRoot() {
-        return modelDirectory.resolve().resolve(PROVIDER_ID).toAbsolutePath().normalize();
+        return modelDirectory.resolve().resolve(VoskSpeechToTextProvider.ID).toAbsolutePath().normalize();
     }
 
     @Override
@@ -305,8 +293,8 @@ public class VoskModelManagementService implements AutoCloseable {
         if (StringUtils.isBlank(selectedId)) {
             return installed.stream().filter(VoskInstalledModel::ready).findFirst();
         }
-        String savedRoot = settingsRepo.get(SettingsKeys.STT_PREFIX + "vosk.model.root", "");
-        String savedFingerprint = settingsRepo.get(SettingsKeys.STT_PREFIX + "vosk.model.fingerprint", "");
+        String savedRoot = settings.savedRoot();
+        String savedFingerprint = settings.savedFingerprint();
         return installed.stream()
                 .filter(model -> Objects.equals(model.id(), selectedId))
                 .filter(model -> !model.custom() || StringUtils.isBlank(savedRoot) || Objects.equals(savedRoot, voskRoot().toString()))
@@ -315,7 +303,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     private String selectedModelId() {
-        return settingsRepo.get(SettingsKeys.sttModelIdKey(PROVIDER_ID), "");
+        return settings.selectedModelId();
     }
 
     private String statusMessage(List<VoskInstalledModel> installed, VoskInstalledModel selected) {

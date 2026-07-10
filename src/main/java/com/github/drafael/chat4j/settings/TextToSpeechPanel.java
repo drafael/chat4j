@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.tts.audio.JavaSoundAudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
@@ -11,6 +10,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
+import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.net.URL;
@@ -48,7 +48,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private JLabel helperLabel;
     private boolean updating;
     private volatile Thread previewThread;
-    private String lastProviderId = SettingsKeys.TTS_PROVIDER_OFF;
+    private String lastProviderId = TextToSpeechSettings.PROVIDER_OFF;
 
     public TextToSpeechPanel(SettingsRepository settingsRepo) {
         this(settingsRepo, TextToSpeechProviderRegistry.createDefault());
@@ -329,8 +329,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     }
 
     private void persistImplicitSystemProvider(TextToSpeechSettings.Selection selection) {
-        if (SettingsKeys.TTS_PROVIDER_SYSTEM.equals(selection.providerId()) && textToSpeechSettings.isProviderUnsetOrBlank()) {
-            textToSpeechSettings.saveProvider(SettingsKeys.TTS_PROVIDER_SYSTEM);
+        if (SystemTextToSpeechProvider.ID.equals(selection.providerId()) && textToSpeechSettings.isProviderUnsetOrBlank()) {
+            textToSpeechSettings.saveProvider(SystemTextToSpeechProvider.ID);
         }
     }
 
@@ -392,7 +392,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     record ProviderOption(String providerId, String label, boolean selectable, String unavailableMessage) {
 
         static ProviderOption off() {
-            return new ProviderOption(SettingsKeys.TTS_PROVIDER_OFF, "Off", true, "");
+            return new ProviderOption(TextToSpeechSettings.PROVIDER_OFF, "Off", true, "");
         }
 
         static ProviderOption of(TextToSpeechProvider provider, boolean selectable) {

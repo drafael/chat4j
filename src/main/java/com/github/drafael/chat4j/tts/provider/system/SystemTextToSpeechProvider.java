@@ -4,7 +4,6 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +12,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 public class SystemTextToSpeechProvider implements TextToSpeechProvider {
+
+    public static final String ID = "system";
 
     static final TextToSpeechCatalogItem DEFAULT_MODEL = TextToSpeechCatalogItem.of("system", "System TTS");
     static final TextToSpeechCatalogItem DEFAULT_VOICE = TextToSpeechCatalogItem.of("system-default", "System Default");
@@ -38,7 +39,7 @@ public class SystemTextToSpeechProvider implements TextToSpeechProvider {
 
     @Override
     public String id() {
-        return SettingsKeys.TTS_PROVIDER_SYSTEM;
+        return ID;
     }
 
     @Override

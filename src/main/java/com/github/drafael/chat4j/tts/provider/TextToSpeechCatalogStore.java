@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.tts.provider;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -25,21 +24,21 @@ public class TextToSpeechCatalogStore {
     }
 
     public List<TextToSpeechCatalogItem> models(TextToSpeechProvider provider, TextToSpeechCatalogItem selected) {
-        return merged(readItems(SettingsKeys.ttsCatalogModelsKey(provider.id())), provider.bundledModels(), selected);
+        return merged(readItems(settings(provider.id()).catalogModelsKey()), provider.bundledModels(), selected);
     }
 
     public List<TextToSpeechCatalogItem> voices(TextToSpeechProvider provider, TextToSpeechCatalogItem selected) {
-        return merged(readItems(SettingsKeys.ttsCatalogVoicesKey(provider.id())), provider.bundledVoices(), selected);
+        return merged(readItems(settings(provider.id()).catalogVoicesKey()), provider.bundledVoices(), selected);
     }
 
     public void saveModels(String providerId, List<TextToSpeechCatalogItem> models) {
-        saveItems(SettingsKeys.ttsCatalogModelsKey(providerId), models);
-        saveUpdatedAt(providerId);
+        TextToSpeechProviderSettings providerSettings = settings(providerId);
+        saveItems(providerSettings.catalogModelsKey(), providerSettings.catalogUpdatedAtKey(), models);
     }
 
     public void saveVoices(String providerId, List<TextToSpeechCatalogItem> voices) {
-        saveItems(SettingsKeys.ttsCatalogVoicesKey(providerId), voices);
-        saveUpdatedAt(providerId);
+        TextToSpeechProviderSettings providerSettings = settings(providerId);
+        saveItems(providerSettings.catalogVoicesKey(), providerSettings.catalogUpdatedAtKey(), voices);
     }
 
     public List<TextToSpeechCatalogItem> mergeWithSelected(
@@ -62,16 +61,20 @@ public class TextToSpeechCatalogStore {
         }
     }
 
-    private void saveItems(String key, List<TextToSpeechCatalogItem> items) {
+    private void saveItems(String itemsKey, String updatedAtKey, List<TextToSpeechCatalogItem> items) {
         try {
-            settingsRepo.put(key, OBJECT_MAPPER.writeValueAsString(items == null ? emptyList() : items));
+            String json = OBJECT_MAPPER.writeValueAsString(items == null ? emptyList() : items);
+            settingsRepo.updateBatch(batch -> {
+                batch.put(itemsKey, json);
+                batch.put(updatedAtKey, Instant.now().toString());
+            });
         } catch (Exception e) {
             throw new IllegalStateException("Failed to save Text to Speech catalog", e);
         }
     }
 
-    private void saveUpdatedAt(String providerId) {
-        settingsRepo.put(SettingsKeys.ttsCatalogUpdatedAtKey(providerId), Instant.now().toString());
+    private TextToSpeechProviderSettings settings(String providerId) {
+        return TextToSpeechProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 
     private static List<TextToSpeechCatalogItem> merged(

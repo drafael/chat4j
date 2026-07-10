@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
@@ -21,9 +20,11 @@ import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.io.File;
@@ -539,9 +540,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     private void refreshLocalProvider(String providerId) {
         try {
-            if (VoskModelManagementService.PROVIDER_ID.equals(providerId)) {
+            if (VoskSpeechToTextProvider.ID.equals(providerId)) {
                 voskModelManagementService.refreshAsync();
-            } else if (SettingsKeys.STT_PROVIDER_WHISPER.equals(providerId)) {
+            } else if (WhisperSpeechToTextProvider.ID.equals(providerId)) {
                 whisperModelManagementService.refreshAsync(true);
             }
         } catch (RuntimeException ignored) {
@@ -549,8 +550,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private boolean localProvider(String providerId) {
-        return VoskModelManagementService.PROVIDER_ID.equals(providerId)
-                || SettingsKeys.STT_PROVIDER_WHISPER.equals(providerId);
+        return VoskSpeechToTextProvider.ID.equals(providerId)
+                || WhisperSpeechToTextProvider.ID.equals(providerId);
     }
 
     private void onModelSelected() {
@@ -1235,11 +1236,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private boolean isVosk(SpeechToTextSettingsSnapshot snapshot) {
-        return snapshot != null && VoskModelManagementService.PROVIDER_ID.equals(snapshot.providerId());
+        return snapshot != null && VoskSpeechToTextProvider.ID.equals(snapshot.providerId());
     }
 
     private boolean isWhisper(SpeechToTextSettingsSnapshot snapshot) {
-        return snapshot != null && WhisperModelManagementService.PROVIDER_ID.equals(snapshot.providerId());
+        return snapshot != null && WhisperSpeechToTextProvider.ID.equals(snapshot.providerId());
     }
 
     private List<SpeechToTextCatalogItem> voskInstalledCatalogItems() {
@@ -1377,7 +1378,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     private record ProviderOption(String providerId, String label, boolean available) {
         static ProviderOption off() {
-            return new ProviderOption(SettingsKeys.STT_PROVIDER_OFF, "Off", true);
+            return new ProviderOption(SpeechToTextSettings.PROVIDER_OFF, "Off", true);
         }
 
         static ProviderOption of(SpeechToTextProvider provider, boolean available) {
@@ -1391,7 +1392,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             if (value instanceof ProviderOption option) {
                 label.setText(option.label());
-                label.setEnabled(option.available() || SettingsKeys.STT_PROVIDER_OFF.equals(option.providerId()));
+                label.setEnabled(option.available() || SpeechToTextSettings.PROVIDER_OFF.equals(option.providerId()));
             }
             return label;
         }

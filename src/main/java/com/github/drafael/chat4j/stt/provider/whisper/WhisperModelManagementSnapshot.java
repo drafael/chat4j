@@ -2,9 +2,11 @@ package com.github.drafael.chat4j.stt.provider.whisper;
 
 import java.nio.file.Path;
 import java.util.List;
+import lombok.Builder;
 
 import static java.util.Collections.emptyList;
 
+@Builder(toBuilder = true)
 public record WhisperModelManagementSnapshot(
         Path modelRoot,
         Path tempRoot,
@@ -26,25 +28,19 @@ public record WhisperModelManagementSnapshot(
 ) {
 
     public static WhisperModelManagementSnapshot empty(Path modelRoot, Path tempRoot) {
-        return new WhisperModelManagementSnapshot(
-                modelRoot,
-                tempRoot,
-                WhisperModelCatalog.entries(),
-                emptyList(),
-                emptyList(),
-                null,
-                true,
-                "Download or select a Whisper.cpp model to enable transcription.",
-                false,
-                "",
-                "",
-                "",
-                0,
-                0,
-                false,
-                false,
-                ""
-        );
+        return WhisperModelManagementSnapshot.builder()
+                .modelRoot(modelRoot)
+                .tempRoot(tempRoot)
+                .catalog(WhisperModelCatalog.entries())
+                .installedModels(emptyList())
+                .rows(emptyList())
+                .runtimeReady(true)
+                .statusMessage("Download or select a Whisper.cpp model to enable transcription.")
+                .operationType("")
+                .operationModelId("")
+                .operationModelLabel("")
+                .operationStatus("")
+                .build();
     }
 
     public boolean readyToTranscribe() {

@@ -45,23 +45,6 @@ public final class SettingsKeys {
     public static final String WEB_AUTO_BROWSE_TOP_N = "chat4j.web.autoBrowseTopN";
     public static final String WEB_SEARCH_RESULT_COUNT = "chat4j.web.searchResultCount";
 
-    public static final String TTS_PROVIDER = "chat4j.tts.provider";
-    public static final String TTS_PROVIDER_OFF = "off";
-    public static final String TTS_PROVIDER_SYSTEM = "system";
-    public static final String TTS_PREFIX = "chat4j.tts.";
-
-    public static final String STT_PROVIDER = "chat4j.stt.provider";
-    public static final String STT_PROVIDER_OFF = "off";
-    public static final String STT_PROVIDER_GROQ = "groq";
-    public static final String STT_PROVIDER_ELEVENLABS = "elevenlabs";
-    public static final String STT_PROVIDER_DEEPGRAM = "deepgram";
-    public static final String STT_PROVIDER_ASSEMBLYAI = "assemblyai";
-    public static final String STT_PROVIDER_WHISPER = "whisper";
-    public static final String STT_PROVIDER_VOSK = "vosk";
-    public static final String STT_PREFIX = "chat4j.stt.";
-    public static final String STT_MODELS_DIR = "chat4j.stt.models.dir";
-    public static final String STT_RECORDING_MAX_DURATION_SECONDS = "chat4j.stt.recording.maxDurationSeconds";
-
     private SettingsKeys() {
     }
 
@@ -83,47 +66,4 @@ public final class SettingsKeys {
         return StringUtils.defaultIfBlank(slug, "unknown");
     }
 
-    public static String ttsModelIdKey(String providerId) {
-        return "%s%s.model.id".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsModelLabelKey(String providerId) {
-        return "%s%s.model.label".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsVoiceIdKey(String providerId) {
-        return "%s%s.voice.id".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsVoiceLabelKey(String providerId) {
-        return "%s%s.voice.label".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsCatalogModelsKey(String providerId) {
-        return "%scatalog.%s.models".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsCatalogVoicesKey(String providerId) {
-        return "%scatalog.%s.voices".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String ttsCatalogUpdatedAtKey(String providerId) {
-        return "%scatalog.%s.updatedAt".formatted(TTS_PREFIX, providerSlug(providerId));
-    }
-
-    public static String sttModelIdKey(String providerId) {
-        return "%s%s.model.id".formatted(STT_PREFIX, providerSlug(providerId));
-    }
-
-    public static String sttModelLabelKey(String providerId) {
-        return "%s%s.model.label".formatted(STT_PREFIX, providerSlug(providerId));
-    }
-
-    public static String sttCatalogModelsKey(String providerId) {
-        return "%scatalog.%s.models".formatted(STT_PREFIX, providerSlug(providerId));
-    }
-
-    public static String sttCatalogUpdatedAtKey(String providerId) {
-        return "%scatalog.%s.updatedAt".formatted(STT_PREFIX, providerSlug(providerId));
-    }
 }

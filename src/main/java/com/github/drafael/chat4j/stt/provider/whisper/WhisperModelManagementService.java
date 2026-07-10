@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.stt.provider.whisper;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.stt.SpeechToTextSettings;
 import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -22,12 +22,10 @@ import org.apache.commons.lang3.StringUtils;
 
 public class WhisperModelManagementService implements AutoCloseable {
 
-    public static final String PROVIDER_ID = WhisperSpeechToTextProvider.ID;
-    private static final String FINGERPRINT_KEY = SettingsKeys.STT_PREFIX + "whisper.model.fingerprint";
-    private static final String ROOT_KEY = SettingsKeys.STT_PREFIX + "whisper.model.root";
     private static final long CLOSE_WAIT_POLL_SECONDS = 1;
 
     private final SettingsRepository settingsRepo;
+    private final WhisperSpeechToTextSettings settings;
     private final SpeechToTextModelDirectory modelDirectory;
     private final Path tempDirectory;
     private final WhisperInstalledModelScanner scanner;
@@ -56,6 +54,7 @@ public class WhisperModelManagementService implements AutoCloseable {
             @NonNull WhisperModelUsageTracker usageTracker
     ) {
         this.settingsRepo = settingsRepo;
+        this.settings = new WhisperSpeechToTextSettings(settingsRepo);
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
         this.tempDirectory = tempDirectory;
         this.nativeRuntime = nativeRuntime;
@@ -185,7 +184,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     public Path whisperRoot() {
-        return modelDirectory.resolve().resolve(PROVIDER_ID).toAbsolutePath().normalize();
+        return settings.modelRoot(modelDirectory.resolve());
     }
 
     @Override
@@ -269,25 +268,20 @@ public class WhisperModelManagementService implements AutoCloseable {
         List<WhisperInstalledModel> installed = scanner.scan(root, catalog, forceHash);
         WhisperInstalledModel selected = selectedInstalledModel(installed).orElse(null);
         String status = statusMessage(installed, selected);
-        publish(new WhisperModelManagementSnapshot(
-                root,
-                tempDirectory,
-                catalog,
-                installed,
-                rows(catalog, installed, selected),
-                selected,
-                runtimeReady,
-                status,
-                false,
-                "",
-                "",
-                "",
-                0,
-                0,
-                false,
-                false,
-                ""
-        ));
+        publish(WhisperModelManagementSnapshot.builder()
+                .modelRoot(root)
+                .tempRoot(tempDirectory)
+                .catalog(catalog)
+                .installedModels(installed)
+                .rows(rows(catalog, installed, selected))
+                .selectedModel(selected)
+                .runtimeReady(runtimeReady)
+                .statusMessage(status)
+                .operationType("")
+                .operationModelId("")
+                .operationModelLabel("")
+                .operationStatus("")
+                .build());
     }
 
     private Optional<WhisperInstalledModel> selectedInstalledModel(List<WhisperInstalledModel> installed) {
@@ -295,8 +289,8 @@ public class WhisperModelManagementService implements AutoCloseable {
         if (StringUtils.isBlank(selectedId)) {
             return Optional.empty();
         }
-        String savedRoot = settingsRepo.get(ROOT_KEY, "");
-        String savedFingerprint = settingsRepo.get(FINGERPRINT_KEY, "");
+        String savedRoot = settings.savedRoot();
+        String savedFingerprint = settings.savedFingerprint();
         return installed.stream()
                 .filter(model -> Objects.equals(model.id(), selectedId))
                 .filter(model -> StringUtils.isBlank(savedRoot) || Objects.equals(savedRoot, whisperRoot().toString()))
@@ -305,7 +299,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     private String selectedModelId() {
-        return settingsRepo.get(SettingsKeys.sttModelIdKey(PROVIDER_ID), "");
+        return settings.selectedModelId();
     }
 
     private WhisperInstalledModel eligibleInstalledModel(String modelId) {
@@ -315,21 +309,11 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     private void persistSelectedModel(WhisperInstalledModel model) {
-        settingsRepo.updateBatch(batch -> {
-            batch.put(SettingsKeys.sttModelIdKey(PROVIDER_ID), model.id());
-            batch.put(SettingsKeys.sttModelLabelKey(PROVIDER_ID), model.label());
-            batch.put(FINGERPRINT_KEY, model.fingerprint());
-            batch.put(ROOT_KEY, whisperRoot().toString());
-        });
+        settings.saveSelectedModel(model, whisperRoot());
     }
 
     private void clearSelectionOnly() {
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(SettingsKeys.sttModelIdKey(PROVIDER_ID));
-            batch.remove(SettingsKeys.sttModelLabelKey(PROVIDER_ID));
-            batch.remove(FINGERPRINT_KEY);
-            batch.remove(ROOT_KEY);
-        });
+        settings.clearSelectedModel();
     }
 
     private String statusMessage(List<WhisperInstalledModel> installed, WhisperInstalledModel selected) {
@@ -354,7 +338,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     private boolean selectedProviderIsWhisper() {
-        return Objects.equals(PROVIDER_ID, settingsRepo.get(SettingsKeys.STT_PROVIDER, ""));
+        return Objects.equals(WhisperSpeechToTextProvider.ID, settingsRepo.get(SpeechToTextSettings.PROVIDER_KEY, ""));
     }
 
     private List<WhisperLocalModelRow> rows(List<WhisperModelCatalogEntry> catalog, List<WhisperInstalledModel> installed, WhisperInstalledModel selected) {
@@ -403,25 +387,10 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     private WhisperModelManagementSnapshot snapshotWithRuntimeStatus(WhisperModelManagementSnapshot base) {
-        return new WhisperModelManagementSnapshot(
-                base.modelRoot(),
-                base.tempRoot(),
-                base.catalog(),
-                base.installedModels(),
-                base.rows(),
-                base.selectedModel(),
-                runtimeReady,
-                statusMessage(base.installedModels(), base.selectedModel()),
-                base.operationInProgress(),
-                base.operationType(),
-                base.operationModelId(),
-                base.operationModelLabel(),
-                base.bytesDownloaded(),
-                base.totalBytes(),
-                base.cancelable(),
-                base.canceling(),
-                base.operationStatus()
-        );
+        return base.toBuilder()
+                .runtimeReady(runtimeReady)
+                .statusMessage(statusMessage(base.installedModels(), base.selectedModel()))
+                .build();
     }
 
     private WhisperModelManagementSnapshot snapshotWithOperation(WhisperModelManagementSnapshot base, boolean inProgress, boolean canceling, String status, long bytesDownloaded, long totalBytes, boolean cancelable) {
@@ -440,25 +409,17 @@ public class WhisperModelManagementService implements AutoCloseable {
             String operationModelId,
             String operationModelLabel
     ) {
-        return new WhisperModelManagementSnapshot(
-                base.modelRoot(),
-                base.tempRoot(),
-                base.catalog(),
-                base.installedModels(),
-                base.rows(),
-                base.selectedModel(),
-                base.runtimeReady(),
-                base.statusMessage(),
-                inProgress,
-                operationType,
-                operationModelId,
-                operationModelLabel,
-                bytesDownloaded,
-                totalBytes,
-                cancelable,
-                canceling,
-                status
-        );
+        return base.toBuilder()
+                .operationInProgress(inProgress)
+                .operationType(operationType)
+                .operationModelId(operationModelId)
+                .operationModelLabel(operationModelLabel)
+                .bytesDownloaded(bytesDownloaded)
+                .totalBytes(totalBytes)
+                .cancelable(cancelable)
+                .canceling(canceling)
+                .operationStatus(status)
+                .build();
     }
 
     private void publish(WhisperModelManagementSnapshot next) {

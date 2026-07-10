@@ -7,7 +7,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
+import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
 import java.util.List;
@@ -45,8 +45,8 @@ class TextToSpeechSettingsTest {
         assertThat(groq.voice().id()).isEqualTo("hannah");
         assertThat(elevenLabs.model().id()).isEqualTo("eleven_flash_v2_5");
         assertThat(elevenLabs.voice().id()).isEqualTo("voice-1");
-        assertThat(settingsRepo.get(SettingsKeys.ttsModelIdKey(GroqTextToSpeechProvider.ID), "")).isEqualTo("playai-tts");
-        assertThat(settingsRepo.get(SettingsKeys.ttsModelIdKey(ElevenLabsTextToSpeechProvider.ID), "")).isEqualTo("eleven_flash_v2_5");
+        assertThat(settingsRepo.get("chat4j.tts.groq.model.id", "")).isEqualTo("playai-tts");
+        assertThat(settingsRepo.get("chat4j.tts.elevenlabs.model.id", "")).isEqualTo("eleven_flash_v2_5");
     }
 
     @Test
@@ -58,7 +58,7 @@ class TextToSpeechSettingsTest {
         TextToSpeechSettings.Selection selection = subject.resolve();
 
         assertThat(selection.enabled()).isFalse();
-        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_OFF);
+        assertThat(selection.providerId()).isEqualTo(TextToSpeechSettings.PROVIDER_OFF);
     }
 
     @Test
@@ -71,47 +71,47 @@ class TextToSpeechSettingsTest {
 
         assertThat(selection.enabled()).isTrue();
         assertThat(selection.available()).isTrue();
-        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
-        assertThat(settingsRepo.get(SettingsKeys.TTS_PROVIDER)).isEmpty();
+        assertThat(selection.providerId()).isEqualTo(SystemTextToSpeechProvider.ID);
+        assertThat(settingsRepo.get(TextToSpeechSettings.PROVIDER_KEY)).isEmpty();
     }
 
     @Test
     @DisplayName("Blank provider setting follows the implicit System default")
     void resolve_blankProviderSavedAndSystemAvailable_defaultsToSystem() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, " ");
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, " ");
         var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(true));
 
         TextToSpeechSettings.Selection selection = subject.resolve();
 
-        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
+        assertThat(selection.providerId()).isEqualTo(SystemTextToSpeechProvider.ID);
     }
 
     @Test
     @DisplayName("Explicit off is respected when System is available")
     void resolve_offProviderSavedAndSystemAvailable_staysOff() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, SettingsKeys.TTS_PROVIDER_OFF);
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, TextToSpeechSettings.PROVIDER_OFF);
         var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(true));
 
         TextToSpeechSettings.Selection selection = subject.resolve();
 
         assertThat(selection.enabled()).isFalse();
-        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_OFF);
+        assertThat(selection.providerId()).isEqualTo(TextToSpeechSettings.PROVIDER_OFF);
     }
 
     @Test
     @DisplayName("Saved System stays selected when backend becomes unavailable")
     void resolve_systemSavedAndUnavailable_staysSelectedUnavailable() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
-        settingsRepo.put(SettingsKeys.TTS_PROVIDER, SettingsKeys.TTS_PROVIDER_SYSTEM);
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
         var subject = new TextToSpeechSettings(settingsRepo, registryWithSystem(false));
 
         TextToSpeechSettings.Selection selection = subject.resolve();
 
         assertThat(selection.enabled()).isTrue();
         assertThat(selection.available()).isFalse();
-        assertThat(selection.providerId()).isEqualTo(SettingsKeys.TTS_PROVIDER_SYSTEM);
+        assertThat(selection.providerId()).isEqualTo(SystemTextToSpeechProvider.ID);
     }
 
     private static TextToSpeechProviderRegistry registryWithSystem(boolean available) {
@@ -127,7 +127,7 @@ class TextToSpeechSettingsTest {
 
         @Override
         public String id() {
-            return SettingsKeys.TTS_PROVIDER_SYSTEM;
+            return SystemTextToSpeechProvider.ID;
         }
 
         @Override

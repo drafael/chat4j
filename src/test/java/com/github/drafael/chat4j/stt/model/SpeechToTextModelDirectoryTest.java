@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.stt.model;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,7 +33,7 @@ class SpeechToTextModelDirectoryTest {
         Path saved = subject.saveAndCreate(tempDir.resolve("nested/../stt").toString());
 
         assertThat(Files.isDirectory(saved)).isTrue();
-        assertThat(repo.get(SettingsKeys.STT_MODELS_DIR)).contains(saved.toString());
+        assertThat(repo.get(SpeechToTextModelDirectory.SETTINGS_KEY)).contains(saved.toString());
     }
 
     @Test

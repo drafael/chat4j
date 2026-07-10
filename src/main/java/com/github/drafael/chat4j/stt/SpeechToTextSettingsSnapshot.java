@@ -1,12 +1,13 @@
 package com.github.drafael.chat4j.stt;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.stt.provider.LocalSpeechToTextModelReference;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import java.net.URI;
 import java.nio.file.Path;
+import lombok.Builder;
 
+@Builder
 public record SpeechToTextSettingsSnapshot(
         SpeechToTextProvider provider,
         SpeechToTextCatalogItem model,
@@ -33,7 +34,11 @@ public record SpeechToTextSettingsSnapshot(
     }
 
     public static SpeechToTextSettingsSnapshot off(int maxDurationSeconds, Path modelDirectory) {
-        return new SpeechToTextSettingsSnapshot(null, null, false, maxDurationSeconds, modelDirectory, null, null, "Speech to Text is turned off.");
+        return SpeechToTextSettingsSnapshot.builder()
+                .maxDurationSeconds(maxDurationSeconds)
+                .modelDirectory(modelDirectory)
+                .statusMessage("Speech to Text is turned off.")
+                .build();
     }
 
     public boolean enabled() {
@@ -41,7 +46,7 @@ public record SpeechToTextSettingsSnapshot(
     }
 
     public String providerId() {
-        return provider == null ? SettingsKeys.STT_PROVIDER_OFF : provider.id();
+        return provider == null ? SpeechToTextSettings.PROVIDER_OFF : provider.id();
     }
 
     @Override
