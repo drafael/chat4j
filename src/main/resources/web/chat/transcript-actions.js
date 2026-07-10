@@ -121,8 +121,41 @@
             animateCopyButton(button);
         }
     }
+    function associatedMessageRow(row) {
+        if (!row) {
+            return null;
+        }
+        if (row.getAttribute('data-message-index') !== null) {
+            return row;
+        }
+        if (!row.classList || !row.classList.contains('activity')) {
+            return null;
+        }
+        var next = row.nextElementSibling;
+        while (next) {
+            if (matches(next, '.row.assistant[data-message-index]')) {
+                return next;
+            }
+            if (!matches(next, '.row.activity')) {
+                break;
+            }
+            next = next.nextElementSibling;
+        }
+        var previous = row.previousElementSibling;
+        while (previous) {
+            if (matches(previous, '.row.assistant[data-message-index]')) {
+                return previous;
+            }
+            if (!matches(previous, '.row.activity')) {
+                break;
+            }
+            previous = previous.previousElementSibling;
+        }
+        return null;
+    }
     function showTranscriptMenu(event, row) {
         var menu = document.getElementById('chat4j-transcript-menu');
+        row = associatedMessageRow(row);
         if (!menu || !row) {
             return;
         }
@@ -394,8 +427,8 @@
         }
     }, true);
     document.addEventListener('contextmenu', function (event) {
-        var row = closest(event.target, '.row[data-message-index]');
-        if (!row) {
+        var row = closest(event.target, '.row');
+        if (!associatedMessageRow(row)) {
             hideTranscriptMenu();
             return;
         }

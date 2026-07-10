@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -17,6 +18,9 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.regex.MatchResult;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -25,6 +29,20 @@ import static java.util.Collections.emptyList;
 
 @Slf4j
 public class TextToSpeechService {
+
+    private static final Pattern FENCED_CODE_BOUNDARY = Pattern.compile("(?m)^\\s*(```|~~~)[\\w+-]*\\s*$");
+    private static final Pattern MARKDOWN_LINK = Pattern.compile("!?\\[([^]\\n]*)]\\([^)]*\\)");
+    private static final Pattern REFERENCE_LINK = Pattern.compile("\\[([^]\\n]+)]\\[[^]\\n]*]");
+    private static final Pattern STRONG_MARKER = Pattern.compile("(\\*\\*|__)(\\S(?:.*?\\S)?)\\1");
+    private static final Pattern STRIKE_MARKER = Pattern.compile("~~(\\S(?:.*?\\S)?)~~");
+    private static final Pattern INLINE_CODE = Pattern.compile("`([^`\\n]+)`");
+    private static final Pattern ITALIC_ASTERISK = Pattern.compile("(?<!\\*)\\*(?!\\*)(\\S(?:.*?\\S)?)(?<!\\*)\\*(?!\\*)");
+    private static final Pattern HEADING_MARKER = Pattern.compile("(?m)^\\s{0,3}#{1,6}\\s+");
+    private static final Pattern LIST_MARKER = Pattern.compile("(?m)^\\s{0,3}(?:[-*+]\\s+|\\d+[.)]\\s+)");
+    private static final Pattern BLOCKQUOTE_MARKER = Pattern.compile("(?m)^\\s{0,3}>\\s?");
+    private static final Pattern HORIZONTAL_RULE = Pattern.compile("(?m)^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$");
+    private static final Pattern TABLE_SEPARATOR = Pattern.compile("(?m)^\\s*\\|?(?:\\s*:?-{3,}:?\\s*\\|)+\\s*:?-{3,}:?\\s*\\|?\\s*$");
+    private static final Pattern ESCAPED_MARKDOWN_CHARACTER = Pattern.compile("\\\\([\\\\`*_{}\\[\\]()#+\\-.!|>])");
 
     private final TextToSpeechSettings settings;
     private final AudioPlaybackService playbackService;
@@ -84,7 +102,7 @@ public class TextToSpeechService {
             Consumer<String> statusHandler,
             Runnable stateChangeHandler
     ) {
-        String normalizedText = StringUtils.trimToEmpty(text);
+        String normalizedText = speechText(text);
         String normalizedMessageKey = StringUtils.defaultString(messageKey);
         if (isReadAloudActive(normalizedMessageKey)) {
             stop();
@@ -155,22 +173,28 @@ public class TextToSpeechService {
         try {
             TextToSpeechProvider provider = selection.provider();
             String responseFormat = provider.defaultResponseFormat();
-            for (String chunk : speechChunks(text, provider.maxInputCharacters())) {
-                if (isStale(requestId, messageKey)) {
-                    return;
+            List<String> chunks = speechChunks(text, provider.maxInputCharacters());
+            try (ExecutorService synthesisExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("chat4j-tts-synthesis-", 0).factory())) {
+                CompletableFuture<TextToSpeechAudio> audioFuture = null;
+                for (int index = 0; index < chunks.size(); index++) {
+                    if (isStale(requestId, messageKey)) {
+                        return;
+                    }
+                    if (audioFuture == null) {
+                        audioFuture = synthesizeAsync(synthesisExecutor, provider, selection, chunks.get(index), responseFormat);
+                    }
+                    TextToSpeechAudio audio = audioFuture.get();
+                    CompletableFuture<TextToSpeechAudio> nextAudioFuture = index + 1 < chunks.size()
+                            ? synthesizeAsync(synthesisExecutor, provider, selection, chunks.get(index + 1), responseFormat)
+                            : null;
+                    if (isStale(requestId, messageKey)) {
+                        cancel(nextAudioFuture);
+                        return;
+                    }
+                    report(statusHandler, "Playing read aloud...");
+                    playbackService.play(audio);
+                    audioFuture = nextAudioFuture;
                 }
-                TextToSpeechAudio audio = provider.synthesize(new TextToSpeechRequest(
-                        provider.id(),
-                        selection.model().id(),
-                        selection.voice().id(),
-                        chunk,
-                        responseFormat
-                ));
-                if (isStale(requestId, messageKey)) {
-                    return;
-                }
-                report(statusHandler, "Playing read aloud...");
-                playbackService.play(audio);
             }
             report(statusHandler, "Read aloud complete.");
         } catch (InterruptedException e) {
@@ -187,8 +211,63 @@ public class TextToSpeechService {
         }
     }
 
+    private CompletableFuture<TextToSpeechAudio> synthesizeAsync(
+            ExecutorService synthesisExecutor,
+            TextToSpeechProvider provider,
+            TextToSpeechSettings.Selection selection,
+            String chunk,
+            String responseFormat
+    ) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return provider.synthesize(new TextToSpeechRequest(
+                        provider.id(),
+                        selection.model().id(),
+                        selection.voice().id(),
+                        chunk,
+                        responseFormat
+                ));
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }, synthesisExecutor);
+    }
+
+    private static void cancel(CompletableFuture<?> future) {
+        if (future != null) {
+            future.cancel(true);
+        }
+    }
+
     private boolean isStale(long requestId, String messageKey) {
         return requestId != requestCounter.get() || !Objects.equals(activeMessageKey.get(), messageKey);
+    }
+
+    private static String speechText(String text) {
+        String speech = StringUtils.defaultString(text);
+        speech = HORIZONTAL_RULE.matcher(speech).replaceAll(" ");
+        speech = TABLE_SEPARATOR.matcher(speech).replaceAll(" ");
+        speech = FENCED_CODE_BOUNDARY.matcher(speech).replaceAll(" ");
+        speech = HEADING_MARKER.matcher(speech).replaceAll("");
+        speech = LIST_MARKER.matcher(speech).replaceAll("");
+        speech = BLOCKQUOTE_MARKER.matcher(speech).replaceAll("");
+        speech = MARKDOWN_LINK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = REFERENCE_LINK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = STRONG_MARKER.matcher(speech).replaceAll(TextToSpeechService::secondGroup);
+        speech = STRIKE_MARKER.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = INLINE_CODE.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = ITALIC_ASTERISK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = ESCAPED_MARKDOWN_CHARACTER.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
+        speech = speech.replace('|', ' ');
+        return StringUtils.normalizeSpace(speech);
+    }
+
+    private static String firstGroup(MatchResult match) {
+        return Matcher.quoteReplacement(match.group(1));
+    }
+
+    private static String secondGroup(MatchResult match) {
+        return Matcher.quoteReplacement(match.group(2));
     }
 
     private static List<String> speechChunks(String text, int maxCharacters) {

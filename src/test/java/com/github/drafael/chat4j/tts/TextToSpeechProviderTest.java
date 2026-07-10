@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.tts;
 
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
@@ -8,6 +9,7 @@ import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechP
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -29,6 +31,19 @@ class TextToSpeechProviderTest {
     @AfterEach
     void tearDown() {
         CredentialResolver.init(emptyMap());
+    }
+
+    @Test
+    @DisplayName("Default registry includes Deepgram without changing existing HTTP provider order")
+    void createDefault_whenCalled_includesDeepgramBeforeExistingNetworkProviders() {
+        var subject = TextToSpeechProviderRegistry.createDefault();
+
+        assertThat(subject.providers()).extracting(TextToSpeechProvider::id)
+                .containsSubsequence(
+                        DeepgramTextToSpeechProvider.ID,
+                        GroqTextToSpeechProvider.ID,
+                        ElevenLabsTextToSpeechProvider.ID
+                );
     }
 
     @Test

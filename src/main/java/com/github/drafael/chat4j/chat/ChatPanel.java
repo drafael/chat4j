@@ -2295,6 +2295,9 @@ public class ChatPanel extends JPanel {
     }
 
     private int messageIndex(ChatMessageView bubble) {
+        if (bubble == null) {
+            return -1;
+        }
         Object value = bubble.component().getClientProperty(MESSAGE_INDEX_PROPERTY);
         return value instanceof Integer index ? index : -1;
     }
@@ -2771,14 +2774,16 @@ public class ChatPanel extends JPanel {
         if (messageView == null) {
             return null;
         }
-        int actionMessageIndex = messageIndex[0]++;
+        int fallbackMessageIndex = messageIndex[0]++;
+        int historyMessageIndex = findHistoryMessageIndex(component);
+        int transcriptMessageIndex = historyMessageIndex >= 0 ? historyMessageIndex : fallbackMessageIndex;
         List<ConversationAttachment> attachments = messageView.getRole() == Role.USER
                 ? conversationAttachments(component)
                 : emptyList();
         return ConversationEntry.message(
                 messageView.getRole(),
                 messageView.getFullText(),
-                actionMessageIndex,
+                transcriptMessageIndex,
                 attachments,
                 messageView.contentPartsSnapshot(),
                 messageMeta(component)
@@ -3212,26 +3217,89 @@ public class ChatPanel extends JPanel {
             }
 
             List<ChatMessageView> bubbles = collectBubbles();
-            if (messageIndex < 0 || messageIndex >= bubbles.size()) {
+            if (messageIndex < 0) {
                 if (Strings.CS.equals(action, "read-aloud") && StringUtils.isNotBlank(text)) {
                     readWebTranscriptAloud(messageIndex, text);
                 }
                 return;
             }
 
-            ChatMessageView bubble = bubbles.get(messageIndex);
-            if (Strings.CS.equals(action, "copy")) {
-                copyBubbleTextToClipboard(bubble);
+            ChatMessageView bubble = webTranscriptBubble(messageIndex, bubbles);
+            if (Strings.CS.equals(action, "read-aloud")) {
+                ChatMessageView readAloudBubble = bubble == null ? webTranscriptBubbleByText(text, bubbles) : bubble;
+                readWebTranscriptAloud(
+                        resolvedWebReadAloudMessageIndex(messageIndex, readAloudBubble),
+                        webTranscriptReadAloudText(messageIndex, text, readAloudBubble)
+                );
                 return;
             }
-            if (Strings.CS.equals(action, "read-aloud") && bubble.getRole() == Role.ASSISTANT) {
-                readWebTranscriptAloud(messageIndex, speakableText(bubble));
+            if (bubble == null) {
+                return;
+            }
+            if (Strings.CS.equals(action, "copy")) {
+                copyBubbleTextToClipboard(bubble);
                 return;
             }
             if (Strings.CS.equals(action, "regenerate")) {
                 regenerateFromBubble(bubble);
             }
         });
+    }
+
+    private ChatMessageView webTranscriptBubble(int messageIndex, List<ChatMessageView> bubbles) {
+        ChatMessageView indexedBubble = bubbles.stream()
+                .filter(bubble -> messageIndex(bubble) == messageIndex)
+                .findFirst()
+                .orElse(null);
+        if (indexedBubble != null) {
+            return indexedBubble;
+        }
+        if (messageIndex >= 0 && messageIndex < history.size()) {
+            Message message = history.get(messageIndex);
+            ChatMessageView matchingBubble = bubbles.stream()
+                    .filter(bubble -> bubble.getRole() == message.role())
+                    .filter(bubble -> Strings.CS.equals(speakableText(bubble), message.content()))
+                    .findFirst()
+                    .orElse(null);
+            if (matchingBubble != null) {
+                return matchingBubble;
+            }
+        }
+        return messageIndex >= 0 && messageIndex < bubbles.size() ? bubbles.get(messageIndex) : null;
+    }
+
+    private int resolvedWebReadAloudMessageIndex(int messageIndex, ChatMessageView bubble) {
+        int bubbleMessageIndex = bubble == null ? -1 : messageIndex(bubble);
+        return bubbleMessageIndex >= 0 && bubble.getRole() == Role.ASSISTANT
+                ? bubbleMessageIndex
+                : messageIndex;
+    }
+
+    private ChatMessageView webTranscriptBubbleByText(String text, List<ChatMessageView> bubbles) {
+        String normalizedText = StringUtils.normalizeSpace(text);
+        if (StringUtils.isBlank(normalizedText)) {
+            return null;
+        }
+        return bubbles.stream()
+                .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                .filter(bubble -> Strings.CS.equals(StringUtils.normalizeSpace(speakableText(bubble)), normalizedText))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String webTranscriptReadAloudText(int messageIndex, String text, ChatMessageView bubble) {
+        String storedText = StringUtils.defaultIfBlank(
+                storedAssistantMessageText(messageIndex),
+                storedAssistantMessageText(messageIndex(bubble))
+        );
+        String bubbleText = bubble != null && bubble.getRole() == Role.ASSISTANT ? speakableText(bubble) : "";
+        return StringUtils.defaultIfBlank(storedText, StringUtils.defaultIfBlank(text, bubbleText));
+    }
+
+    private String storedAssistantMessageText(int messageIndex) {
+        return messageIndex >= 0 && messageIndex < history.size() && history.get(messageIndex).role() == Role.ASSISTANT
+                ? history.get(messageIndex).content()
+                : "";
     }
 
     private void readWebTranscriptAloud(int messageIndex, String text) {

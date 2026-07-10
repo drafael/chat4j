@@ -78,6 +78,28 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Read aloud strips markdown syntax before synthesis")
+    void readAloud_markdownText_synthesizesPlainSpeechText() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(SettingsKeys.TTS_PROVIDER, "fake");
+        FakeProvider provider = new LargeInputProvider();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                executor
+        );
+
+        subject.readAloud("message", "## Title\nThis is **bold**, [price is $5](https://example.com), and `C:\\tmp\\`.", error -> {
+        });
+        executor.shutdown();
+        assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(provider.requests).extracting(TextToSpeechRequest::text)
+                .containsExactly("Title This is bold, price is $5, and C:\\tmp.");
+    }
+
+    @Test
     @DisplayName("Read aloud uses provider default response format")
     void readAloud_providerDefaultResponseFormat_sendsProviderFormat() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
@@ -197,6 +219,13 @@ class TextToSpeechServiceTest {
         public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
             requests.add(request);
             return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+        }
+    }
+
+    private static final class LargeInputProvider extends FakeProvider {
+        @Override
+        public int maxInputCharacters() {
+            return 1_000;
         }
     }
 

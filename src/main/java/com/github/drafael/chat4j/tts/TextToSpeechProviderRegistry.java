@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.tts;
 import com.github.drafael.chat4j.tts.provider.JavaNetTtsHttpTransport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
@@ -23,6 +24,7 @@ public class TextToSpeechProviderRegistry {
         TtsHttpTransport transport = new JavaNetTtsHttpTransport();
         return new TextToSpeechProviderRegistry(List.of(
                 SystemTextToSpeechProvider.createDefault(),
+                new DeepgramTextToSpeechProvider(transport),
                 new GroqTextToSpeechProvider(transport),
                 new ElevenLabsTextToSpeechProvider(transport)
         ));

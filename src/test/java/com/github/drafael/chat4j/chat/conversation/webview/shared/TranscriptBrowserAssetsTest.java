@@ -265,6 +265,8 @@ class TranscriptBrowserAssetsTest {
                 .contains("window.chat4jTranscriptAction(JSON.stringify({args:")
                 .contains("dispatchMessageActionButton(actionButton, event)")
                 .contains("messageActionText(button)")
+                .contains("function associatedMessageRow(row)")
+                .contains("matches(next, '.row.assistant[data-message-index]')")
                 .contains("player-stop")
                 .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
                 .contains("data-action=\"open-diagram\"")

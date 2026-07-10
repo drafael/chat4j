@@ -1284,6 +1284,22 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Read aloud web transcript action uses stored message text for valid indexes")
+    void handleWebTranscriptAction_whenReadAloudIndexIsValid_usesStoredMessageText() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        subject.loadHistory(List.of(Message.assistant("stored assistant answer")));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", 0, "browser rendered answer");
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("stored assistant answer");
+    }
+
+    @Test
     @DisplayName("Read aloud web transcript action can use browser-provided text when index is unavailable")
     void handleWebTranscriptAction_whenReadAloudIndexUnavailable_usesTextPayload() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
@@ -1295,6 +1311,60 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+    }
+
+    @Test
+    @DisplayName("Read aloud web transcript action uses bubble history index when activity-only assistant messages are skipped")
+    void handleWebTranscriptAction_whenActivityOnlyAssistantIsSkipped_usesBubbleHistoryIndex() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        Message activityOnlyAssistant = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("")),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "thinking", "searching")
+        );
+        subject.loadHistory(List.of(
+                Message.user("question"),
+                activityOnlyAssistant,
+                Message.assistant("assistant answer")
+        ));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", 2, "assistant answer");
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(textToSpeechService.requestedKey()).isEqualTo("web:1");
+    }
+
+    @Test
+    @DisplayName("Read aloud web transcript action resolves visible indexes shifted by skipped activity messages")
+    void handleWebTranscriptAction_whenVisibleIndexIsShiftedByActivity_resolvesAssistantBubbleIndex() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        Message activityOnlyAssistant = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("")),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "thinking", "searching")
+        );
+        subject.loadHistory(List.of(
+                Message.user("question"),
+                activityOnlyAssistant,
+                Message.assistant("assistant answer")
+        ));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        method.invoke(subject, "read-aloud", 1, "assistant answer");
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(textToSpeechService.requestedKey()).isEqualTo("web:1");
     }
 
     @Test
@@ -1319,6 +1389,7 @@ class ChatPanelTest {
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
         assertThat(findComponents(messagesPanel, ActivityBubble.class)).hasSize(1);
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(textToSpeechService.requestedKey()).isEqualTo("web:1");
     }
 
     @Test
@@ -2916,6 +2987,7 @@ class ChatPanelTest {
 
     private static final class RecordingTextToSpeechService extends TextToSpeechService {
         private String requestedText = "";
+        private String requestedKey = "";
         private String activeMessageKey = "";
 
         private RecordingTextToSpeechService() throws IOException {
@@ -2948,11 +3020,13 @@ class ChatPanelTest {
 
         @Override
         public void readAloud(String messageKey, String text, Consumer<String> errorHandler) {
+            requestedKey = messageKey;
             requestedText = text;
         }
 
         @Override
         public void readAloud(String messageKey, String text, Consumer<String> errorHandler, Consumer<String> statusHandler) {
+            requestedKey = messageKey;
             requestedText = text;
         }
 
@@ -2964,6 +3038,7 @@ class ChatPanelTest {
                 Consumer<String> statusHandler,
                 Runnable stateChangeHandler
         ) {
+            requestedKey = messageKey;
             requestedText = text;
             activeMessageKey = activeMessageKey.equals(messageKey) ? "" : messageKey;
             if (stateChangeHandler != null) {
@@ -2978,6 +3053,10 @@ class ChatPanelTest {
 
         private String requestedText() {
             return requestedText;
+        }
+
+        private String requestedKey() {
+            return requestedKey;
         }
     }
 }
