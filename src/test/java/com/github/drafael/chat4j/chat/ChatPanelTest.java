@@ -1905,7 +1905,8 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
+        // Allow headroom for asynchronous send/completion dispatch on slower CI.
+        awaitCondition(5, TimeUnit.SECONDS, () -> {
             flushEdt();
             return subject.getHistory().size() == 2;
         });

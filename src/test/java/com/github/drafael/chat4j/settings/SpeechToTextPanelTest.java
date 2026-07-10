@@ -50,28 +50,158 @@ class SpeechToTextPanelTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Stale failed Speech to Text saves do not override newer successful saves")
-    void savePendingChanges_whenStaleSaveFailsAfterNewerSuccess_ignoresStaleFailure() throws Exception {
+    @DisplayName("Stale failed Speech to Text saves do not block queued successful saves")
+    void savePendingChanges_whenStaleSaveFailsBeforeQueuedSuccess_ignoresStaleFailure() throws Exception {
         var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings.properties")), tempDir.resolve("default-models"));
         var firstSaveStarted = new CountDownLatch(1);
         var releaseFirstSave = new CountDownLatch(1);
         var secondSaveSucceeded = new CountDownLatch(1);
 
-        scheduleSave(subject, () -> {
-            firstSaveStarted.countDown();
-            assertThat(releaseFirstSave.await(2, TimeUnit.SECONDS)).isTrue();
-            throw new IllegalStateException("stale failure");
-        }, () -> {
+        try {
+            scheduleSave(subject, () -> {
+                firstSaveStarted.countDown();
+                assertThat(releaseFirstSave.await(2, TimeUnit.SECONDS)).isTrue();
+                throw new IllegalStateException("stale failure");
+            }, () -> {
+            });
+            assertThat(firstSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            scheduleSave(subject, () -> {
+            }, secondSaveSucceeded::countDown);
+            releaseFirstSave.countDown();
+            assertThat(secondSaveSucceeded.await(2, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(subject.lastSaveError()).isBlank();
+        } finally {
+            releaseFirstSave.countDown();
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Queued Speech to Text provider selections persist the latest selection")
+    void savePendingChanges_whenProviderSelectionsOverlap_persistsLatestProvider() throws Exception {
+        var repo = new BlockingProviderSettingsRepository(tempDir.resolve("settings-provider-race.properties"));
+        var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
+
+        try {
+            SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_GROQ));
+            assertThat(repo.firstProviderSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_DEEPGRAM));
+            repo.releaseFirstProviderSave.countDown();
+
+            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(repo.get(SettingsKeys.STT_PROVIDER)).contains(SettingsKeys.STT_PROVIDER_DEEPGRAM);
+        } finally {
+            repo.releaseFirstProviderSave.countDown();
+            subject.removeNotify();
+        }
+    }
+
+    @Test
+    @DisplayName("Selecting Vosk refreshes local models")
+    void onProviderSelected_whenVoskSelected_refreshesLocalModels() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-select-refresh.properties"));
+        Path models = tempDir.resolve("vosk-select-refresh-models");
+        try (var voskModels = new RefreshCountingVoskModelManagementService(repo, models, tempDir.resolve("vosk-select-refresh-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_VOSK));
+
+                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(voskModels.refreshRequested.await(2, TimeUnit.SECONDS)).isTrue();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Vosk refresh failures do not block provider selection saves")
+    void onProviderSelected_whenVoskRefreshFails_stillSavesProviderSelection() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-refresh-fails.properties"));
+        Path models = tempDir.resolve("vosk-refresh-fails-models");
+        try (var voskModels = new ThrowingRefreshVoskModelManagementService(repo, models, tempDir.resolve("vosk-refresh-fails-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            try {
+                SwingUtilities.invokeAndWait(() -> selectProvider(subject, SettingsKeys.STT_PROVIDER_VOSK));
+
+                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(repo.get(SettingsKeys.STT_PROVIDER)).contains(SettingsKeys.STT_PROVIDER_VOSK);
+                assertThat(subject.lastSaveError()).isBlank();
+            } finally {
+                subject.removeNotify();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Queued Vosk completion callbacks skip UI updates after panel removal")
+    void handleVoskModelSnapshot_whenPanelRemovedBeforeCallback_skipsStatusUpdate() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-removed-callback.properties"));
+        repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
+        Path models = tempDir.resolve("vosk-removed-callback-models");
+        try (var voskModels = new CompletingVoskModelManagementService(repo, models, tempDir.resolve("vosk-removed-callback-temp"))) {
+            var subject = new SpeechToTextPanel(repo, models, voskModels);
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            voskModels.completeWithStatus("Vosk completion after removal");
+            subject.removeNotify();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(subject.statusLabel().getText()).doesNotContain("Vosk completion after removal");
+        }
+    }
+
+    @Test
+    @DisplayName("Speech to Text saves are ignored after panel removal")
+    void scheduleSave_whenPanelAlreadyRemoved_ignoresSave() throws Exception {
+        var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-removed-save.properties")), tempDir.resolve("default-models"));
+        var saveCalled = new CountDownLatch(1);
+
+        subject.removeNotify();
+        scheduleSave(subject, saveCalled::countDown, () -> {
         });
-        assertThat(firstSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
-        scheduleSave(subject, () -> {
-        }, secondSaveSucceeded::countDown);
-        assertThat(secondSaveSucceeded.await(2, TimeUnit.SECONDS)).isTrue();
-        releaseFirstSave.countDown();
+        assertThat(saveCalled.await(100, TimeUnit.MILLISECONDS)).isFalse();
+    }
 
-        assertThat(subject.savePendingChanges()).isTrue();
-        assertThat(subject.lastSaveError()).isBlank();
+    @Test
+    @DisplayName("Completed Speech to Text saves skip UI callbacks after panel removal")
+    void savePendingChanges_whenPanelRemovedBeforeSuccessCallback_skipsSuccessCallback() throws Exception {
+        var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-removed.properties")), tempDir.resolve("default-models"));
+        var saveStarted = new CountDownLatch(1);
+        var releaseSave = new CountDownLatch(1);
+        var successCallback = new CountDownLatch(1);
+        boolean[] removed = {false};
+
+        try {
+            scheduleSave(subject, () -> {
+                saveStarted.countDown();
+                assertThat(releaseSave.await(2, TimeUnit.SECONDS)).isTrue();
+            }, successCallback::countDown);
+            assertThat(saveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            SwingUtilities.invokeAndWait(() -> {
+                releaseSave.countDown();
+                assertThat(subject.savePendingChanges()).isTrue();
+                subject.removeNotify();
+                removed[0] = true;
+            });
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(successCallback.await(100, TimeUnit.MILLISECONDS)).isFalse();
+        } finally {
+            releaseSave.countDown();
+            if (!removed[0]) {
+                subject.removeNotify();
+            }
+        }
     }
 
     @Test
@@ -81,15 +211,18 @@ class SpeechToTextPanelTest {
         Path existingFile = Files.writeString(tempDir.resolve("not-a-directory"), "content");
         Path validDirectory = tempDir.resolve("models");
         var subject = new SpeechToTextPanel(new SettingsRepository(settingsFile), tempDir.resolve("default-models"));
+        try {
+            SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, existingFile));
+            waitUntil(() -> !subject.lastSaveError().isBlank());
+            assertThat(subject.savePendingChanges()).isFalse();
 
-        SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, existingFile));
-        waitUntil(() -> !subject.lastSaveError().isBlank());
-        assertThat(subject.savePendingChanges()).isFalse();
+            SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, validDirectory));
 
-        SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, validDirectory));
-
-        assertThat(subject.savePendingChanges()).isTrue();
-        assertThat(Files.isDirectory(validDirectory)).isTrue();
+            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(Files.isDirectory(validDirectory)).isTrue();
+        } finally {
+            subject.removeNotify();
+        }
     }
 
     @Test
@@ -98,10 +231,13 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_GROQ);
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
+        try {
+            JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
 
-        JPanel localModelsPanel = (JPanel) fieldValue(subject, "localModelsPanel");
-
-        assertThat(localModelsPanel.isVisible()).isFalse();
+            assertThat(localModelsPanel.isVisible()).isFalse();
+        } finally {
+            subject.removeNotify();
+        }
     }
 
     @Test
@@ -110,16 +246,19 @@ class SpeechToTextPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SettingsKeys.STT_PROVIDER, SettingsKeys.STT_PROVIDER_VOSK);
         var subject = new SpeechToTextPanel(repo, tempDir.resolve("default-models"));
+        try {
+            JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
 
-        JTable localModelsTable = (JTable) fieldValue(subject, "localModelsTable");
-
-        assertThat(localModelsTable.getColumnClass(0)).isEqualTo(String.class);
-        assertThat(localModelsTable.getColumnClass(1)).isEqualTo(String.class);
-        assertThat(localModelsTable.getColumnClass(2)).isEqualTo(String.class);
-        assertThat(localModelsTable.getColumnClass(3)).isEqualTo(String.class);
-        assertThat(localModelsTable.getColumnClass(4)).isEqualTo(Boolean.class);
-        assertThat(localModelsTable.getColumnClass(5)).isEqualTo(Boolean.class);
-        assertThat(localModelsTable.getColumnClass(6)).isEqualTo(String.class);
+            assertThat(localModelsTable.getColumnClass(0)).isEqualTo(String.class);
+            assertThat(localModelsTable.getColumnClass(1)).isEqualTo(String.class);
+            assertThat(localModelsTable.getColumnClass(2)).isEqualTo(String.class);
+            assertThat(localModelsTable.getColumnClass(3)).isEqualTo(String.class);
+            assertThat(localModelsTable.getColumnClass(4)).isEqualTo(Boolean.class);
+            assertThat(localModelsTable.getColumnClass(5)).isEqualTo(Boolean.class);
+            assertThat(localModelsTable.getColumnClass(6)).isEqualTo(String.class);
+        } finally {
+            subject.removeNotify();
+        }
     }
 
     @Test
@@ -254,17 +393,21 @@ class SpeechToTextPanelTest {
     @DisplayName("Default Speech to Text providers include AssemblyAI before Vosk")
     void reloadProviderOptions_whenDefaultRegistryLoaded_ordersAssemblyAiBeforeVosk() throws Exception {
         var subject = new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-provider-order.properties")), tempDir.resolve("default-models"));
-        @SuppressWarnings("unchecked")
-        JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
+        try {
+            @SuppressWarnings("unchecked")
+            JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
 
-        assertThat(providerComboBox.getItemCount()).isEqualTo(7);
-        assertThat(providerId(providerComboBox.getItemAt(0))).isEqualTo("off");
-        assertThat(providerId(providerComboBox.getItemAt(1))).isEqualTo("groq");
-        assertThat(providerId(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
-        assertThat(providerId(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
-        assertThat(providerId(providerComboBox.getItemAt(4))).isEqualTo("assemblyai");
-        assertThat(providerId(providerComboBox.getItemAt(5))).isEqualTo("whisper");
-        assertThat(providerId(providerComboBox.getItemAt(6))).isEqualTo("vosk");
+            assertThat(providerComboBox.getItemCount()).isEqualTo(7);
+            assertThat(providerIdOf(providerComboBox.getItemAt(0))).isEqualTo("off");
+            assertThat(providerIdOf(providerComboBox.getItemAt(1))).isEqualTo("groq");
+            assertThat(providerIdOf(providerComboBox.getItemAt(2))).isEqualTo("elevenlabs");
+            assertThat(providerIdOf(providerComboBox.getItemAt(3))).isEqualTo("deepgram");
+            assertThat(providerIdOf(providerComboBox.getItemAt(4))).isEqualTo("assemblyai");
+            assertThat(providerIdOf(providerComboBox.getItemAt(5))).isEqualTo("whisper");
+            assertThat(providerIdOf(providerComboBox.getItemAt(6))).isEqualTo("vosk");
+        } finally {
+            subject.removeNotify();
+        }
     }
 
     @Test
@@ -583,10 +726,27 @@ class SpeechToTextPanelTest {
         }
     }
 
-    private String providerId(Object providerOption) throws Exception {
+    private String providerIdOf(Object providerOption) throws Exception {
         Method method = providerOption.getClass().getDeclaredMethod("providerId");
         method.setAccessible(true);
         return (String) method.invoke(providerOption);
+    }
+
+    private void selectProvider(SpeechToTextPanel subject, String expectedProviderId) {
+        try {
+            @SuppressWarnings("unchecked")
+            JComboBox<Object> providerComboBox = (JComboBox<Object>) fieldValue(subject, "providerComboBox");
+            for (int i = 0; i < providerComboBox.getItemCount(); i++) {
+                Object item = providerComboBox.getItemAt(i);
+                if (expectedProviderId.equals(providerIdOf(item))) {
+                    providerComboBox.setSelectedItem(item);
+                    return;
+                }
+            }
+            throw new AssertionError("Provider option not found: " + expectedProviderId);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private void scheduleSave(SpeechToTextPanel subject, ThrowingAction action, Runnable onSuccess) throws Exception {
@@ -644,6 +804,96 @@ class SpeechToTextPanelTest {
                 return "";
             }
         });
+    }
+
+    private static final class BlockingProviderSettingsRepository extends SettingsRepository {
+        private final CountDownLatch firstProviderSaveStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseFirstProviderSave = new CountDownLatch(1);
+        private boolean blockedFirstProviderSave;
+
+        private BlockingProviderSettingsRepository(Path settingsFile) {
+            super(settingsFile);
+        }
+
+        @Override
+        public void put(String key, String value) {
+            if (SettingsKeys.STT_PROVIDER.equals(key) && SettingsKeys.STT_PROVIDER_GROQ.equals(value) && !blockedFirstProviderSave) {
+                blockedFirstProviderSave = true;
+                firstProviderSaveStarted.countDown();
+                try {
+                    assertThat(releaseFirstProviderSave.await(2, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            super.put(key, value);
+        }
+    }
+
+    private static final class RefreshCountingVoskModelManagementService extends VoskModelManagementService {
+        private final CountDownLatch refreshRequested = new CountDownLatch(1);
+
+        private RefreshCountingVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+        }
+
+        @Override
+        public void refreshAsync() {
+            refreshRequested.countDown();
+        }
+    }
+
+    private static final class ThrowingRefreshVoskModelManagementService extends VoskModelManagementService {
+        private ThrowingRefreshVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+        }
+
+        @Override
+        public void refreshAsync() {
+            throw new IllegalStateException("refresh unavailable");
+        }
+    }
+
+    private static final class CompletingVoskModelManagementService extends VoskModelManagementService {
+        private final Path modelRoot;
+        private final Path tempRoot;
+        private Consumer<VoskModelManagementSnapshot> listener = snapshot -> {
+        };
+
+        private CompletingVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            this.modelRoot = modelRoot;
+            this.tempRoot = tempRoot;
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return newBusySnapshot(modelRoot, tempRoot);
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            this.listener = listener;
+            listener.accept(snapshot());
+            return () -> this.listener = snapshot -> {
+            };
+        }
+
+        private void completeWithStatus(String status) {
+            listener.accept(new VoskModelManagementSnapshot(
+                    modelRoot.resolve(VoskModelManagementService.PROVIDER_ID),
+                    tempRoot,
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    null,
+                    true,
+                    status,
+                    false,
+                    status
+            ));
+        }
     }
 
     private static final class PlausibleVoskModelManagementService extends VoskModelManagementService {

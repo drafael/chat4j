@@ -35,6 +35,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -66,6 +69,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private long refreshCounter;
     private final Object refreshLock = new Object();
     private final AtomicLong saveCounter = new AtomicLong();
+    private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor(
+            Thread.ofVirtual().name("chat4j-stt-settings-save-", 0).factory()
+    );
 
     private JComboBox<ProviderOption> providerComboBox;
     private JComboBox<SpeechToTextCatalogItem> modelComboBox;
@@ -95,6 +101,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private Runnable whisperUnsubscribe = () -> {
     };
     private final List<CompletableFuture<Boolean>> pendingSaves = new CopyOnWriteArrayList<>();
+    private volatile boolean removed;
     private volatile String lastSaveError = "";
 
     public SpeechToTextPanel(SettingsRepository settingsRepo, Path defaultModelDirectory) {
@@ -176,9 +183,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         buildUi();
         voskUnsubscribe = voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> handleVoskModelSnapshot(snapshot)));
         whisperUnsubscribe = whisperModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> handleWhisperModelSnapshot(snapshot)));
-        if (ownsWhisperModelManagementService && isWhisper(settings.resolve())) {
-            whisperModelManagementService.refreshAsync(true);
-        }
     }
 
     @Override
@@ -233,9 +237,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     @Override
     public void removeNotify() {
+        removed = true;
         cancelCatalogRefreshes();
         voskUnsubscribe.run();
         whisperUnsubscribe.run();
+        saveExecutor.shutdown();
         closeOwnedModelManagementServices();
         super.removeNotify();
     }
@@ -415,6 +421,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void handleVoskModelSnapshot(VoskModelManagementSnapshot snapshot) {
+        if (removed) {
+            return;
+        }
         boolean completed = voskOperationInProgress && !snapshot.operationInProgress();
         voskOperationInProgress = snapshot.operationInProgress();
         if (localModelsPanel != null && isShowing()) {
@@ -435,6 +444,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void handleWhisperModelSnapshot(WhisperModelManagementSnapshot snapshot) {
+        if (removed) {
+            return;
+        }
         boolean completed = whisperOperationInProgress && !snapshot.operationInProgress();
         whisperOperationInProgress = snapshot.operationInProgress();
         if (localModelsPanel != null && isShowing()) {
@@ -494,6 +506,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         updateLocalModels(snapshot, models);
         updateAvailability(snapshot);
+        if (refreshCatalogs && isVosk(snapshot) && !voskModelManagementService.snapshot().operationInProgress()) {
+            voskModelManagementService.refreshAsync();
+            return;
+        }
         if (refreshCatalogs && isWhisper(snapshot) && !whisperModelManagementService.snapshot().operationInProgress()) {
             whisperModelManagementService.refreshAsync(true);
             return;
@@ -511,11 +527,30 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         if (!(selected instanceof ProviderOption option)) {
             return;
         }
-        scheduleSave(() -> settings.saveProvider(option.providerId()), () -> {
+        scheduleSave(() -> {
+            settings.saveProvider(option.providerId());
+            refreshLocalProvider(option.providerId());
+        }, () -> {
             reloadProviderOptions();
-            refreshControlsFromSettings(true);
+            refreshControlsFromSettings(!localProvider(option.providerId()));
             setStatusInfo(STATUS_SAVED);
         });
+    }
+
+    private void refreshLocalProvider(String providerId) {
+        try {
+            if (VoskModelManagementService.PROVIDER_ID.equals(providerId)) {
+                voskModelManagementService.refreshAsync();
+            } else if (SettingsKeys.STT_PROVIDER_WHISPER.equals(providerId)) {
+                whisperModelManagementService.refreshAsync(true);
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private boolean localProvider(String providerId) {
+        return VoskModelManagementService.PROVIDER_ID.equals(providerId)
+                || SettingsKeys.STT_PROVIDER_WHISPER.equals(providerId);
     }
 
     private void onModelSelected() {
@@ -1293,26 +1328,37 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void scheduleSave(ThrowingRunnable action, Runnable onSuccess) {
+        if (removed) {
+            return;
+        }
         long saveId = saveCounter.incrementAndGet();
-        CompletableFuture<Boolean> pendingSave = CompletableFuture.supplyAsync(() -> {
-            try {
-                action.run();
-                if (saveId == saveCounter.get()) {
-                    lastSaveError = "";
+        CompletableFuture<Boolean> pendingSave;
+        try {
+            pendingSave = CompletableFuture.supplyAsync(() -> {
+                try {
+                    action.run();
+                    if (saveId == saveCounter.get()) {
+                        lastSaveError = "";
+                    }
+                    return true;
+                } catch (Exception e) {
+                    if (saveId == saveCounter.get()) {
+                        lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
+                        return false;
+                    }
+                    return true;
                 }
-                return true;
-            } catch (Exception e) {
-                if (saveId == saveCounter.get()) {
-                    lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
-                    return false;
-                }
-                return true;
+            }, saveExecutor);
+        } catch (RejectedExecutionException e) {
+            if (!removed) {
+                throw e;
             }
-        });
+            return;
+        }
         pendingSaves.add(pendingSave);
         pendingSave.whenComplete((saved, error) -> pendingSaves.remove(pendingSave));
         pendingSave.thenAccept(saved -> SwingUtilities.invokeLater(() -> {
-            if (saveId != saveCounter.get()) {
+            if (removed || saveId != saveCounter.get()) {
                 return;
             }
             if (saved) {
