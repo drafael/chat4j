@@ -84,7 +84,7 @@ import com.github.drafael.chat4j.provider.support.ProviderMenuStructureRebuilder
 import com.github.drafael.chat4j.provider.support.ProviderModelMenuItemFactory;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
-import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.AgentModeSettings;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
@@ -114,7 +114,6 @@ import com.github.drafael.chat4j.settings.RenderModeChangeCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeToggleCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeToggleSelectionSyncCoordinator;
 import com.github.drafael.chat4j.settings.SettingsDialog;
@@ -144,6 +143,7 @@ import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
+import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.WindowAdapter;
@@ -258,7 +258,6 @@ public class MainFrame extends JFrame {
     private final ModelMenuStructureRebuildCoordinator modelMenuStructureRebuildCoordinator;
     private final ModelMenuStructureRebuildApplyCoordinator modelMenuStructureRebuildApplyCoordinator =
             new ModelMenuStructureRebuildApplyCoordinator();
-    private final RenderModeSettingsCoordinator renderModeSettingsCoordinator;
     private final MainFrameConversationRuntimeSettingsCoordinator conversationRuntimeSettingsCoordinator;
     private final RenderModeChangeCoordinator renderModeChangeCoordinator;
     private final RenderModeChangeUiApplyCoordinator renderModeChangeUiApplyCoordinator =
@@ -420,8 +419,8 @@ public class MainFrame extends JFrame {
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
         this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
                 conversationRepo,
-                settingsRepo,
-                new AgentModeSettingsCoordinator(settingsRepo)
+                new AgentModeSettings(settingsRepo),
+                new WebSearchSettings(settingsRepo)
         );
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
@@ -465,7 +464,6 @@ public class MainFrame extends JFrame {
         this.modelMenuStructureRebuildCoordinator = providerMenuWiring.modelMenuStructureRebuildCoordinator();
 
         var settingsWiring = dependencies.settingsWiring();
-        this.renderModeSettingsCoordinator = settingsWiring.renderModeSettingsCoordinator();
         this.renderModeChangeCoordinator = settingsWiring.renderModeChangeCoordinator();
         this.renderModeChangeDispatchCoordinator =
                 settingsWiring.renderModeChangeDispatchCoordinator();

@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -19,7 +18,7 @@ class GeneralSettingsResolverTest {
     @DisplayName("Resolve returns default values when settings are missing")
     void resolve_whenSettingsMissing_returnsDefaults() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("general-settings-defaults");
-        var modeCoordinator = new RenderModeSettingsCoordinator(settingsRepo);
+        var modeCoordinator = new RenderModeSettings(settingsRepo);
         var subject = new GeneralSettingsResolver(settingsRepo, modeCoordinator);
 
         GeneralSettingsResolver.GeneralSettings settings = subject.resolve(true);
@@ -34,12 +33,12 @@ class GeneralSettingsResolverTest {
     @DisplayName("Resolve returns configured values when settings exist")
     void resolve_whenSettingsConfigured_returnsConfiguredValues() throws Exception {
         SettingsRepository settingsRepo = settingsRepo("general-settings-configured");
-        settingsRepo.put(SettingsKeys.CHAT_SEND_KEY, "Ctrl+Enter");
-        settingsRepo.put(SettingsKeys.CHAT_AUTO_SCROLL, "false");
-        settingsRepo.put(SettingsKeys.CHAT_RENDER_MODE, SettingsKeys.CHAT_RENDER_MODE_MARKDOWN);
-        settingsRepo.put(SettingsKeys.MENU_BAR_ENABLED, "false");
+        settingsRepo.put("chat4j.chat.input.sendKey", "Ctrl+Enter");
+        settingsRepo.put("chat4j.chat.behavior.autoScroll", "false");
+        settingsRepo.put("chat4j.chat.render.mode", RenderMode.MARKDOWN.settingValue());
+        settingsRepo.put("chat4j.ui.menuBar.enabled", "false");
 
-        var modeCoordinator = new RenderModeSettingsCoordinator(settingsRepo);
+        var modeCoordinator = new RenderModeSettings(settingsRepo);
         var subject = new GeneralSettingsResolver(settingsRepo, modeCoordinator);
 
         GeneralSettingsResolver.GeneralSettings settings = subject.resolve(true);
@@ -54,7 +53,7 @@ class GeneralSettingsResolverTest {
     @DisplayName("Resolve falls back to safe defaults when repository access fails")
     void resolve_whenRepositoryFails_returnsSafeDefaults() {
         SettingsRepository failingRepo = new ThrowingSettingsRepo();
-        var modeCoordinator = new RenderModeSettingsCoordinator(failingRepo);
+        var modeCoordinator = new RenderModeSettings(failingRepo);
         var subject = new GeneralSettingsResolver(failingRepo, modeCoordinator);
 
         GeneralSettingsResolver.GeneralSettings settings = subject.resolve(false);

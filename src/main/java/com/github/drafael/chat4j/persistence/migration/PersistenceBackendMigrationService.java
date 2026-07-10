@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence.migration;
 
+import com.github.drafael.chat4j.persistence.db.ChatStorageSettings;
 import com.github.drafael.chat4j.persistence.db.DatabaseBootstrap;
 import com.github.drafael.chat4j.persistence.db.PersistenceBackendConfig;
 import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
@@ -7,7 +8,6 @@ import com.github.drafael.chat4j.persistence.db.SqlDialect;
 import com.github.drafael.chat4j.persistence.db.SqlDialects;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
 import com.github.drafael.chat4j.persistence.db.StoragePaths;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -35,11 +35,15 @@ public class PersistenceBackendMigrationService {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final StoragePaths storagePaths;
-    private final SettingsRepository settingsRepo;
+    private final ChatStorageSettings chatStorageSettings;
 
     public PersistenceBackendMigrationService(@NonNull StoragePaths storagePaths, @NonNull SettingsRepository settingsRepo) {
+        this(storagePaths, new ChatStorageSettings(settingsRepo));
+    }
+
+    PersistenceBackendMigrationService(@NonNull StoragePaths storagePaths, @NonNull ChatStorageSettings chatStorageSettings) {
         this.storagePaths = storagePaths;
-        this.settingsRepo = settingsRepo;
+        this.chatStorageSettings = chatStorageSettings;
     }
 
     public StorageBackend migrateIfNeeded() throws SQLException, IOException {
@@ -47,7 +51,7 @@ public class PersistenceBackendMigrationService {
             return migrateAndMarkActive(StorageBackend.H2, StorageBackend.SQLITE);
         }
 
-        PersistenceBackendConfig config = PersistenceBackendConfig.load(settingsRepo);
+        PersistenceBackendConfig config = chatStorageSettings.load();
         StorageBackend sourceBackend = config.activeBackend();
         StorageBackend targetBackend = config.pendingMigrationTarget().orElse(null);
         if (targetBackend == null) {
@@ -59,8 +63,7 @@ public class PersistenceBackendMigrationService {
 
     private boolean shouldMigrateExistingH2ToDefaultSqlite() throws SQLException {
         return PersistenceBackendConfig.DEFAULT_BACKEND == StorageBackend.SQLITE
-                && settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE).isEmpty()
-                && settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING).isEmpty()
+                && chatStorageSettings.hasNoStoredBackendSelection()
                 && Files.exists(storagePaths.h2DatabaseFile())
                 && !Files.exists(storagePaths.sqliteDatabaseFile());
     }
@@ -70,7 +73,7 @@ public class PersistenceBackendMigrationService {
         log.info("Starting chat storage migration: {} -> {}", sourceBackend, targetBackend);
         try {
             migrate(sourceBackend, targetBackend);
-            PersistenceBackendConfig.markActive(settingsRepo, targetBackend);
+            chatStorageSettings.markActive(targetBackend);
             log.info("Completed chat storage migration: {} -> {}", sourceBackend, targetBackend);
             return targetBackend;
         } catch (SQLException | IOException | RuntimeException e) {

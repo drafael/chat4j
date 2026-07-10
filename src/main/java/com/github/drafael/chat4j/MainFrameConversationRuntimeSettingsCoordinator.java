@@ -1,10 +1,9 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.AgentModeSettings;
+import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
@@ -20,17 +19,17 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     private static final int DEFAULT_WEB_BROWSE_TOP_N = 3;
 
     private final ConversationRepository conversationRepo;
-    private final SettingsRepository settingsRepo;
-    private final AgentModeSettingsCoordinator agentModeSettingsCoordinator;
+    private final AgentModeSettings agentModeSettings;
+    private final WebSearchSettings webSearchSettings;
 
     public MainFrameConversationRuntimeSettingsCoordinator(
             @NonNull ConversationRepository conversationRepo,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull AgentModeSettingsCoordinator agentModeSettingsCoordinator
+            @NonNull AgentModeSettings agentModeSettings,
+            @NonNull WebSearchSettings webSearchSettings
     ) {
         this.conversationRepo = conversationRepo;
-        this.settingsRepo = settingsRepo;
-        this.agentModeSettingsCoordinator = agentModeSettingsCoordinator;
+        this.agentModeSettings = agentModeSettings;
+        this.webSearchSettings = webSearchSettings;
     }
 
     public void applyLoadedConversationSettings(
@@ -51,7 +50,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
 
     public void applyAgentModeSettings(@NonNull Consumer<String> setAgentSystemPromptAppend) {
         try {
-            setAgentSystemPromptAppend.accept(agentModeSettingsCoordinator.resolveSystemPromptAppend());
+            setAgentSystemPromptAppend.accept(agentModeSettings.resolveSystemPromptAppend());
         } catch (Exception e) {
             log.debug("Failed to resolve Agent Mode settings", e);
         }
@@ -59,8 +58,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
 
     public void applyWebSearchSettings(@NonNull IntConsumer setWebBrowseTopN) {
         try {
-            int topN = Integer.parseInt(settingsRepo.get(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, "3"));
-            setWebBrowseTopN.accept(topN);
+            setWebBrowseTopN.accept(webSearchSettings.autoBrowseTopN());
         } catch (Exception e) {
             log.debug("Failed to resolve Web Search settings", e);
             setWebBrowseTopN.accept(DEFAULT_WEB_BROWSE_TOP_N);
@@ -84,7 +82,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
     public void persistWebBrowseTopN(int topN) {
         Thread.startVirtualThread(() -> {
             try {
-                settingsRepo.put(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, String.valueOf(topN));
+                webSearchSettings.persistAutoBrowseTopN(topN);
             } catch (Exception e) {
                 log.debug("Failed to persist Web Search browse-top setting", e);
             }

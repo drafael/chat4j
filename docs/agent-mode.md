@@ -23,7 +23,7 @@ General settings include:
 
 - **Prompt addendum** (appended to default Agent Mode system prompt)
 
-Stored key (`SettingsKeys`):
+Stored setting key:
 
 - `chat4j.chat.agent.systemPromptAppend`
 

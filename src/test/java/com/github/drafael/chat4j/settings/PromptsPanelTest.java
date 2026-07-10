@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,6 +27,6 @@ class PromptsPanelTest {
         });
 
         assertThat(saved).isTrue();
-        assertThat(settingsRepo.get(SettingsKeys.PROMPT_CATALOG)).isEmpty();
+        assertThat(settingsRepo.get("chat4j.prompts.catalog")).isEmpty();
     }
 }

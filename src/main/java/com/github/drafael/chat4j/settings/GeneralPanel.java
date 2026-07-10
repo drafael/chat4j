@@ -2,41 +2,78 @@ package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.persistence.db.ChatStorageSettings;
 import com.github.drafael.chat4j.persistence.db.PersistenceBackendConfig;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.awt.*;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.GridBagConstraints;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import javax.swing.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import javax.swing.DefaultListCellRenderer;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import org.apache.commons.lang3.StringUtils;
 
 public class GeneralPanel extends AbstractSettingsPanel {
 
-    private static final String KEY_SEND = SettingsKeys.CHAT_SEND_KEY;
-    private static final String KEY_AUTO_SCROLL = SettingsKeys.CHAT_AUTO_SCROLL;
-    private static final String KEY_RENDER_MODE_DEFAULT = SettingsKeys.CHAT_RENDER_MODE;
-    private static final String KEY_MENU_BAR_ENABLED = SettingsKeys.MENU_BAR_ENABLED;
-    private static final String KEY_AGENT_SYSTEM_PROMPT_APPEND = SettingsKeys.CHAT_AGENT_SYSTEM_PROMPT_APPEND;
-
-    private static final String SEND_ENTER = "Enter";
-    private static final String SEND_CTRL_ENTER = "Ctrl+Enter";
+    private static final String SEND_ENTER = ChatBehaviorSettings.SEND_ENTER;
+    private static final String SEND_CTRL_ENTER = ChatBehaviorSettings.SEND_CTRL_ENTER;
 
     private final Runnable exitAction;
+    private final ChatBehaviorSettings chatBehaviorSettings;
+    private final RenderModeSettings renderModeSettings;
+    private final AgentModeSettings agentModeSettings;
+    private final ChatStorageSettings chatStorageSettings;
+    private final StorageRestartPrompt storageRestartPrompt;
 
     public GeneralPanel(SettingsRepository settingsRepo) {
         this(settingsRepo, () -> System.exit(0));
     }
 
     public GeneralPanel(SettingsRepository settingsRepo, Runnable exitAction) {
+        this(
+                settingsRepo,
+                exitAction,
+                new ChatBehaviorSettings(settingsRepo),
+                new RenderModeSettings(settingsRepo),
+                new AgentModeSettings(settingsRepo),
+                new ChatStorageSettings(settingsRepo),
+                null
+        );
+    }
+
+    GeneralPanel(
+            SettingsRepository settingsRepo,
+            Runnable exitAction,
+            ChatBehaviorSettings chatBehaviorSettings,
+            RenderModeSettings renderModeSettings,
+            AgentModeSettings agentModeSettings,
+            ChatStorageSettings chatStorageSettings,
+            StorageRestartPrompt storageRestartPrompt
+    ) {
         super(settingsRepo);
         this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
+        this.chatBehaviorSettings = chatBehaviorSettings;
+        this.renderModeSettings = renderModeSettings;
+        this.agentModeSettings = agentModeSettings;
+        this.chatStorageSettings = chatStorageSettings;
+        this.storageRestartPrompt = storageRestartPrompt == null ? this::showStorageBackendChangePrompt : storageRestartPrompt;
 
         JPanel form = createFormPanel("General");
         GridBagConstraints gbc = createFormConstraints();
@@ -44,29 +81,46 @@ public class GeneralPanel extends AbstractSettingsPanel {
         int row = 0;
 
         JCheckBox menuBarEnabled = new JCheckBox();
+        menuBarEnabled.setName("menuBarEnabledCheckBox");
         row = addCheckBoxRow(form, gbc, row, menuBarEnabled, "Enable menu bar");
-        bindCheckBox(menuBarEnabled, KEY_MENU_BAR_ENABLED, SystemInfo.isMacOS, null);
+        bindTypedCheckBox(
+                menuBarEnabled,
+                () -> chatBehaviorSettings.menuBarEnabled(SystemInfo.isMacOS),
+                chatBehaviorSettings::persistMenuBarEnabled,
+                SystemInfo.isMacOS,
+                "menu bar"
+        );
 
         row = addSectionHeader(form, gbc, row, "Chat Behavior");
 
         JComboBox<String> sendKey = withPreferredWidth(new JComboBox<>(new String[]{SEND_ENTER, SEND_CTRL_ENTER}), 220);
+        sendKey.setName("sendKeyComboBox");
         addRow(form, gbc, row++, "Send message with", sendKey);
-        bindComboBox(
+        bindTypedComboBox(
                 sendKey,
-                KEY_SEND,
+                chatBehaviorSettings::sendKey,
+                chatBehaviorSettings::persistSendKey,
                 SEND_ENTER,
                 Validators.oneOf(Set.of(SEND_ENTER, SEND_CTRL_ENTER), "Invalid send key option"),
-                null
+                "send key"
         );
 
         JCheckBox autoScroll = new JCheckBox();
+        autoScroll.setName("autoScrollCheckBox");
         row = addCheckBoxRow(form, gbc, row, autoScroll, "Scroll chat to bottom");
-        bindCheckBox(autoScroll, KEY_AUTO_SCROLL, true, null);
+        bindTypedCheckBox(
+                autoScroll,
+                chatBehaviorSettings::autoScrollEnabled,
+                chatBehaviorSettings::persistAutoScrollEnabled,
+                true,
+                "auto-scroll"
+        );
 
         JComboBox<String> renderModeDefault = withPreferredWidth(
                 new JComboBox<>(renderModeSettingValues()),
                 220
         );
+        renderModeDefault.setName("renderModeDefaultComboBox");
         renderModeDefault.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(
@@ -91,12 +145,13 @@ public class GeneralPanel extends AbstractSettingsPanel {
             }
         });
         addRow(form, gbc, row++, "Message display mode", renderModeDefault);
-        bindComboBox(
+        bindTypedComboBox(
                 renderModeDefault,
-                KEY_RENDER_MODE_DEFAULT,
+                renderModeSettings::readDefaultModeValue,
+                renderModeSettings::persistDefaultModeValue,
                 RenderMode.PREVIEW.settingValue(),
                 renderModeValidator(),
-                null
+                "message display mode"
         );
         row = addSectionHint(form, gbc, row, "Chat settings are applied immediately.");
 
@@ -106,7 +161,7 @@ public class GeneralPanel extends AbstractSettingsPanel {
         agentPromptAppendArea.setName("agentSystemPromptAppendArea");
         agentPromptAppendArea.setLineWrap(true);
         agentPromptAppendArea.setWrapStyleWord(true);
-        agentPromptAppendArea.setText(readString(KEY_AGENT_SYSTEM_PROMPT_APPEND, ""));
+        agentPromptAppendArea.setText(readPromptAppend());
 
         JScrollPane agentPromptScrollPane = new JScrollPane(agentPromptAppendArea);
         agentPromptScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
@@ -125,11 +180,112 @@ public class GeneralPanel extends AbstractSettingsPanel {
                 new JComboBox<>(StorageBackend.values()),
                 220
         );
+        storageBackend.setName("storageBackendComboBox");
         addRow(form, gbc, row++, "Chat storage", storageBackend);
         bindStorageBackend(storageBackend);
         row = addSectionHint(form, gbc, row, "Changing storage requires a restart. Existing chats will be migrated automatically.");
 
         addVerticalSpacer(form, gbc, row);
+    }
+
+    private void bindTypedCheckBox(
+            JCheckBox checkBox,
+            Supplier<Boolean> reader,
+            Consumer<Boolean> writer,
+            boolean defaultValue,
+            String settingName
+    ) {
+        checkBox.setSelected(readTypedSetting(reader, defaultValue, settingName));
+
+        checkBox.addActionListener(e -> {
+            boolean selected = checkBox.isSelected();
+            try {
+                writer.accept(selected);
+                setStatusInfo(STATUS_SAVED);
+            } catch (Exception ex) {
+                setStatusError("Failed to save %s setting".formatted(settingName));
+            }
+        });
+    }
+
+    private void bindTypedComboBox(
+            JComboBox<String> comboBox,
+            Supplier<String> reader,
+            Consumer<String> writer,
+            String defaultValue,
+            SettingsValidator<String> validator,
+            String settingName
+    ) {
+        String storedValue = readTypedSetting(reader, defaultValue, settingName);
+        ValidationResult<String> initialResult = validate(validator, storedValue);
+        String initialValue = initialResult.valid() ? initialResult.normalizedValue() : defaultValue;
+
+        if (!initialResult.valid()) {
+            setStatusError(initialResult.message());
+            persistTypedSetting(writer, initialValue, settingName);
+        }
+
+        comboBox.setSelectedItem(initialValue);
+
+        AtomicBoolean updating = new AtomicBoolean(false);
+        AtomicReference<String> lastValidValue = new AtomicReference<>(initialValue);
+
+        comboBox.addActionListener(e -> {
+            if (updating.get()) {
+                return;
+            }
+
+            Object selected = comboBox.getSelectedItem();
+            if (!(selected instanceof String rawValue)) {
+                return;
+            }
+
+            ValidationResult<String> result = validate(validator, rawValue);
+            if (!result.valid()) {
+                updating.set(true);
+                comboBox.setSelectedItem(lastValidValue.get());
+                updating.set(false);
+                setStatusError(result.message());
+                return;
+            }
+
+            String normalizedValue = result.normalizedValue();
+            if (!persistTypedSetting(writer, normalizedValue, settingName)) {
+                updating.set(true);
+                comboBox.setSelectedItem(lastValidValue.get());
+                updating.set(false);
+                return;
+            }
+
+            lastValidValue.set(normalizedValue);
+            setStatusInfo(STATUS_SAVED);
+
+            if (!normalizedValue.equals(rawValue)) {
+                updating.set(true);
+                comboBox.setSelectedItem(normalizedValue);
+                updating.set(false);
+            }
+        });
+    }
+
+    private <T> T readTypedSetting(Supplier<T> reader, T defaultValue, String settingName) {
+        try {
+            T value = reader.get();
+            return value != null ? value : defaultValue;
+        } catch (Exception e) {
+            setStatusError("Failed to read %s setting".formatted(settingName));
+            return defaultValue;
+        }
+    }
+
+    private <T> boolean persistTypedSetting(Consumer<T> writer, T value, String settingName) {
+        try {
+            writer.accept(value);
+            return true;
+        } catch (Exception e) {
+            setStatusError("Failed to save %s setting".formatted(settingName));
+            return false;
+        }
     }
 
     private void bindStorageBackend(JComboBox<StorageBackend> storageBackend) {
@@ -151,25 +307,45 @@ public class GeneralPanel extends AbstractSettingsPanel {
             }
 
             if (backend == activeBackend) {
-                removeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING);
-                setStatusInfo(STATUS_SAVED);
+                try {
+                    chatStorageSettings.requestBackend(backend);
+                    setStatusInfo(STATUS_SAVED);
+                } catch (Exception ex) {
+                    setStatusError("Failed to save chat storage setting");
+                    updating.set(true);
+                    storageBackend.setSelectedItem(selectedBackend);
+                    updating.set(false);
+                }
                 return;
             }
 
-            writeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, backend.settingValue());
-            setStatusInfo("Saved — restart required");
-            RestartRequiredDialog.Choice choice = showStorageBackendChangePrompt(activeBackend, backend);
+            try {
+                chatStorageSettings.requestBackend(backend);
+                setStatusInfo("Saved — restart required");
+            } catch (Exception ex) {
+                setStatusError("Failed to save chat storage setting");
+                updating.set(true);
+                storageBackend.setSelectedItem(selectedBackend);
+                updating.set(false);
+                return;
+            }
+
+            RestartRequiredDialog.Choice choice = storageRestartPrompt.show(activeBackend, backend);
 
             if (choice == RestartRequiredDialog.Choice.EXIT_NOW) {
                 exitAction.run();
                 return;
             }
             if (choice == RestartRequiredDialog.Choice.CANCEL) {
-                removeSetting(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING);
-                updating.set(true);
-                storageBackend.setSelectedItem(activeBackend);
-                updating.set(false);
-                setStatusInfo(STATUS_SAVED);
+                try {
+                    chatStorageSettings.requestBackend(activeBackend);
+                    updating.set(true);
+                    storageBackend.setSelectedItem(activeBackend);
+                    updating.set(false);
+                    setStatusInfo(STATUS_SAVED);
+                } catch (Exception ex) {
+                    setStatusError("Failed to save chat storage setting");
+                }
             }
         });
     }
@@ -184,56 +360,48 @@ public class GeneralPanel extends AbstractSettingsPanel {
 
     private PersistenceBackendConfig readStorageConfig() {
         try {
-            return PersistenceBackendConfig.load(settingsRepo());
+            return chatStorageSettings.load();
         } catch (Exception e) {
             setStatusError("Failed to read chat storage setting");
             return new PersistenceBackendConfig(PersistenceBackendConfig.DEFAULT_BACKEND, null);
         }
     }
 
-    private static String[] renderModeSettingValues() {
+    private String readPromptAppend() {
+        try {
+            return agentModeSettings.resolveSystemPromptAppend();
+        } catch (Exception e) {
+            setStatusError("Failed to read prompt addendum setting");
+            return "";
+        }
+    }
+
+    private String[] renderModeSettingValues() {
         return Arrays.stream(RenderMode.values())
                 .map(RenderMode::settingValue)
                 .toArray(String[]::new);
     }
 
     private SettingsValidator<String> renderModeValidator() {
-        return value -> {
-            RenderMode mode = renderModeFromValue(value);
-            if (mode == null) {
-                return ValidationResult.invalid("Invalid markdown render mode", RenderMode.PREVIEW.settingValue());
-            }
-
-            return ValidationResult.valid(mode.settingValue());
-        };
+        return value -> renderModeSettings.normalizeSettingValue(value)
+                .map(ValidationResult::valid)
+                .orElseGet(() -> ValidationResult.invalid("Invalid markdown render mode", RenderMode.PREVIEW.settingValue()));
     }
 
-    private static String renderModeDisplayName(String settingValue) {
-        RenderMode mode = renderModeFromValue(settingValue);
-        return mode != null ? mode.displayName() : RenderMode.PREVIEW.displayName();
-    }
-
-    private static RenderMode renderModeFromValue(String value) {
-        if (StringUtils.isBlank(value)) {
-            return null;
-        }
-
-        String normalized = value.trim();
-        return Arrays.stream(RenderMode.values())
-                .filter(mode -> mode.settingValue().equalsIgnoreCase(normalized) || mode.name().equalsIgnoreCase(normalized))
-                .findFirst()
-                .orElse(null);
+    private String renderModeDisplayName(String settingValue) {
+        return renderModeSettings.parseMode(settingValue)
+                .map(RenderMode::displayName)
+                .orElse(RenderMode.PREVIEW.displayName());
     }
 
     private void persistPromptAppendArea(JTextArea textArea) {
         Runnable persist = () -> {
-            String value = textArea.getText();
-            if (StringUtils.isBlank(value)) {
-                removeSetting(KEY_AGENT_SYSTEM_PROMPT_APPEND);
-            } else {
-                writeSetting(KEY_AGENT_SYSTEM_PROMPT_APPEND, value);
+            try {
+                agentModeSettings.persistSystemPromptAppend(textArea.getText());
+                setStatusInfo(STATUS_SAVED);
+            } catch (Exception e) {
+                setStatusError("Failed to save prompt addendum setting");
             }
-            setStatusInfo(STATUS_SAVED);
         };
 
         textArea.addFocusListener(new FocusAdapter() {
@@ -246,19 +414,32 @@ public class GeneralPanel extends AbstractSettingsPanel {
         textArea.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
-                persist.run();
+                persistLater(persist);
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
-                persist.run();
+                persistLater(persist);
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
-                persist.run();
+                persistLater(persist);
             }
         });
     }
 
+    private void persistLater(Runnable persist) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            persist.run();
+            return;
+        }
+
+        SwingUtilities.invokeLater(persist);
+    }
+
+    @FunctionalInterface
+    interface StorageRestartPrompt {
+        RestartRequiredDialog.Choice show(StorageBackend activeBackend, StorageBackend selectedBackend);
+    }
 }

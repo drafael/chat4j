@@ -1,10 +1,10 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import com.github.drafael.chat4j.settings.AgentModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.AgentModeSettings;
+import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -16,18 +16,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MainFrameConversationRuntimeSettingsCoordinatorTest {
 
     private final ConversationRepository conversationRepo = mock(ConversationRepository.class);
     private final SettingsRepository settingsRepo = mock(SettingsRepository.class);
-    private final AgentModeSettingsCoordinator agentModeSettingsCoordinator = mock(AgentModeSettingsCoordinator.class);
+    private final AgentModeSettings agentModeSettings = mock(AgentModeSettings.class);
     private final MainFrameConversationRuntimeSettingsCoordinator subject = new MainFrameConversationRuntimeSettingsCoordinator(
             conversationRepo,
-            settingsRepo,
-            agentModeSettingsCoordinator
+            agentModeSettings,
+            new WebSearchSettings(settingsRepo)
     );
 
     @TempDir
@@ -93,11 +97,46 @@ class MainFrameConversationRuntimeSettingsCoordinatorTest {
     @DisplayName("Web search settings use stored browse-top value")
     void applyWebSearchSettings_whenStoredValueExists_appliesStoredTopN() throws Exception {
         var appliedTopN = new AtomicReference<Integer>();
-        when(settingsRepo.get(SettingsKeys.WEB_AUTO_BROWSE_TOP_N, "3")).thenReturn("7");
+        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3")).thenReturn("7");
 
         subject.applyWebSearchSettings(appliedTopN::set);
 
         assertThat(appliedTopN).hasValue(7);
+    }
+
+    @Test
+    @DisplayName("Invalid web search settings fall back to default browse-top value")
+    void applyWebSearchSettings_whenStoredValueInvalid_appliesDefaultTopN() throws Exception {
+        var appliedTopN = new AtomicReference<Integer>();
+        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3")).thenReturn("invalid");
+
+        subject.applyWebSearchSettings(appliedTopN::set);
+
+        assertThat(appliedTopN).hasValue(3);
+    }
+
+    @Test
+    @DisplayName("Web search settings read failures fall back to default browse-top value")
+    void applyWebSearchSettings_whenRepositoryReadFails_appliesDefaultTopN() throws Exception {
+        var appliedTopN = new AtomicReference<Integer>();
+        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3"))
+                .thenThrow(new IllegalStateException("forced failure"));
+
+        subject.applyWebSearchSettings(appliedTopN::set);
+
+        assertThat(appliedTopN).hasValue(3);
+    }
+
+    @Test
+    @DisplayName("Web search browse-top write failures are best effort")
+    void persistWebBrowseTopN_whenRepositoryWriteFails_doesNotThrow() {
+        doThrow(new IllegalStateException("forced failure"))
+                .when(settingsRepo)
+                .put("chat4j.web.autoBrowseTopN", "9");
+
+        assertThatCode(() -> subject.persistWebBrowseTopN(9))
+                .doesNotThrowAnyException();
+        verify(settingsRepo, timeout(1000)).put("chat4j.web.autoBrowseTopN", "9");
     }
 
     private ConversationRepository.ConversationRecord conversationRecord(

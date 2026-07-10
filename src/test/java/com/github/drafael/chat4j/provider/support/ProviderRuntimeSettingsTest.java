@@ -15,7 +15,7 @@ class ProviderRuntimeSettingsTest {
 
     @Test
     @DisplayName("Provider runtime settings create backward-compatible keys")
-    void keys_whenProviderNamesVary_matchPersistedSettingsKeys() {
+    void keys_whenProviderNamesVary_matchPersistedSettingNames() {
         assertThat(settings("OpenAI").enabledKey()).isEqualTo("chat4j.provider.openai.enabled");
         assertThat(settings("OpenAI").baseUrlKey()).isEqualTo("chat4j.provider.openai.baseUrl");
         assertThat(settings("LM Studio").enabledKey()).isEqualTo("chat4j.provider.lm-studio.enabled");

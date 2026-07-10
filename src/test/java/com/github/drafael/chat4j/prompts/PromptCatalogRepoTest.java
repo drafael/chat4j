@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.prompts;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.util.List;
@@ -45,7 +44,7 @@ class PromptCatalogRepoTest {
     @DisplayName("Load falls back to built-ins when saved JSON is invalid")
     void load_whenJsonInvalid_returnsBuiltIns() throws Exception {
         SettingsRepository settingsRepo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        settingsRepo.put(SettingsKeys.PROMPT_CATALOG, "not json");
+        settingsRepo.put("chat4j.prompts.catalog", "not json");
         var subject = new PromptCatalogRepo(settingsRepo);
 
         assertThat(subject.load()).extracting(PromptTemplate::id)

@@ -4,7 +4,7 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
-import com.github.drafael.chat4j.settings.WindowStateSettingsCoordinator;
+import com.github.drafael.chat4j.settings.WindowStateSettings;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import lombok.NonNull;
@@ -16,8 +16,8 @@ public class MainFrameLifecycleWiringFactory {
         var modelMenuDirtyRefreshTriggerCoordinator =
                 new ModelMenuDirtyRefreshTriggerCoordinator(modelMenuDirtyRefreshCoordinator);
         var lookAndFeelMenuRefreshCoordinator = new LookAndFeelMenuRefreshCoordinator(menuPopupVisibleRunner);
-        var windowStateSettingsCoordinator = new WindowStateSettingsCoordinator(settingsRepo);
-        var windowPlacementCoordinator = new WindowPlacementCoordinator(windowStateSettingsCoordinator);
+        var windowStateSettings = new WindowStateSettings(settingsRepo);
+        var windowPlacementCoordinator = new WindowPlacementCoordinator(windowStateSettings);
 
         return new LifecycleWiring(
                 modelMenuDirtyRefreshCoordinator,

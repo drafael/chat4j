@@ -38,7 +38,7 @@ class WindowPlacementCoordinatorTest {
     @Test
     @DisplayName("Save persists the screen with the largest window intersection")
     void save_whenWindowSpansScreens_persistsScreenWithLargestIntersection() {
-        var settingsCoordinator = new WindowStateSettingsCoordinator(
+        var settingsCoordinator = new WindowStateSettings(
                 new SettingsRepository(tempDir.resolve("save-settings.properties"))
         );
         WindowPlacementCoordinator subject = new WindowPlacementCoordinator(settingsCoordinator, () -> screens(
@@ -185,7 +185,7 @@ class WindowPlacementCoordinatorTest {
     }
 
     private WindowPlacementCoordinator subject(List<ScreenSnapshot> screens) {
-        var settingsCoordinator = new WindowStateSettingsCoordinator(
+        var settingsCoordinator = new WindowStateSettings(
                 new SettingsRepository(tempDir.resolve("settings.properties"))
         );
         return new WindowPlacementCoordinator(settingsCoordinator, () -> screens);

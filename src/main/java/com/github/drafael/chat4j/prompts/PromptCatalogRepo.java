@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.prompts;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.util.List;
 import lombok.NonNull;
@@ -16,21 +15,29 @@ public class PromptCatalogRepo {
     private static final TypeReference<List<PromptTemplate>> PROMPT_LIST_TYPE = new TypeReference<>() {
     };
 
-    private final SettingsRepository settingsRepo;
+    private final PromptCatalogSettings promptCatalogSettings;
     private final ObjectMapper objectMapper;
 
     public PromptCatalogRepo(@NonNull SettingsRepository settingsRepo) {
-        this(settingsRepo, new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT));
+        this(new PromptCatalogSettings(settingsRepo));
+    }
+
+    public PromptCatalogRepo(@NonNull PromptCatalogSettings promptCatalogSettings) {
+        this(promptCatalogSettings, new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT));
     }
 
     PromptCatalogRepo(@NonNull SettingsRepository settingsRepo, @NonNull ObjectMapper objectMapper) {
-        this.settingsRepo = settingsRepo;
+        this(new PromptCatalogSettings(settingsRepo), objectMapper);
+    }
+
+    PromptCatalogRepo(@NonNull PromptCatalogSettings promptCatalogSettings, @NonNull ObjectMapper objectMapper) {
+        this.promptCatalogSettings = promptCatalogSettings;
         this.objectMapper = objectMapper;
     }
 
     public List<PromptTemplate> load() {
         try {
-            String json = settingsRepo.get(SettingsKeys.PROMPT_CATALOG).orElse(null);
+            String json = promptCatalogSettings.loadCatalogJson().orElse(null);
             if (StringUtils.isBlank(json)) {
                 return BuiltInPromptCatalog.prompts();
             }
@@ -48,7 +55,7 @@ public class PromptCatalogRepo {
     public void save(@NonNull List<PromptTemplate> prompts) {
         PromptCatalogValidator.validateOrThrow(prompts);
         try {
-            settingsRepo.put(SettingsKeys.PROMPT_CATALOG, objectMapper.writeValueAsString(prompts));
+            promptCatalogSettings.saveCatalogJson(objectMapper.writeValueAsString(prompts));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to save prompt catalog", e);
         }

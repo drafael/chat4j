@@ -1,26 +1,25 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Rectangle;
 import java.util.Optional;
 import lombok.NonNull;
 
-public class WindowStateSettingsCoordinator {
+public final class WindowStateSettings {
 
-    private static final String WINDOW_X_KEY = SettingsKeys.WINDOW_X;
-    private static final String WINDOW_Y_KEY = SettingsKeys.WINDOW_Y;
-    private static final String WINDOW_WIDTH_KEY = SettingsKeys.WINDOW_WIDTH;
-    private static final String WINDOW_HEIGHT_KEY = SettingsKeys.WINDOW_HEIGHT;
-    private static final String WINDOW_SCREEN_X_KEY = SettingsKeys.WINDOW_SCREEN_X;
-    private static final String WINDOW_SCREEN_Y_KEY = SettingsKeys.WINDOW_SCREEN_Y;
-    private static final String WINDOW_SCREEN_WIDTH_KEY = SettingsKeys.WINDOW_SCREEN_WIDTH;
-    private static final String WINDOW_SCREEN_HEIGHT_KEY = SettingsKeys.WINDOW_SCREEN_HEIGHT;
-    private static final String WINDOW_SCREEN_ID_KEY = SettingsKeys.WINDOW_SCREEN_ID;
+    private static final String WINDOW_X_KEY = "chat4j.ui.window.x";
+    private static final String WINDOW_Y_KEY = "chat4j.ui.window.y";
+    private static final String WINDOW_WIDTH_KEY = "chat4j.ui.window.width";
+    private static final String WINDOW_HEIGHT_KEY = "chat4j.ui.window.height";
+    private static final String WINDOW_SCREEN_X_KEY = "chat4j.ui.window.screen.x";
+    private static final String WINDOW_SCREEN_Y_KEY = "chat4j.ui.window.screen.y";
+    private static final String WINDOW_SCREEN_WIDTH_KEY = "chat4j.ui.window.screen.width";
+    private static final String WINDOW_SCREEN_HEIGHT_KEY = "chat4j.ui.window.screen.height";
+    private static final String WINDOW_SCREEN_ID_KEY = "chat4j.ui.window.screen.id";
 
     private final SettingsRepository settingsRepo;
 
-    public WindowStateSettingsCoordinator(@NonNull SettingsRepository settingsRepo) {
+    public WindowStateSettings(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 
@@ -52,22 +51,6 @@ public class WindowStateSettingsCoordinator {
         save(new WindowPlacementSnapshot(bounds));
     }
 
-    private void clearScreenMetadata() {
-        removeSetting(WINDOW_SCREEN_X_KEY);
-        removeSetting(WINDOW_SCREEN_Y_KEY);
-        removeSetting(WINDOW_SCREEN_WIDTH_KEY);
-        removeSetting(WINDOW_SCREEN_HEIGHT_KEY);
-        removeSetting(WINDOW_SCREEN_ID_KEY);
-    }
-
-    private void removeSetting(String key) {
-        try {
-            settingsRepo.remove(key);
-        } catch (Exception ignored) {
-            // Window placement persistence is best-effort.
-        }
-    }
-
     public Optional<WindowPlacementSnapshot> load() {
 
         try {
@@ -81,6 +64,22 @@ public class WindowStateSettingsCoordinator {
             return Optional.of(new WindowPlacementSnapshot(windowBounds.get(), screenBounds, screenId));
         } catch (Exception e) {
             return Optional.empty();
+        }
+    }
+
+    private void clearScreenMetadata() {
+        removeSetting(WINDOW_SCREEN_X_KEY);
+        removeSetting(WINDOW_SCREEN_Y_KEY);
+        removeSetting(WINDOW_SCREEN_WIDTH_KEY);
+        removeSetting(WINDOW_SCREEN_HEIGHT_KEY);
+        removeSetting(WINDOW_SCREEN_ID_KEY);
+    }
+
+    private void removeSetting(String key) {
+        try {
+            settingsRepo.remove(key);
+        } catch (Exception ignored) {
+            // Window placement persistence is best-effort.
         }
     }
 

@@ -6,7 +6,6 @@ import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
 import com.github.drafael.chat4j.persistence.db.SqlDialects;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
 import com.github.drafael.chat4j.persistence.db.StoragePaths;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.Message;
 import java.io.IOException;
@@ -66,15 +65,15 @@ class PersistenceBackendMigrationServiceTest {
     @DisplayName("Migration copies chat data from SQLite to H2 and marks H2 active")
     void migrateIfNeeded_whenPendingIsH2_copiesSqliteDataAndMarksH2Active() throws Exception {
         UUID conversationId = createSqliteConversation();
-        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE, StorageBackend.SQLITE.settingValue());
-        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, StorageBackend.H2.settingValue());
+        settingsRepo.put("chat.storage.backend.active", StorageBackend.SQLITE.settingValue());
+        settingsRepo.put("chat.storage.backend.pending", StorageBackend.H2.settingValue());
         var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
 
         StorageBackend activeBackend = subject.migrateIfNeeded();
 
         assertThat(activeBackend).isEqualTo(StorageBackend.H2);
-        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE)).contains("h2");
-        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).isEmpty();
+        assertThat(settingsRepo.get("chat.storage.backend.active")).contains("h2");
+        assertThat(settingsRepo.get("chat.storage.backend.pending")).isEmpty();
         assertThat(storagePaths.h2DatabaseFile()).exists();
 
         DataSource h2DataSource = PersistenceDataSourceFactory.create(storagePaths, StorageBackend.H2);
@@ -95,8 +94,8 @@ class PersistenceBackendMigrationServiceTest {
     @DisplayName("Migration copies chat data from H2 to SQLite and marks SQLite active")
     void migrateIfNeeded_whenPendingIsSqlite_copiesH2DataAndMarksSqliteActive() throws Exception {
         UUID conversationId = createH2Conversation();
-        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE, StorageBackend.H2.settingValue());
-        settingsRepo.put(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING, StorageBackend.SQLITE.settingValue());
+        settingsRepo.put("chat.storage.backend.active", StorageBackend.H2.settingValue());
+        settingsRepo.put("chat.storage.backend.pending", StorageBackend.SQLITE.settingValue());
         var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
 
         StorageBackend activeBackend = subject.migrateIfNeeded();
@@ -115,10 +114,42 @@ class PersistenceBackendMigrationServiceTest {
         assertThatSqliteConversationWasMigrated(activeBackend, conversationId);
     }
 
+    @Test
+    @DisplayName("Invalid stored active backend blocks automatic existing H2 migration")
+    void migrateIfNeeded_whenInvalidActiveBackendIsPresent_doesNotAutoMigrateExistingH2() throws Exception {
+        createH2Conversation();
+        settingsRepo.put("chat.storage.backend.active", "invalid-backend");
+        var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
+
+        StorageBackend activeBackend = subject.migrateIfNeeded();
+
+        assertThat(activeBackend).isEqualTo(StorageBackend.SQLITE);
+        assertThat(settingsRepo.get("chat.storage.backend.active")).contains("invalid-backend");
+        assertThat(settingsRepo.get("chat.storage.backend.pending")).isEmpty();
+        assertThat(storagePaths.sqliteDatabaseFile()).doesNotExist();
+        assertThat(storagePaths.h2DatabaseFile()).exists();
+    }
+
+    @Test
+    @DisplayName("Invalid stored pending backend blocks automatic existing H2 migration")
+    void migrateIfNeeded_whenInvalidPendingBackendIsPresent_doesNotAutoMigrateExistingH2() throws Exception {
+        createH2Conversation();
+        settingsRepo.put("chat.storage.backend.pending", "invalid-backend");
+        var subject = new PersistenceBackendMigrationService(storagePaths, settingsRepo);
+
+        StorageBackend activeBackend = subject.migrateIfNeeded();
+
+        assertThat(activeBackend).isEqualTo(StorageBackend.SQLITE);
+        assertThat(settingsRepo.get("chat.storage.backend.active")).isEmpty();
+        assertThat(settingsRepo.get("chat.storage.backend.pending")).contains("invalid-backend");
+        assertThat(storagePaths.sqliteDatabaseFile()).doesNotExist();
+        assertThat(storagePaths.h2DatabaseFile()).exists();
+    }
+
     private void assertThatSqliteConversationWasMigrated(StorageBackend activeBackend, UUID conversationId) throws Exception {
         assertThat(activeBackend).isEqualTo(StorageBackend.SQLITE);
-        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_ACTIVE)).contains("sqlite");
-        assertThat(settingsRepo.get(SettingsKeys.CHAT_STORAGE_BACKEND_PENDING)).isEmpty();
+        assertThat(settingsRepo.get("chat.storage.backend.active")).contains("sqlite");
+        assertThat(settingsRepo.get("chat.storage.backend.pending")).isEmpty();
         assertThat(storagePaths.sqliteDatabaseFile()).exists();
 
         DataSource sqliteDataSource = PersistenceDataSourceFactory.create(storagePaths, StorageBackend.SQLITE);

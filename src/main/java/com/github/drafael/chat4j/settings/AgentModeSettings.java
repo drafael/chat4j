@@ -1,17 +1,16 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
-public class AgentModeSettingsCoordinator {
+public final class AgentModeSettings {
 
-    private static final String KEY_AGENT_SYSTEM_PROMPT_APPEND = SettingsKeys.CHAT_AGENT_SYSTEM_PROMPT_APPEND;
+    private static final String KEY_AGENT_SYSTEM_PROMPT_APPEND = "chat4j.chat.agent.systemPromptAppend";
 
     private final SettingsRepository settingsRepo;
 
-    public AgentModeSettingsCoordinator(@NonNull SettingsRepository settingsRepo) {
+    public AgentModeSettings(@NonNull SettingsRepository settingsRepo) {
         this.settingsRepo = settingsRepo;
     }
 
@@ -30,18 +29,10 @@ public class AgentModeSettingsCoordinator {
             return;
         }
 
-        try {
-            settingsRepo.put(KEY_AGENT_SYSTEM_PROMPT_APPEND, normalized);
-        } catch (Exception ignored) {
-            // best effort
-        }
+        settingsRepo.put(KEY_AGENT_SYSTEM_PROMPT_APPEND, normalized);
     }
 
     private void removeSystemPromptAppend() {
-        try {
-            settingsRepo.remove(KEY_AGENT_SYSTEM_PROMPT_APPEND);
-        } catch (Exception ignored) {
-            // best effort
-        }
+        settingsRepo.remove(KEY_AGENT_SYSTEM_PROMPT_APPEND);
     }
 }

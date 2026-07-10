@@ -1,10 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
+import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,10 +37,32 @@ class RenderModeChangeCoordinatorTest {
     }
 
     @Test
+    @DisplayName("Apply remains handled when settings persistence fails")
+    void apply_whenSettingsPersistenceFails_stillHandlesChange() {
+        var subject = new RenderModeChangeCoordinator(new RenderModeSettings(new ThrowingSettingsRepo()));
+
+        RenderModeChangeCoordinator.ApplyResult result = subject.apply(RenderMode.MARKDOWN);
+
+        assertThat(result.handled()).isTrue();
+    }
+
+    @Test
     @DisplayName("Constructor validates persister")
     void constructor_whenPersisterMissing_throwsException() {
         assertThatThrownBy(() -> new RenderModeChangeCoordinator((RenderModeChangeCoordinator.ModePersister) null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("modePersister");
+    }
+
+    private static class ThrowingSettingsRepo extends SettingsRepository {
+
+        private ThrowingSettingsRepo() {
+            super(Path.of("unused-render-mode-change.properties"));
+        }
+
+        @Override
+        public void put(String key, String value) {
+            throw new IllegalStateException("forced failure");
+        }
     }
 }

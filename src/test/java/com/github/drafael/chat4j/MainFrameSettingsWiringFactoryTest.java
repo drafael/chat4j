@@ -42,7 +42,7 @@ class MainFrameSettingsWiringFactoryTest {
                 new ThemeMenuSelectionApplyCoordinator()
         );
 
-        assertThat(wiring.renderModeSettingsCoordinator()).isNotNull();
+        assertThat(wiring.renderModeSettings()).isNotNull();
         assertThat(wiring.renderModeChangeCoordinator()).isNotNull();
         assertThat(wiring.renderModeChangeDispatchCoordinator()).isNotNull();
         assertThat(wiring.generalSettingsResolver()).isNotNull();

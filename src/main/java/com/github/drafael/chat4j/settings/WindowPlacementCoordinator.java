@@ -30,15 +30,15 @@ public class WindowPlacementCoordinator {
     private static final int DISPLAY_CHECK_INTERVAL_MS = 2_000;
     private static final int PRIMARY_REPAIR_OFFSET = 50;
 
-    private final WindowStateSettingsCoordinator settingsCoordinator;
+    private final WindowStateSettings settingsCoordinator;
     private final ScreenResolver screenResolver;
 
-    public WindowPlacementCoordinator(@NonNull WindowStateSettingsCoordinator settingsCoordinator) {
+    public WindowPlacementCoordinator(@NonNull WindowStateSettings settingsCoordinator) {
         this(settingsCoordinator, WindowPlacementCoordinator::currentAwtScreens);
     }
 
     WindowPlacementCoordinator(
-            @NonNull WindowStateSettingsCoordinator settingsCoordinator,
+            @NonNull WindowStateSettings settingsCoordinator,
             @NonNull ScreenResolver screenResolver
     ) {
         this.settingsCoordinator = settingsCoordinator;

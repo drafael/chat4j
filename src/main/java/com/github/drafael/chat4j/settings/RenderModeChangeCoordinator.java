@@ -7,8 +7,14 @@ public class RenderModeChangeCoordinator {
 
     private final ModePersister modePersister;
 
-    public RenderModeChangeCoordinator(RenderModeSettingsCoordinator renderModeSettingsCoordinator) {
-        this(renderModeSettingsCoordinator::persistDefaultMode);
+    public RenderModeChangeCoordinator(RenderModeSettings renderModeSettings) {
+        this(mode -> {
+            try {
+                renderModeSettings.persistDefaultMode(mode);
+            } catch (Exception ignored) {
+                // Render mode persistence is best-effort for menu-driven runtime changes.
+            }
+        });
     }
 
     RenderModeChangeCoordinator(@NonNull ModePersister modePersister) {

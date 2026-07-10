@@ -1,34 +1,35 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.render.RenderMode;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import lombok.NonNull;
 
 public class GeneralSettingsResolver {
 
-    private static final String KEY_MENU_BAR_ENABLED = SettingsKeys.MENU_BAR_ENABLED;
-
-    private final SettingsRepository settingsRepo;
-    private final RenderModeSettingsCoordinator renderModeSettingsCoordinator;
+    private final ChatBehaviorSettings chatBehaviorSettings;
+    private final RenderModeSettings renderModeSettings;
 
     public GeneralSettingsResolver(
             @NonNull SettingsRepository settingsRepo,
-            @NonNull RenderModeSettingsCoordinator renderModeSettingsCoordinator
+            @NonNull RenderModeSettings renderModeSettings
     ) {
-        this.settingsRepo = settingsRepo;
-        this.renderModeSettingsCoordinator = renderModeSettingsCoordinator;
+        this(new ChatBehaviorSettings(settingsRepo), renderModeSettings);
+    }
+
+    GeneralSettingsResolver(
+            @NonNull ChatBehaviorSettings chatBehaviorSettings,
+            @NonNull RenderModeSettings renderModeSettings
+    ) {
+        this.chatBehaviorSettings = chatBehaviorSettings;
+        this.renderModeSettings = renderModeSettings;
     }
 
     public GeneralSettings resolve(boolean defaultMenuBarEnabled) {
         try {
-            String sendKey = settingsRepo.get(SettingsKeys.CHAT_SEND_KEY, "Enter");
-            boolean sendOnEnter = !"Ctrl+Enter".equalsIgnoreCase(sendKey);
-            boolean autoScrollEnabled = Boolean.parseBoolean(settingsRepo.get(SettingsKeys.CHAT_AUTO_SCROLL, "true"));
-            RenderMode defaultRenderMode = renderModeSettingsCoordinator.resolveDefaultMode();
-            boolean menuBarEnabled = Boolean.parseBoolean(
-                    settingsRepo.get(KEY_MENU_BAR_ENABLED, String.valueOf(defaultMenuBarEnabled))
-            );
+            boolean sendOnEnter = chatBehaviorSettings.sendOnEnter();
+            boolean autoScrollEnabled = chatBehaviorSettings.autoScrollEnabled();
+            boolean menuBarEnabled = chatBehaviorSettings.menuBarEnabled(defaultMenuBarEnabled);
+            RenderMode defaultRenderMode = renderModeSettings.resolveDefaultMode();
 
             return new GeneralSettings(sendOnEnter, autoScrollEnabled, defaultRenderMode, menuBarEnabled);
         } catch (Exception e) {

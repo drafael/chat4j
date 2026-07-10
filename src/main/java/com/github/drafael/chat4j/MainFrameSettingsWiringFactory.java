@@ -22,7 +22,7 @@ import com.github.drafael.chat4j.settings.RenderModeChangeDispatchCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeChangePlanner;
 import com.github.drafael.chat4j.settings.RenderModeChangeUiApplyCoordinator;
 import com.github.drafael.chat4j.settings.RenderModeSelectionResolver;
-import com.github.drafael.chat4j.settings.RenderModeSettingsCoordinator;
+import com.github.drafael.chat4j.settings.RenderModeSettings;
 import com.github.drafael.chat4j.settings.ThemeMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionApplyCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuSelectionDispatchCoordinator;
@@ -46,13 +46,13 @@ public class MainFrameSettingsWiringFactory {
             @NonNull ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer,
             @NonNull ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator
     ) {
-        var renderModeSettingsCoordinator = new RenderModeSettingsCoordinator(settingsRepo);
-        var renderModeChangeCoordinator = new RenderModeChangeCoordinator(renderModeSettingsCoordinator);
+        var renderModeSettings = new RenderModeSettings(settingsRepo);
+        var renderModeChangeCoordinator = new RenderModeChangeCoordinator(renderModeSettings);
         var renderModeChangeDispatchCoordinator = new RenderModeChangeDispatchCoordinator(
                 renderModeChangeCoordinator,
                 renderModeChangeUiApplyCoordinator
         );
-        var generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, renderModeSettingsCoordinator);
+        var generalSettingsResolver = new GeneralSettingsResolver(settingsRepo, renderModeSettings);
         var generalSettingsApplyCoordinator = new GeneralSettingsApplyCoordinator(
                 generalSettingsResolver,
                 renderModeSelectionResolver
@@ -94,7 +94,7 @@ public class MainFrameSettingsWiringFactory {
         );
 
         return new SettingsWiring(
-                renderModeSettingsCoordinator,
+                renderModeSettings,
                 renderModeChangeCoordinator,
                 renderModeChangeDispatchCoordinator,
                 generalSettingsResolver,
@@ -117,7 +117,7 @@ public class MainFrameSettingsWiringFactory {
     }
 
     public record SettingsWiring(
-            RenderModeSettingsCoordinator renderModeSettingsCoordinator,
+            RenderModeSettings renderModeSettings,
             RenderModeChangeCoordinator renderModeChangeCoordinator,
             RenderModeChangeDispatchCoordinator renderModeChangeDispatchCoordinator,
             GeneralSettingsResolver generalSettingsResolver,
