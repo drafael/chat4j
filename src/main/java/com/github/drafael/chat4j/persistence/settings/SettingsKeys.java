@@ -22,8 +22,6 @@ public final class SettingsKeys {
     public static final String CHAT_RENDER_MODE_MARKDOWN = RenderMode.MARKDOWN.settingValue();
     public static final String CHAT_STORAGE_BACKEND_ACTIVE = "chat.storage.backend.active";
     public static final String CHAT_STORAGE_BACKEND_PENDING = "chat.storage.backend.pending";
-    public static final String MODEL_FAVORITE_PREFIX = "chat4j.models.favorite.";
-    public static final String MODEL_FAVORITE_DELIMITER = "::";
 
     public static final String PROMPT_CATALOG = "chat4j.prompts.catalog";
 

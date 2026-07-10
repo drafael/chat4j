@@ -1,11 +1,9 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +37,7 @@ class ModelFavoritesServiceTest {
         subject.setFavorite("LM Studio", "qwen3:14b", true);
         subject.setFavorite("   ", "unknown-model", true);
 
-        assertThat(settingsRepo.findByPrefix(SettingsKeys.MODEL_FAVORITE_PREFIX).keySet())
+        assertThat(settingsRepo.findByPrefix(ModelFavoriteKeyCodec.FAVORITE_KEY_PREFIX).keySet())
                 .containsExactlyInAnyOrder(
                         "chat4j.models.favorite.openai::gpt-4.1",
                         "chat4j.models.favorite.lm-studio::qwen3%3A14b",
@@ -59,7 +57,7 @@ class ModelFavoritesServiceTest {
         assertThat(firstToggle).isTrue();
         assertThat(secondToggle).isFalse();
         assertThat(subject.isFavorite("Ollama", "qwen3:14b")).isFalse();
-        assertThat(settingsRepo.countByPrefix(SettingsKeys.MODEL_FAVORITE_PREFIX)).isZero();
+        assertThat(settingsRepo.countByPrefix(ModelFavoriteKeyCodec.FAVORITE_KEY_PREFIX)).isZero();
     }
 
     @Test
@@ -72,6 +70,20 @@ class ModelFavoritesServiceTest {
 
         assertThat(subject.isFavorite("OpenAI", "gpt-4o")).isTrue();
         assertThat(subject.isFavorite("OpenRouter", "gpt-4o")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Malformed favorite keys are ignored during service priming")
+    void primeFromSettings_whenFavoriteKeyCannotBeDecoded_ignoresMalformedKey() {
+        var settingsRepo = new InMemorySettingsRepo();
+        settingsRepo.put("chat4j.models.favorite.openai::gpt-4.1", "true");
+        settingsRepo.put("chat4j.models.favorite.openai::bad%zzmodel", "true");
+        var subject = new ModelFavoritesService(settingsRepo);
+
+        subject.primeFromSettings();
+
+        assertThat(subject.isFavorite("OpenAI", "gpt-4.1")).isTrue();
+        assertThat(subject.snapshot()).containsExactly(new ModelFavoritesService.ModelRef("openai", "gpt-4.1"));
     }
 
     private static class InMemorySettingsRepo extends SettingsRepository {

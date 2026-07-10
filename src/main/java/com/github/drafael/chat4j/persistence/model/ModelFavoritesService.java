@@ -1,19 +1,11 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsKeySlugs;
-import com.github.drafael.chat4j.persistence.settings.SettingsKeys;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ModelFavoritesService {
-
-    private static final String FAVORITE_KEY_PREFIX = SettingsKeys.MODEL_FAVORITE_PREFIX;
-    private static final String KEY_DELIMITER = SettingsKeys.MODEL_FAVORITE_DELIMITER;
 
     private final SettingsRepository settingsRepo;
     private final boolean persistenceEnabled;
@@ -38,25 +30,25 @@ public class ModelFavoritesService {
             return;
         }
 
-        settingsRepo.findByPrefix(FAVORITE_KEY_PREFIX).keySet().stream()
-                .map(ModelFavoritesService::parseFavoriteKey)
+        settingsRepo.findByPrefix(ModelFavoriteKeyCodec.FAVORITE_KEY_PREFIX).keySet().stream()
+                .map(ModelFavoriteKeyCodec::parseFavoriteKey)
                 .filter(Objects::nonNull)
                 .forEach(favorites::add);
     }
 
     public boolean isFavorite(String providerName, String modelId) {
-        ModelRef modelRef = normalize(providerName, modelId);
+        ModelRef modelRef = ModelFavoriteKeyCodec.normalize(providerName, modelId);
         return modelRef != null && favorites.contains(modelRef);
     }
 
     public boolean setFavorite(String providerName, String modelId, boolean favorite) {
-        ModelRef modelRef = normalize(providerName, modelId);
+        ModelRef modelRef = ModelFavoriteKeyCodec.normalize(providerName, modelId);
         if (modelRef == null) {
             return false;
         }
 
         if (persistenceEnabled && settingsRepo != null) {
-            String key = toFavoriteKey(modelRef);
+            String key = ModelFavoriteKeyCodec.toFavoriteKey(modelRef);
             if (favorite) {
                 settingsRepo.put(key, "true");
             } else {
@@ -80,49 +72,6 @@ public class ModelFavoritesService {
 
     public Set<ModelRef> snapshot() {
         return Set.copyOf(favorites);
-    }
-
-    private static String toFavoriteKey(ModelRef modelRef) {
-        return FAVORITE_KEY_PREFIX
-                + modelRef.providerName()
-                + KEY_DELIMITER
-                + encode(modelRef.modelId());
-    }
-
-    private static ModelRef parseFavoriteKey(String key) {
-        if (key == null || !key.startsWith(FAVORITE_KEY_PREFIX)) {
-            return null;
-        }
-
-        String raw = key.substring(FAVORITE_KEY_PREFIX.length());
-        String[] parts = raw.split(KEY_DELIMITER, 2);
-        if (parts.length != 2) {
-            return null;
-        }
-
-        return normalize(decode(parts[0]), decode(parts[1]));
-    }
-
-    private static ModelRef normalize(String providerName, String modelId) {
-        if (providerName == null || modelId == null) {
-            return null;
-        }
-
-        String normalizedProvider = SettingsKeySlugs.providerSlug(providerName);
-        String normalizedModel = modelId.trim();
-        if (normalizedProvider.isEmpty() || normalizedModel.isEmpty()) {
-            return null;
-        }
-
-        return new ModelRef(normalizedProvider, normalizedModel);
-    }
-
-    private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
-    }
-
-    private static String decode(String value) {
-        return URLDecoder.decode(value, StandardCharsets.UTF_8);
     }
 
     public record ModelRef(String providerName, String modelId) {
