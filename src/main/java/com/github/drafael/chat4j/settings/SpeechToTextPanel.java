@@ -144,6 +144,16 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             SettingsRepository settingsRepo,
             Path defaultModelDirectory,
             SpeechToTextProviderRegistry providerRegistry,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService
+    ) {
+        this(settingsRepo, defaultModelDirectory, providerRegistry, new UnavailableSpeechToTextModelDownloader(), voskModelManagementService, whisperModelManagementService, false, false);
+    }
+
+    SpeechToTextPanel(
+            SettingsRepository settingsRepo,
+            Path defaultModelDirectory,
+            SpeechToTextProviderRegistry providerRegistry,
             SpeechToTextModelDownloader modelDownloader
     ) {
         this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader,
