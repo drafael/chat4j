@@ -177,9 +177,9 @@ class SpeechToTextPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            voskModels.completeWithStatus("Vosk completion after removal");
-            subject.removeNotify();
-            SwingUtilities.invokeAndWait(() -> {
+            runWhileEventDispatchThreadBlocked(() -> {
+                voskModels.completeWithStatus("Vosk completion after removal");
+                subject.removeNotify();
             });
 
             assertThat(subject.statusLabel().getText()).doesNotContain("Vosk completion after removal");
@@ -803,6 +803,27 @@ class SpeechToTextPanelTest {
         Method method = SpeechToTextPanel.class.getDeclaredMethod("scheduleSave", throwingRunnableClass, Runnable.class);
         method.setAccessible(true);
         method.invoke(subject, throwingRunnable, onSuccess);
+    }
+
+    private void runWhileEventDispatchThreadBlocked(ThrowingAction action) throws Exception {
+        var edtBlocked = new CountDownLatch(1);
+        var releaseEdt = new CountDownLatch(1);
+        SwingUtilities.invokeLater(() -> {
+            edtBlocked.countDown();
+            try {
+                releaseEdt.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        try {
+            assertThat(edtBlocked.await(2, TimeUnit.SECONDS)).isTrue();
+            action.run();
+        } finally {
+            releaseEdt.countDown();
+        }
+        SwingUtilities.invokeAndWait(() -> {
+        });
     }
 
     private void waitUntil(Condition condition) throws Exception {

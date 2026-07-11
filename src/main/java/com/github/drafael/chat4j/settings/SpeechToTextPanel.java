@@ -182,8 +182,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
         this.modelDownloader = modelDownloader;
         buildUi();
-        voskUnsubscribe = voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> handleVoskModelSnapshot(snapshot)));
-        whisperUnsubscribe = whisperModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> handleWhisperModelSnapshot(snapshot)));
+        voskUnsubscribe = voskModelManagementService.addListener(snapshot -> runWhenActiveOnEventDispatchThread(() -> handleVoskModelSnapshot(snapshot)));
+        whisperUnsubscribe = whisperModelManagementService.addListener(snapshot -> runWhenActiveOnEventDispatchThread(() -> handleWhisperModelSnapshot(snapshot)));
     }
 
     @Override
@@ -702,9 +702,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 if (!saveCatalogModelsIfCurrent(refreshId, snapshot.providerId(), models)) {
                     return;
                 }
-                SwingUtilities.invokeLater(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
+                runWhenActiveOnEventDispatchThread(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
             } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> {
+                runWhenActiveOnEventDispatchThread(() -> {
                     if (catalogRefreshCurrent(refreshId) && explicit) {
                         setStatusError("Could not refresh %s Speech to Text models.".formatted(snapshot.provider().displayName()));
                     }
@@ -1124,9 +1124,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         Thread.startVirtualThread(() -> {
             try {
                 modelDownloader.download(new SpeechToTextModelDescriptor(snapshot.providerId(), selected.id(), directory));
-                SwingUtilities.invokeLater(() -> setStatusInfo("%s downloaded".formatted(selected.label())));
+                runWhenActiveOnEventDispatchThread(() -> setStatusInfo("%s downloaded".formatted(selected.label())));
             } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not download model.")));
+                runWhenActiveOnEventDispatchThread(() -> setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not download model.")));
             }
         });
     }
@@ -1169,9 +1169,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         Thread.startVirtualThread(() -> {
             try {
                 deleteDirectory(directory);
-                SwingUtilities.invokeLater(() -> setStatusInfo("Deleted local files for %s".formatted(selected.label())));
+                runWhenActiveOnEventDispatchThread(() -> setStatusInfo("Deleted local files for %s".formatted(selected.label())));
             } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not delete local model.")));
+                runWhenActiveOnEventDispatchThread(() -> setStatusError(StringUtils.defaultIfBlank(e.getMessage(), "Could not delete local model.")));
             }
         });
     }
@@ -1358,8 +1358,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         pendingSaves.add(pendingSave);
         pendingSave.whenComplete((saved, error) -> pendingSaves.remove(pendingSave));
-        pendingSave.thenAccept(saved -> SwingUtilities.invokeLater(() -> {
-            if (removed || saveId != saveCounter.get()) {
+        pendingSave.thenAccept(saved -> runWhenActiveOnEventDispatchThread(() -> {
+            if (saveId != saveCounter.get()) {
                 return;
             }
             if (saved) {
@@ -1369,6 +1369,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 refreshControlsFromSettings(false);
             }
         }));
+    }
+
+    private void runWhenActiveOnEventDispatchThread(Runnable action) {
+        if (removed) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (!removed) {
+                action.run();
+            }
+        });
     }
 
     @FunctionalInterface
