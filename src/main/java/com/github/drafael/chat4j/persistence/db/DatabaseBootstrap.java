@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence.db;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
 import java.nio.file.Files;
 import javax.sql.DataSource;

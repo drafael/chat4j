@@ -37,6 +37,7 @@ import org.apache.commons.lang3.StringUtils;
 public class VoskModelInstaller {
 
     private static final int BUFFER_SIZE = 64 * 1024;
+    private static final int EXTRACTION_PROGRESS_INTERVAL_FILES = 25;
     private static final int MAX_ZIP_ENTRIES = 100_000;
     private static final long MAX_UNCOMPRESSED_BYTES = 8L * 1024L * 1024L * 1024L;
     private static final Duration DOWNLOAD_TIMEOUT = Duration.ofHours(2);
@@ -261,6 +262,7 @@ public class VoskModelInstaller {
         try (InputStream input = body; OutputStream output = Files.newOutputStream(zipFile, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             byte[] buffer = new byte[BUFFER_SIZE];
             long total = 0;
+            long lastPublishedPercent = -1;
             int read;
             while (true) {
                 if (cancellationToken != null && cancellationToken.cancelled()) {
@@ -279,7 +281,11 @@ public class VoskModelInstaller {
                 }
                 output.write(buffer, 0, read);
                 if (entry.size() > 0) {
-                    progress.accept("Downloading %s%%".formatted(Math.min(100, total * 100 / entry.size())));
+                    long percent = Math.min(100, total * 100 / entry.size());
+                    if (percent != lastPublishedPercent) {
+                        progress.accept("Downloading %s%%".formatted(percent));
+                        lastPublishedPercent = percent;
+                    }
                 }
             }
             if (entry.size() > 0 && total != entry.size()) {
@@ -368,6 +374,7 @@ public class VoskModelInstaller {
 
     private void extract(Path zipFile, Path staging, SpeechToTextProviderContext.CancellationToken cancellationToken, Consumer<String> progress) throws Exception {
         int entries = 0;
+        int lastPublishedEntries = 0;
         long uncompressed = 0;
         try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(zipFile))) {
             ZipEntry entry;
@@ -396,6 +403,12 @@ public class VoskModelInstaller {
                         output.write(buffer, 0, read);
                     }
                 }
+                if (entries % EXTRACTION_PROGRESS_INTERVAL_FILES == 0) {
+                    progress.accept("Extracted %d files".formatted(entries));
+                    lastPublishedEntries = entries;
+                }
+            }
+            if (entries > 0 && entries != lastPublishedEntries) {
                 progress.accept("Extracted %d files".formatted(entries));
             }
         } catch (ArithmeticException e) {

@@ -30,7 +30,7 @@ Open **Settings → Speech to Text**.
 
 ## Groq credentials and base URL
 
-Groq Speech to Text requires `GROQ_API_KEY` in the process environment. Chat4J does not store the API key.
+Groq Speech to Text requires `GROQ_API_KEY`, either saved in Chat4J's encrypted local token vault from Settings or supplied by the process/shell environment. A saved token takes precedence over environment variables.
 
 Groq STT reuses the configured Groq provider base URL, defaulting to:
 
@@ -42,7 +42,7 @@ Custom Groq-compatible endpoints are supported when the configured URL is an abs
 
 ## ElevenLabs credentials and models
 
-ElevenLabs Speech to Text requires `ELEVENLABS_API_KEY` in the process environment. Chat4J does not store the API key.
+ElevenLabs Speech to Text requires `ELEVENLABS_API_KEY`, either saved in Chat4J's encrypted local token vault from Settings or supplied by the process/shell environment. A saved token takes precedence over environment variables.
 
 ElevenLabs STT uses the official API base URL:
 
@@ -62,7 +62,7 @@ Advanced ElevenLabs options such as language code, diarization, keyterms, entity
 
 ## Deepgram credentials and models
 
-Deepgram Speech to Text requires `DEEPGRAM_API_KEY` in the process environment. Chat4J does not store the API key.
+Deepgram Speech to Text requires `DEEPGRAM_API_KEY`, either saved in Chat4J's encrypted local token vault from Settings or supplied by the process/shell environment. A saved token takes precedence over environment variables.
 
 Deepgram STT uses the official API base URL:
 
@@ -88,7 +88,7 @@ Advanced Deepgram options such as smart formatting, diarization, language select
 
 ## AssemblyAI credentials and models
 
-AssemblyAI Speech to Text requires `ASSEMBLYAI_API_KEY` in the process environment. Chat4J does not store the API key.
+AssemblyAI Speech to Text requires `ASSEMBLYAI_API_KEY`, either saved in Chat4J's encrypted local token vault from Settings or supplied by the process/shell environment. A saved token takes precedence over environment variables.
 
 AssemblyAI STT uses the official API base URL:
 

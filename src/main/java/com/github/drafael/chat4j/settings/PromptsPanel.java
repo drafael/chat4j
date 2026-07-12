@@ -19,6 +19,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import lombok.NonNull;
+import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
@@ -395,7 +396,16 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
 
     private void setStatus(String message, boolean error) {
         statusLabel.setText(StringUtils.defaultString(message));
-        statusLabel.setForeground(error ? new Color(200, 50, 50) : UIManager.getColor("Label.disabledForeground"));
+        statusLabel.setForeground(error ? errorForeground() : UIManager.getColor("Label.disabledForeground"));
+    }
+
+    private Color errorForeground() {
+        return ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.error.foreground"),
+                UIManager.getColor("Component.error.focusedBorderColor"),
+                UIManager.getColor("Actions.Red"),
+                UIManager.getColor("Label.foreground")
+        );
     }
 
     private static final class PromptListRenderer extends DefaultListCellRenderer {

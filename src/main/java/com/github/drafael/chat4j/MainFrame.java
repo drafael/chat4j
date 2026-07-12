@@ -46,7 +46,7 @@ import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSav
 import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownFlowCoordinator;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
@@ -86,6 +86,8 @@ import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
+import com.github.drafael.chat4j.settings.ApiTokenChange;
+import com.github.drafael.chat4j.settings.CredentialChangeEffects;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuReadyCoordinator;
@@ -133,6 +135,8 @@ import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildApplyCoordina
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.settings.ThemeMenuStructureRebuilder;
 import com.github.drafael.chat4j.settings.WindowPlacementCoordinator;
+import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
@@ -1351,7 +1355,8 @@ public class MainFrame extends JFrame {
                         this::requestWindowClose,
                         sttModelsDirectory,
                         voskModelManagementService,
-                        whisperModelManagementService
+                        whisperModelManagementService,
+                        this::onSettingsCredentialChanged
                 )),
                 () -> {
                     applyProviderSettings();
@@ -1361,6 +1366,39 @@ public class MainFrame extends JFrame {
                     chatPanel.setPromptQuickActions(promptQuickActions());
                 }
         );
+    }
+
+    private void onSettingsCredentialChanged(ApiTokenChange change) {
+        Runnable invalidate = () -> invalidateCredentialBackedCaches(change);
+        Runnable refreshUi = this::refreshCredentialBackedUi;
+        if (SwingUtilities.isEventDispatchThread()) {
+            CompletableFuture.runAsync(invalidate)
+                    .whenComplete((ignored, error) -> {
+                        if (error != null) {
+                            log.warn("Failed to invalidate credential-backed caches after {} changed", change.canonicalTokenId(), error);
+                            return;
+                        }
+                        SwingUtilities.invokeLater(refreshUi);
+                    });
+            return;
+        }
+        invalidate.run();
+        SwingUtilities.invokeLater(refreshUi);
+    }
+
+    private void invalidateCredentialBackedCaches(ApiTokenChange change) {
+        CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(change.canonicalTokenId());
+        effect.chatProviders().forEach(modelCacheService::invalidate);
+        SpeechToTextCatalogStore sttCatalogStore = new SpeechToTextCatalogStore(settingsRepo);
+        effect.speechToTextProviderIds().forEach(sttCatalogStore::invalidate);
+        TextToSpeechCatalogStore ttsCatalogStore = new TextToSpeechCatalogStore(settingsRepo);
+        effect.textToSpeechProviderIds().forEach(ttsCatalogStore::invalidate);
+    }
+
+    private void refreshCredentialBackedUi() {
+        applyProviderSettings();
+        chatPanel.reloadTextToSpeechSettings();
+        chatPanel.reloadSpeechToTextSettings();
     }
 
     private void applyProviderSettings() {

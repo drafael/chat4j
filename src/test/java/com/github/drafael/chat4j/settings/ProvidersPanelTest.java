@@ -1,13 +1,38 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.nio.file.Path;
+import java.util.Arrays;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProvidersPanelTest {
+
+    @TempDir
+    private Path tempDir;
+
+    @BeforeEach
+    void setUp() {
+        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        CredentialResolver.init(emptyMap());
+    }
+
+    @AfterEach
+    void tearDown() {
+        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        CredentialResolver.init(emptyMap());
+    }
 
     @Test
     @DisplayName("Provider panel configured base URL reports read failures through status path")
@@ -23,6 +48,30 @@ class ProvidersPanelTest {
         assertThat(subject.statusLabel().isVisible()).isTrue();
         assertThat(subject.statusLabel().getText())
                 .contains("Failed to read setting", "chat4j.provider.lm-studio.baseUrl");
+    }
+
+    @Test
+    @DisplayName("Provider credential refresh hides stale missing token guidance")
+    void refreshProviderCredentialUi_whenTokenWasSaved_hidesMissingTokenInfoPanel() {
+        var subject = new ProvidersPanel(new SettingsRepository(tempDir.resolve("providers.properties")));
+        var statusLabel = new JLabel();
+        var missingTokenInfoPanel = new JPanel();
+        char[] token = "saved-token".toCharArray();
+        try {
+            CredentialResolver.saveTokenOverride("OPENAI_API_KEY", token);
+        } finally {
+            Arrays.fill(token, '\0');
+        }
+
+        subject.refreshProviderCredentialUi(
+                statusLabel,
+                "OpenAI",
+                ProvidersPanel.ProviderInfo.envVar("OPENAI_API_KEY", "https://api.openai.com/v1"),
+                missingTokenInfoPanel
+        );
+
+        assertThat(statusLabel.getText()).contains("Saved token configured");
+        assertThat(missingTokenInfoPanel.isVisible()).isFalse();
     }
 
     @Test

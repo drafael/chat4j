@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 import static java.util.Collections.emptyList;
 
@@ -31,14 +32,39 @@ public class TextToSpeechCatalogStore {
         return merged(readItems(settings(provider.id()).catalogVoicesKey()), provider.bundledVoices(), selected);
     }
 
-    public void saveModels(String providerId, List<TextToSpeechCatalogItem> models) {
-        TextToSpeechProviderSettings providerSettings = settings(providerId);
-        saveItems(providerSettings.catalogModelsKey(), providerSettings.catalogUpdatedAtKey(), models);
+    public void saveCatalogs(String providerId, List<TextToSpeechCatalogItem> models, List<TextToSpeechCatalogItem> voices) {
+        saveCatalogsIf(providerId, models, voices, () -> true);
     }
 
-    public void saveVoices(String providerId, List<TextToSpeechCatalogItem> voices) {
+    public boolean saveCatalogsIf(
+            String providerId,
+            List<TextToSpeechCatalogItem> models,
+            List<TextToSpeechCatalogItem> voices,
+            BooleanSupplier condition
+    ) {
         TextToSpeechProviderSettings providerSettings = settings(providerId);
-        saveItems(providerSettings.catalogVoicesKey(), providerSettings.catalogUpdatedAtKey(), voices);
+        try {
+            String modelsJson = OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models);
+            String voicesJson = OBJECT_MAPPER.writeValueAsString(voices == null ? emptyList() : voices);
+            return settingsRepo.updateBatchIf(condition, batch -> {
+                batch.put(providerSettings.catalogModelsKey(), modelsJson);
+                batch.put(providerSettings.catalogVoicesKey(), voicesJson);
+                batch.put(providerSettings.catalogUpdatedAtKey(), Instant.now().toString());
+            });
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to save Text to Speech catalogs", e);
+        }
+    }
+
+    public void invalidate(String providerId) {
+        TextToSpeechProviderSettings providerSettings = settings(providerId);
+        settingsRepo.updateBatch(batch -> {
+            batch.remove(providerSettings.catalogModelsKey());
+            batch.remove(providerSettings.catalogVoicesKey());
+            batch.remove(providerSettings.catalogUpdatedAtKey());
+        });
+        providerSettings.clearModel();
+        providerSettings.clearVoice();
     }
 
     public List<TextToSpeechCatalogItem> mergeWithSelected(
@@ -58,18 +84,6 @@ public class TextToSpeechCatalogStore {
             return OBJECT_MAPPER.readValue(json, ITEM_LIST_TYPE);
         } catch (Exception e) {
             return emptyList();
-        }
-    }
-
-    private void saveItems(String itemsKey, String updatedAtKey, List<TextToSpeechCatalogItem> items) {
-        try {
-            String json = OBJECT_MAPPER.writeValueAsString(items == null ? emptyList() : items);
-            settingsRepo.updateBatch(batch -> {
-                batch.put(itemsKey, json);
-                batch.put(updatedAtKey, Instant.now().toString());
-            });
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to save Text to Speech catalog", e);
         }
     }
 

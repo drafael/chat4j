@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -38,7 +38,7 @@ public class ProviderModelCache {
 
         try {
             List<String> lines = Files.readAllLines(file);
-            if (lines.size() < 2) {
+            if (lines.isEmpty()) {
                 log.warn("Model cache file is malformed for provider {}", providerName);
                 return Optional.empty();
             }
@@ -51,7 +51,9 @@ public class ProviderModelCache {
                 return Optional.empty();
             }
 
-            List<String> models = sanitizeModels(providerName, lines.subList(1, lines.size()));
+            List<String> models = lines.size() == 1
+                    ? emptyList()
+                    : sanitizeModels(providerName, lines.subList(1, lines.size()));
             return Optional.of(new CacheSnapshot(fetchedAt, models));
         } catch (IOException e) {
             log.warn("Failed to read model cache for provider {}: {}", providerName, ExceptionUtils.getMessage(e));
@@ -59,11 +61,11 @@ public class ProviderModelCache {
         }
     }
 
-    public void writeCache(String providerName, List<String> models) {
-        writeCache(providerName, Instant.now(), models);
+    public boolean writeCache(String providerName, List<String> models) {
+        return writeCache(providerName, Instant.now(), models);
     }
 
-    public void writeCache(String providerName, Instant fetchedAt, List<String> models) {
+    public boolean writeCache(String providerName, Instant fetchedAt, List<String> models) {
         try {
             Files.createDirectories(cacheDir);
             Path file = cacheDir.resolve("%s.txt".formatted(sanitize(providerName)));
@@ -71,8 +73,10 @@ public class ProviderModelCache {
             lines.add(fetchedAt.toString());
             lines.addAll(sanitizeModels(providerName, models));
             Files.write(file, lines);
+            return true;
         } catch (IOException e) {
             log.warn("Failed to write model cache for provider {}: {}", providerName, ExceptionUtils.getMessage(e));
+            return false;
         }
     }
 

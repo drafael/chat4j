@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.chat.conversation.webview.jcef;
 
 import com.formdev.flatlaf.util.SystemInfo;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.awt.GraphicsEnvironment;
 import java.nio.file.Files;
 import java.nio.file.Path;

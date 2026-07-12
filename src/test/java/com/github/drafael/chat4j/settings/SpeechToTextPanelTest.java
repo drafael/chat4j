@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
+import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
@@ -34,15 +35,19 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -51,6 +56,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class SpeechToTextPanelTest {
 
@@ -195,6 +202,49 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Coalesced Vosk start and completion callbacks still apply completion status")
+    void handleVoskModelSnapshot_whenStartAndCompletionCoalesce_appliesCompletionStatus() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-coalesced-completion.properties"));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
+        Path models = tempDir.resolve("vosk-coalesced-completion-models");
+        try (var voskModels = new RapidCompletingVoskModelManagementService(repo, models, tempDir.resolve("vosk-coalesced-completion-temp"))) {
+            var subject = callOnEdt(() -> new SpeechToTextPanel(repo, models, voskModels));
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            runWhileEventDispatchThreadBlocked(() -> voskModels.startAndCompleteWithStatus("Vosk failed after download"));
+
+            assertThat(statusLabelText(subject)).contains("Vosk failed after download");
+
+            voskModels.publishIdleSnapshot();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(statusLabelText(subject)).contains("Vosk failed after download");
+            runOnEdt(subject::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("Stale Vosk completion does not overwrite another provider status")
+    void handleVoskModelSnapshot_whenProviderChangedBeforeCompletion_skipsStatusUpdate() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-vosk-stale-completion.properties"));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
+        Path models = tempDir.resolve("vosk-stale-completion-models");
+        try (var voskModels = new CompletingVoskModelManagementService(repo, models, tempDir.resolve("vosk-stale-completion-temp"))) {
+            var subject = callOnEdt(() -> new SpeechToTextPanel(repo, models, voskModels));
+            SwingUtilities.invokeAndWait(() -> {
+            });
+            repo.put(SpeechToTextSettings.PROVIDER_KEY, GroqSpeechToTextProvider.ID);
+
+            runWhileEventDispatchThreadBlocked(() -> voskModels.completeWithStatus("Stale Vosk completion"));
+
+            assertThat(statusLabelText(subject)).doesNotContain("Stale Vosk completion");
+            runOnEdt(subject::removeNotify);
+        }
+    }
+
+    @Test
     @DisplayName("Speech to Text saves are ignored after panel removal")
     void scheduleSave_whenPanelAlreadyRemoved_ignoresSave() throws Exception {
         var subject = callOnEdt(() -> new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-removed-save.properties")), tempDir.resolve("default-models")));
@@ -204,7 +254,7 @@ class SpeechToTextPanelTest {
         scheduleSave(subject, saveCalled::countDown, () -> {
         });
 
-        assertThat(saveCalled.await(100, TimeUnit.MILLISECONDS)).isFalse();
+        assertThat(saveCalled.getCount()).isEqualTo(1);
     }
 
     @Test
@@ -232,12 +282,42 @@ class SpeechToTextPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            assertThat(successCallback.await(100, TimeUnit.MILLISECONDS)).isFalse();
+            assertThat(successCallback.getCount()).isEqualTo(1);
         } finally {
             releaseSave.countDown();
             if (!removed[0]) {
                 runOnEdt(subject::removeNotify);
             }
+        }
+    }
+
+    @Test
+    @DisplayName("Pending Speech to Text token save failure uses original token field after rebuild")
+    void savePendingChangesAsync_whenTokenFieldRebuiltBeforeFailure_usesOriginalError() throws Exception {
+        var subject = callOnEdt(() -> new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-token-rebuild.properties")), tempDir.resolve("default-models")));
+        ApiTokenFieldPanel originalField = mock(ApiTokenFieldPanel.class);
+        ApiTokenFieldPanel replacementField = mock(ApiTokenFieldPanel.class);
+        CompletableFuture<Boolean> tokenSave = new CompletableFuture<>();
+        var tokenSaveStarted = new CountDownLatch(1);
+        when(originalField.dirty()).thenReturn(true);
+        when(originalField.savePendingChangesAsync()).thenAnswer(invocation -> {
+            tokenSaveStarted.countDown();
+            return tokenSave;
+        });
+        when(originalField.lastSaveError()).thenReturn("original Speech to Text token save failed");
+        when(replacementField.lastSaveError()).thenReturn("replacement Speech to Text token save failed");
+        try {
+            runOnEdt(() -> setField(subject, "tokenField", originalField));
+            CompletableFuture<Boolean> pendingSave = subject.savePendingChangesAsync();
+            assertThat(tokenSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> setField(subject, "tokenField", replacementField));
+
+            tokenSave.complete(false);
+
+            assertThat(pendingSave.get(2, TimeUnit.SECONDS)).isFalse();
+            assertThat(subject.lastSaveError()).isEqualTo("original Speech to Text token save failed");
+        } finally {
+            runOnEdt(subject::removeNotify);
         }
     }
 
@@ -412,9 +492,15 @@ class SpeechToTextPanelTest {
                 runOnEdt(() -> {
                     JTextField modelDirectoryField = (JTextField) fieldValue(subject, "modelDirectoryField");
                     JButton browseButton = (JButton) fieldValue(subject, "modelDirectoryBrowseButton");
+                    JPanel helperPanel = (JPanel) fieldValue(subject, "helperPanel");
+                    JProgressBar progressBar = (JProgressBar) fieldValue(subject, "localModelProgressBar");
 
                     assertThat(modelDirectoryField.isEnabled()).isFalse();
                     assertThat(browseButton.isEnabled()).isFalse();
+                    assertThat(helperPanel.isVisible()).isFalse();
+                    assertThat(progressBar.isVisible()).isTrue();
+                    assertThat(progressBar.isIndeterminate()).isTrue();
+                    assertThat(progressBar.isStringPainted()).isFalse();
 
                     setModelDirectoryAndSave(subject, requested);
 
@@ -527,6 +613,35 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Speech to Text token changes cancel stale cloud catalog refresh before invalidation")
+    void prepareForCredentialChange_whenCloudRefreshInFlight_preventsStaleCatalogPersistence() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-token-refresh.properties"));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        var provider = new CredentialRefreshingElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider))));
+        try {
+            assertThat(provider.firstStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> ((ApiTokenFieldPanel) fieldValue(subject, "tokenField")).prepareForCredentialChange());
+            new SpeechToTextCatalogStore(repo).invalidate(ElevenLabsSpeechToTextProvider.ID);
+            provider.releaseFirst.countDown();
+            assertThat(provider.firstFinished.await(2, TimeUnit.SECONDS)).isTrue();
+            waitUntil(() -> provider.calls.get() >= 1);
+
+            assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).doesNotContain("stale-scribe");
+            assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
+
+            runOnEdt(() -> ((ApiTokenFieldPanel) fieldValue(subject, "tokenField")).reloadAfterPeerCredentialChanged());
+
+            assertThat(provider.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            waitUntil(() -> repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "").contains("fresh-scribe"));
+            assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).doesNotContain("stale-scribe");
+        } finally {
+            provider.releaseFirst.countDown();
+            runOnEdt(subject::removeNotify);
+        }
+    }
+
+    @Test
     @DisplayName("Failed explicit ElevenLabs refresh preserves cached catalog")
     void refreshCatalogs_whenElevenLabsRefreshFails_preservesCachedCatalog() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-cache.properties"));
@@ -636,13 +751,15 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Deepgram helper copy explains cloud upload and key storage")
+    @DisplayName("Deepgram helper copy explains cloud upload and token storage options")
     void updateAvailability_whenDeepgramAvailable_showsDeepgramPrivacyCopy() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-helper.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
         var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new DeepgramTestProvider()))));
-        assertThat(helperLabelText(subject)).isEqualTo("Recorded audio is sent to Deepgram for transcription. No API key is stored by Chat4J.");
+        assertThat(helperLabelText(subject))
+                .contains("Using Deepgram.")
+                .contains("Recorded audio is sent to Deepgram for transcription.");
         runOnEdt(subject::removeNotify);
     }
 
@@ -666,12 +783,14 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("AssemblyAI helper copy explains cloud upload and key storage")
+    @DisplayName("AssemblyAI helper copy explains cloud upload and token storage options")
     void updateAvailability_whenAssemblyAiAvailable_showsAssemblyAiPrivacyCopy() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-helper.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
         var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider()))));
-        assertThat(helperLabelText(subject)).isEqualTo("Recorded audio is sent to AssemblyAI for transcription. No API key is stored by Chat4J.");
+        assertThat(helperLabelText(subject))
+                .contains("Using AssemblyAI.")
+                .contains("Recorded audio is sent to AssemblyAI for transcription.");
         runOnEdt(subject::removeNotify);
     }
 
@@ -770,6 +889,7 @@ class SpeechToTextPanelTest {
         assertThat(localModelsTable.getRowCount()).isEqualTo(2);
         assertThat(localModelsTable.getValueAt(0, 0)).isEqualTo("Local Tiny");
         assertThat(localModelsTable.getValueAt(0, 1)).isEqualTo(Boolean.TRUE);
+        assertThat(downloadModelButton.getText()).isEqualTo("Download");
         assertThat(downloadModelButton.isEnabled()).isTrue();
     }
 
@@ -930,7 +1050,7 @@ class SpeechToTextPanelTest {
     }
 
     private String helperLabelText(SpeechToTextPanel subject) throws Exception {
-        return callOnEdt(() -> ((JLabel) fieldValue(subject, "helperLabel")).getText());
+        return callOnEdt(() -> ((JTextArea) fieldValue(subject, "helperLabel")).getText());
     }
 
     private void waitUntil(Condition condition) throws Exception {
@@ -945,6 +1065,12 @@ class SpeechToTextPanelTest {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
+    }
+
+    private void setField(Object target, String name, Object value) throws Exception {
+        var field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     private WhisperNativeRuntime fakeWhisperRuntime() {
@@ -1082,6 +1208,52 @@ class SpeechToTextPanelTest {
                     false,
                     status
             ));
+        }
+    }
+
+    private static final class RapidCompletingVoskModelManagementService extends VoskModelManagementService {
+        private final Path modelRoot;
+        private final Path tempRoot;
+        private Consumer<VoskModelManagementSnapshot> listener = snapshot -> {
+        };
+
+        private RapidCompletingVoskModelManagementService(SettingsRepository settingsRepo, Path modelRoot, Path tempRoot) {
+            super(settingsRepo, modelRoot, tempRoot);
+            this.modelRoot = modelRoot;
+            this.tempRoot = tempRoot;
+        }
+
+        @Override
+        public VoskModelManagementSnapshot snapshot() {
+            return VoskModelManagementSnapshot.empty(modelRoot.resolve(VoskSpeechToTextProvider.ID), tempRoot);
+        }
+
+        @Override
+        public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
+            this.listener = listener;
+            listener.accept(snapshot());
+            return () -> this.listener = snapshot -> {
+            };
+        }
+
+        private void startAndCompleteWithStatus(String status) {
+            listener.accept(newBusySnapshot(modelRoot, tempRoot));
+            listener.accept(new VoskModelManagementSnapshot(
+                    modelRoot.resolve(VoskSpeechToTextProvider.ID),
+                    tempRoot,
+                    emptyList(),
+                    emptyList(),
+                    emptyList(),
+                    null,
+                    true,
+                    status,
+                    false,
+                    status
+            ));
+        }
+
+        private void publishIdleSnapshot() {
+            listener.accept(snapshot());
         }
     }
 
@@ -1394,6 +1566,43 @@ class SpeechToTextPanelTest {
                 throw new IllegalStateException("Timed out waiting to release catalog refresh.");
             }
             return List.of(SpeechToTextCatalogItem.of("stale-scribe", "Stale Scribe"));
+        }
+    }
+
+    private static final class CredentialRefreshingElevenLabsProvider extends ElevenLabsTestProvider {
+        private final CountDownLatch firstStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseFirst = new CountDownLatch(1);
+        private final CountDownLatch firstFinished = new CountDownLatch(1);
+        private final CountDownLatch secondStarted = new CountDownLatch(1);
+        private final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public String requiredEnvVar() {
+            return "CHAT4J_TEST_ELEVENLABS_TOKEN";
+        }
+
+        @Override
+        public boolean available(CredentialSource credentialSource) {
+            return true;
+        }
+
+        @Override
+        public String availableMessage() {
+            return "Using ElevenLabs with test credentials.";
+        }
+
+        @Override
+        public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
+            if (calls.incrementAndGet() == 1) {
+                firstStarted.countDown();
+                if (!releaseFirst.await(2, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to release first catalog refresh.");
+                }
+                firstFinished.countDown();
+                return List.of(SpeechToTextCatalogItem.of("stale-scribe", "Stale Scribe"));
+            }
+            secondStarted.countDown();
+            return List.of(SpeechToTextCatalogItem.of("fresh-scribe", "Fresh Scribe"));
         }
     }
 

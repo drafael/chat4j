@@ -299,6 +299,8 @@ public class ModelSelectorPopup extends JDialog {
         preloaded = false;
         loadingProviders = false;
         entries.clear();
+        capabilityCache.clear();
+        capabilityRefreshInFlight.clear();
     }
 
     @Override
@@ -715,7 +717,12 @@ public class ModelSelectorPopup extends JDialog {
         entries.clear();
 
         providers.forEach(provider -> {
-            List<String> models = initialModels(provider.name(), modelCacheService.getModels(provider.name()), provider.seedModels());
+            List<String> models = initialModels(
+                    provider.name(),
+                    modelCacheService.getModels(provider.name()),
+                    provider.seedModels(),
+                    modelCacheService.isInvalidated(provider.name())
+            );
             entries.put(provider.name(), new ProviderEntry(
                     provider,
                     models,
@@ -793,20 +800,25 @@ public class ModelSelectorPopup extends JDialog {
 
             Duration ttl = refreshTtl(entry.name());
             boolean refreshRequired = modelCacheService.shouldRefresh(entry.name(), ttl);
-            if (!refreshRequired || !modelCacheService.tryMarkRefreshInFlight(entry.name())) {
+            ProviderModelCacheService.RefreshAttempt refreshAttempt = refreshRequired
+                    ? modelCacheService.tryBeginRefresh(entry.name()).orElse(null)
+                    : null;
+            if (refreshAttempt == null) {
                 return;
             }
 
             Thread.startVirtualThread(() -> {
                 try {
-                    modelCacheService.update(entry.name(), entry.def.fetcher().fetchModels());
-                    List<String> fetched = sanitizeModels(entry.name(), modelCacheService.getModels(entry.name()));
-                    SwingUtilities.invokeLater(() -> refreshProvider(entry.name(), fetched));
+                    boolean updated = modelCacheService.update(refreshAttempt, entry.def.fetcher().fetchModels());
+                    if (updated) {
+                        List<String> fetched = sanitizeModels(entry.name(), modelCacheService.getModels(entry.name()));
+                        SwingUtilities.invokeLater(() -> refreshProvider(entry.name(), fetched));
+                    }
                 } catch (Exception e) {
                     log.warn("Failed to refresh models for provider {}. Keeping cached/seed models: {}",
                             entry.name(), ExceptionUtils.getMessage(e));
                 } finally {
-                    modelCacheService.clearRefreshInFlight(entry.name());
+                    modelCacheService.clearRefreshInFlight(refreshAttempt);
                     modelCacheService.logMetricsSnapshot("refresh-complete:%s".formatted(entry.name()));
                 }
             });
@@ -1037,8 +1049,16 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels) {
+        return initialModels(providerName, cachedModels, seedModels, false);
+    }
+
+    static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels, boolean invalidated) {
         if (Strings.CS.equals(providerName, "Perplexity")) {
             return PerplexityModelIds.SONAR_MODELS;
+        }
+
+        if (invalidated) {
+            return sanitizeModels(providerName, seedModels);
         }
 
         List<String> cached = sanitizeModels(providerName, cachedModels);

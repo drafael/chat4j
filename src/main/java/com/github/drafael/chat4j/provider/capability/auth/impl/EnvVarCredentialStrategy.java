@@ -8,7 +8,7 @@ public class EnvVarCredentialStrategy implements CredentialStrategy {
 
     @Override
     public String resolveCredentialEnvVar(String envVarExpression) {
-        return CredentialResolver.firstConfiguredEnvVar(envVarExpression);
+        return CredentialResolver.firstConfiguredCredentialId(envVarExpression);
     }
 
     @Override

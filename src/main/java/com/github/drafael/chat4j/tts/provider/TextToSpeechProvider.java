@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.tts.provider;
 
+import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
+import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import java.util.List;
@@ -52,9 +54,17 @@ public interface TextToSpeechProvider {
     }
 
     default String availableMessage() {
-        return StringUtils.isBlank(requiredEnvVar())
-                ? "Using %s.".formatted(displayName())
-                : "Using %s with environment variable %s.".formatted(displayName(), requiredEnvVar());
+        if (StringUtils.isBlank(requiredEnvVar())) {
+            return "Using %s.".formatted(displayName());
+        }
+        ApiCredentialStatus status = CredentialResolver.resolveCredentialStatus(requiredEnvVar(), null);
+        if (status.source() == ApiCredentialSource.SAVED_TOKEN) {
+            return "Using %s with entered/stored API token.".formatted(displayName());
+        }
+        if (status.source() == ApiCredentialSource.SHELL_ENV) {
+            return "Using %s with shell environment variable %s.".formatted(displayName(), status.credentialId());
+        }
+        return "Using %s with environment variable %s.".formatted(displayName(), status.credentialId() == null ? requiredEnvVar() : status.credentialId());
     }
 
     default TextToSpeechCatalogItem normalizeModelSelection(TextToSpeechCatalogItem model) {

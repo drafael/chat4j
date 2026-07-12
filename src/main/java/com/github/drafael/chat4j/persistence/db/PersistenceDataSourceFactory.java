@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence.db;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import javax.sql.DataSource;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;

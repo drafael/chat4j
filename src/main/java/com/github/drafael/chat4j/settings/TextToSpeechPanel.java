@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.JavaSoundAudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
@@ -17,6 +18,7 @@ import java.net.URL;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import javax.swing.*;
@@ -24,7 +26,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
-public class TextToSpeechPanel extends AbstractSettingsPanel {
+public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
     private static final int FIELD_WIDTH = 520;
     private static final int CATALOG_LABEL_MAX_LENGTH = 72;
@@ -35,6 +37,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private final TextToSpeechProviderRegistry providerRegistry;
     private final TextToSpeechSettings textToSpeechSettings;
     private final TextToSpeechCatalogStore catalogStore;
+    private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final SettingsCredentialChangeListener credentialChangeListener;
     private final JavaSoundAudioPlaybackService previewPlayback = new JavaSoundAudioPlaybackService();
     private final Object previewPlaybackLock = new Object();
     private final AtomicLong refreshCounter = new AtomicLong();
@@ -45,26 +49,60 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private JComboBox<TextToSpeechCatalogItem> voiceComboBox;
     private JButton previewButton;
     private JButton refreshButton;
-    private JLabel helperLabel;
+    private JPanel helperPanel;
+    private JTextArea helperLabel;
+    private SettingsFormRow tokenFormRow;
+    private JPanel tokenRowPanel;
+    private ApiTokenFieldPanel tokenField;
     private boolean updating;
+    private volatile boolean removed;
     private volatile Thread previewThread;
     private String lastProviderId = TextToSpeechSettings.PROVIDER_OFF;
+    private volatile String lastSaveError = "";
 
     public TextToSpeechPanel(SettingsRepository settingsRepo) {
-        this(settingsRepo, TextToSpeechProviderRegistry.createDefault());
+        this(settingsRepo, TextToSpeechProviderRegistry.createDefault(), new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
     }
 
     TextToSpeechPanel(SettingsRepository settingsRepo, TextToSpeechProviderRegistry providerRegistry) {
+        this(settingsRepo, providerRegistry, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
+    }
+
+    TextToSpeechPanel(
+            SettingsRepository settingsRepo,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener
+    ) {
+        this(settingsRepo, TextToSpeechProviderRegistry.createDefault(), tokenFieldRegistry, credentialChangeListener);
+    }
+
+    TextToSpeechPanel(
+            SettingsRepository settingsRepo,
+            TextToSpeechProviderRegistry providerRegistry,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener
+    ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
         this.textToSpeechSettings = new TextToSpeechSettings(settingsRepo, providerRegistry);
         this.catalogStore = new TextToSpeechCatalogStore(settingsRepo);
+        this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialChangeListener = credentialChangeListener == null
+                ? SettingsCredentialChangeListener.NO_OP
+                : credentialChangeListener;
         buildUi();
     }
 
     @Override
+    public void addNotify() {
+        removed = false;
+        super.addNotify();
+    }
+
+    @Override
     public void removeNotify() {
-        refreshCounter.incrementAndGet();
+        removed = true;
+        cancelCatalogRefreshes();
         previewCounter.incrementAndGet();
         cancelPreviewWork();
         super.removeNotify();
@@ -79,6 +117,11 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         providerComboBox.setRenderer(new ProviderOptionRenderer());
         providerComboBox.addActionListener(e -> onProviderSelected());
         addRow(form, gbc, row++, "Provider", providerComboBox);
+
+        tokenRowPanel = withPreferredWidth(new JPanel(new BorderLayout()), FIELD_WIDTH);
+        tokenRowPanel.setOpaque(false);
+        tokenFormRow = addManagedRow(form, gbc, row++, "API token", tokenRowPanel);
+        tokenFormRow.setVisible(false);
 
         modelComboBox = withPreferredWidth(new JComboBox<>(), FIELD_WIDTH);
         modelComboBox.setPrototypeDisplayValue(TextToSpeechCatalogItem.of("prototype", "Sample TTS model"));
@@ -103,10 +146,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         buttons.add(refreshButton);
         row = addFullWidthRow(form, gbc, row, buttons);
 
-        helperLabel = new JLabel(" ");
-        Fonts.apply(helperLabel, Font.PLAIN, Fonts.SIZE_SMALL);
-        helperLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        row = addFullWidthRow(form, gbc, row, helperLabel);
+        helperPanel = createHelperInfoPanel();
+        row = addFullWidthRow(form, gbc, row, withPreferredWidth(helperPanel, FIELD_WIDTH));
         addVerticalSpacer(form, gbc, row);
 
         reloadProviderOptions();
@@ -119,7 +160,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         DefaultComboBoxModel<ProviderOption> model = new DefaultComboBoxModel<>();
         model.addElement(ProviderOption.off());
         providerRegistry.providers().stream()
-                .map(provider -> ProviderOption.of(provider, provider.available()))
+                .map(provider -> ProviderOption.of(provider, provider.available() || StringUtils.isNotBlank(provider.requiredEnvVar())))
                 .forEach(model::addElement);
         updating = true;
         providerComboBox.setModel(model);
@@ -144,6 +185,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         } finally {
             updating = false;
         }
+        rebuildTokenField(selection);
         updateControlAvailability(selection);
         if (refreshCatalogs && selection.available()) {
             refreshCatalogsForSelectedProvider(false);
@@ -169,8 +211,10 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
             updating = false;
             return;
         }
+        if (!saveTextToSpeechSetting("provider selection", () -> textToSpeechSettings.saveProvider(option.providerId()), true)) {
+            return;
+        }
         lastProviderId = option.providerId();
-        textToSpeechSettings.saveProvider(option.providerId());
         reloadProviderOptions();
         setStatusInfo(STATUS_SAVED);
         refreshControlsFromSettings(true);
@@ -182,8 +226,12 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         }
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         selectedCatalogItem(modelComboBox).ifPresent(item -> {
-            persistImplicitSystemProvider(selection);
-            textToSpeechSettings.saveModel(selection.providerId(), item);
+            if (!persistImplicitSystemProvider(selection)) {
+                return;
+            }
+            if (!saveTextToSpeechSetting("model selection", () -> textToSpeechSettings.saveModel(selection.providerId(), item), true)) {
+                return;
+            }
             setStatusInfo(STATUS_SAVED);
             refreshControlsFromSettings(false);
         });
@@ -195,32 +243,68 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         }
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         selectedCatalogItem(voiceComboBox).ifPresent(item -> {
-            persistImplicitSystemProvider(selection);
-            textToSpeechSettings.saveVoice(selection.providerId(), item);
+            if (!persistImplicitSystemProvider(selection)) {
+                return;
+            }
+            if (!saveTextToSpeechSetting("voice selection", () -> textToSpeechSettings.saveVoice(selection.providerId(), item), true)) {
+                return;
+            }
             setStatusInfo(STATUS_SAVED);
         });
     }
 
+    private long nextCatalogRefreshId() {
+        return refreshCounter.incrementAndGet();
+    }
+
+    private void cancelCatalogRefreshes() {
+        refreshCounter.incrementAndGet();
+    }
+
+    private boolean catalogRefreshCurrent(long requestId) {
+        return !removed && requestId == refreshCounter.get();
+    }
+
+    private boolean saveCatalogsIfCurrent(
+            long requestId,
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> models,
+            List<TextToSpeechCatalogItem> voices
+    ) {
+        return catalogStore.saveCatalogsIf(selection.providerId(), models, voices, () -> catalogRefreshCurrent(requestId));
+    }
+
     private void refreshCatalogsForSelectedProvider(boolean explicit) {
+        if (removed) {
+            return;
+        }
         TextToSpeechSettings.Selection selection = textToSpeechSettings.resolve();
         if (!selection.enabled() || !selection.available()) {
             updateControlAvailability(selection);
             return;
         }
-        long requestId = refreshCounter.incrementAndGet();
+        long requestId = nextCatalogRefreshId();
         if (explicit) {
             setStatusInfo("Refreshing Text to Speech catalogs...");
         }
         Thread.startVirtualThread(() -> {
             try {
                 List<TextToSpeechCatalogItem> models = selection.provider().fetchModels();
+                if (!catalogRefreshCurrent(requestId)) {
+                    return;
+                }
                 List<TextToSpeechCatalogItem> voices = selection.provider().fetchVoices();
-                catalogStore.saveModels(selection.providerId(), models);
-                catalogStore.saveVoices(selection.providerId(), voices);
-                SwingUtilities.invokeLater(() -> applyCatalogRefresh(requestId, selection, models, voices, explicit));
+                if (!saveCatalogsIfCurrent(requestId, selection, models, voices)) {
+                    return;
+                }
+                SwingUtilities.invokeLater(() -> {
+                    if (!removed) {
+                        applyCatalogRefresh(requestId, selection, models, voices, explicit);
+                    }
+                });
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() -> {
-                    if (requestId == refreshCounter.get()) {
+                    if (catalogRefreshCurrent(requestId)) {
                         setStatusError("Could not refresh %s catalogs.".formatted(selection.provider().displayName()));
                     }
                 });
@@ -235,7 +319,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
             List<TextToSpeechCatalogItem> voices,
             boolean explicit
     ) {
-        if (requestId != refreshCounter.get()) {
+        if (!catalogRefreshCurrent(requestId)) {
             return;
         }
         TextToSpeechSettings.Selection current = textToSpeechSettings.resolve();
@@ -291,11 +375,19 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
                     previewPlayback.play(audio);
                 }
                 if (requestId == previewCounter.get()) {
-                    SwingUtilities.invokeLater(() -> setStatusInfo("Preview complete"));
+                    SwingUtilities.invokeLater(() -> {
+                        if (!removed && requestId == previewCounter.get()) {
+                            setStatusInfo("Preview complete");
+                        }
+                    });
                 }
             } catch (Exception e) {
                 if (requestId == previewCounter.get()) {
-                    SwingUtilities.invokeLater(() -> setStatusError("Preview failed: %s".formatted(StringUtils.defaultIfBlank(e.getMessage(), "error"))));
+                    SwingUtilities.invokeLater(() -> {
+                        if (!removed && requestId == previewCounter.get()) {
+                            setStatusError("Preview failed: %s".formatted(StringUtils.defaultIfBlank(e.getMessage(), "error")));
+                        }
+                    });
                 }
             } finally {
                 if (previewThread == Thread.currentThread()) {
@@ -323,20 +415,121 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
     private void saveFirstVoiceWhenSelectionIsUnavailable(TextToSpeechSettings.Selection selection, List<TextToSpeechCatalogItem> voices) {
         if (!selectCatalogItem(voiceComboBox, selection.voice()) && !voices.isEmpty()) {
             TextToSpeechCatalogItem firstVoice = voices.getFirst();
-            textToSpeechSettings.saveVoice(selection.providerId(), firstVoice);
-            voiceComboBox.setSelectedItem(firstVoice);
+            if (saveTextToSpeechSetting("voice selection", () -> textToSpeechSettings.saveVoice(selection.providerId(), firstVoice), false)) {
+                voiceComboBox.setSelectedItem(firstVoice);
+            } else {
+                voiceComboBox.setSelectedIndex(-1);
+            }
         }
     }
 
-    private void persistImplicitSystemProvider(TextToSpeechSettings.Selection selection) {
-        if (SystemTextToSpeechProvider.ID.equals(selection.providerId()) && textToSpeechSettings.isProviderUnsetOrBlank()) {
-            textToSpeechSettings.saveProvider(SystemTextToSpeechProvider.ID);
+    private boolean persistImplicitSystemProvider(TextToSpeechSettings.Selection selection) {
+        if (!SystemTextToSpeechProvider.ID.equals(selection.providerId())) {
+            return true;
+        }
+        try {
+            if (!textToSpeechSettings.isProviderUnsetOrBlank()) {
+                return true;
+            }
+        } catch (Exception e) {
+            handleTextToSpeechSaveFailure("provider selection", true);
+            return false;
+        }
+        return saveTextToSpeechSetting("provider selection", () -> textToSpeechSettings.saveProvider(SystemTextToSpeechProvider.ID), true);
+    }
+
+    private void handleTextToSpeechSaveFailure(String settingName, boolean revertControlsOnFailure) {
+        lastSaveError = "Could not save Text to Speech %s.".formatted(settingName);
+        setStatusError(lastSaveError);
+        if (revertControlsOnFailure) {
+            try {
+                reloadProviderOptions();
+                refreshControlsFromSettings(false);
+            } catch (Exception e) {
+                setStatusError(lastSaveError);
+            }
+        }
+    }
+
+    private boolean saveTextToSpeechSetting(String settingName, Runnable saveAction, boolean revertControlsOnFailure) {
+        try {
+            saveAction.run();
+            lastSaveError = "";
+            return true;
+        } catch (Exception e) {
+            handleTextToSpeechSaveFailure(settingName, revertControlsOnFailure);
+            return false;
         }
     }
 
     private void updateCatalogCombos(List<TextToSpeechCatalogItem> models, List<TextToSpeechCatalogItem> voices) {
         modelComboBox.setModel(new DefaultComboBoxModel<>(models.toArray(TextToSpeechCatalogItem[]::new)));
         voiceComboBox.setModel(new DefaultComboBoxModel<>(voices.toArray(TextToSpeechCatalogItem[]::new)));
+    }
+
+    @Override
+    public CompletableFuture<Boolean> savePendingChangesAsync() {
+        ApiTokenFieldPanel field = tokenField;
+        if (field == null || !field.dirty()) {
+            lastSaveError = "";
+            return CompletableFuture.completedFuture(true);
+        }
+        String conflict = tokenFieldRegistry.conflictMessage(field);
+        if (StringUtils.isNotBlank(conflict)) {
+            lastSaveError = conflict;
+            return CompletableFuture.completedFuture(false);
+        }
+        return field.savePendingChangesAsync().thenApply(saved -> {
+            lastSaveError = saved ? "" : field.lastSaveError();
+            return saved;
+        });
+    }
+
+    @Override
+    public String lastSaveError() {
+        return lastSaveError;
+    }
+
+    @Override
+    public String settingsSectionName() {
+        return "Text to Speech settings";
+    }
+
+    private void rebuildTokenField(TextToSpeechSettings.Selection selection) {
+        String requiredEnvVar = selection.enabled() ? selection.provider().requiredEnvVar() : null;
+        if (StringUtils.isBlank(requiredEnvVar)) {
+            clearTokenField();
+            tokenFormRow.setVisible(false);
+            tokenRowPanel.revalidate();
+            tokenRowPanel.repaint();
+            return;
+        }
+        if (tokenField != null && StringUtils.equals(tokenField.canonicalTokenId(), CredentialResolver.canonicalTokenId(requiredEnvVar))) {
+            return;
+        }
+        clearTokenField();
+        tokenField = withPreferredWidth(new ApiTokenFieldPanel(
+                requiredEnvVar,
+                tokenFieldRegistry,
+                credentialChangeListener,
+                this::cancelCatalogRefreshes,
+                () -> {
+                    reloadProviderOptions();
+                    refreshControlsFromSettings(true);
+                }
+        ), FIELD_WIDTH);
+        tokenRowPanel.add(tokenField, BorderLayout.CENTER);
+        tokenFormRow.setVisible(true);
+        tokenRowPanel.revalidate();
+        tokenRowPanel.repaint();
+    }
+
+    private void clearTokenField() {
+        if (tokenField != null) {
+            tokenField.unregisterFromRegistry();
+        }
+        tokenRowPanel.removeAll();
+        tokenField = null;
     }
 
     private void updateControlAvailability(TextToSpeechSettings.Selection selection) {
@@ -346,12 +539,57 @@ public class TextToSpeechPanel extends AbstractSettingsPanel {
         previewButton.setEnabled(enabled);
         refreshButton.setEnabled(enabled);
         if (!selection.enabled()) {
-            helperLabel.setText("Text to Speech is off.");
+            setHelperText("Text to Speech is off.");
         } else if (!selection.available()) {
-            helperLabel.setText(selection.provider().unavailableMessage());
+            setHelperText(selection.provider().unavailableMessage());
+        } else if (StringUtils.isNotBlank(selection.provider().requiredEnvVar())) {
+            setHelperText("%s Text is sent to %s for speech synthesis.".formatted(
+                    selection.provider().availableMessage(),
+                    selection.provider().displayName()
+            ));
         } else {
-            helperLabel.setText(selection.provider().availableMessage());
+            setHelperText(selection.provider().availableMessage());
         }
+    }
+
+    private void setHelperText(String message) {
+        String text = StringUtils.defaultString(message);
+        helperLabel.setText(text);
+        int rows = estimatedHelperRows(text);
+        helperLabel.setRows(rows);
+        int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
+        helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
+        helperPanel.revalidate();
+        helperPanel.repaint();
+    }
+
+    private int estimatedHelperRows(String text) {
+        FontMetrics metrics = helperLabel.getFontMetrics(helperLabel.getFont());
+        int textWidth = metrics.stringWidth(StringUtils.defaultString(text));
+        return Math.max(1, (int) Math.ceil(textWidth / (double) Math.max(1, FIELD_WIDTH - 24)));
+    }
+
+    private JPanel createHelperInfoPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(true);
+        panel.setBorder(infoBoxBorder());
+        panel.setBackground(infoBoxBackground());
+        helperLabel = createWrappingHelperTextArea();
+        panel.add(helperLabel, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JTextArea createWrappingHelperTextArea() {
+        JTextArea textArea = new JTextArea(" ");
+        textArea.setEditable(false);
+        textArea.setFocusable(false);
+        textArea.setOpaque(false);
+        textArea.setLineWrap(true);
+        textArea.setWrapStyleWord(true);
+        textArea.setBorder(null);
+        Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
+        textArea.setForeground(messageBoxForeground());
+        return textArea;
     }
 
     private ProviderOption findProviderOption(String providerId) {

@@ -2,13 +2,21 @@
 
 This document collects provider-specific auth/runtime behavior that is not covered by the general provider architecture.
 
+## API token vault
+
+API-key providers (`AuthType.ENV_VAR`) resolve credentials in this order: saved UI token override, process environment, shell-loaded environment, then provider fallback. Saved UI tokens are stored under the app config directory in `secrets/token-vault.json`, encrypted with an app-local AES-256-GCM master key in `secrets/master.key`.
+
+The vault is intentionally app-local convenience encryption, not OS keychain storage. Anyone who can read both secret files can decrypt saved API tokens. Saved tokens are never injected into `CredentialResolver.mergedEnvironment()` or subprocess environments.
+
+OAuth providers such as GitHub Copilot and OpenAI Codex keep their existing auth files and are not stored in this vault.
+
 ## GitHub Copilot
 
 Authentication:
 
 - Auth type: `COPILOT_OAUTH`
 - Resolver: `CopilotAuthResolver`
-- Stored token: `~/.config/chat4j/copilot-auth.json`
+- Stored token: `$XDG_CONFIG_HOME/chat4j/copilot-auth.json`, falling back to `~/.config/chat4j/copilot-auth.json` when `XDG_CONFIG_HOME` is unset.
 - Login flow: GitHub OAuth device authorization.
 
 Login behavior:
@@ -48,7 +56,7 @@ Header evidence summary:
 Useful verification commands:
 
 ```bash
-export TOKEN="$(jq -r '.accessToken // empty' ~/.config/chat4j/copilot-auth.json)"
+export TOKEN="$(jq -r '.accessToken // empty' "${XDG_CONFIG_HOME:-$HOME/.config}/chat4j/copilot-auth.json")"
 export BASE="https://api.githubcopilot.com"
 
 curl -sS "$BASE/models" \
@@ -69,7 +77,7 @@ Authentication:
 
 - Auth type: `CODEX_OAUTH`
 - Resolver: `CodexAuthResolver`
-- Stored token: `~/.config/chat4j/codex-auth.json`
+- Stored token: `$XDG_CONFIG_HOME/chat4j/codex-auth.json`, falling back to `~/.config/chat4j/codex-auth.json` when `XDG_CONFIG_HOME` is unset.
 - Login flow: OAuth authorization code + PKCE.
 - Chat4J owns Codex auth and does not use `~/.codex/auth.json` as the auth source of truth.
 
@@ -92,9 +100,9 @@ Runtime behavior:
 
 - Codex chat uses `CodexCliChatCompletionClient` by design.
 - Model listing tries OpenAI-compatible `/v1/models` first, then falls back to `~/.codex/models_cache.json`.
-- Chat4J persists the final model list in `~/.config/chat4j/models-cache/OpenAI_Codex.txt`.
+- Chat4J persists the final model list in `<app-config>/models-cache/OpenAI_Codex.txt`.
 - Agent Mode chooses the Codex CLI-first adapter path for OpenAI Codex to avoid noisy HTTP tool-calling fallback warnings.
 
 Troubleshooting:
 
-- If the Codex model picker is empty after auth changes, remove `~/.config/chat4j/models-cache/OpenAI_Codex.txt` and refresh provider models.
+- If the Codex model picker is empty after auth changes, remove `<app-config>/models-cache/OpenAI_Codex.txt` and refresh provider models.

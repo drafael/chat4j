@@ -42,6 +42,16 @@ public abstract class AbstractTextToSpeechProviderSettings implements TextToSpee
     }
 
     @Override
+    public void clearModel() {
+        clearItem(modelIdKey(), modelLabelKey());
+    }
+
+    @Override
+    public void clearVoice() {
+        clearItem(voiceIdKey(), voiceLabelKey());
+    }
+
+    @Override
     public String catalogModelsKey() {
         return "%scatalog.%s.models".formatted(PREFIX, providerSlug());
     }
@@ -66,6 +76,13 @@ public abstract class AbstractTextToSpeechProviderSettings implements TextToSpee
         settingsRepo.updateBatch(batch -> {
             batch.put(idKey, item.id());
             batch.put(labelKey, item.label());
+        });
+    }
+
+    private void clearItem(String idKey, String labelKey) {
+        settingsRepo.updateBatch(batch -> {
+            batch.remove(idKey);
+            batch.remove(labelKey);
         });
     }
 

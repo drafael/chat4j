@@ -646,17 +646,23 @@ public class ChatPanel extends JPanel {
         if (selectedProviderName != null
                 && selectedModelId != null
                 && providerMap.containsKey(selectedProviderName)
+                && !modelCacheService.isInvalidated(selectedProviderName)
         ) {
             selectModel(selectedProviderName, selectedModelId);
             return;
         }
 
-        // Prefer cached models fetched in previous sessions.
+        if (selectedProviderName != null
+                && (!providerMap.containsKey(selectedProviderName) || modelCacheService.isInvalidated(selectedProviderName))) {
+            clearSelectedModel();
+        }
+
+        // Prefer cached models fetched in previous sessions, but never reuse a credential-invalidated cache.
         if (!providerMap.isEmpty()) {
             providerMap.values().stream()
                     .map(providerDef -> new ProviderModelSelection(
                         providerDef.name(),
-                        sanitizeModelIds(providerDef.name(), modelCacheService.getModels(providerDef.name()))
+                        initialProviderModels(providerDef)
                     )
                     )
                     .filter(selection -> !selection.models().isEmpty())
@@ -680,6 +686,10 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        clearSelectedModel();
+    }
+
+    private void clearSelectedModel() {
         providerSelectionCounter.incrementAndGet();
         selectedProviderName = null;
         selectedModelId = null;
@@ -690,6 +700,13 @@ public class ChatPanel extends JPanel {
         inputBar.setThinkingAvailable(false);
         inputBar.setWebSearchOptions(emptyList(), null);
         inputBar.setAgentModeAvailable(false);
+    }
+
+    private List<String> initialProviderModels(ProviderRegistry.ProviderDef providerDef) {
+        if (modelCacheService.isInvalidated(providerDef.name())) {
+            return sanitizeModelIds(providerDef.name(), providerDef.seedModels());
+        }
+        return sanitizeModelIds(providerDef.name(), modelCacheService.getModels(providerDef.name()));
     }
 
     private void toggleModelPopup() {
@@ -3677,8 +3694,24 @@ public class ChatPanel extends JPanel {
     }
 
     public void setSelectedModel(String modelKey) {
-        ModelSelectionCodec.parse(modelKey)
-                .ifPresent(selection -> selectModel(selection.provider(), selection.model()));
+        ModelSelectionCodec.parse(modelKey).ifPresent(selection -> {
+            String safeModelId = safeModelId(selection.provider(), selection.model());
+            if (StringUtils.isNotBlank(safeModelId)) {
+                selectModel(selection.provider(), safeModelId);
+            }
+        });
+    }
+
+    private String safeModelId(String providerName, String modelId) {
+        ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
+        if (providerDef == null || !modelCacheService.isInvalidated(providerName)) {
+            return modelId;
+        }
+        List<String> seedModels = sanitizeModelIds(providerName, providerDef.seedModels());
+        if (seedModels.contains(modelId)) {
+            return modelId;
+        }
+        return seedModels.isEmpty() ? null : seedModels.getFirst();
     }
 
     public InputBar getInputBar() {

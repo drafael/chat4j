@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.persistence.db;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

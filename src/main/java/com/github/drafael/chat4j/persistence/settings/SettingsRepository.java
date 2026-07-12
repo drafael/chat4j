@@ -1,16 +1,20 @@
 package com.github.drafael.chat4j.persistence.settings;
 
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
@@ -18,8 +22,10 @@ import org.apache.commons.lang3.Validate;
 
 public class SettingsRepository {
 
+    private static final ConcurrentMap<Path, Object> PATH_LOCKS = new ConcurrentHashMap<>();
+
     private final Path settingsFile;
-    private final Object lock = new Object();
+    private final Object lock;
 
     public SettingsRepository(@NonNull StoragePaths storagePaths) {
         this(storagePaths.settingsFile());
@@ -27,6 +33,7 @@ public class SettingsRepository {
 
     public SettingsRepository(@NonNull Path settingsFile) {
         this.settingsFile = settingsFile;
+        this.lock = PATH_LOCKS.computeIfAbsent(normalizedPath(settingsFile), ignored -> new Object());
     }
 
     public Optional<String> get(String key) {
@@ -86,6 +93,21 @@ public class SettingsRepository {
         }
     }
 
+    public boolean updateBatchIf(BooleanSupplier condition, Consumer<BatchUpdate> updates) {
+        Validate.notNull(condition, "condition should not be null");
+        Validate.notNull(updates, "updates should not be null");
+
+        synchronized (lock) {
+            Properties properties = loadProperties();
+            if (!condition.getAsBoolean()) {
+                return false;
+            }
+            updates.accept(new BatchUpdate(properties));
+            storeProperties(properties);
+            return true;
+        }
+    }
+
     public static final class BatchUpdate {
         private final Properties properties;
 
@@ -104,6 +126,10 @@ public class SettingsRepository {
         }
     }
 
+    private static Path normalizedPath(Path settingsFile) {
+        return settingsFile.toAbsolutePath().normalize();
+    }
+
     private Properties loadProperties() {
         Properties properties = new Properties();
         if (!Files.exists(settingsFile)) {
@@ -112,6 +138,8 @@ public class SettingsRepository {
 
         try (InputStream input = Files.newInputStream(settingsFile)) {
             properties.load(input);
+            return properties;
+        } catch (NoSuchFileException e) {
             return properties;
         } catch (IOException e) {
             throw new SettingsStorageException("Failed to read settings file: %s".formatted(settingsFile), e);

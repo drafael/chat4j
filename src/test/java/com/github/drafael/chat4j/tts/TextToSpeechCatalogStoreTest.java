@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.tts;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
+import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettingsFactory;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
@@ -18,17 +19,14 @@ class TextToSpeechCatalogStoreTest {
 
     @Test
     @DisplayName("Saved catalogs use legacy persisted keys")
-    void saveModelsAndVoices_whenElevenLabsProvider_writesLegacyKeysAndReadsCatalogs() throws Exception {
+    void saveCatalogs_whenElevenLabsProvider_writesLegacyKeysAndReadsCatalogs() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
         var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
-        subject.saveModels(
+        subject.saveCatalogs(
                 ElevenLabsTextToSpeechProvider.ID,
-                List.of(TextToSpeechCatalogItem.of("eleven_turbo_v2_5", "Eleven Turbo"))
-        );
-        subject.saveVoices(
-                ElevenLabsTextToSpeechProvider.ID,
+                List.of(TextToSpeechCatalogItem.of("eleven_turbo_v2_5", "Eleven Turbo")),
                 List.of(TextToSpeechCatalogItem.of("voice-a", "Voice A"))
         );
 
@@ -44,6 +42,28 @@ class TextToSpeechCatalogStoreTest {
         assertThat(subject.voices(provider, provider.defaultVoice()))
                 .extracting(TextToSpeechCatalogItem::id)
                 .contains("voice-a");
+    }
+
+    @Test
+    @DisplayName("Models and voices can be saved together in one catalog update")
+    void saveCatalogs_whenModelsAndVoicesProvided_writesBothCatalogs() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var subject = new TextToSpeechCatalogStore(settingsRepo);
+
+        subject.saveCatalogs(
+                ElevenLabsTextToSpeechProvider.ID,
+                List.of(TextToSpeechCatalogItem.of("eleven_multilingual_v2", "Eleven Multilingual")),
+                List.of(TextToSpeechCatalogItem.of("voice-b", "Voice B"))
+        );
+
+        assertThat(subject.models(provider, provider.defaultModel()))
+                .extracting(TextToSpeechCatalogItem::id)
+                .contains("eleven_multilingual_v2");
+        assertThat(subject.voices(provider, provider.defaultVoice()))
+                .extracting(TextToSpeechCatalogItem::id)
+                .contains("voice-b");
+        assertThat(settingsRepo.get("chat4j.tts.catalog.elevenlabs.updatedAt")).isPresent();
     }
 
     @Test
@@ -76,6 +96,27 @@ class TextToSpeechCatalogStoreTest {
         var voices = subject.voices(provider, provider.defaultVoice());
 
         assertThat(voices).extracting(TextToSpeechCatalogItem::id).contains("voice-a");
+    }
+
+    @Test
+    @DisplayName("Invalidating TTS catalog clears stale selected model and voice")
+    void invalidate_whenProviderHasSelections_removesTimestampAndSelections() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-invalidate", ".properties"));
+        var settings = TextToSpeechProviderSettingsFactory.forProvider(settingsRepo, ElevenLabsTextToSpeechProvider.ID);
+        settings.saveModel(TextToSpeechCatalogItem.of("old-model", "Old Model"));
+        settings.saveVoice(TextToSpeechCatalogItem.of("old-voice", "Old Voice"));
+        settingsRepo.put("chat4j.tts.catalog.elevenlabs.models", "[{\"id\":\"old-model\",\"label\":\"Old Model\",\"description\":\"\"}]");
+        settingsRepo.put("chat4j.tts.catalog.elevenlabs.voices", "[{\"id\":\"old-voice\",\"label\":\"Old Voice\",\"description\":\"\"}]");
+        settingsRepo.put("chat4j.tts.catalog.elevenlabs.updatedAt", "2026-07-11T00:00:00Z");
+        var subject = new TextToSpeechCatalogStore(settingsRepo);
+
+        subject.invalidate(ElevenLabsTextToSpeechProvider.ID);
+
+        assertThat(settingsRepo.get("chat4j.tts.catalog.elevenlabs.models")).isEmpty();
+        assertThat(settingsRepo.get("chat4j.tts.catalog.elevenlabs.voices")).isEmpty();
+        assertThat(settingsRepo.get("chat4j.tts.catalog.elevenlabs.updatedAt")).isEmpty();
+        assertThat(settingsRepo.get("chat4j.tts.elevenlabs.model.id")).isEmpty();
+        assertThat(settingsRepo.get("chat4j.tts.elevenlabs.voice.id")).isEmpty();
     }
 
     @Test

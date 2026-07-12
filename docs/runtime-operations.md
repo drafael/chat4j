@@ -64,6 +64,12 @@ System.getProperty("jpackage.app-path") != null && SystemInfo.isMacOS
 Lookup policy throughout provider code:
 
 ```text
+CredentialResolver.resolveCredential(name, fallback)
+  -> saved encrypted token override
+  -> System.getenv(name)
+  -> shellEnv.get(name)
+  -> fallback
+
 CredentialResolver.getenv(name)
   -> System.getenv(name)
   -> shellEnv.get(name)
@@ -74,7 +80,7 @@ Important details:
 - `-l -i` is intentional: many users put API keys in `.zshrc`, which is read only by interactive shells.
 - Timeout defaults to 5 seconds; override with `-Dchat4j.shellEnvTimeoutSeconds=<n>`.
 - The loader falls back gracefully and Chat4J continues launching.
-- If no provider credentials are visible, Chat4J shows a warning suggesting terminal launch, `launchctl setenv`, Ollama, or doctor diagnostics.
+- If no provider credentials are visible, Chat4J shows a warning suggesting Settings token entry, terminal launch, `launchctl setenv`, Ollama, or doctor diagnostics.
 
 Troubleshooting commands:
 
@@ -141,8 +147,8 @@ Destinations:
 
 - Console when launched from terminal.
 - Rotating file: `${chat4j.log.dir}/chat4j.log`.
-- Default log dir: `$XDG_CONFIG_HOME/chat4j/logs`, else `~/.config/chat4j/logs`.
-- Emergency bootstrap fallback: `~/.config/chat4j/logs/bootstrap-fallback.log`.
+- Default log dir: `<app-config>/logs`, where `<app-config>` is the Chat4J app config directory: `%APPDATA%/chat4j` on Windows when `%APPDATA%` is set, otherwise `%USERPROFILE%/AppData/Roaming/chat4j`; on non-Windows it is `$XDG_CONFIG_HOME/chat4j` when set, otherwise `~/.config/chat4j`.
+- Emergency bootstrap fallback if normal path resolution fails: `~/.config/chat4j/logs/bootstrap-fallback.log`.
 
 Noise dampening in `logback.xml`:
 

@@ -28,6 +28,19 @@ class ModelSelectorPopupRefreshPolicyTest {
     }
 
     @Test
+    @DisplayName("Invalidated popup models use seeds instead of cached account models")
+    void initialModels_whenProviderIsInvalidated_returnsSeedModels() {
+        List<String> models = ModelSelectorPopup.initialModels(
+                "OpenAI",
+                List.of("old-account-model"),
+                List.of("seed-b", "seed-a"),
+                true
+        );
+
+        assertThat(models).containsExactly("seed-b", "seed-a");
+    }
+
+    @Test
     @DisplayName("GitHub Copilot uses default provider refresh cadence")
     void refreshTtl_whenProviderIsGitHubCopilot_returnsDefaultRefreshTtl() {
         Duration ttl = ModelSelectorPopup.refreshTtl("GitHub Copilot");

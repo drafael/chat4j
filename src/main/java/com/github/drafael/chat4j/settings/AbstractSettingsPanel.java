@@ -7,13 +7,16 @@ import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.net.URI;
+import java.util.Comparator;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 import javax.swing.*;
+import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
-import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
 public abstract class AbstractSettingsPanel extends JPanel {
@@ -106,16 +109,30 @@ public abstract class AbstractSettingsPanel extends JPanel {
     }
 
     protected void addRow(JPanel form, GridBagConstraints gbc, int row, String labelText, JComponent field) {
+        addManagedRow(form, gbc, row, labelText, field);
+    }
+
+    protected SettingsFormRow addManagedRow(JPanel form, GridBagConstraints gbc, int row, String labelText, JComponent field) {
         gbc.gridx = 0;
         gbc.gridy = row;
         gbc.weightx = 0;
         gbc.weighty = 0;
         gbc.insets = new Insets(FORM_ROW_GAP, 0, FORM_ROW_GAP, FORM_COLUMN_GAP);
-        form.add(createRowLabel(labelText), gbc);
+        JLabel label = createRowLabel(labelText);
+        form.add(label, gbc);
 
         gbc.gridx = 1;
         gbc.weightx = 1;
-        form.add(wrapField(field), gbc);
+        JComponent wrappedField = wrapField(field);
+        form.add(wrappedField, gbc);
+        return new SettingsFormRow(label, wrappedField);
+    }
+
+    protected record SettingsFormRow(JComponent label, JComponent field) {
+        public void setVisible(boolean visible) {
+            label.setVisible(visible);
+            field.setVisible(visible);
+        }
     }
 
     protected int addFullWidthRow(JPanel form, GridBagConstraints gbc, int row, JComponent field) {
@@ -170,6 +187,102 @@ public abstract class AbstractSettingsPanel extends JPanel {
         return field;
     }
 
+    protected Border infoBoxBorder() {
+        return messageBoxBorder("Component.focusColor", "Actions.Blue", "Separator.foreground");
+    }
+
+    protected Color infoBoxBackground() {
+        return toolTipBackground();
+    }
+
+    protected Color infoBoxTitleForeground() {
+        return toolTipForeground();
+    }
+
+    protected Border warningBoxBorder() {
+        return messageBoxBorder("Component.warning.borderColor", "Component.warning.focusedBorderColor", "Actions.Yellow", "Separator.foreground");
+    }
+
+    protected Color warningBoxBackground() {
+        return toolTipBackground();
+    }
+
+    protected Color warningBoxTitleForeground() {
+        return toolTipForeground();
+    }
+
+    protected Color messageBoxForeground() {
+        return toolTipForeground();
+    }
+
+    protected Color successForeground() {
+        return uiColor("Component.success.foreground", "Component.success.focusedBorderColor", "Actions.Green", "Label.foreground");
+    }
+
+    protected Color warningForeground() {
+        return uiColor("Component.warning.foreground", "Component.warning.focusedBorderColor", "Actions.Yellow", "Label.foreground");
+    }
+
+    protected Color errorForeground() {
+        return uiColor("Component.error.foreground", "Component.error.focusedBorderColor", "Actions.Red", "Label.foreground");
+    }
+
+    protected Color readableForegroundOn(Color background) {
+        return Stream.of(
+                        UIManager.getColor("Button.foreground"),
+                        UIManager.getColor("Label.foreground"),
+                        Color.BLACK,
+                        Color.WHITE
+                )
+                .filter(Objects::nonNull)
+                .max(Comparator.comparingDouble(candidate -> contrastRatio(candidate, background)))
+                .orElseGet(this::getForeground);
+    }
+
+    private double contrastRatio(Color first, Color second) {
+        double lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+        double darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    private double relativeLuminance(Color color) {
+        return 0.2126 * linearColor(color.getRed())
+                + 0.7152 * linearColor(color.getGreen())
+                + 0.0722 * linearColor(color.getBlue());
+    }
+
+    private double linearColor(int component) {
+        double normalized = component / 255.0;
+        return normalized <= 0.03928
+                ? normalized / 12.92
+                : Math.pow((normalized + 0.055) / 1.055, 2.4);
+    }
+
+    private Border messageBoxBorder(String... colorKeys) {
+        return BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(uiColor(colorKeys)),
+                BorderFactory.createEmptyBorder(10, 12, 10, 12)
+        );
+    }
+
+    private Color toolTipBackground() {
+        return uiColor("ToolTip.background", "info", "Panel.background");
+    }
+
+    private Color toolTipForeground() {
+        return uiColor("ToolTip.foreground", "infoText", "Label.foreground");
+    }
+
+    private Color uiColor(String... keys) {
+        for (String key : keys) {
+            Color color = UIManager.getColor(key);
+            if (color != null) {
+                return color;
+            }
+        }
+        return getForeground();
+    }
+
     protected void bindCheckBox(
             JCheckBox checkBox,
             String key,
@@ -179,9 +292,21 @@ public abstract class AbstractSettingsPanel extends JPanel {
         boolean initialValue = readBoolean(key, defaultValue);
         checkBox.setSelected(initialValue);
 
+        AtomicBoolean lastPersistedValue = new AtomicBoolean(initialValue);
+        AtomicBoolean updating = new AtomicBoolean(false);
+
         checkBox.addActionListener(e -> {
+            if (updating.get()) {
+                return;
+            }
             boolean selected = checkBox.isSelected();
-            writeSetting(key, String.valueOf(selected));
+            if (!writeSetting(key, String.valueOf(selected))) {
+                updating.set(true);
+                checkBox.setSelected(lastPersistedValue.get());
+                updating.set(false);
+                return;
+            }
+            lastPersistedValue.set(selected);
             setStatusInfo(STATUS_SAVED);
             if (onApplied != null) {
                 onApplied.accept(selected);
@@ -230,8 +355,13 @@ public abstract class AbstractSettingsPanel extends JPanel {
             }
 
             String normalizedValue = result.normalizedValue();
+            if (!writeSetting(key, normalizedValue)) {
+                updating.set(true);
+                comboBox.setSelectedItem(lastValidValue.get());
+                updating.set(false);
+                return;
+            }
             lastValidValue.set(normalizedValue);
-            writeSetting(key, normalizedValue);
             setStatusInfo(STATUS_SAVED);
 
             if (!normalizedValue.equals(rawValue)) {
@@ -277,12 +407,17 @@ public abstract class AbstractSettingsPanel extends JPanel {
             }
 
             String normalizedValue = result.normalizedValue();
+            if (!writeSetting(key, normalizedValue)) {
+                updating.set(true);
+                textField.setText(lastValidValue.get());
+                updating.set(false);
+                return;
+            }
             lastValidValue.set(normalizedValue);
             updating.set(true);
             textField.setText(normalizedValue);
             updating.set(false);
 
-            writeSetting(key, normalizedValue);
             setStatusInfo(STATUS_SAVED);
             if (onApplied != null) {
                 onApplied.accept(normalizedValue);
@@ -312,19 +447,23 @@ public abstract class AbstractSettingsPanel extends JPanel {
         return Boolean.parseBoolean(readString(key, String.valueOf(defaultValue)));
     }
 
-    protected void writeSetting(String key, String value) {
+    protected boolean writeSetting(String key, String value) {
         try {
             settingsRepo.put(key, value);
+            return true;
         } catch (Exception e) {
             setStatusError("Failed to save setting: %s".formatted(key));
+            return false;
         }
     }
 
-    protected void removeSetting(String key) {
+    protected boolean removeSetting(String key) {
         try {
             settingsRepo.remove(key);
+            return true;
         } catch (Exception e) {
             setStatusError("Failed to remove setting: %s".formatted(key));
+            return false;
         }
     }
 
@@ -346,11 +485,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
 
     protected void setStatusError(String message) {
         statusClearTimer.stop();
-        Color error = ObjectUtils.firstNonNull(
-                UIManager.getColor("Component.error.focusedBorderColor"),
-                new Color(200, 50, 50)
-        );
-        statusLabel.setForeground(error);
+        statusLabel.setForeground(errorForeground());
         setStatusLabelText(StringUtils.defaultIfBlank(message, "Error"));
         statusLabel.setVisible(true);
     }

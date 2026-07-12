@@ -5,7 +5,6 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -28,6 +27,10 @@ public class ProviderModelsResolver {
                         provider -> {
                             if (Strings.CS.equals(provider.name(), "Perplexity")) {
                                 return provider.seedModels();
+                            }
+
+                            if (modelCacheService.isInvalidated(provider.name())) {
+                                return sanitize(provider.name(), provider.seedModels());
                             }
 
                             List<String> models = sanitize(provider.name(), modelCacheService.getModels(provider.name()));

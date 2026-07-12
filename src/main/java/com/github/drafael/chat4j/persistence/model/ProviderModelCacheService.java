@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import java.time.Clock;
@@ -8,8 +8,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
@@ -27,6 +28,7 @@ public class ProviderModelCacheService {
     private final Duration defaultRefreshTtl;
     private final boolean metricsLoggingEnabled;
     private final ConcurrentHashMap<String, CacheEntry> cacheByProvider = new ConcurrentHashMap<>();
+    private final Set<String> invalidatedProviders = ConcurrentHashMap.newKeySet();
     private final CacheMetrics metrics = new CacheMetrics();
 
     public ProviderModelCacheService(ProviderModelCache modelCache) {
@@ -68,6 +70,11 @@ public class ProviderModelCacheService {
             : getOrLoadEntry(providerName).models();
     }
 
+    public boolean isInvalidated(String providerName) {
+        return StringUtils.isNotBlank(providerName)
+                && (invalidatedProviders.contains(providerName) || persistedInvalidationLoaded(providerName));
+    }
+
     public boolean shouldRefresh(String providerName) {
         return shouldRefresh(providerName, defaultRefreshTtl);
     }
@@ -78,7 +85,7 @@ public class ProviderModelCacheService {
         }
 
         CacheEntry entry = getOrLoadEntry(providerName);
-        if (entry.models().isEmpty()) {
+        if (entry.models().isEmpty() || invalidatedProviders.contains(providerName)) {
             metrics.refreshAllowed.incrementAndGet();
             return true;
         }
@@ -94,50 +101,74 @@ public class ProviderModelCacheService {
         return shouldRefresh;
     }
 
-    public boolean tryMarkRefreshInFlight(String providerName) {
+    public synchronized Optional<RefreshAttempt> tryBeginRefresh(String providerName) {
         if (StringUtils.isBlank(providerName)) {
+            return Optional.empty();
+        }
+
+        CacheEntry entry = getOrLoadEntry(providerName);
+        if (entry.refreshInFlight()) {
+            metrics.refreshInFlightRejected.incrementAndGet();
+            return Optional.empty();
+        }
+
+        cacheByProvider.put(providerName, entry.withRefreshInFlight(true));
+        metrics.refreshInFlightAccepted.incrementAndGet();
+        return Optional.of(new RefreshAttempt(providerName, entry.generation()));
+    }
+
+    public synchronized void clearRefreshInFlight(RefreshAttempt attempt) {
+        if (attempt == null || StringUtils.isBlank(attempt.providerName())) {
+            return;
+        }
+
+        cacheByProvider.computeIfPresent(attempt.providerName(), (name, entry) ->
+                entry.generation() == attempt.generation() ? entry.withRefreshInFlight(false) : entry);
+    }
+
+    public synchronized void invalidate(String providerName) {
+        if (StringUtils.isBlank(providerName)) {
+            return;
+        }
+
+        CacheEntry entry = getOrLoadEntry(providerName);
+        CacheEntry invalidated = new CacheEntry(entry.models(), Instant.EPOCH, false, entry.generation() + 1, true);
+        invalidatedProviders.add(providerName);
+        cacheByProvider.put(providerName, invalidated);
+        if (!modelCache.writeCache(providerName, Instant.EPOCH, emptyList())) {
+            log.warn("Model cache invalidation for provider {} could not be persisted; stale disk cache may survive restart.", providerName);
+        }
+    }
+
+    public synchronized void update(String providerName, List<String> models) {
+        if (StringUtils.isBlank(providerName)) {
+            return;
+        }
+
+        CacheEntry entry = getOrLoadEntry(providerName);
+        updateFresh(providerName, models, entry.generation());
+    }
+
+    public synchronized boolean update(RefreshAttempt attempt, List<String> models) {
+        if (attempt == null || StringUtils.isBlank(attempt.providerName())) {
             return false;
         }
 
-        AtomicBoolean marked = new AtomicBoolean(false);
-        cacheByProvider.compute(
-            providerName,
-            (name, existing) -> {
-            CacheEntry entry = existing == null ? loadEntry(name) : existing;
-            if (entry.refreshInFlight()) {
-                return entry;
-            }
-
-            marked.set(true);
-            return entry.withRefreshInFlight(true);
-        });
-
-        if (marked.get()) {
-            metrics.refreshInFlightAccepted.incrementAndGet();
-        } else {
-            metrics.refreshInFlightRejected.incrementAndGet();
+        CacheEntry entry = getOrLoadEntry(attempt.providerName());
+        if (entry.generation() != attempt.generation()) {
+            return false;
         }
 
-        return marked.get();
+        updateFresh(attempt.providerName(), models, attempt.generation());
+        return true;
     }
 
-    public void clearRefreshInFlight(String providerName) {
-        if (StringUtils.isBlank(providerName)) {
-            return;
-        }
-
-        cacheByProvider.computeIfPresent(providerName, (name, entry) -> entry.withRefreshInFlight(false));
-    }
-
-    public void update(String providerName, List<String> models) {
-        if (StringUtils.isBlank(providerName)) {
-            return;
-        }
-
+    private void updateFresh(String providerName, List<String> models, long generation) {
         List<String> sanitizedModels = sanitizeModels(providerName, models);
         Instant fetchedAt = Instant.now(clock);
-        cacheByProvider.put(providerName, new CacheEntry(sanitizedModels, fetchedAt, false));
+        cacheByProvider.put(providerName, new CacheEntry(sanitizedModels, fetchedAt, false, generation, false));
         modelCache.writeCache(providerName, fetchedAt, sanitizedModels);
+        invalidatedProviders.remove(providerName);
         metrics.updates.incrementAndGet();
 
         if (metricsLoggingEnabled) {
@@ -186,19 +217,30 @@ public class ProviderModelCacheService {
         return loaded;
     }
 
+    private boolean persistedInvalidationLoaded(String providerName) {
+        CacheEntry entry = getOrLoadEntry(providerName);
+        return entry.invalidated();
+    }
+
     private CacheEntry loadEntry(String providerName) {
         return modelCache.readCacheEntry(providerName)
                 .map(snapshot -> {
                     metrics.diskReadsWithData.incrementAndGet();
+                    boolean invalidated = snapshot.fetchedAt().equals(Instant.EPOCH) && snapshot.models().isEmpty();
+                    if (invalidated) {
+                        invalidatedProviders.add(providerName);
+                    }
                     return new CacheEntry(
                         List.copyOf(sanitizeModels(providerName, snapshot.models())),
                         snapshot.fetchedAt(),
-                        false
+                        false,
+                        0L,
+                        invalidated
                     );
                 })
                 .orElseGet(() -> {
                     metrics.diskReadsEmpty.incrementAndGet();
-                    return new CacheEntry(emptyList(), Instant.EPOCH, false);
+                    return new CacheEntry(emptyList(), Instant.EPOCH, false, 0L, false);
                 });
     }
 
@@ -225,9 +267,12 @@ public class ProviderModelCacheService {
     ) {
     }
 
-    private record CacheEntry(List<String> models, Instant fetchedAt, boolean refreshInFlight) {
+    public record RefreshAttempt(String providerName, long generation) {
+    }
+
+    private record CacheEntry(List<String> models, Instant fetchedAt, boolean refreshInFlight, long generation, boolean invalidated) {
         private CacheEntry withRefreshInFlight(boolean value) {
-            return new CacheEntry(models, fetchedAt, value);
+            return new CacheEntry(models, fetchedAt, value, generation, invalidated);
         }
     }
 
@@ -242,18 +287,5 @@ public class ProviderModelCacheService {
         private final AtomicLong refreshInFlightRejected = new AtomicLong();
         private final AtomicLong updates = new AtomicLong();
         private final AtomicLong primeRequests = new AtomicLong();
-
-        private void reset() {
-            memoryHits.set(0L);
-            memoryMisses.set(0L);
-            diskReadsWithData.set(0L);
-            diskReadsEmpty.set(0L);
-            refreshAllowed.set(0L);
-            refreshBlocked.set(0L);
-            refreshInFlightAccepted.set(0L);
-            refreshInFlightRejected.set(0L);
-            updates.set(0L);
-            primeRequests.set(0L);
-        }
     }
 }

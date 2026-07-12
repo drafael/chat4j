@@ -19,13 +19,14 @@ Key classes:
 
 ## Credentials
 
-Credentials are environment-variable only. Chat4J never stores TTS API keys in settings.
+Cloud TTS credentials can be saved in Chat4J's encrypted local token vault from Settings or supplied by process/shell environment variables. Saved tokens take precedence over environment variables. The vault is app-local convenience encryption, not OS keychain storage.
 
 Supported providers:
 
 | Provider | Env var | Default format | Notes |
 | --- | --- | --- | --- |
 | System | none | WAV/AIFF | Uses local OS text-to-speech tools and does not send text to a cloud provider. macOS uses `/usr/bin/say`, Windows uses SAPI through PowerShell `System.Speech`, and Linux uses `espeak-ng` when installed. |
+| Deepgram | `DEEPGRAM_API_KEY` | WAV | Uses Aura TTS voice models, Thalia as the bundled default voice, 140-character chunking, and WAV RIFF normalization during playback. |
 | Groq | `GROQ_API_KEY` | WAV | Uses Orpheus models, Hannah as the default English voice, model-scoped English/Arabic voice lists, 200-character chunking, and WAV RIFF normalization during playback. |
 | ElevenLabs | `ELEVENLABS_API_KEY` | MP3 | Uses ElevenLabs model/voice catalogs when available and stores selected voice IDs separately from labels. |
 
@@ -59,7 +60,7 @@ Settings UI behavior:
 5. Update Swing controls only on the EDT and ignore stale refresh results.
 6. Keep unavailable providers visible with provider-specific helper text.
 
-Missing or blank provider settings resolve to available `System`, otherwise `Off`. Explicit `off` is respected. Saved unavailable providers remain selected so the UI can explain what is missing. No API key fields should be added to the UI.
+Missing or blank provider settings resolve to available `System`, otherwise `Off`. Explicit `off` is respected. Saved unavailable cloud providers remain selected so the UI can explain what is missing and provide an API token field for configuration.
 
 ## System provider
 

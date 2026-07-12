@@ -57,6 +57,23 @@ class SpeechToTextCatalogStoreTest {
     }
 
     @Test
+    @DisplayName("Invalidating STT catalog clears stale selected model")
+    void invalidate_whenProviderHasSelectedModel_removesTimestampAndSelection() throws Exception {
+        var repo = repo("invalidate.properties");
+        var settings = SpeechToTextProviderSettingsFactory.forProvider(repo, DeepgramSpeechToTextProvider.ID);
+        settings.saveModel(SpeechToTextCatalogItem.of("old-account-model", "Old Account Model"));
+        repo.put("chat4j.stt.catalog.deepgram.models", "[{\"id\":\"old-account-model\",\"label\":\"Old Account Model\",\"description\":\"\"}]");
+        repo.put("chat4j.stt.catalog.deepgram.updatedAt", "2026-07-11T00:00:00Z");
+        var subject = new SpeechToTextCatalogStore(repo);
+
+        subject.invalidate(DeepgramSpeechToTextProvider.ID);
+
+        assertThat(repo.get("chat4j.stt.catalog.deepgram.models")).isEmpty();
+        assertThat(repo.get("chat4j.stt.catalog.deepgram.updatedAt")).isEmpty();
+        assertThat(settings.selectedModelId()).isBlank();
+    }
+
+    @Test
     @DisplayName("AssemblyAI catalog exposes only bundled official models")
     void models_whenAssemblyAiSelected_usesBundledOfficialModelsOnly() throws Exception {
         var repo = repo("assemblyai.properties");

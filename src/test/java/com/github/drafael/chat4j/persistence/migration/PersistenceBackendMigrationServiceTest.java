@@ -5,7 +5,7 @@ import com.github.drafael.chat4j.persistence.db.DatabaseBootstrap;
 import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
 import com.github.drafael.chat4j.persistence.db.SqlDialects;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.Message;
 import java.io.IOException;

@@ -10,7 +10,7 @@ import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
 import com.github.drafael.chat4j.persistence.db.SqlDialect;
 import com.github.drafael.chat4j.persistence.db.SqlDialects;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.migration.PersistenceBackendMigrationService;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
@@ -185,6 +185,7 @@ public final class ApplicationBootstrap {
                 and providers requiring them might be disabled.
 
                 To fix this, either:
+                \u2022 Enter and save API tokens in Settings after Chat4J opens
                 \u2022 Run Chat4J from the terminal: java --enable-preview -jar chat4j.jar
                 \u2022 Set keys via: launchctl setenv ANTHROPIC_API_KEY sk-...
                 \u2022 Use a local provider like LM Studio or Ollama (no API key required)

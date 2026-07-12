@@ -29,7 +29,9 @@ import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
@@ -284,6 +286,81 @@ class ChatPanelTest {
                 .doesNotContain("1 finding");
         assertThat(subject.getHistory()).extracting(Message::content)
                 .contains("Findings\n\nP1 Agent bash escapes selected root\nAgent Mode documents bash as running within selected folder.\nLocalToolRuntime.java:218-233\n");
+    }
+
+    @Test
+    @DisplayName("Refreshing providers after cache invalidation drops stale selected model")
+    void refreshProviders_whenSelectedProviderCacheInvalidated_selectsSeedModel() throws Exception {
+        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-test");
+        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
+        cacheService.update("OpenAI", List.of("old-account-model"));
+        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI",
+                "OPENAI_API_KEY",
+                null,
+                List.of("seed-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        setField(panel, "selectedProviderName", "OpenAI");
+        setField(panel, "selectedModelId", "old-account-model");
+
+        cacheService.invalidate("OpenAI");
+        invokeApplyProviderModels(panel, List.of(provider));
+
+        assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+    }
+
+    @Test
+    @DisplayName("Loading an invalidated non-seed model selection falls back to seed model")
+    void setSelectedModel_whenProviderCacheInvalidated_usesSeedModel() throws Exception {
+        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-load-test");
+        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
+        cacheService.update("OpenAI", List.of("old-account-model"));
+        cacheService.invalidate("OpenAI");
+        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
+        var provider = new ProviderRegistry.ProviderDef(
+                "OpenAI",
+                "OPENAI_API_KEY",
+                null,
+                List.of("seed-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        setField(panel, "providerMap", Map.of(provider.name(), provider));
+
+        panel.setSelectedModel("OpenAI > old-account-model");
+
+        assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+    }
+
+    @Test
+    @DisplayName("Loading an invalidated non-seed model selection without seed models is ignored")
+    void setSelectedModel_whenProviderCacheInvalidatedAndNoSeedModels_doesNotSelectStaleModel() throws Exception {
+        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-empty-seed-test");
+        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
+        cacheService.update("EmptySeed", List.of("old-account-model"));
+        cacheService.invalidate("EmptySeed");
+        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
+        var provider = new ProviderRegistry.ProviderDef(
+                "EmptySeed",
+                "EMPTY_SEED_API_KEY",
+                null,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                () -> emptyList()
+        );
+        setField(panel, "providerMap", Map.of(provider.name(), provider));
+        setField(panel, "selectedProviderName", null);
+        setField(panel, "selectedModelId", null);
+
+        panel.setSelectedModel("EmptySeed > old-account-model");
+
+        assertThat(panel.getSelectedModel()).isNull();
     }
 
     @Test
@@ -2822,6 +2899,12 @@ class ChatPanelTest {
         Field field = ChatPanel.class.getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(chatPanel, value);
+    }
+
+    private static void invokeApplyProviderModels(ChatPanel chatPanel, List<ProviderRegistry.ProviderDef> providers) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("applyProviderModels", List.class);
+        method.setAccessible(true);
+        method.invoke(chatPanel, providers);
     }
 
     private static void invokePersistAssistantResponse(

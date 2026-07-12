@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
 import com.github.drafael.chat4j.stt.SpeechToTextSettingsSnapshot;
@@ -26,6 +27,7 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementServ
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.*;
 import java.io.File;
 import java.nio.file.Files;
@@ -39,8 +41,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -49,7 +55,7 @@ import org.apache.commons.lang3.Strings;
 
 import static java.util.Collections.emptyList;
 
-public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingSettingsSaveParticipant {
+public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
     private static final int FIELD_WIDTH = 520;
     private static final int LOCAL_MODELS_WIDTH = FIELD_WIDTH;
@@ -58,6 +64,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private static final int LOCAL_MODELS_COLUMN_GAP = 12;
     private static final String VOSK_OPERATION_IN_PROGRESS_ERROR = "A Vosk model operation is still in progress.";
     private static final String WHISPER_OPERATION_IN_PROGRESS_ERROR = "A Whisper.cpp model operation is still in progress.";
+    private static final Pattern PERCENT_PATTERN = Pattern.compile("(\\d{1,3})%");
 
     private final SpeechToTextProviderRegistry providerRegistry;
     private final SpeechToTextSettings settings;
@@ -65,10 +72,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private final SpeechToTextModelDownloader modelDownloader;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
+    private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final SettingsCredentialChangeListener credentialChangeListener;
     private final boolean ownsVoskModelManagementService;
     private final boolean ownsWhisperModelManagementService;
-    private long refreshCounter;
-    private final Object refreshLock = new Object();
+    private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong saveCounter = new AtomicLong();
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("chat4j-stt-settings-save-", 0).factory()
@@ -76,6 +84,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
 
     private JComboBox<ProviderOption> providerComboBox;
     private JComboBox<SpeechToTextCatalogItem> modelComboBox;
+    private SettingsFormRow tokenFormRow;
+    private JPanel tokenRowPanel;
+    private ApiTokenFieldPanel tokenField;
     private JTextField modelDirectoryField;
     private JButton modelDirectoryBrowseButton;
     private JPanel localModelsPanel;
@@ -84,10 +95,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private JButton downloadModelButton;
     private JButton deleteModelButton;
     private JButton importModelButton;
-    private JLabel localModelsHintLabel;
+    private JProgressBar localModelProgressBar;
     private JSpinner maxDurationSpinner;
     private JButton refreshButton;
-    private JLabel helperLabel;
+    private JPanel helperPanel;
+    private JTextArea helperLabel;
     private boolean updating;
     private boolean updatingLocalModels;
     private List<SpeechToTextCatalogItem> localModelItems = emptyList();
@@ -95,6 +107,12 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     private List<WhisperLocalModelRow> whisperRows = emptyList();
     private boolean voskOperationInProgress;
     private boolean whisperOperationInProgress;
+    private final AtomicReference<VoskModelManagementSnapshot> pendingVoskSnapshot = new AtomicReference<>();
+    private final AtomicReference<WhisperModelManagementSnapshot> pendingWhisperSnapshot = new AtomicReference<>();
+    private final AtomicBoolean voskSnapshotDispatchPending = new AtomicBoolean();
+    private final AtomicBoolean whisperSnapshotDispatchPending = new AtomicBoolean();
+    private final AtomicBoolean voskOperationObservedInProgress = new AtomicBoolean();
+    private final AtomicBoolean whisperOperationObservedInProgress = new AtomicBoolean();
     private String voskOperationSuccessMessage = "";
     private String whisperOperationSuccessMessage = "";
     private Runnable voskUnsubscribe = () -> {
@@ -182,22 +200,89 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             boolean ownsVoskModelManagementService,
             boolean ownsWhisperModelManagementService
     ) {
+        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader, voskModelManagementService, whisperModelManagementService,
+                ownsVoskModelManagementService, ownsWhisperModelManagementService, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
+    }
+
+    SpeechToTextPanel(
+            SettingsRepository settingsRepo,
+            Path defaultModelDirectory,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener
+    ) {
+        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(), new UnavailableSpeechToTextModelDownloader(),
+                voskModelManagementService, whisperModelManagementService, false, false, tokenFieldRegistry, credentialChangeListener);
+    }
+
+    private SpeechToTextPanel(
+            SettingsRepository settingsRepo,
+            Path defaultModelDirectory,
+            SpeechToTextProviderRegistry providerRegistry,
+            SpeechToTextModelDownloader modelDownloader,
+            VoskModelManagementService voskModelManagementService,
+            WhisperModelManagementService whisperModelManagementService,
+            boolean ownsVoskModelManagementService,
+            boolean ownsWhisperModelManagementService,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener
+    ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
         this.voskModelManagementService = voskModelManagementService;
         this.whisperModelManagementService = whisperModelManagementService;
+        this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialChangeListener = credentialChangeListener == null
+                ? SettingsCredentialChangeListener.NO_OP
+                : credentialChangeListener;
         this.ownsVoskModelManagementService = ownsVoskModelManagementService;
         this.ownsWhisperModelManagementService = ownsWhisperModelManagementService;
         this.settings = new SpeechToTextSettings(settingsRepo, providerRegistry, CredentialSource.SYSTEM, defaultModelDirectory, voskModelManagementService, whisperModelManagementService);
         this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
         this.modelDownloader = modelDownloader;
         buildUi();
-        voskUnsubscribe = voskModelManagementService.addListener(snapshot -> runWhenActiveOnEventDispatchThread(() -> handleVoskModelSnapshot(snapshot)));
-        whisperUnsubscribe = whisperModelManagementService.addListener(snapshot -> runWhenActiveOnEventDispatchThread(() -> handleWhisperModelSnapshot(snapshot)));
+        voskUnsubscribe = voskModelManagementService.addListener(this::enqueueVoskModelSnapshot);
+        whisperUnsubscribe = whisperModelManagementService.addListener(this::enqueueWhisperModelSnapshot);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> savePendingChangesAsync() {
+        return CompletableFuture.supplyAsync(this::saveNonTokenPendingChanges)
+                .thenCompose(saved -> {
+                    if (!saved) {
+                        return CompletableFuture.completedFuture(false);
+                    }
+                    return onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
+                            .thenCompose(future -> future);
+                });
+    }
+
+    private CompletableFuture<Boolean> savePendingTokenChangesOnEventDispatchThread() {
+        ApiTokenFieldPanel field = tokenField;
+        if (field == null || !field.dirty()) {
+            return CompletableFuture.completedFuture(true);
+        }
+        String conflict = tokenFieldRegistry.conflictMessage(field);
+        if (StringUtils.isNotBlank(conflict)) {
+            lastSaveError = conflict;
+            return CompletableFuture.completedFuture(false);
+        }
+        return field.savePendingChangesAsync().thenApply(tokenSaved -> {
+            lastSaveError = tokenSaved ? "" : field.lastSaveError();
+            return tokenSaved;
+        });
     }
 
     @Override
     public boolean savePendingChanges() {
+        return saveNonTokenPendingChanges()
+                && onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
+                .thenCompose(future -> future)
+                .join();
+    }
+
+    private boolean saveNonTokenPendingChanges() {
         VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
         if (voskModelOperationBlocksClose(voskSnapshot)) {
             lastSaveError = VOSK_OPERATION_IN_PROGRESS_ERROR;
@@ -286,6 +371,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         providerComboBox.addActionListener(e -> onProviderSelected());
         addRow(form, gbc, row++, "Provider", providerComboBox);
 
+        tokenRowPanel = withPreferredWidth(new JPanel(new BorderLayout()), FIELD_WIDTH);
+        tokenRowPanel.setOpaque(false);
+        tokenFormRow = addManagedRow(form, gbc, row++, "API token", tokenRowPanel);
+        tokenFormRow.setVisible(false);
+
         modelComboBox = withPreferredWidth(new JComboBox<>(), FIELD_WIDTH);
         modelComboBox.setRenderer(new CatalogItemRenderer());
         modelComboBox.addActionListener(e -> onModelSelected());
@@ -304,10 +394,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         buttons.add(refreshButton);
         row = addFullWidthRow(form, gbc, row, buttons);
 
-        helperLabel = new JLabel(" ");
-        Fonts.apply(helperLabel, Font.PLAIN, Fonts.SIZE_SMALL);
-        helperLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        row = addFullWidthRow(form, gbc, row, helperLabel);
+        helperPanel = createHelperInfoPanel();
+        row = addFullWidthRow(form, gbc, row, withPreferredWidth(helperPanel, FIELD_WIDTH));
 
         localModelsPanel = createLocalModelsPanel();
         row = addLocalModelsRow(form, gbc, row);
@@ -402,8 +490,14 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         modelsScrollPane.setPreferredSize(new Dimension(LOCAL_MODELS_WIDTH, LOCAL_MODELS_TABLE_HEIGHT));
         panel.add(modelsScrollPane, BorderLayout.CENTER);
 
-        JPanel actions = new JPanel(new BorderLayout(0, 4));
+        JPanel actions = new JPanel(new BorderLayout(0, 6));
         actions.setOpaque(false);
+        localModelProgressBar = new JProgressBar(0, 100);
+        localModelProgressBar.setVisible(false);
+        localModelProgressBar.setStringPainted(true);
+        localModelProgressBar.setPreferredSize(new Dimension(220, 18));
+        actions.add(localModelProgressBar, BorderLayout.NORTH);
+
         JPanel actionButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         actionButtons.setOpaque(false);
         downloadModelButton = new JButton("Download");
@@ -421,28 +515,68 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         actionButtons.add(downloadModelButton);
         actionButtons.add(deleteModelButton);
         actionButtons.add(importModelButton);
-        actions.add(actionButtons, BorderLayout.NORTH);
-        localModelsHintLabel = new JLabel(" ");
-        Fonts.apply(localModelsHintLabel, Font.PLAIN, Fonts.SIZE_SMALL);
-        localModelsHintLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        actions.add(localModelsHintLabel, BorderLayout.SOUTH);
+        actions.add(actionButtons, BorderLayout.CENTER);
         panel.add(actions, BorderLayout.SOUTH);
 
         return panel;
+    }
+
+    private void enqueueVoskModelSnapshot(VoskModelManagementSnapshot snapshot) {
+        if (snapshot != null && snapshot.operationInProgress()) {
+            voskOperationObservedInProgress.set(true);
+        }
+        pendingVoskSnapshot.set(snapshot);
+        if (removed || !voskSnapshotDispatchPending.compareAndSet(false, true)) {
+            return;
+        }
+        SwingUtilities.invokeLater(this::drainVoskModelSnapshotOnEventDispatchThread);
+    }
+
+    private void drainVoskModelSnapshotOnEventDispatchThread() {
+        VoskModelManagementSnapshot snapshot = pendingVoskSnapshot.getAndSet(null);
+        try {
+            if (!removed && snapshot != null) {
+                handleVoskModelSnapshot(snapshot);
+            }
+        } finally {
+            voskSnapshotDispatchPending.set(false);
+        }
+        if (!removed && pendingVoskSnapshot.get() != null && voskSnapshotDispatchPending.compareAndSet(false, true)) {
+            SwingUtilities.invokeLater(this::drainVoskModelSnapshotOnEventDispatchThread);
+        }
     }
 
     private void handleVoskModelSnapshot(VoskModelManagementSnapshot snapshot) {
         if (removed) {
             return;
         }
-        boolean completed = voskOperationInProgress && !snapshot.operationInProgress();
-        voskOperationInProgress = snapshot.operationInProgress();
-        if (localModelsPanel != null && isShowing()) {
-            refreshControlsFromSettings(false);
+        boolean inProgress = snapshot.operationInProgress();
+        boolean observedInProgress = voskOperationObservedInProgress.getAndSet(inProgress);
+        boolean wasInProgress = voskOperationInProgress || observedInProgress;
+        boolean started = !voskOperationInProgress && inProgress;
+        boolean completed = wasInProgress && !inProgress;
+        voskOperationInProgress = inProgress;
+        SpeechToTextSettingsSnapshot settingsSnapshot = settings.resolve();
+        boolean currentProvider = isVosk(settingsSnapshot);
+        if (localModelsPanel != null && isShowing() && currentProvider) {
+            updateLocalControlsForVoskSnapshot(snapshot, settingsSnapshot, started, completed);
         }
         if (completed) {
-            applyCompletedVoskOperationStatus(snapshot);
+            if (currentProvider) {
+                applyCompletedVoskOperationStatus(snapshot);
+            } else {
+                voskOperationSuccessMessage = "";
+            }
         }
+    }
+
+    private void updateLocalControlsForVoskSnapshot(VoskModelManagementSnapshot snapshot, SpeechToTextSettingsSnapshot settingsSnapshot, boolean started, boolean completed) {
+        if (snapshot.operationInProgress() && !started && !completed) {
+            updateLocalOperationProgress(true, operationPercent(snapshot.operationStatus()));
+            updateLocalModelButtons(settingsSnapshot);
+            return;
+        }
+        refreshControlsFromSettings(false);
     }
 
     private void applyCompletedVoskOperationStatus(VoskModelManagementSnapshot snapshot) {
@@ -454,18 +588,62 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         voskOperationSuccessMessage = "";
     }
 
+    private void enqueueWhisperModelSnapshot(WhisperModelManagementSnapshot snapshot) {
+        if (snapshot != null && snapshot.operationInProgress()) {
+            whisperOperationObservedInProgress.set(true);
+        }
+        pendingWhisperSnapshot.set(snapshot);
+        if (removed || !whisperSnapshotDispatchPending.compareAndSet(false, true)) {
+            return;
+        }
+        SwingUtilities.invokeLater(this::drainWhisperModelSnapshotOnEventDispatchThread);
+    }
+
+    private void drainWhisperModelSnapshotOnEventDispatchThread() {
+        WhisperModelManagementSnapshot snapshot = pendingWhisperSnapshot.getAndSet(null);
+        try {
+            if (!removed && snapshot != null) {
+                handleWhisperModelSnapshot(snapshot);
+            }
+        } finally {
+            whisperSnapshotDispatchPending.set(false);
+        }
+        if (!removed && pendingWhisperSnapshot.get() != null && whisperSnapshotDispatchPending.compareAndSet(false, true)) {
+            SwingUtilities.invokeLater(this::drainWhisperModelSnapshotOnEventDispatchThread);
+        }
+    }
+
     private void handleWhisperModelSnapshot(WhisperModelManagementSnapshot snapshot) {
         if (removed) {
             return;
         }
-        boolean completed = whisperOperationInProgress && !snapshot.operationInProgress();
-        whisperOperationInProgress = snapshot.operationInProgress();
-        if (localModelsPanel != null && isShowing()) {
-            refreshControlsFromSettings(false);
+        boolean inProgress = snapshot.operationInProgress();
+        boolean observedInProgress = whisperOperationObservedInProgress.getAndSet(inProgress);
+        boolean wasInProgress = whisperOperationInProgress || observedInProgress;
+        boolean started = !whisperOperationInProgress && inProgress;
+        boolean completed = wasInProgress && !inProgress;
+        whisperOperationInProgress = inProgress;
+        SpeechToTextSettingsSnapshot settingsSnapshot = settings.resolve();
+        boolean currentProvider = isWhisper(settingsSnapshot);
+        if (localModelsPanel != null && isShowing() && currentProvider) {
+            updateLocalControlsForWhisperSnapshot(snapshot, settingsSnapshot, started, completed);
         }
         if (completed) {
-            applyCompletedWhisperOperationStatus(snapshot);
+            if (currentProvider) {
+                applyCompletedWhisperOperationStatus(snapshot);
+            } else {
+                whisperOperationSuccessMessage = "";
+            }
         }
+    }
+
+    private void updateLocalControlsForWhisperSnapshot(WhisperModelManagementSnapshot snapshot, SpeechToTextSettingsSnapshot settingsSnapshot, boolean started, boolean completed) {
+        if (snapshot.operationInProgress() && !started && !completed) {
+            updateLocalOperationProgress(true, operationPercent(snapshot));
+            updateLocalModelButtons(settingsSnapshot);
+            return;
+        }
+        refreshControlsFromSettings(false);
     }
 
     private void applyCompletedWhisperOperationStatus(WhisperModelManagementSnapshot snapshot) {
@@ -482,12 +660,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         DefaultComboBoxModel<ProviderOption> model = new DefaultComboBoxModel<>();
         model.addElement(ProviderOption.off());
         providerRegistry.providers().stream()
-                .map(provider -> ProviderOption.of(provider, provider.available(CredentialSource.SYSTEM)))
+                .map(provider -> ProviderOption.of(provider, selectableProvider(provider)))
                 .forEach(model::addElement);
         updating = true;
         providerComboBox.setModel(model);
         providerComboBox.setSelectedItem(findProviderOption(snapshot.providerId()));
         updating = false;
+    }
+
+    private boolean selectableProvider(SpeechToTextProvider provider) {
+        return provider.available(CredentialSource.SYSTEM)
+                || StringUtils.isNotBlank(provider.requiredEnvVar());
     }
 
     private void refreshControlsFromSettings(boolean refreshCatalogs) {
@@ -515,6 +698,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         } finally {
             updating = false;
         }
+        rebuildTokenField(snapshot);
         updateLocalModels(snapshot, models);
         updateAvailability(snapshot);
         if (refreshCatalogs && isVosk(snapshot) && !voskModelManagementService.snapshot().operationInProgress()) {
@@ -636,7 +820,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             Path path = savedPath.get();
             if (path != null) {
                 modelDirectoryField.setText(path.toString());
-                localModelsHintLabel.setText("Stored under %s".formatted(compactPath(path)));
                 voskModelManagementService.refreshAsync();
                 whisperModelManagementService.refreshAsync(isWhisper(settings.resolve()));
             }
@@ -724,31 +907,19 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private long nextCatalogRefreshId() {
-        synchronized (refreshLock) {
-            return ++refreshCounter;
-        }
+        return refreshCounter.incrementAndGet();
     }
 
     private void cancelCatalogRefreshes() {
-        synchronized (refreshLock) {
-            refreshCounter++;
-        }
+        refreshCounter.incrementAndGet();
     }
 
     private boolean catalogRefreshCurrent(long refreshId) {
-        synchronized (refreshLock) {
-            return refreshId == refreshCounter;
-        }
+        return !removed && refreshId == refreshCounter.get();
     }
 
     private boolean saveCatalogModelsIfCurrent(long refreshId, String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
-        synchronized (refreshLock) {
-            if (refreshId != refreshCounter) {
-                return false;
-            }
-            catalogStore.saveModels(providerId, models);
-            return true;
-        }
+        return catalogStore.saveModelsIf(providerId, models, () -> catalogRefreshCurrent(refreshId));
     }
 
     private void applyCatalogRefresh(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
@@ -793,6 +964,52 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
     }
 
+    private void rebuildTokenField(SpeechToTextSettingsSnapshot snapshot) {
+        String requiredEnvVar = snapshot.enabled() ? snapshot.provider().requiredEnvVar() : null;
+        if (StringUtils.isBlank(requiredEnvVar)) {
+            clearTokenField();
+            tokenFormRow.setVisible(false);
+            tokenRowPanel.revalidate();
+            tokenRowPanel.repaint();
+            return;
+        }
+        if (tokenField != null && Strings.CS.equals(tokenField.canonicalTokenId(), CredentialResolver.canonicalTokenId(requiredEnvVar))) {
+            return;
+        }
+        clearTokenField();
+        tokenField = withPreferredWidth(new ApiTokenFieldPanel(
+                requiredEnvVar,
+                tokenFieldRegistry,
+                credentialChangeListener,
+                this::cancelCatalogRefreshes,
+                this::refreshAfterTokenFieldSave
+        ), FIELD_WIDTH);
+        tokenRowPanel.add(tokenField, BorderLayout.CENTER);
+        tokenFormRow.setVisible(true);
+        tokenRowPanel.revalidate();
+        tokenRowPanel.repaint();
+    }
+
+    private void clearTokenField() {
+        if (tokenField != null) {
+            tokenField.unregisterFromRegistry();
+        }
+        tokenRowPanel.removeAll();
+        tokenField = null;
+    }
+
+    private void refreshAfterTokenFieldSave() {
+        reloadProviderOptions();
+        SpeechToTextSettingsSnapshot snapshot = settings.resolve();
+        if (snapshot.enabled() && !isVosk(snapshot) && !isWhisper(snapshot)) {
+            cancelCatalogRefreshes();
+            refreshControlsFromSettings(false);
+            refreshCatalogs(false);
+            return;
+        }
+        refreshControlsFromSettings(true);
+    }
+
     private void updateLocalModels(SpeechToTextSettingsSnapshot snapshot, List<SpeechToTextCatalogItem> models) {
         boolean visible = localModelsVisible(snapshot);
         localModelsPanel.setVisible(visible);
@@ -803,6 +1020,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
             voskRows = emptyList();
             whisperRows = emptyList();
             updateLocalModelRows(snapshot, emptyList());
+            updateLocalOperationProgress(false, -1);
             updateLocalModelButtons(snapshot);
             return;
         }
@@ -818,8 +1036,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         localModelItems = List.copyOf(models == null ? emptyList() : models);
         updateLocalModelRows(snapshot, localModelItems);
         updateLocalModelButtons(snapshot);
-        Path directory = settings.modelDirectory().resolve();
-        localModelsHintLabel.setText("Stored under %s".formatted(compactPath(directory)));
+        updateLocalOperationProgress(false, -1);
     }
 
     private void updateModelDirectoryControls(SpeechToTextSettingsSnapshot snapshot) {
@@ -831,6 +1048,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
     }
 
     private void updateVoskLocalModels(SpeechToTextSettingsSnapshot snapshot) {
+        String preferredModelId = selectedVoskRowId();
         VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
         voskRows = List.copyOf(voskSnapshot.rows());
         updatingLocalModels = true;
@@ -851,13 +1069,13 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         } finally {
             updatingLocalModels = false;
         }
-        localModelsHintLabel.setText(voskSnapshot.operationInProgress()
-                ? voskSnapshot.operationStatus()
-                : "Vosk root: %s".formatted(compactPath(voskSnapshot.modelRoot())));
+        selectPreferredVoskRow(preferredModelId);
+        updateLocalOperationProgress(voskSnapshot.operationInProgress(), operationPercent(voskSnapshot.operationStatus()));
         updateLocalModelButtons(snapshot);
     }
 
     private void updateWhisperLocalModels(SpeechToTextSettingsSnapshot snapshot) {
+        String preferredModelId = selectedWhisperRowId();
         WhisperModelManagementSnapshot whisperSnapshot = whisperModelManagementService.snapshot();
         whisperRows = List.copyOf(whisperSnapshot.rows());
         updatingLocalModels = true;
@@ -877,18 +1095,116 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         } finally {
             updatingLocalModels = false;
         }
-        localModelsHintLabel.setText(whisperSnapshot.operationInProgress()
-                ? operationStatus(whisperSnapshot)
-                : "Whisper.cpp root: %s".formatted(compactPath(whisperSnapshot.modelRoot())));
+        selectPreferredWhisperRow(preferredModelId);
+        updateLocalOperationProgress(whisperSnapshot.operationInProgress(), operationPercent(whisperSnapshot));
         updateLocalModelButtons(snapshot);
     }
 
-    private String operationStatus(WhisperModelManagementSnapshot snapshot) {
-        if (snapshot.totalBytes() <= 0) {
-            return snapshot.operationStatus();
+    private String selectedVoskRowId() {
+        VoskLocalModelRow selected = selectedVoskRow();
+        return selected == null ? null : selected.id();
+    }
+
+    private String selectedWhisperRowId() {
+        WhisperLocalModelRow selected = selectedWhisperRow();
+        return selected == null ? null : selected.id();
+    }
+
+    private void selectPreferredVoskRow(String preferredModelId) {
+        selectPreferredLocalModelRow(preferredModelId, voskRows.stream()
+                .filter(VoskLocalModelRow::selected)
+                .map(VoskLocalModelRow::id)
+                .findFirst()
+                .orElse(null));
+    }
+
+    private void selectPreferredWhisperRow(String preferredModelId) {
+        selectPreferredLocalModelRow(preferredModelId, whisperRows.stream()
+                .filter(WhisperLocalModelRow::selected)
+                .map(WhisperLocalModelRow::id)
+                .findFirst()
+                .orElse(null));
+    }
+
+    private void selectPreferredLocalModelRow(String preferredModelId, String fallbackModelId) {
+        if (localModelsTable == null) {
+            return;
         }
-        long percent = snapshot.bytesDownloaded() <= 0 ? 0 : Math.min(100, snapshot.bytesDownloaded() * 100 / snapshot.totalBytes());
-        return "%s (%d%%)".formatted(StringUtils.defaultIfBlank(snapshot.operationStatus(), "Downloading Whisper.cpp model..."), percent);
+        int modelRow = localModelRowById(preferredModelId);
+        if (modelRow < 0) {
+            modelRow = localModelRowById(fallbackModelId);
+        }
+        if (modelRow < 0) {
+            return;
+        }
+        int viewRow = localModelsTable.convertRowIndexToView(modelRow);
+        localModelsTable.getSelectionModel().setSelectionInterval(viewRow, viewRow);
+    }
+
+    private int localModelRowById(String modelId) {
+        if (StringUtils.isBlank(modelId)) {
+            return -1;
+        }
+        SpeechToTextSettingsSnapshot snapshot = settings.resolve();
+        if (isVosk(snapshot)) {
+            for (int row = 0; row < voskRows.size(); row++) {
+                if (Objects.equals(voskRows.get(row).id(), modelId)) {
+                    return row;
+                }
+            }
+        }
+        if (isWhisper(snapshot)) {
+            for (int row = 0; row < whisperRows.size(); row++) {
+                if (Objects.equals(whisperRows.get(row).id(), modelId)) {
+                    return row;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private void updateLocalOperationProgress(boolean operationInProgress, long percent) {
+        if (localModelProgressBar == null) {
+            return;
+        }
+        localModelProgressBar.setVisible(operationInProgress);
+        if (!operationInProgress) {
+            localModelProgressBar.setIndeterminate(false);
+            localModelProgressBar.setStringPainted(false);
+            localModelProgressBar.setValue(0);
+            localModelProgressBar.setString("");
+            localModelProgressBar.revalidate();
+            localModelProgressBar.repaint();
+            return;
+        }
+        boolean determinate = percent >= 0;
+        localModelProgressBar.setIndeterminate(!determinate);
+        localModelProgressBar.setStringPainted(determinate);
+        if (determinate) {
+            int value = (int) Math.max(0, Math.min(100, percent));
+            localModelProgressBar.setValue(value);
+            localModelProgressBar.setString("%d%%".formatted(value));
+        }
+        localModelProgressBar.revalidate();
+        localModelProgressBar.repaint();
+    }
+
+    private long operationPercent(WhisperModelManagementSnapshot snapshot) {
+        if (snapshot.totalBytes() <= 0) {
+            return -1;
+        }
+        return snapshot.bytesDownloaded() <= 0 ? 0 : Math.min(100, snapshot.bytesDownloaded() * 100 / snapshot.totalBytes());
+    }
+
+    private long operationPercent(String status) {
+        if (StringUtils.isBlank(status)) {
+            return -1;
+        }
+        Matcher matcher = PERCENT_PATTERN.matcher(status);
+        if (!matcher.find()) {
+            return -1;
+        }
+        return Math.min(100, Long.parseLong(matcher.group(1)));
     }
 
     private void updateLocalModelRows(SpeechToTextSettingsSnapshot snapshot, List<SpeechToTextCatalogItem> models) {
@@ -1061,6 +1377,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         SpeechToTextCatalogItem selected = selectedLocalModel();
         boolean enabled = localModelsVisible(snapshot) && selected != null;
+        downloadModelButton.setText("Download");
         downloadModelButton.setEnabled(enabled && snapshot.available());
         deleteModelButton.setEnabled(enabled);
         importModelButton.setEnabled(false);
@@ -1092,7 +1409,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 return;
             }
             voskOperationSuccessMessage = "Downloaded %s".formatted(selected.label());
-            setStatusInfo("Downloading %s...".formatted(selected.label()));
             try {
                 voskModelManagementService.downloadAsync(selected.id());
             } catch (Exception e) {
@@ -1116,7 +1432,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 return;
             }
             whisperOperationSuccessMessage = "Downloaded %s".formatted(selected.label());
-            setStatusInfo("Downloading %s...".formatted(selected.label()));
             try {
                 whisperModelManagementService.downloadAsync(selected.id());
             } catch (Exception e) {
@@ -1228,7 +1543,22 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         }
         String message = "Download %s (%s) to %s? Larger Whisper.cpp models can require substantial RAM and CPU."
                 .formatted(row.label(), row.sizeLabel(), compactPath(whisperModelManagementService.snapshot().modelRoot()));
-        return JOptionPane.showConfirmDialog(this, message, "Download Whisper.cpp model", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION;
+        JOptionPane pane = new JOptionPane(message, JOptionPane.WARNING_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setUndecorated(true);
+        dialog.setContentPane(pane);
+        pane.addPropertyChangeListener(event -> {
+            if (dialog.isVisible()
+                    && event.getSource() == pane
+                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
+                dialog.setVisible(false);
+            }
+        });
+        ModalDialogSupport.prepareCompactModal(dialog, this);
+        dialog.setVisible(true);
+        dialog.dispose();
+        Object value = pane.getValue();
+        return value instanceof Integer selectedValue && selectedValue == JOptionPane.OK_OPTION;
     }
 
     private String compactPath(Path path) {
@@ -1307,25 +1637,66 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
         boolean localBusy = voskBusy || whisperBusy;
         modelComboBox.setEnabled(snapshot.enabled() && ((!isVosk(snapshot) && !isWhisper(snapshot)) || modelComboBox.getItemCount() > 0 && !localBusy));
         refreshButton.setEnabled(snapshot.enabled() && ((isVosk(snapshot) || isWhisper(snapshot)) ? !localBusy : snapshot.available()));
-        if (!snapshot.enabled()) {
-            helperLabel.setText("Speech to Text is off.");
-        } else if (isVosk(snapshot)) {
-            helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), "Download or add a Vosk model to enable transcription."));
-        } else if (isWhisper(snapshot)) {
-            helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), "Transcription runs locally with Whisper.cpp after a model is downloaded. No recorded audio is uploaded."));
-        } else if (!snapshot.available()) {
-            helperLabel.setText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
-        } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            helperLabel.setText("Recorded audio is sent to Groq for transcription. No API key is stored by Chat4J.");
-        } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            helperLabel.setText("Recorded audio is sent to ElevenLabs for transcription. No API key is stored by Chat4J.");
-        } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            helperLabel.setText("Recorded audio is sent to Deepgram for transcription. No API key is stored by Chat4J.");
-        } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            helperLabel.setText("Recorded audio is sent to AssemblyAI for transcription. No API key is stored by Chat4J.");
-        } else {
-            helperLabel.setText(snapshot.provider().availableMessage());
+        boolean localProvider = isVosk(snapshot) || isWhisper(snapshot);
+        helperPanel.setVisible(!localProvider);
+        if (localProvider) {
+            return;
         }
+        if (!snapshot.enabled()) {
+            setHelperText("Speech to Text is off.");
+        } else if (!snapshot.available()) {
+            setHelperText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
+        } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            setHelperText("%s Recorded audio is sent to Groq for transcription.".formatted(snapshot.provider().availableMessage()));
+        } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            setHelperText("%s Recorded audio is sent to ElevenLabs for transcription.".formatted(snapshot.provider().availableMessage()));
+        } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            setHelperText("%s Recorded audio is sent to Deepgram for transcription.".formatted(snapshot.provider().availableMessage()));
+        } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
+            setHelperText("%s Recorded audio is sent to AssemblyAI for transcription.".formatted(snapshot.provider().availableMessage()));
+        } else {
+            setHelperText(snapshot.provider().availableMessage());
+        }
+    }
+
+    private void setHelperText(String message) {
+        String text = StringUtils.defaultString(message);
+        helperLabel.setText(text);
+        int rows = estimatedHelperRows(text);
+        helperLabel.setRows(rows);
+        int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
+        helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
+        helperPanel.revalidate();
+        helperPanel.repaint();
+    }
+
+    private int estimatedHelperRows(String text) {
+        FontMetrics metrics = helperLabel.getFontMetrics(helperLabel.getFont());
+        int textWidth = metrics.stringWidth(StringUtils.defaultString(text));
+        return Math.max(1, (int) Math.ceil(textWidth / (double) Math.max(1, FIELD_WIDTH - 24)));
+    }
+
+    private JPanel createHelperInfoPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(true);
+        panel.setBorder(infoBoxBorder());
+        panel.setBackground(infoBoxBackground());
+        helperLabel = createWrappingHelperTextArea();
+        panel.add(helperLabel, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JTextArea createWrappingHelperTextArea() {
+        JTextArea textArea = new JTextArea(" ");
+        textArea.setEditable(false);
+        textArea.setFocusable(false);
+        textArea.setOpaque(false);
+        textArea.setLineWrap(true);
+        textArea.setWrapStyleWord(true);
+        textArea.setBorder(null);
+        Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
+        textArea.setForeground(messageBoxForeground());
+        return textArea;
     }
 
     private ProviderOption findProviderOption(String providerId) {
@@ -1379,6 +1750,21 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements PendingS
                 refreshControlsFromSettings(false);
             }
         }));
+    }
+
+    private <T> CompletableFuture<T> onEventDispatchThread(Supplier<T> action) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return CompletableFuture.completedFuture(action.get());
+        }
+        CompletableFuture<T> result = new CompletableFuture<>();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                result.complete(action.get());
+            } catch (Throwable t) {
+                result.completeExceptionally(t);
+            }
+        });
+        return result;
     }
 
     private void runWhenActiveOnEventDispatchThread(Runnable action) {

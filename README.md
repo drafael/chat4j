@@ -116,7 +116,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 
 ## Supported providers
 
-### API-key providers (env vars)
+### API-key providers (Settings token vault or env vars)
 
 - `ANTHROPIC_API_KEY`
 - `GEMINI_API_KEY` (alias: `GOOGLEAI_API_KEY`)
@@ -125,7 +125,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
 - `ELEVENLABS_API_KEY` (speech-to-text/text-to-speech)
-- `DEEPGRAM_API_KEY` (speech-to-text)
+- `DEEPGRAM_API_KEY` (speech-to-text/text-to-speech)
 - `ASSEMBLYAI_API_KEY` (speech-to-text)
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
@@ -133,9 +133,11 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 
 Whisper.cpp local speech-to-text does not require an API key after downloading a local model.
 
-### Setting environment variables
+### API tokens
 
-Replace `sk-...` with your real API key. Restart Chat4J after changing environment variables.
+API-key providers can use tokens saved in **Settings** or environment variables. A token saved in Settings is stored in Chat4J's app-local encrypted token vault and takes precedence over environment variables. This local encryption protects against casual file browsing, but it is not OS keychain storage; anyone who can read both Chat4J secret files can decrypt saved tokens.
+
+Environment variables remain supported. Replace `sk-...` with your real API key. Restart Chat4J after changing environment variables.
 
 #### macOS / Linux (bash or zsh)
 

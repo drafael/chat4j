@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import org.apache.commons.lang3.StringUtils;
 

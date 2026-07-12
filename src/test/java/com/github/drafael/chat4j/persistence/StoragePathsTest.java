@@ -1,4 +1,4 @@
-package com.github.drafael.chat4j.persistence.db;
+package com.github.drafael.chat4j.persistence;
 
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;

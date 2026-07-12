@@ -47,7 +47,8 @@ This document describes the provider architecture under `src/main/java/com/githu
 ## Credential Resolution
 
 - Credential aliases are supported using `A|B|C` env-var expressions.
-- Resolution is ordered (first configured alias wins).
+- Runtime API-key resolution checks saved UI token overrides first, then process environment, shell-loaded environment, and finally provider fallback keys.
+- Raw environment helpers such as `CredentialResolver.getenv(...)` and `mergedEnvironment()` remain environment-only and do not expose saved vault tokens.
 - Google AI uses:
   - `GEMINI_API_KEY`
   - fallback `GOOGLEAI_API_KEY`
@@ -90,4 +91,4 @@ For non-OpenAI protocols:
 - `provider/modules/AnthropicModuleTest` validates base URL normalization.
 - `ProviderRegistryTest` covers runtime policy and factory behavior.
 - `ProviderCatalogTest` validates dynamic model fetching behavior.
-- `CredentialResolverTest` validates env-var alias precedence.
+- `CredentialResolverTest` validates saved-token precedence and env-var alias precedence.

@@ -6,6 +6,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
+import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
@@ -33,6 +34,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +44,7 @@ import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
-public class ProvidersPanel extends AbstractSettingsPanel {
+public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
     private static final CopilotAuthResolver COPILOT_AUTH_RESOLVER = new CopilotAuthResolver();
     private static final CodexAuthResolver CODEX_AUTH_RESOLVER = new CodexAuthResolver();
@@ -54,8 +56,8 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private static final DateTimeFormatter DIAGNOSTICS_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
     private static final String CHAT4J_OAUTH_SOURCE = "Chat4J OAuth";
-    private static final int DETAIL_LABEL_COLUMN_WIDTH = 156;
-    private static final int DETAIL_COLUMN_GAP = 12;
+    private static final int DETAIL_LABEL_COLUMN_WIDTH = 100;
+    private static final int DETAIL_COLUMN_GAP = 4;
 
     private final CardLayout detailCardLayout = new CardLayout();
     private final JPanel detailPanel = new JPanel(detailCardLayout);
@@ -108,6 +110,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     private final Map<String, CopilotAuthAvailabilitySnapshot> copilotAuthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, CodexAuthAvailabilitySnapshot> codexAuthAvailabilityByProvider = new ConcurrentHashMap<>();
     private final JList<String> providerList;
+    private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final SettingsCredentialChangeListener credentialChangeListener;
+    private final List<ApiTokenFieldPanel> tokenFields = new CopyOnWriteArrayList<>();
+    private volatile String lastSaveError = "";
 
     static {
         PROVIDERS.put("Anthropic", ProviderInfo.envVar("ANTHROPIC_API_KEY", "https://api.anthropic.com"));
@@ -126,7 +132,19 @@ public class ProvidersPanel extends AbstractSettingsPanel {
     }
 
     public ProvidersPanel(SettingsRepository settingsRepo) {
+        this(settingsRepo, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
+    }
+
+    public ProvidersPanel(
+            SettingsRepository settingsRepo,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener
+    ) {
         super(settingsRepo);
+        this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialChangeListener = credentialChangeListener == null
+                ? SettingsCredentialChangeListener.NO_OP
+                : credentialChangeListener;
 
         PROVIDER_BASE_ICON_CACHE.clear();
         PROVIDER_STATUS_ICON_CACHE.clear();
@@ -193,6 +211,44 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         providerList.setSelectedIndex(0);
     }
 
+    @Override
+    public CompletableFuture<Boolean> savePendingChangesAsync() {
+        String conflict = tokenFieldRegistry.conflictMessage();
+        if (StringUtils.isNotBlank(conflict)) {
+            lastSaveError = conflict;
+            return CompletableFuture.completedFuture(false);
+        }
+        List<CompletableFuture<Boolean>> saveFutures = tokenFields.stream()
+                .filter(ApiTokenFieldPanel::dirty)
+                .map(ApiTokenFieldPanel::savePendingChangesAsync)
+                .toList();
+        CompletableFuture<?>[] saves = saveFutures.toArray(CompletableFuture[]::new);
+        if (saves.length == 0) {
+            lastSaveError = "";
+            return CompletableFuture.completedFuture(true);
+        }
+        return CompletableFuture.allOf(saves).thenApply(ignored -> {
+            boolean allSaved = saveFutures.stream().allMatch(CompletableFuture::join);
+            String error = tokenFields.stream()
+                    .map(ApiTokenFieldPanel::lastSaveError)
+                    .filter(StringUtils::isNotBlank)
+                    .findFirst()
+                    .orElse(allSaved ? "" : "One or more API tokens could not be saved.");
+            lastSaveError = error;
+            return allSaved && StringUtils.isBlank(error);
+        });
+    }
+
+    @Override
+    public String lastSaveError() {
+        return lastSaveError;
+    }
+
+    @Override
+    public String settingsSectionName() {
+        return "Provider settings";
+    }
+
     private JPanel createDetailPanel(String name, ProviderInfo info) {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBorder(new EmptyBorder(6, 14, 6, 6));
@@ -222,6 +278,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 && LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
 
         row = addSectionHeader(panel, gbc, row, "Connection");
+        applyDetailRowInsets(gbc);
 
         gbc.gridx = 0;
         gbc.gridy = row;
@@ -233,13 +290,36 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         JLabel statusLabel = createStatusLabel(name, info, configuredBaseUrl, localReachable);
         panel.add(statusLabel, gbc);
 
-        if (shouldShowMissingApiKeyInfo(info)) {
+        JComponent missingApiKeyInfoPanel = shouldShowMissingApiKeyInfo(info)
+                ? createMissingApiKeyInfoPanel(name, info)
+                : null;
+
+        if (shouldShowApiTokenField(info)) {
+            row++;
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.weightx = 0;
+            panel.add(label("API token"), gbc);
+
+            gbc.gridx = 1;
+            gbc.weightx = 1;
+            ApiTokenFieldPanel tokenField = withPreferredWidth(new ApiTokenFieldPanel(
+                    info.envVar(),
+                    tokenFieldRegistry,
+                    credentialChangeListener,
+                    () -> refreshProviderCredentialUi(statusLabel, name, info, missingApiKeyInfoPanel)
+            ), 420);
+            tokenFields.add(tokenField);
+            panel.add(tokenField, gbc);
+        }
+
+        if (missingApiKeyInfoPanel != null) {
             row++;
             gbc.gridx = 0;
             gbc.gridy = row;
             gbc.gridwidth = 2;
             gbc.weightx = 1;
-            panel.add(createMissingApiKeyInfoPanel(name, info), gbc);
+            panel.add(missingApiKeyInfoPanel, gbc);
             gbc.gridwidth = 1;
         }
 
@@ -282,6 +362,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
             row = addSectionHeader(panel, gbc, row + 1, "Authentication");
+            applyDetailRowInsets(gbc);
 
             gbc.gridx = 0;
             gbc.gridy = row;
@@ -302,6 +383,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         if ("OpenRouter".equals(name)) {
             row = addSectionHeader(panel, gbc, row + 1, "API Usage");
+            applyDetailRowInsets(gbc);
 
             gbc.gridx = 0;
             gbc.gridy = row;
@@ -344,48 +426,82 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             return status;
         }
 
-        String configuredEnvVar = CredentialResolver.firstConfiguredEnvVar(info.envVar());
-        if (configuredEnvVar != null) {
-            status.setText("\u2713 %s detected".formatted(configuredEnvVar));
-            status.setForeground(new Color(0, 150, 0));
-        } else {
-            status.setText("\u2717 %s not set".formatted(formatEnvVarNames(info.envVar())));
-            status.setForeground(new Color(200, 50, 50));
-        }
+        applyApiCredentialStatus(status, info);
         return status;
+    }
+
+    void refreshProviderCredentialUi(JLabel statusLabel, String providerName, ProviderInfo info, JComponent missingApiKeyInfoPanel) {
+        applyApiCredentialStatus(statusLabel, info);
+        if (missingApiKeyInfoPanel != null) {
+            missingApiKeyInfoPanel.setVisible(shouldShowMissingApiKeyInfo(info));
+            Container parent = missingApiKeyInfoPanel.getParent();
+            if (parent != null) {
+                parent.revalidate();
+                parent.repaint();
+            }
+        }
+        providerList.repaint();
+        if ("OpenRouter".equals(providerName)) {
+            setStatusInfo("OpenRouter token updated. Refresh usage to load the latest account data.");
+        }
+    }
+
+    private void applyApiCredentialStatus(JLabel status, ProviderInfo info) {
+        ApiCredentialStatus credentialStatus = CredentialResolver.resolveCredentialStatus(info.envVar(), null);
+        switch (credentialStatus.source()) {
+            case SAVED_TOKEN -> {
+                status.setText("\u2713 Saved token configured");
+                status.setForeground(successForeground());
+            }
+            case PROCESS_ENV -> {
+                status.setText("\u2713 %s from environment".formatted(credentialStatus.credentialId()));
+                status.setForeground(successForeground());
+            }
+            case SHELL_ENV -> {
+                status.setText("\u2713 %s from shell environment".formatted(credentialStatus.credentialId()));
+                status.setForeground(successForeground());
+            }
+            case ERROR -> {
+                status.setText("\u26A0 Could not read saved token");
+                status.setForeground(warningForeground());
+            }
+            default -> {
+                status.setText("\u2717 %s not set".formatted(formatEnvVarNames(info.envVar())));
+                status.setForeground(errorForeground());
+            }
+        }
     }
 
     private void applyLocalStatus(JLabel status, String configuredBaseUrl, boolean reachable) {
         if (reachable) {
             status.setText("\u2713 Running at %s".formatted(configuredBaseUrl));
-            status.setForeground(new Color(0, 150, 0));
+            status.setForeground(successForeground());
         } else {
             status.setText("\u2717 Not running at %s".formatted(configuredBaseUrl));
-            status.setForeground(new Color(200, 50, 50));
+            status.setForeground(errorForeground());
         }
     }
 
+    private boolean shouldShowApiTokenField(ProviderInfo info) {
+        return info.authType() == AuthType.ENV_VAR && StringUtils.isNotBlank(info.envVar());
+    }
+
     private boolean shouldShowMissingApiKeyInfo(ProviderInfo info) {
-        if (info.authType() != AuthType.ENV_VAR || info.envVar() == null) {
+        if (!shouldShowApiTokenField(info)) {
             return false;
         }
-        return CredentialResolver.firstConfiguredEnvVar(info.envVar()) == null;
+        return !CredentialResolver.hasRequiredCredentials(info.envVar());
     }
 
     private JComponent createMissingApiKeyInfoPanel(String providerName, ProviderInfo info) {
         JPanel infoPanel = new JPanel(new BorderLayout(0, 8));
         infoPanel.setOpaque(true);
-        infoPanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(229, 194, 90)),
-                new EmptyBorder(10, 12, 10, 12)
-        ));
+        infoPanel.setBorder(warningBoxBorder());
+        infoPanel.setBackground(warningBoxBackground());
 
-        Color warningBackground = UIManager.getColor("Component.warning.background");
-        infoPanel.setBackground(warningBackground != null ? warningBackground : new Color(255, 248, 225));
-
-        JLabel header = new JLabel("\u26A0 API key setup required");
+        JLabel header = new JLabel("\u26A0 API token setup required");
         Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
-        header.setForeground(new Color(214, 117, 0));
+        header.setForeground(warningBoxTitleForeground());
         infoPanel.add(header, BorderLayout.NORTH);
 
         String primaryEnvVar = CredentialResolver.envVarCandidates(info.envVar()).stream()
@@ -394,13 +510,14 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         String acceptedEnvVars = formatEnvVarNames(info.envVar());
 
         JTextArea instructions = new JTextArea("""
-                No API key environment variable was detected for %s.
+                No API token is configured for %s.
 
                 How to set it up:
                 1) Create an API key in your provider dashboard.
-                2) Add it to your shell profile, for example:
+                2) Paste it into the API token field above; Chat4J saves it when the field loses focus.
+                   Or add it to your shell profile:
                    export %s=<your-api-key>
-                3) Restart Chat4J after updating your shell profile.
+                3) Restart Chat4J only if you choose the shell-profile option.
 
                 Accepted env vars: %s
                 """.formatted(providerName, primaryEnvVar, acceptedEnvVars));
@@ -410,7 +527,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         instructions.setOpaque(false);
         instructions.setBorder(null);
         Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
-        instructions.setForeground(readablePanelTextColor(infoPanel.getBackground()));
+        instructions.setForeground(messageBoxForeground());
         infoPanel.add(instructions, BorderLayout.CENTER);
 
         String portalUrl = API_KEY_PORTAL_URLS.get(providerName);
@@ -444,17 +561,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         JPanel infoPanel = new JPanel(new BorderLayout(0, 8));
         infoPanel.setOpaque(true);
-        infoPanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(124, 179, 255)),
-                new EmptyBorder(10, 12, 10, 12)
-        ));
-
-        Color infoBackground = UIManager.getColor("Component.info.background");
-        infoPanel.setBackground(infoBackground != null ? infoBackground : new Color(232, 245, 253));
+        infoPanel.setBorder(infoBoxBorder());
+        infoPanel.setBackground(infoBoxBackground());
 
         JLabel header = new JLabel("\u2139 Local server setup");
         Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
-        header.setForeground(new Color(25, 118, 210));
+        header.setForeground(infoBoxTitleForeground());
         infoPanel.add(header, BorderLayout.NORTH);
 
         JTextArea instructions = new JTextArea("""
@@ -471,7 +583,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         instructions.setOpaque(false);
         instructions.setBorder(null);
         Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
-        instructions.setForeground(readablePanelTextColor(infoPanel.getBackground()));
+        instructions.setForeground(messageBoxForeground());
         infoPanel.add(instructions, BorderLayout.CENTER);
 
         if (StringUtils.isNotBlank(localHelp.docsUrl())) {
@@ -485,20 +597,6 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         }
 
         return infoPanel;
-    }
-
-    private static Color readablePanelTextColor(Color background) {
-        Color fallback = UIManager.getColor("Label.foreground");
-        if (background == null) {
-            return fallback != null ? fallback : new Color(60, 60, 60);
-        }
-
-        double luminance = (0.2126 * background.getRed() + 0.7152 * background.getGreen() + 0.0722 * background.getBlue()) / 255.0;
-        if (luminance > 0.55) {
-            return new Color(74, 74, 74);
-        }
-
-        return fallback != null ? fallback : Color.WHITE;
     }
 
     private void openInBrowser(String url) {
@@ -577,7 +675,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             authButton.setEnabled(false);
             authButton.setText("Working...");
             statusLabel.setText("Preparing OpenAI Codex login...");
-            statusLabel.setForeground(new Color(214, 117, 0));
+            statusLabel.setForeground(warningForeground());
 
             Thread.startVirtualThread(() -> {
                 CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
@@ -695,7 +793,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 ? "%s Waiting for browser callback. You can paste manually if it is blocked.".formatted(callbackWait.message())
                 : callbackWait.message();
         JLabel callbackStatus = new JLabel(callbackStatusText);
-        callbackStatus.setForeground(new Color(214, 117, 0));
+        callbackStatus.setForeground(warningForeground());
 
         JButton openBrowserButton = new JButton("Open browser");
         JButton copyLoginUrlButton = new JButton("Copy login URL");
@@ -774,7 +872,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
                 .formatted(challenge.userCode(), challenge.verificationUri());
         statusLabel.setText(message);
-        statusLabel.setForeground(new Color(214, 117, 0));
+        statusLabel.setForeground(warningForeground());
         setStatusInfo(message);
 
         JDialog dialog = new JDialog(
@@ -867,10 +965,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         authButton.setOpaque(true);
         if (chat4jSession) {
+            Color destructiveBackground = errorForeground();
             authButton.setText("Log out");
             authButton.setEnabled(true);
-            authButton.setForeground(Color.WHITE);
-            authButton.setBackground(new Color(229, 57, 53));
+            authButton.setForeground(readableForegroundOn(destructiveBackground));
+            authButton.setBackground(destructiveBackground);
             authButton.setToolTipText("Sign out Chat4J OAuth session");
         } else if (!oauthClientConfigured) {
             authButton.setText("Configure OAuth App");
@@ -881,7 +980,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(COPILOT_AUTH_RESOLVER.oauthClientConfigurationHint());
-                statusLabel.setForeground(new Color(214, 117, 0));
+                statusLabel.setForeground(warningForeground());
             }
         } else {
             authButton.setText("Login");
@@ -893,7 +992,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         if (StringUtils.isNotBlank(failureMessage)) {
             statusLabel.setText(failureMessage);
-            statusLabel.setForeground(new Color(200, 50, 50));
+            statusLabel.setForeground(errorForeground());
         }
 
         providerList.repaint();
@@ -914,10 +1013,11 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         authButton.setOpaque(true);
         if (chat4jSession) {
+            Color destructiveBackground = errorForeground();
             authButton.setText("Log out");
             authButton.setEnabled(true);
-            authButton.setForeground(Color.WHITE);
-            authButton.setBackground(new Color(229, 57, 53));
+            authButton.setForeground(readableForegroundOn(destructiveBackground));
+            authButton.setBackground(destructiveBackground);
             authButton.setToolTipText("Sign out Chat4J OAuth session");
         } else if (!oauthClientConfigured) {
             authButton.setText("Configure OAuth App");
@@ -928,7 +1028,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
-                statusLabel.setForeground(new Color(214, 117, 0));
+                statusLabel.setForeground(warningForeground());
             }
         } else {
             authButton.setText("Login");
@@ -940,7 +1040,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
         if (StringUtils.isNotBlank(failureMessage)) {
             statusLabel.setText(failureMessage);
-            statusLabel.setForeground(new Color(200, 50, 50));
+            statusLabel.setForeground(errorForeground());
         }
 
         providerList.repaint();
@@ -948,12 +1048,12 @@ public class ProvidersPanel extends AbstractSettingsPanel {
 
     private void applyCopilotAuthStatus(JLabel statusLabel, CopilotAuthResolver.CopilotAuthStatus status) {
         statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
-        statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
+        statusLabel.setForeground(status.authorized() ? successForeground() : errorForeground());
     }
 
     private void applyCodexAuthStatus(JLabel statusLabel, CodexAuthResolver.CodexAuthStatus status) {
         statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
-        statusLabel.setForeground(status.authorized() ? new Color(0, 150, 0) : new Color(200, 50, 50));
+        statusLabel.setForeground(status.authorized() ? successForeground() : errorForeground());
     }
 
     private JPanel createOpenRouterUsagePanel(ProviderInfo info) {
@@ -988,7 +1088,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         accountRow.add(limitLabel, BorderLayout.EAST);
 
         JLabel noteLabel = new JLabel("");
-        noteLabel.setForeground(new Color(214, 117, 0));
+        noteLabel.setForeground(warningForeground());
 
         JButton refreshButton = new JButton("Refresh usage");
         refreshButton.addActionListener(e -> refreshOpenRouterUsage(
@@ -1150,7 +1250,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
             balanceLabel.setText("Balance: n/a");
             limitLabel.setText("Limit: n/a");
             usageBar.setValue(0);
-            noteLabel.setForeground(new Color(200, 50, 50));
+            noteLabel.setForeground(errorForeground());
             noteLabel.setText(snapshot.errorMessage());
             return;
         }
@@ -1177,7 +1277,7 @@ public class ProvidersPanel extends AbstractSettingsPanel {
                 : "Limit: %s".formatted(formatUsd(snapshot.limit())));
 
         String note = snapshot.note();
-        noteLabel.setForeground(new Color(214, 117, 0));
+        noteLabel.setForeground(warningForeground());
         noteLabel.setText(StringUtils.isBlank(note) ? "" : note);
     }
 
@@ -1362,6 +1462,10 @@ public class ProvidersPanel extends AbstractSettingsPanel {
         row.setOpaque(false);
         row.add(component);
         return row;
+    }
+
+    private void applyDetailRowInsets(GridBagConstraints gbc) {
+        gbc.insets = new Insets(4, 0, 4, DETAIL_COLUMN_GAP);
     }
 
     private JLabel label(String text) {

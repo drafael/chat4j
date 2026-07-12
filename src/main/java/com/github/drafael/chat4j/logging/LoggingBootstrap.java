@@ -2,7 +2,7 @@ package com.github.drafael.chat4j.logging;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;

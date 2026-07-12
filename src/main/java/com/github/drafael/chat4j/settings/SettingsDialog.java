@@ -3,7 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.persistence.db.StoragePaths;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
@@ -15,9 +15,14 @@ import java.beans.PropertyChangeListener;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.function.Function;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
@@ -38,6 +43,7 @@ public class SettingsDialog extends JDialog {
     private final WhisperModelManagementService whisperModelManagementService;
     private final boolean ownsVoskModelManagementService;
     private final boolean ownsWhisperModelManagementService;
+    private final SettingsCredentialChangeListener credentialChangeListener;
 
     public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
         this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
@@ -104,7 +110,20 @@ public class SettingsDialog extends JDialog {
             @NonNull VoskModelManagementService voskModelManagementService,
             @NonNull WhisperModelManagementService whisperModelManagementService
     ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, false, false);
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, SettingsCredentialChangeListener.NO_OP);
+    }
+
+    public SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull VoskModelManagementService voskModelManagementService,
+            @NonNull WhisperModelManagementService whisperModelManagementService,
+            @NonNull SettingsCredentialChangeListener credentialChangeListener
+    ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, false, false, credentialChangeListener);
     }
 
     private SettingsDialog(
@@ -118,6 +137,22 @@ public class SettingsDialog extends JDialog {
             boolean ownsVoskModelManagementService,
             boolean ownsWhisperModelManagementService
     ) {
+        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService,
+                ownsVoskModelManagementService, ownsWhisperModelManagementService, SettingsCredentialChangeListener.NO_OP);
+    }
+
+    private SettingsDialog(
+            @NonNull Frame owner,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
+            @NonNull Runnable exitAction,
+            @NonNull Path sttModelsDirectory,
+            @NonNull VoskModelManagementService voskModelManagementService,
+            @NonNull WhisperModelManagementService whisperModelManagementService,
+            boolean ownsVoskModelManagementService,
+            boolean ownsWhisperModelManagementService,
+            @NonNull SettingsCredentialChangeListener credentialChangeListener
+    ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
         this.sttModelsDirectory = sttModelsDirectory;
@@ -125,6 +160,7 @@ public class SettingsDialog extends JDialog {
         this.whisperModelManagementService = whisperModelManagementService;
         this.ownsVoskModelManagementService = ownsVoskModelManagementService;
         this.ownsWhisperModelManagementService = ownsWhisperModelManagementService;
+        this.credentialChangeListener = credentialChangeListener;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -225,12 +261,13 @@ public class SettingsDialog extends JDialog {
     }
 
     private List<SettingsSection> createSections(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
+        ApiTokenFieldRegistry tokenFieldRegistry = new ApiTokenFieldRegistry();
         return List.of(
                 new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo, exitAction)),
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
-                new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo)),
-                new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo)),
-                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService, whisperModelManagementService)),
+                new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo, tokenFieldRegistry, credentialChangeListener)),
+                new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo, tokenFieldRegistry, credentialChangeListener)),
+                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, tokenFieldRegistry, credentialChangeListener)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
@@ -291,7 +328,19 @@ public class SettingsDialog extends JDialog {
 
     @Override
     public void dispose() {
-        SavePendingResult saveResult = savePendingPanelChangesResult();
+        if (savingBeforeDispose) {
+            return;
+        }
+        savingBeforeDispose = true;
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        savePendingPanelChangesResultAsync()
+                .exceptionally(error -> new SavePendingResult(false, saveErrorMessage(error), "Settings"))
+                .thenAccept(saveResult -> SwingUtilities.invokeLater(() -> finishDisposeAfterSave(saveResult)));
+    }
+
+    private void finishDisposeAfterSave(SavePendingResult saveResult) {
+        setCursor(Cursor.getDefaultCursor());
+        savingBeforeDispose = false;
         if (!saveResult.saved()) {
             JOptionPane.showMessageDialog(
                     this,
@@ -301,26 +350,68 @@ public class SettingsDialog extends JDialog {
             );
             return;
         }
-        super.dispose();
+        SettingsDialog.super.dispose();
     }
 
-    private SavePendingResult savePendingPanelChangesResult() {
-        if (savingBeforeDispose) {
-            return new SavePendingResult(true, "", "Settings");
+    private CompletableFuture<SavePendingResult> savePendingPanelChangesResultAsync() {
+        List<PendingSettingsSaveParticipant> participants = sections.stream()
+                .map(SettingsSection::content)
+                .filter(PendingSettingsSaveParticipant.class::isInstance)
+                .map(PendingSettingsSaveParticipant.class::cast)
+                .toList();
+        return saveParticipantAt(participants, 0);
+    }
+
+    private CompletableFuture<SavePendingResult> saveParticipantAt(List<PendingSettingsSaveParticipant> participants, int index) {
+        if (index >= participants.size()) {
+            return CompletableFuture.completedFuture(new SavePendingResult(true, "", "Settings"));
         }
-        savingBeforeDispose = true;
-        try {
-            return sections.stream()
-                    .map(SettingsSection::content)
-                    .filter(PendingSettingsSaveParticipant.class::isInstance)
-                    .map(PendingSettingsSaveParticipant.class::cast)
-                    .filter(panel -> !panel.savePendingChanges())
-                    .findFirst()
-                    .map(panel -> new SavePendingResult(false, panel.lastSaveError(), panel.settingsSectionName()))
-                    .orElseGet(() -> new SavePendingResult(true, "", "Settings"));
-        } finally {
-            savingBeforeDispose = false;
+        PendingSettingsSaveParticipant participant = participants.get(index);
+        CompletableFuture<Boolean> saved = runOnEdt(() -> participant instanceof AsyncPendingSettingsSaveParticipant asyncParticipant
+                ? asyncParticipant.savePendingChangesAsync()
+                : CompletableFuture.completedFuture(participant.savePendingChanges()))
+                .thenCompose(Function.identity());
+        return saved.handle((success, error) -> {
+                    if (error != null) {
+                        return CompletableFuture.completedFuture(
+                                new SavePendingResult(false, saveErrorMessage(error), participant.settingsSectionName())
+                        );
+                    }
+                    if (success) {
+                        return saveParticipantAt(participants, index + 1);
+                    }
+                    return runOnEdt(() -> CompletableFuture.completedFuture(
+                            new SavePendingResult(false, participant.lastSaveError(), participant.settingsSectionName())
+                    )).thenCompose(Function.identity());
+                })
+                .thenCompose(Function.identity());
+    }
+
+    private String saveErrorMessage(Throwable error) {
+        Throwable unwrapped = error instanceof CompletionException && error.getCause() != null
+                ? error.getCause()
+                : error;
+        String message = unwrapped.getMessage();
+        return StringUtils.isBlank(message)
+                ? unwrapped.getClass().getSimpleName()
+                : message;
+    }
+
+    private <T> CompletableFuture<T> runOnEdt(Callable<T> action) {
+        CompletableFuture<T> result = new CompletableFuture<>();
+        Runnable task = () -> {
+            try {
+                result.complete(action.call());
+            } catch (Exception e) {
+                result.completeExceptionally(e);
+            }
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            task.run();
+        } else {
+            SwingUtilities.invokeLater(task);
         }
+        return result;
     }
 
     private void applyThemeStyles() {

@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
@@ -45,15 +46,25 @@ public class SpeechToTextCatalogStore {
                 .orElse(true);
     }
 
-    public void saveModels(String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
+    public void invalidate(String providerId) {
         SpeechToTextProviderSettings providerSettings = settings(providerId);
         settingsRepo.updateBatch(batch -> {
-            try {
-                batch.put(providerSettings.catalogModelsKey(), OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models));
-                batch.put(providerSettings.catalogUpdatedAtKey(), Instant.now().toString());
-            } catch (Exception e) {
-                throw new IllegalStateException(e);
-            }
+            batch.remove(providerSettings.catalogModelsKey());
+            batch.remove(providerSettings.catalogUpdatedAtKey());
+        });
+        providerSettings.clearModel();
+    }
+
+    public void saveModels(String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
+        saveModelsIf(providerId, models, () -> true);
+    }
+
+    public boolean saveModelsIf(String providerId, List<SpeechToTextCatalogItem> models, BooleanSupplier condition) throws Exception {
+        SpeechToTextProviderSettings providerSettings = settings(providerId);
+        String modelsJson = OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models);
+        return settingsRepo.updateBatchIf(condition, batch -> {
+            batch.put(providerSettings.catalogModelsKey(), modelsJson);
+            batch.put(providerSettings.catalogUpdatedAtKey(), Instant.now().toString());
         });
     }
 

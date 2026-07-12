@@ -1,4 +1,4 @@
-package com.github.drafael.chat4j.persistence.db;
+package com.github.drafael.chat4j.persistence;
 
 import java.nio.file.Path;
 import org.apache.commons.lang3.StringUtils;
@@ -17,6 +17,10 @@ public final class StoragePaths {
 
     private StoragePaths(Path configHome) {
         this.configHome = configHome;
+    }
+
+    public static StoragePaths ofConfigHome(Path configHome) {
+        return new StoragePaths(configHome);
     }
 
     public static StoragePaths defaultPaths() {
@@ -94,6 +98,22 @@ public final class StoragePaths {
 
     public Path settingsFile() {
         return appConfigDirectory().resolve("chat4j.properties");
+    }
+
+    public Path secretsDirectory() {
+        return appConfigDirectory().resolve("secrets");
+    }
+
+    public Path tokenVaultFile() {
+        return secretsDirectory().resolve("token-vault.json");
+    }
+
+    public Path tokenVaultMasterKeyFile() {
+        return secretsDirectory().resolve("master.key");
+    }
+
+    public Path tokenVaultLockFile() {
+        return secretsDirectory().resolve("token-vault.lock");
     }
 
     public Path modelsCacheDirectory() {

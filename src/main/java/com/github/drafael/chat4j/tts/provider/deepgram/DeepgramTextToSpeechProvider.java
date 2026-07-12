@@ -99,11 +99,6 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         return new TextToSpeechAudio(wavBytes(response), "audio/wav", "wav");
     }
 
-    @Override
-    public String availableMessage() {
-        return "Text is sent to Deepgram for speech synthesis. No API key is stored by Chat4J.";
-    }
-
     private List<TextToSpeechCatalogItem> fetchVoiceModels() throws Exception {
         TtsHttpResponse response = get(URI.create("%s/models".formatted(BASE_URL)), authHeaders());
         List<TextToSpeechCatalogItem> voiceModels = new ArrayList<>();
