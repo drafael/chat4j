@@ -299,7 +299,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
                 }
                 SwingUtilities.invokeLater(() -> {
                     if (!removed) {
-                        applyCatalogRefresh(requestId, selection, models, voices, explicit);
+                        applyCatalogRefreshSafely(requestId, selection, models, voices, explicit);
                     }
                 });
             } catch (Exception e) {
@@ -310,6 +310,22 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
                 });
             }
         });
+    }
+
+    private void applyCatalogRefreshSafely(
+            long requestId,
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> models,
+            List<TextToSpeechCatalogItem> voices,
+            boolean explicit
+    ) {
+        try {
+            applyCatalogRefresh(requestId, selection, models, voices, explicit);
+        } catch (Exception e) {
+            if (catalogRefreshCurrent(requestId)) {
+                setStatusError("Could not refresh %s catalogs.".formatted(selection.provider().displayName()));
+            }
+        }
     }
 
     private void applyCatalogRefresh(

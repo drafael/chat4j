@@ -14,6 +14,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -42,7 +44,7 @@ class TextToSpeechPanelTest {
     @DisplayName("Changing the implicit System model persists the provider")
     void onModelSelected_whenSystemProviderImplicit_persistsSystemProvider() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("tts-model-settings.properties"));
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -51,7 +53,7 @@ class TextToSpeechPanelTest {
 
             assertThat(repo.get(TextToSpeechSettings.PROVIDER_KEY)).contains(SystemTextToSpeechProvider.ID);
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -59,7 +61,7 @@ class TextToSpeechPanelTest {
     @DisplayName("Changing the implicit System voice persists the provider")
     void onVoiceSelected_whenSystemProviderImplicit_persistsSystemProvider() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("tts-voice-settings.properties"));
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -68,7 +70,7 @@ class TextToSpeechPanelTest {
 
             assertThat(repo.get(TextToSpeechSettings.PROVIDER_KEY)).contains(SystemTextToSpeechProvider.ID);
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -76,7 +78,7 @@ class TextToSpeechPanelTest {
     @DisplayName("Provider selection save failure reverts controls and reports an error")
     void onProviderSelected_whenSaveFails_revertsProviderSelection() throws Exception {
         var repo = new FailingSettingsRepository(tempDir.resolve("tts-provider-save-failure.properties"));
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -90,7 +92,7 @@ class TextToSpeechPanelTest {
             });
             assertThat(repo.get(TextToSpeechSettings.PROVIDER_KEY)).isEmpty();
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -99,7 +101,7 @@ class TextToSpeechPanelTest {
     void onModelSelected_whenSaveFails_revertsModelSelection() throws Exception {
         var repo = new FailingSettingsRepository(tempDir.resolve("tts-model-save-failure.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -113,7 +115,7 @@ class TextToSpeechPanelTest {
             });
             assertThat(repo.get("chat4j.tts.system.model.id")).isEmpty();
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -122,7 +124,7 @@ class TextToSpeechPanelTest {
     void onVoiceSelected_whenSaveFails_revertsVoiceSelection() throws Exception {
         var repo = new FailingSettingsRepository(tempDir.resolve("tts-voice-save-failure.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -136,7 +138,7 @@ class TextToSpeechPanelTest {
             });
             assertThat(repo.get("chat4j.tts.system.voice.id")).isEmpty();
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -144,7 +146,7 @@ class TextToSpeechPanelTest {
     @DisplayName("Implicit System provider save failure stops model persistence and reports an error")
     void onModelSelected_whenImplicitProviderSaveFails_doesNotSaveModelSelection() throws Exception {
         var repo = new FailingSettingsRepository(tempDir.resolve("tts-implicit-provider-save-failure.properties"));
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -159,7 +161,7 @@ class TextToSpeechPanelTest {
             assertThat(repo.get(TextToSpeechSettings.PROVIDER_KEY)).isEmpty();
             assertThat(repo.get("chat4j.tts.system.model.id")).isEmpty();
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -170,7 +172,7 @@ class TextToSpeechPanelTest {
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "limited-voice");
         repo.failBatch = true;
 
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new LimitedVoiceProvider()))
         );
@@ -181,14 +183,14 @@ class TextToSpeechPanelTest {
             });
             assertThat(repo.get("chat4j.tts.limited-voice.voice.id")).isEmpty();
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
     @Test
     @DisplayName("Pending token save failure uses original token field after rebuild")
     void savePendingChangesAsync_whenTokenFieldRebuiltBeforeFailure_usesOriginalError() throws Exception {
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 new SettingsRepository(tempDir.resolve("tts-token-rebuild.properties")),
                 new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
         );
@@ -200,16 +202,16 @@ class TextToSpeechPanelTest {
         when(originalField.lastSaveError()).thenReturn("original token save failed");
         when(replacementField.lastSaveError()).thenReturn("replacement token save failed");
         try {
-            setField(subject, "tokenField", originalField);
-            CompletableFuture<Boolean> pendingSave = subject.savePendingChangesAsync();
-            setField(subject, "tokenField", replacementField);
+            runOnEdt(() -> setField(subject, "tokenField", originalField));
+            CompletableFuture<Boolean> pendingSave = callOnEdt(subject::savePendingChangesAsync);
+            runOnEdt(() -> setField(subject, "tokenField", replacementField));
 
             save.complete(false);
 
             assertThat(pendingSave.get(2, TimeUnit.SECONDS)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("original token save failed");
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -219,7 +221,7 @@ class TextToSpeechPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("tts-token-catalog-refresh.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "credential-refreshing");
         var provider = new CredentialRefreshingProvider();
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
@@ -243,7 +245,7 @@ class TextToSpeechPanelTest {
             assertThat(repo.get(ttsCatalogVoicesKey(provider.id()), "")).doesNotContain("stale-voice");
         } finally {
             provider.releaseFirst.countDown();
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -253,14 +255,14 @@ class TextToSpeechPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("tts-removed-settings.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "slow");
         var provider = new SlowProvider();
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
         try {
             assertThat(provider.fetchStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
-            SwingUtilities.invokeAndWait(subject::removeNotify);
+            removePanel(subject);
             provider.releaseFetch.countDown();
 
             assertThat(provider.modelsReturned.await(5, TimeUnit.SECONDS)).isTrue();
@@ -272,14 +274,48 @@ class TextToSpeechPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            @SuppressWarnings("unchecked")
-            JComboBox<TextToSpeechCatalogItem> modelComboBox = (JComboBox<TextToSpeechCatalogItem>) fieldValue(
-                    subject,
-                    "modelComboBox"
-            );
-            assertThat(comboItemIds(modelComboBox)).doesNotContain("fetched-model");
+            List<String> modelIds = callOnEdt(() -> {
+                @SuppressWarnings("unchecked")
+                JComboBox<TextToSpeechCatalogItem> modelComboBox = (JComboBox<TextToSpeechCatalogItem>) fieldValue(
+                        subject,
+                        "modelComboBox"
+                );
+                return comboItemIds(modelComboBox);
+            });
+            assertThat(modelIds).doesNotContain("fetched-model");
         } finally {
-            subject.removeNotify();
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Catalog refresh apply read failures report an error without leaking EDT exceptions")
+    void refreshCatalogs_whenSettingsReadFailsDuringApply_reportsRefreshError() throws Exception {
+        var repo = new FailingSettingsRepository(tempDir.resolve("tts-refresh-apply-read-failure.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, "slow");
+        var provider = new SlowProvider();
+        var subject = createPanel(
+                repo,
+                new TextToSpeechProviderRegistry(List.of(provider))
+        );
+        try {
+            assertThat(provider.fetchStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            repo.failGet = true;
+            provider.releaseFetch.countDown();
+
+            assertThat(provider.modelsReturned.await(5, TimeUnit.SECONDS)).isTrue();
+            Thread refreshThread = provider.refreshThread.get();
+            assertThat(refreshThread).isNotNull();
+            refreshThread.join(2_000);
+            assertThat(refreshThread.isAlive()).isFalse();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(callOnEdt(() -> subject.statusLabel().getText())).contains("Could not refresh Slow catalogs.");
+        } finally {
+            repo.failGet = false;
+            provider.releaseFetch.countDown();
+            removePanel(subject);
         }
     }
 
@@ -289,14 +325,14 @@ class TextToSpeechPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("tts-preview-removed-settings.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "preview-failure");
         var provider = new PreviewFailureProvider();
-        var subject = new TextToSpeechPanel(
+        var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
         CountDownLatch edtBlocked = new CountDownLatch(1);
         CountDownLatch releaseEdt = new CountDownLatch(1);
         try {
-            JButton previewButton = (JButton) fieldValue(subject, "previewButton");
+            JButton previewButton = callOnEdt(() -> (JButton) fieldValue(subject, "previewButton"));
             SwingUtilities.invokeAndWait(previewButton::doClick);
             assertThat(provider.synthesizeStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
@@ -319,11 +355,11 @@ class TextToSpeechPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            assertThat(subject.statusLabel().getText()).doesNotContain("Preview failed");
+            assertThat(callOnEdt(() -> subject.statusLabel().getText())).doesNotContain("Preview failed");
         } finally {
             provider.releaseSynthesize.countDown();
             releaseEdt.countDown();
-            subject.removeNotify();
+            removePanel(subject);
         }
     }
 
@@ -424,6 +460,46 @@ class TextToSpeechPanelTest {
         field.set(target, value);
     }
 
+    private TextToSpeechPanel createPanel(SettingsRepository repo, TextToSpeechProviderRegistry registry) throws Exception {
+        return callOnEdt(() -> new TextToSpeechPanel(repo, registry));
+    }
+
+    private void removePanel(TextToSpeechPanel subject) throws Exception {
+        runOnEdt(subject::removeNotify);
+    }
+
+    private void runOnEdt(ThrowingAction action) throws Exception {
+        callOnEdt(() -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private <T> T callOnEdt(Callable<T> action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return action.call();
+        }
+        var result = new AtomicReference<T>();
+        var error = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.call());
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        if (error.get() instanceof Exception e) {
+            throw e;
+        }
+        if (error.get() instanceof Error e) {
+            throw e;
+        }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return result.get();
+    }
+
     private void waitForPreviewThreadToClear(TextToSpeechPanel subject) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (fieldValue(subject, "previewThread") != null && System.nanoTime() < deadline) {
@@ -460,6 +536,11 @@ class TextToSpeechPanelTest {
             Thread.sleep(10);
         }
         assertThat(condition.getAsBoolean()).isTrue();
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
     }
 
     private static final class AvailableSystemProvider implements TextToSpeechProvider {
@@ -803,11 +884,20 @@ class TextToSpeechPanelTest {
     }
 
     private static final class FailingSettingsRepository extends SettingsRepository {
+        private volatile boolean failGet;
         private volatile boolean failPut;
         private volatile boolean failBatch;
 
         private FailingSettingsRepository(Path settingsFile) {
             super(settingsFile);
+        }
+
+        @Override
+        public Optional<String> get(String key) {
+            if (failGet) {
+                throw new SettingsStorageException("test get failure", new IOException("get failed"));
+            }
+            return super.get(key);
         }
 
         @Override

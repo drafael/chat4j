@@ -895,7 +895,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 if (!saveCatalogModelsIfCurrent(refreshId, snapshot.providerId(), models)) {
                     return;
                 }
-                runWhenActiveOnEventDispatchThread(() -> applyCatalogRefresh(refreshId, snapshot, models, explicit));
+                runWhenActiveOnEventDispatchThread(() -> applyCatalogRefreshSafely(refreshId, snapshot, models, explicit));
             } catch (Exception e) {
                 runWhenActiveOnEventDispatchThread(() -> {
                     if (catalogRefreshCurrent(refreshId) && explicit) {
@@ -920,6 +920,16 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     private boolean saveCatalogModelsIfCurrent(long refreshId, String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
         return catalogStore.saveModelsIf(providerId, models, () -> catalogRefreshCurrent(refreshId));
+    }
+
+    private void applyCatalogRefreshSafely(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
+        try {
+            applyCatalogRefresh(refreshId, previous, models, explicit);
+        } catch (Exception e) {
+            if (catalogRefreshCurrent(refreshId) && explicit) {
+                setStatusError("Could not refresh %s Speech to Text models.".formatted(previous.provider().displayName()));
+            }
+        }
     }
 
     private void applyCatalogRefresh(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {

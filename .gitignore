@@ -1,5 +1,6 @@
-.claude
-!.claude/skills/update-app-icon/SKILL.md
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 # Generated brainstorm/refactor plans
 #/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 
