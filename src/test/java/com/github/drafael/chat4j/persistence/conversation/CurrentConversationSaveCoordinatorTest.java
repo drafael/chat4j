@@ -24,11 +24,12 @@ class CurrentConversationSaveCoordinatorTest {
                 (title, provider, model) -> UUID.randomUUID(),
                 (conversationId, history) -> history.size(),
                 (conversationId, agentModeEnabled, agentProjectRoot) -> {},
-                (conversationId, reasoningLevel) -> {}
+                (conversationId, reasoningLevel) -> {},
+                (conversationId, webSearchEnabled, webSearchOptionId) -> {}
         );
         UUID conversationId = UUID.randomUUID();
 
-        var result = subject.save(conversationId, emptyList(), "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
+        var result = subject.save(conversationId, emptyList(), "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null, false, null);
 
         assertThat(result.saved()).isFalse();
         assertThat(result.conversationId()).isEqualTo(conversationId);
@@ -41,6 +42,7 @@ class CurrentConversationSaveCoordinatorTest {
         var persistedHistory = new AtomicReference<List<Message>>();
         var agentSettingsPersisted = new AtomicBoolean(false);
         var reasoningPersisted = new AtomicBoolean(false);
+        var webSearchSettingsPersisted = new AtomicBoolean(false);
         var subject = new CurrentConversationSaveCoordinator(
                 new ConversationTitleDeriver(),
                 (title, provider, model) -> createdId,
@@ -49,11 +51,14 @@ class CurrentConversationSaveCoordinatorTest {
                     return history.size();
                 },
                 (conversationId, agentModeEnabled, agentProjectRoot) -> agentSettingsPersisted.set(true),
-                (conversationId, reasoningLevel) -> reasoningPersisted.set(reasoningLevel == ReasoningLevel.OFF)
+                (conversationId, reasoningLevel) -> reasoningPersisted.set(reasoningLevel == ReasoningLevel.OFF),
+                (conversationId, webSearchEnabled, webSearchOptionId) -> webSearchSettingsPersisted.set(
+                        webSearchEnabled && "native".equals(webSearchOptionId)
+                )
         );
         List<Message> history = List.of(Message.user("hello"));
 
-        var result = subject.save(null, history, "OpenAI:gpt-4o", null, true, Path.of("/tmp"));
+        var result = subject.save(null, history, "OpenAI:gpt-4o", null, true, Path.of("/tmp"), true, "native");
 
         assertThat(result.saved()).isTrue();
         assertThat(result.createdConversation()).isTrue();
@@ -61,6 +66,7 @@ class CurrentConversationSaveCoordinatorTest {
         assertThat(persistedHistory.get()).isEqualTo(history);
         assertThat(agentSettingsPersisted).isTrue();
         assertThat(reasoningPersisted).isTrue();
+        assertThat(webSearchSettingsPersisted).isTrue();
     }
 
     @Test
@@ -80,11 +86,12 @@ class CurrentConversationSaveCoordinatorTest {
                     return history.size();
                 },
                 (id, agentModeEnabled, agentProjectRoot) -> {},
-                (id, reasoningLevel) -> {}
+                (id, reasoningLevel) -> {},
+                (id, webSearchEnabled, webSearchOptionId) -> {}
         );
         List<Message> history = List.of(Message.user("hello"));
 
-        var result = subject.save(conversationId, history, "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
+        var result = subject.save(conversationId, history, "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null, false, null);
 
         assertThat(result.saved()).isTrue();
         assertThat(result.createdConversation()).isFalse();
@@ -108,11 +115,12 @@ class CurrentConversationSaveCoordinatorTest {
                 },
                 (id, agentModeEnabled, agentProjectRoot) -> {},
                 (id, reasoningLevel) -> {},
+                (id, webSearchEnabled, webSearchOptionId) -> {},
                 id -> !id.equals(missingId)
         );
         List<Message> history = List.of(Message.user("hello"));
 
-        var result = subject.save(missingId, history, "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null);
+        var result = subject.save(missingId, history, "OpenAI:gpt-4o", ReasoningLevel.OFF, false, null, false, null);
 
         assertThat(result.saved()).isTrue();
         assertThat(result.createdConversation()).isTrue();
@@ -130,6 +138,7 @@ class CurrentConversationSaveCoordinatorTest {
                 (id, history) -> 0,
                 (id, agentModeEnabled, agentProjectRoot) -> {},
                 (id, reasoningLevel) -> {},
+                (id, webSearchEnabled, webSearchOptionId) -> {},
                 id -> true
         );
 
@@ -138,6 +147,8 @@ class CurrentConversationSaveCoordinatorTest {
                 List.of(Message.user("hello")),
                 "OpenAI:gpt-4o",
                 ReasoningLevel.OFF,
+                false,
+                null,
                 false,
                 null
         );
@@ -154,10 +165,11 @@ class CurrentConversationSaveCoordinatorTest {
                 (title, provider, model) -> UUID.randomUUID(),
                 (conversationId, history) -> history.size(),
                 (conversationId, agentModeEnabled, agentProjectRoot) -> {},
-                (conversationId, reasoningLevel) -> {}
+                (conversationId, reasoningLevel) -> {},
+                (conversationId, webSearchEnabled, webSearchOptionId) -> {}
         );
 
-        assertThatThrownBy(() -> subject.save(null, null, null, null, false, null))
+        assertThatThrownBy(() -> subject.save(null, null, null, null, false, null, false, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("history");
     }

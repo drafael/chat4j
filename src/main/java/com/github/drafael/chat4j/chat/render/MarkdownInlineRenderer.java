@@ -18,6 +18,7 @@ final class MarkdownInlineRenderer {
     private static final Pattern MARKDOWN_LINK_TOKEN_PATTERN = Pattern.compile("@@MARKDOWN_LINK_(\\d+)@@");
     private static final Pattern ESCAPED_LINK_LABEL_CHAR_PATTERN = Pattern.compile("\\\\([\\[\\]\\\\])");
     private static final Pattern AUTO_LINK_PATTERN = Pattern.compile("&lt;((?:https?|mailto):[^\\s]+?)&gt;");
+    private static final Pattern BARE_URL_PATTERN = Pattern.compile("(?<!&lt;)(?<![\\w@])https?://[^\\s<]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern HTML_BREAK_PATTERN = Pattern.compile("(?i)&lt;br\\s*/?&gt;");
     private static final Pattern BOLD_ASTERISK_PATTERN = Pattern.compile("\\*\\*(.+?)\\*\\*");
     private static final Pattern BOLD_UNDERSCORE_PATTERN = Pattern.compile("__(.+?)__");
@@ -35,6 +36,7 @@ final class MarkdownInlineRenderer {
         LinkExtraction linkExtraction = extractMarkdownLinks(codeExtraction.text());
         MathExtraction mathExtraction = extractMathSegments(linkExtraction.text());
         String rendered = applyInlineFormatting(mathExtraction.text());
+        rendered = renderBareUrls(rendered);
 
         rendered = restoreMarkdownLinks(rendered, linkExtraction.linkSegments());
         rendered = renderAnchors(rendered, MARKDOWN_LINK_PATTERN, 1, 2);
@@ -229,8 +231,37 @@ final class MarkdownInlineRenderer {
             String renderedLabel = label.matches("\\d+")
                     ? "[%s]".formatted(label)
                     : unescapeLinkLabel(label);
-            return Matcher.quoteReplacement("<a href=\"%s\">%s</a>".formatted(href, renderedLabel));
+            return Matcher.quoteReplacement(anchorHtml(href, renderedLabel));
         });
+    }
+
+    private static String renderBareUrls(String text) {
+        Matcher matcher = BARE_URL_PATTERN.matcher(text);
+        StringBuilder rendered = new StringBuilder(text.length());
+        while (matcher.find()) {
+            String url = matcher.group();
+            String trimmedUrl = trimTrailingUrlPunctuation(url);
+            String trailing = url.substring(trimmedUrl.length());
+            matcher.appendReplacement(rendered, Matcher.quoteReplacement(anchorHtml(trimmedUrl, trimmedUrl) + trailing));
+        }
+        matcher.appendTail(rendered);
+        return rendered.toString();
+    }
+
+    private static String trimTrailingUrlPunctuation(String url) {
+        int end = url.length();
+        while (end > 0 && isTrailingUrlPunctuation(url.charAt(end - 1))) {
+            end--;
+        }
+        return url.substring(0, end);
+    }
+
+    private static boolean isTrailingUrlPunctuation(char value) {
+        return value == '.' || value == ',' || value == ';' || value == ':';
+    }
+
+    private static String anchorHtml(String href, String label) {
+        return "<a href=\"%s\">%s</a>".formatted(href, label);
     }
 
     private static String unescapeLinkLabel(String label) {

@@ -22,7 +22,9 @@ public class MainFrameShutdownSaveActionFactory {
                     snapshot.selectedModelKey(),
                     snapshot.reasoningLevel(),
                     snapshot.agentModeEnabled(),
-                    snapshot.agentProjectRoot()
+                    snapshot.agentProjectRoot(),
+                    snapshot.webSearchEnabled(),
+                    snapshot.webSearchOptionId()
             );
         } catch (Exception e) {
             request.snapshotFailureHandler().handle(e);
@@ -38,7 +40,9 @@ public class MainFrameShutdownSaveActionFactory {
                 request.selectedModelKeySupplier().get(),
                 request.reasoningLevelSupplier().get(),
                 request.agentModeEnabledSupplier().getAsBoolean(),
-                request.agentProjectRootSupplier().get()
+                request.agentProjectRootSupplier().get(),
+                request.webSearchEnabledSupplier().getAsBoolean(),
+                request.webSearchOptionIdSupplier().get()
         );
     }
 
@@ -49,6 +53,8 @@ public class MainFrameShutdownSaveActionFactory {
             @NonNull Supplier<ReasoningLevel> reasoningLevelSupplier,
             @NonNull BooleanSupplier agentModeEnabledSupplier,
             @NonNull Supplier<Path> agentProjectRootSupplier,
+            @NonNull BooleanSupplier webSearchEnabledSupplier,
+            @NonNull Supplier<String> webSearchOptionIdSupplier,
             @NonNull CurrentConversationSaveCoordinator currentConversationSaveCoordinator,
             @NonNull ShutdownSaveDispatchCoordinator.FailureHandler snapshotFailureHandler
     ) {
@@ -60,18 +66,22 @@ public class MainFrameShutdownSaveActionFactory {
             String selectedModelKey,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
-            Path agentProjectRoot
+            Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId
     ) {
         @Override
         public String toString() {
-            return "ShutdownSaveSnapshot[currentConversationId=%s, historySize=%d, selectedModelKey=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=%s]"
+            return "ShutdownSaveSnapshot[currentConversationId=%s, historySize=%d, selectedModelKey=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=%s, webSearchEnabled=%s, webSearchOptionId=%s]"
                     .formatted(
                             currentConversationId,
                             history.size(),
                             selectedModelKey,
                             reasoningLevel,
                             agentModeEnabled,
-                            agentProjectRoot
+                            agentProjectRoot,
+                            webSearchEnabled,
+                            webSearchOptionId
                     );
         }
     }

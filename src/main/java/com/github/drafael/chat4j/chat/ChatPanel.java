@@ -1025,6 +1025,8 @@ public class ChatPanel extends JPanel {
                         sendJob.reasoningLevel,
                         sendJob.agentModeEnabled,
                         sendJob.agentProjectRoot,
+                        sendJob.webSearchEnabled,
+                        sendJob.webSearchOptionId,
                         visibleConversation
                 ));
                 if (persistedConversationId != null) {
@@ -4853,12 +4855,23 @@ public class ChatPanel extends JPanel {
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId,
             boolean visibleConversation
     ) {
         @Override
         public String toString() {
-            return "UserMessageEvent[conversationId=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, visibleConversation=%s]"
-                    .formatted(conversationId, providerName, modelId, reasoningLevel, agentModeEnabled, visibleConversation);
+            return "UserMessageEvent[conversationId=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, webSearchEnabled=%s, webSearchOptionId=%s, visibleConversation=%s]"
+                    .formatted(
+                            conversationId,
+                            providerName,
+                            modelId,
+                            reasoningLevel,
+                            agentModeEnabled,
+                            webSearchEnabled,
+                            webSearchOptionId,
+                            visibleConversation
+                    );
         }
     }
 

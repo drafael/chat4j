@@ -7,11 +7,15 @@ import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -96,6 +100,49 @@ class CapabilityProviderServiceTest {
                 .doesNotContain("`sdf`");
     }
 
+    @Test
+    @DisplayName("Citation-aware streaming forwards citations and completion callbacks")
+    void streamCompletion_whenClientEmitsCitation_forwardsCitationAndCompletes() {
+        AtomicReference<List<Message>> observedHistory = new AtomicReference<>();
+        CitationRef expectedCitation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Source")
+                .url("https://example.test/source")
+                .build();
+        var subject = new CapabilityProviderService(runtime(), citationClient(observedHistory, expectedCitation), runtime -> List.of());
+        AtomicReference<CitationRef> observedCitation = new AtomicReference<>();
+        AtomicBoolean completed = new AtomicBoolean(false);
+        AtomicReference<Exception> error = new AtomicReference<>();
+
+        subject.streamCompletion(
+                List.of(Message.user("research this")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                part -> {
+                },
+                observedCitation::set,
+                () -> completed.set(true),
+                error::set,
+                () -> false,
+                stream -> {
+                },
+                () -> {
+                }
+        );
+
+        assertThat(observedHistory.get()).isNotNull();
+        assertThat(observedHistory.get().getFirst().role()).isEqualTo(Role.SYSTEM);
+        assertThat(observedHistory.get().get(1).content()).isEqualTo("research this");
+        assertThat(observedCitation.get()).isEqualTo(expectedCitation);
+        assertThat(completed.get()).isTrue();
+        assertThat(error.get()).isNull();
+    }
+
     private static ProviderRuntime runtime() {
         return new ProviderRuntime(
                 new ProviderDescriptor(
@@ -144,6 +191,42 @@ class CapabilityProviderServiceTest {
                     Runnable clearActiveStream
             ) {
                 observedHistory.set(history);
+            }
+        };
+    }
+
+    private static ChatCompletionClient citationClient(AtomicReference<List<Message>> observedHistory, CitationRef citation) {
+        return new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                throw new AssertionError("Expected citation-aware overload");
+            }
+
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                observedHistory.set(history);
+                onCitation.accept(citation);
             }
         };
     }

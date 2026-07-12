@@ -57,7 +57,8 @@ class ConversationSaveLoadFlowIntegrationTest {
                 (title, provider, model) -> conversationId,
                 (id, history) -> history.size(),
                 (id, agentModeEnabled, agentProjectRoot) -> {},
-                (id, reasoningLevel) -> {}
+                (id, reasoningLevel) -> {},
+                (id, webSearchEnabled, webSearchOptionId) -> {}
         );
 
         var saveResult = saveCoordinator.save(
@@ -65,6 +66,8 @@ class ConversationSaveLoadFlowIntegrationTest {
                 List.of(Message.user("hello")),
                 "OpenAI:gpt-4o",
                 ReasoningLevel.OFF,
+                false,
+                null,
                 false,
                 null
         );

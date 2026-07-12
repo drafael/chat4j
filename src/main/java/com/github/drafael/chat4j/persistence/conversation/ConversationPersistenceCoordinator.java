@@ -81,6 +81,10 @@ public class ConversationPersistenceCoordinator {
         conversationRepo.updateReasoningLevel(conversationId, reasoningLevel);
     }
 
+    public void persistConversationWebSearchSettings(@NonNull UUID conversationId, boolean enabled, String optionId) throws Exception {
+        conversationRepo.updateWebSearchSettings(conversationId, enabled, optionId);
+    }
+
     public void markConversationLoaded(UUID conversationId, int persistedCount) {
         persistedMessageCounter.markConversationLoaded(conversationId, persistedCount);
     }

@@ -5,6 +5,9 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
@@ -106,6 +109,177 @@ class PerplexityChatCompletionClientTest {
 
             assertThat(output.toString()).contains("answer [1](<https://example.test/source_(one)>) next [1](<https://example.test/source_(one)>)");
             assertThat(output.toString().split("https://example.test/source_\\(one\\)", -1)).hasSize(4);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Perplexity chat client emits structured citations from canonical source list")
+    void streamCompletion_whenSearchResultsAndTopLevelCitationsArePresent_emitsNumberedWebCitations() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": "answer [1] and [2]"}}],
+                      "search_results": [
+                        {"title": "First Source", "url": "https://example.test/first/", "snippet": "first excerpt"},
+                        {"title": "Second Source", "url": "https://example.test/second", "content": "second excerpt"}
+                      ],
+                      "citations": [
+                        "https://example.test/first#",
+                        "https://example.test/third"
+                      ]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            StringBuilder output = new StringBuilder();
+            List<CitationRef> citations = new CopyOnWriteArrayList<>();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    output::append,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    citations::add,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output.toString()).contains("answer [1](<https://example.test/first>) and [2](<https://example.test/second>)");
+            assertThat(output.toString()).contains("1. [First Source](<https://example.test/first>)");
+            assertThat(output.toString()).contains("2. [Second Source](<https://example.test/second>)");
+            assertThat(output.toString()).contains("3. <https://example.test/third>");
+            assertThat(citations)
+                    .extracting(CitationRef::number)
+                    .containsExactly(1, 2, 3);
+            assertThat(citations)
+                    .extracting(CitationRef::kind)
+                    .containsExactly(CitationKind.WEB, CitationKind.WEB, CitationKind.WEB);
+            assertThat(citations)
+                    .extracting(CitationRef::url)
+                    .containsExactly("https://example.test/first", "https://example.test/second", "https://example.test/third");
+            assertThat(citations)
+                    .extracting(CitationRef::title)
+                    .containsExactly("First Source", "Second Source", "");
+            assertThat(citations)
+                    .extracting(CitationRef::citedText)
+                    .containsExactly("first excerpt", "second excerpt", "");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Perplexity chat client tolerates null optional structured callbacks")
+    void streamCompletion_whenOptionalStructuredCallbacksAreNull_completes() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": "answer"}}],
+                      "search_results": [{"title": "Source", "url": "https://example.test/source", "snippet": "source excerpt"}]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            StringBuilder output = new StringBuilder();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    output::append,
+                    ignored -> {
+                    },
+                    null,
+                    null,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output.toString()).contains("answer");
+            assertThat(output.toString()).contains("Sources:");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Perplexity chat client emits citations when answer content is blank")
+    void streamCompletion_whenAnswerContentIsBlank_stillEmitsCitations() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": ""}}],
+                      "search_results": [{"title": "Only Source", "url": "https://example.test/source", "snippet": "source excerpt"}]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            StringBuilder output = new StringBuilder();
+            List<CitationRef> citations = new CopyOnWriteArrayList<>();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    output::append,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    citations::add,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output.toString()).contains("Sources:");
+            assertThat(citations).singleElement().satisfies(citation -> {
+                assertThat(citation.number()).isEqualTo(1);
+                assertThat(citation.url()).isEqualTo("https://example.test/source");
+                assertThat(citation.title()).isEqualTo("Only Source");
+                assertThat(citation.citedText()).isEqualTo("source excerpt");
+            });
         } finally {
             server.stop(0);
         }
@@ -242,14 +416,19 @@ class PerplexityChatCompletionClientTest {
         try {
             PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
             StringBuilder output = new StringBuilder();
+            List<CitationRef> citations = new CopyOnWriteArrayList<>();
 
             subject.streamCompletion(
                     runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort()), "sonar-deep-research"),
                     List.of(Message.user("question")),
                     ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
                     output::append,
                     ignored -> {
                     },
+                    ignored -> {
+                    },
+                    citations::add,
                     () -> false,
                     ignored -> {
                     },
@@ -260,6 +439,11 @@ class PerplexityChatCompletionClientTest {
             assertThat(requestedPaths).containsExactly("/v1/async/sonar", "/v1/async/sonar/async-123");
             assertThat(output.toString()).contains("deep answer");
             assertThat(output.toString()).contains("Sources:");
+            assertThat(citations).singleElement().satisfies(citation -> {
+                assertThat(citation.number()).isEqualTo(1);
+                assertThat(citation.url()).isEqualTo("https://example.test/source");
+                assertThat(citation.title()).isEqualTo("Source");
+            });
         } finally {
             server.stop(0);
         }

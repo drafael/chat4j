@@ -16,6 +16,8 @@ public class CurrentConversationSaveDispatchCoordinator {
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId,
             @NonNull SaveAction saveAction,
             @NonNull UiApplyAction uiApplyAction,
             @NonNull FailureHandler failureHandler
@@ -27,7 +29,9 @@ public class CurrentConversationSaveDispatchCoordinator {
                     selectedModelKey,
                     reasoningLevel,
                     agentModeEnabled,
-                    agentProjectRoot
+                    agentProjectRoot,
+                    webSearchEnabled,
+                    webSearchOptionId
             );
             uiApplyAction.apply(saveResult);
         } catch (Exception e) {
@@ -43,7 +47,9 @@ public class CurrentConversationSaveDispatchCoordinator {
                 String selectedModelKey,
                 ReasoningLevel reasoningLevel,
                 boolean agentModeEnabled,
-                Path agentProjectRoot
+                Path agentProjectRoot,
+                boolean webSearchEnabled,
+                String webSearchOptionId
         ) throws Exception;
     }
 

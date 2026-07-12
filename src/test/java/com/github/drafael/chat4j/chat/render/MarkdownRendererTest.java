@@ -321,6 +321,29 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Bare URLs render anchor tags in assistant markdown")
+    void toHtml_whenMarkdownContainsBareUrls_rendersAnchors() {
+        String body = renderBody("Official repo: https://github.com/java-native-access/jna and docs https://example.com/docs?x=1&y=2.");
+
+        assertThat(body)
+                .contains("href=\"https://github.com/java-native-access/jna\">https://github.com/java-native-access/jna</a>")
+                .contains("href=\"https://example.com/docs?x=1&amp;y=2\">https://example.com/docs?x=1&amp;y=2</a>.");
+    }
+
+    @Test
+    @DisplayName("Bare URL linkifying does not alter markdown links, angle autolinks, or inline code")
+    void toHtml_whenMarkdownContainsOtherLinkForms_doesNotDoubleLinkify() {
+        String body = renderBody("[Docs](https://example.com/docs) <https://example.com/auto> `https://example.com/code`");
+
+        assertThat(body)
+                .contains("href=\"https://example.com/docs\">Docs</a>")
+                .contains("href=\"https://example.com/auto\">https://example.com/auto</a>")
+                .contains(">https://example.com/code</font></code>")
+                .doesNotContain("href=\"<a href")
+                .doesNotContain("<a href=\"https://example.com/code\"");
+    }
+
+    @Test
     @DisplayName("Markdown links allow escaped brackets in labels")
     void toHtml_whenMarkdownLinkLabelContainsEscapedBrackets_rendersAnchor() {
         String body = renderBody("[About \\[PDF\\]](<https://example.com/report>)");

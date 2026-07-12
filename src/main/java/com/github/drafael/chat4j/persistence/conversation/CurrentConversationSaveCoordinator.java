@@ -16,6 +16,7 @@ public class CurrentConversationSaveCoordinator {
     private final HistoryPersister historyPersister;
     private final ConversationAgentSettingsPersister conversationAgentSettingsPersister;
     private final ConversationReasoningLevelPersister conversationReasoningLevelPersister;
+    private final ConversationWebSearchSettingsPersister conversationWebSearchSettingsPersister;
     private final ConversationExistsChecker conversationExistsChecker;
 
     public CurrentConversationSaveCoordinator(
@@ -28,6 +29,7 @@ public class CurrentConversationSaveCoordinator {
                 conversationPersistenceCoordinator::persistConversationHistory,
                 conversationPersistenceCoordinator::persistConversationAgentSettings,
                 conversationPersistenceCoordinator::persistConversationReasoningLevel,
+                conversationPersistenceCoordinator::persistConversationWebSearchSettings,
                 conversationPersistenceCoordinator::conversationExists
         );
     }
@@ -37,7 +39,8 @@ public class CurrentConversationSaveCoordinator {
             @NonNull ConversationCreator conversationCreator,
             @NonNull HistoryPersister historyPersister,
             @NonNull ConversationAgentSettingsPersister conversationAgentSettingsPersister,
-            @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister
+            @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister,
+            @NonNull ConversationWebSearchSettingsPersister conversationWebSearchSettingsPersister
     ) {
         this(
                 conversationTitleDeriver,
@@ -45,6 +48,7 @@ public class CurrentConversationSaveCoordinator {
                 historyPersister,
                 conversationAgentSettingsPersister,
                 conversationReasoningLevelPersister,
+                conversationWebSearchSettingsPersister,
                 conversationId -> true
         );
     }
@@ -55,6 +59,7 @@ public class CurrentConversationSaveCoordinator {
             @NonNull HistoryPersister historyPersister,
             @NonNull ConversationAgentSettingsPersister conversationAgentSettingsPersister,
             @NonNull ConversationReasoningLevelPersister conversationReasoningLevelPersister,
+            @NonNull ConversationWebSearchSettingsPersister conversationWebSearchSettingsPersister,
             @NonNull ConversationExistsChecker conversationExistsChecker
     ) {
         this.conversationTitleDeriver = conversationTitleDeriver;
@@ -62,6 +67,7 @@ public class CurrentConversationSaveCoordinator {
         this.historyPersister = historyPersister;
         this.conversationAgentSettingsPersister = conversationAgentSettingsPersister;
         this.conversationReasoningLevelPersister = conversationReasoningLevelPersister;
+        this.conversationWebSearchSettingsPersister = conversationWebSearchSettingsPersister;
         this.conversationExistsChecker = conversationExistsChecker;
     }
 
@@ -71,7 +77,9 @@ public class CurrentConversationSaveCoordinator {
             String selectedModelKey,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
-            Path agentProjectRoot
+            Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId
     ) throws Exception {
 
         if (history.isEmpty()) {
@@ -95,6 +103,7 @@ public class CurrentConversationSaveCoordinator {
                     conversationId,
                     reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel
             );
+            conversationWebSearchSettingsPersister.persist(conversationId, webSearchEnabled, webSearchOptionId);
             createdConversation = true;
         }
 
@@ -133,6 +142,11 @@ public class CurrentConversationSaveCoordinator {
     @FunctionalInterface
     interface ConversationReasoningLevelPersister {
         void persist(UUID conversationId, ReasoningLevel reasoningLevel) throws Exception;
+    }
+
+    @FunctionalInterface
+    interface ConversationWebSearchSettingsPersister {
+        void persist(UUID conversationId, boolean webSearchEnabled, String webSearchOptionId) throws Exception;
     }
 
     @FunctionalInterface

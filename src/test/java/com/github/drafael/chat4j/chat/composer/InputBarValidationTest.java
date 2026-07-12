@@ -386,6 +386,72 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Persisted web search state is restored after options become available")
+    void setWebSearchOptions_whenPersistedStateAppliedFirst_restoresEnabledToggle() throws Exception {
+        AtomicReference<InputBar> subjectRef = new AtomicReference<>();
+        AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
+
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                InputBar subject = new InputBar();
+                subject.setWebSearchOptionId("perplexity");
+                subject.setWebSearchEnabled(true);
+                subject.setWebSearchOptions(List.of(
+                        new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
+                        new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
+                ), "native");
+                subjectRef.set(subject);
+                buttonRef.set(readWebSearchButton(subject));
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+        });
+
+        AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
+        AtomicReference<String> webSearchOptionId = new AtomicReference<>();
+        AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
+            webSearchOptionId.set(subjectRef.get().getWebSearchOptionId());
+            buttonSelected.set(buttonRef.get().isSelected());
+        });
+
+        assertThat(webSearchEnabled.get()).isTrue();
+        assertThat(webSearchOptionId.get()).isEqualTo("perplexity");
+        assertThat(buttonSelected.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Web search button keeps selected state while input bar is disabled")
+    void setEnabled_whenWebSearchEnabled_displaysSelectedState() throws Exception {
+        AtomicReference<InputBar> subjectRef = new AtomicReference<>();
+        AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
+
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                InputBar subject = new InputBar();
+                subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
+                subject.setWebSearchEnabled(true);
+                subject.setEnabled(false);
+                subjectRef.set(subject);
+                buttonRef.set(readWebSearchButton(subject));
+            } catch (Exception e) {
+                throw new AssertionError(e);
+            }
+        });
+
+        AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
+        AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
+            buttonSelected.set(buttonRef.get().isSelected());
+        });
+
+        assertThat(webSearchEnabled.get()).isTrue();
+        assertThat(buttonSelected.get()).isTrue();
+    }
+
+    @Test
     @DisplayName("Web search context menu omits enabled item and separators")
     void rebuildWebSearchMenu_whenOptionsAvailable_omitsToggleItemAndSeparators() throws Exception {
         InputBar subject = new InputBar();

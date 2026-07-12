@@ -40,6 +40,8 @@ class MainFrameShutdownSaveActionFactoryTest {
                 () -> ReasoningLevel.HIGH,
                 () -> true,
                 () -> projectRoot,
+                () -> true,
+                () -> "native",
                 saveCoordinator,
                 error -> {
                     throw new AssertionError(error);
@@ -56,7 +58,9 @@ class MainFrameShutdownSaveActionFactoryTest {
                 eq("OpenAI:gpt-4o"),
                 eq(ReasoningLevel.HIGH),
                 eq(true),
-                eq(projectRoot)
+                eq(projectRoot),
+                eq(true),
+                eq("native")
         );
         assertThat(historyCaptor.getValue())
                 .hasSize(1)
@@ -80,6 +84,8 @@ class MainFrameShutdownSaveActionFactoryTest {
                 () -> ReasoningLevel.OFF,
                 () -> false,
                 () -> null,
+                () -> false,
+                () -> null,
                 saveCoordinator,
                 capturedFailure::set
         ));
@@ -87,7 +93,7 @@ class MainFrameShutdownSaveActionFactoryTest {
         saveAction.save();
 
         assertThat(capturedFailure).hasValue(failure);
-        verify(saveCoordinator, never()).save(any(), any(), any(), any(), anyBoolean(), any());
+        verify(saveCoordinator, never()).save(any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -98,6 +104,8 @@ class MainFrameShutdownSaveActionFactoryTest {
                 () -> List.of(Message.user("secret chat text")),
                 () -> "OpenAI:gpt-4o",
                 () -> ReasoningLevel.OFF,
+                () -> false,
+                () -> null,
                 () -> false,
                 () -> null,
                 mock(CurrentConversationSaveCoordinator.class),

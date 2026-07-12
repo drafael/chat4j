@@ -28,7 +28,9 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 ReasoningLevel.OFF,
                 false,
                 null,
-                (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot) ->
+                true,
+                "native",
+                (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot, webSearchEnabled, webSearchOptionId) ->
                         new CurrentConversationSaveCoordinator.SaveResult(true, id, false),
                 appliedResult::set,
                 error -> {}
@@ -49,7 +51,9 @@ class CurrentConversationSaveDispatchCoordinatorTest {
                 ReasoningLevel.OFF,
                 false,
                 null,
-                (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot) -> {
+                false,
+                null,
+                (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot, webSearchEnabled, webSearchOptionId) -> {
                     throw new IllegalStateException("boom");
                 },
                 result -> {},
@@ -62,7 +66,19 @@ class CurrentConversationSaveDispatchCoordinatorTest {
     @Test
     @DisplayName("Save validates history")
     void save_whenHistoryMissing_throwsException() {
-        assertThatThrownBy(() -> subject.save(UUID.randomUUID(), null, null, ReasoningLevel.OFF, false, null, (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot) -> null, result -> {}, error -> {}))
+        assertThatThrownBy(() -> subject.save(
+                UUID.randomUUID(),
+                null,
+                null,
+                ReasoningLevel.OFF,
+                false,
+                null,
+                false,
+                null,
+                (id, history, selectedModelKey, reasoningLevel, agentModeEnabled, agentProjectRoot, webSearchEnabled, webSearchOptionId) -> null,
+                result -> {},
+                error -> {}
+        ))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("history");
     }

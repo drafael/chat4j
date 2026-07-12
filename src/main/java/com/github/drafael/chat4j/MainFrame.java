@@ -882,6 +882,8 @@ public class MainFrame extends JFrame {
         ReasoningLevel reasoningLevel = chatPanel.getInputBar().getReasoningLevel();
         boolean agentModeEnabled = chatPanel.getInputBar().isAgentModeRequested();
         Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
+        boolean webSearchEnabled = chatPanel.getInputBar().isWebSearchEnabled();
+        String webSearchOptionId = chatPanel.getInputBar().getWebSearchOptionId();
         boolean retitleClearedConversation = shouldRetitleClearedConversation(currentConversationId, history);
 
         Thread.startVirtualThread(() -> {
@@ -892,7 +894,9 @@ public class MainFrame extends JFrame {
                         selectedModel,
                         reasoningLevel,
                         agentModeEnabled,
-                        agentProjectRoot
+                        agentProjectRoot,
+                        webSearchEnabled,
+                        webSearchOptionId
                 );
                 if (savedConversationId == null) {
                     return;
@@ -914,7 +918,9 @@ public class MainFrame extends JFrame {
             String selectedModel,
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
-            Path agentProjectRoot
+            Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId
     ) throws Exception {
         if (currentConversationId == null) {
             CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
@@ -923,7 +929,9 @@ public class MainFrame extends JFrame {
                     selectedModel,
                     reasoningLevel,
                     agentModeEnabled,
-                    agentProjectRoot
+                    agentProjectRoot,
+                    webSearchEnabled,
+                    webSearchOptionId
             );
             return saveResult.saved() ? saveResult.conversationId() : null;
         }
@@ -948,7 +956,9 @@ public class MainFrame extends JFrame {
                 chatPanel.getInputBar().getReasoningLevel(),
                 chatPanel.getInputBar().isAgentModeRequested(),
                 chatPanel.getInputBar().getAgentProjectRoot(),
-                (conversationId, messages, selectedModel, reasoningLevel, agentModeEnabled, agentProjectRoot) ->
+                chatPanel.getInputBar().isWebSearchEnabled(),
+                chatPanel.getInputBar().getWebSearchOptionId(),
+                (conversationId, messages, selectedModel, reasoningLevel, agentModeEnabled, agentProjectRoot, webSearchEnabled, webSearchOptionId) ->
                         saveConversationAndRetitleIfNeeded(
                                 conversationId,
                                 messages,
@@ -956,6 +966,8 @@ public class MainFrame extends JFrame {
                                 reasoningLevel,
                                 agentModeEnabled,
                                 agentProjectRoot,
+                                webSearchEnabled,
+                                webSearchOptionId,
                                 retitleClearedConversation
                         ),
                 saveResult -> currentConversationSaveUiApplyCoordinator.apply(
@@ -977,6 +989,8 @@ public class MainFrame extends JFrame {
             ReasoningLevel reasoningLevel,
             boolean agentModeEnabled,
             Path agentProjectRoot,
+            boolean webSearchEnabled,
+            String webSearchOptionId,
             boolean retitleClearedConversation
     ) throws Exception {
         CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
@@ -985,7 +999,9 @@ public class MainFrame extends JFrame {
                 selectedModelKey,
                 reasoningLevel,
                 agentModeEnabled,
-                agentProjectRoot
+                agentProjectRoot,
+                webSearchEnabled,
+                webSearchOptionId
         );
 
         if (saveResult.saved() && retitleClearedConversation) {
@@ -1060,6 +1076,8 @@ public class MainFrame extends JFrame {
                 chatPanel.getInputBar()::getReasoningLevel,
                 chatPanel.getInputBar()::isAgentModeRequested,
                 chatPanel.getInputBar()::getAgentProjectRoot,
+                chatPanel.getInputBar()::isWebSearchEnabled,
+                chatPanel.getInputBar()::getWebSearchOptionId,
                 currentConversationSaveCoordinator,
                 error -> warnWithoutStack("Failed to capture shutdown save snapshot", error)
         ));
@@ -1157,7 +1175,9 @@ public class MainFrame extends JFrame {
                 modelKey,
                 event.reasoningLevel(),
                 event.agentModeEnabled(),
-                event.agentProjectRoot()
+                event.agentProjectRoot(),
+                event.webSearchEnabled(),
+                event.webSearchOptionId()
         );
 
         if (event.visibleConversation()) {

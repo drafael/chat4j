@@ -724,21 +724,22 @@ public class InputBar extends JPanel {
     }
 
     public void setWebSearchOptionId(String optionId) {
-        boolean available = webSearchOptions.stream()
-                .anyMatch(option -> option.available() && Strings.CS.equals(option.id(), optionId));
-        if (available) {
-            selectWebSearchOption(optionId, false);
+        if (StringUtils.isBlank(optionId)) {
+            return;
         }
+
+        webSearchOptionId = StringUtils.trim(optionId);
+        webSearchOptionItems.forEach((id, item) -> item.setSelected(Strings.CS.equals(id, webSearchOptionId)));
+        updateWebSearchPresentation();
     }
 
     public void setWebSearchEnabled(boolean enabled) {
-        boolean normalized = enabled && webSearchAvailable;
-        if (webSearchEnabled == normalized) {
+        if (webSearchEnabled == enabled) {
             updateWebSearchPresentation();
             return;
         }
 
-        webSearchEnabled = normalized;
+        webSearchEnabled = enabled;
         updateWebSearchPresentation();
     }
 
@@ -1038,7 +1039,7 @@ public class InputBar extends JPanel {
             return;
         }
 
-        boolean selected = isEnabled() && webSearchAvailable && webSearchEnabled;
+        boolean selected = webSearchAvailable && webSearchEnabled;
         webSearchButton.setVisible(webSearchAvailable && !isRecordingOrTranscribing());
         webSearchButton.setEnabled(isEnabled() && webSearchAvailable && isComposerMutable());
         webSearchButton.setSelected(selected);
