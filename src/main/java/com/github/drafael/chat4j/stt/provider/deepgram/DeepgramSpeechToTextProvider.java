@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
@@ -62,6 +63,17 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
     @Override
     public List<SpeechToTextCatalogItem> bundledModels() {
         return DeepgramSpeechToTextModels.BUNDLED_MODELS;
+    }
+
+    @Override
+    public SpeechToTextCatalogItem normalizeModelSelection(SpeechToTextCatalogItem model) {
+        if (model == null) {
+            return DeepgramSpeechToTextModels.DEFAULT_MODEL;
+        }
+        String id = normalizeModelId(model.id());
+        return DeepgramSpeechToTextModels.DEFAULT_MODEL_ID.equals(id) && !DeepgramSpeechToTextModels.DEFAULT_MODEL_ID.equals(model.id())
+                ? DeepgramSpeechToTextModels.DEFAULT_MODEL
+                : new SpeechToTextCatalogItem(id, modelLabel(id), model.description());
     }
 
     @Override
@@ -129,12 +141,11 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         if (!model.path("batch").asBoolean(false)) {
             return;
         }
-        String id = firstText(model, "canonical_name", "name");
-        if (invalidModelId(id)) {
+        String id = StringUtils.trimToEmpty(firstText(model, "canonical_name")).toLowerCase(Locale.ROOT);
+        if (!isSupportedModelId(id)) {
             return;
         }
-        String label = StringUtils.defaultIfBlank(firstText(model, "name", "canonical_name"), id);
-        models.putIfAbsent(id, new SpeechToTextCatalogItem(id, label, modelDescription(model)));
+        models.putIfAbsent(id, new SpeechToTextCatalogItem(id, modelLabel(id), modelDescription(model)));
     }
 
     private String modelDescription(JsonNode model) {
@@ -242,8 +253,28 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         return StringUtils.defaultIfBlank(StringUtils.abbreviate(sanitized, ERROR_DETAIL_LIMIT), "HTTP error");
     }
 
-    private boolean invalidModelId(String id) {
-        return StringUtils.isBlank(id) || id.chars().anyMatch(Character::isISOControl);
+    private String normalizeModelId(String id) {
+        String normalized = StringUtils.trimToEmpty(id).toLowerCase(Locale.ROOT);
+        return isSupportedModelId(normalized) ? normalized : DeepgramSpeechToTextModels.DEFAULT_MODEL_ID;
+    }
+
+    private boolean isSupportedModelId(String id) {
+        if (StringUtils.isBlank(id) || id.chars().anyMatch(Character::isISOControl)) {
+            return false;
+        }
+        return id.equals("nova")
+                || id.startsWith("nova-")
+                || id.equals("enhanced")
+                || id.startsWith("enhanced-")
+                || id.equals("base")
+                || id.startsWith("base-");
+    }
+
+    private String modelLabel(String id) {
+        return "Deepgram %s".formatted(Arrays.stream(id.split("-"))
+                .filter(StringUtils::isNotBlank)
+                .map(StringUtils::capitalize)
+                .collect(joining(" ")));
     }
 
     private String firstText(JsonNode node, String... fields) {

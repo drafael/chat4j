@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettingsFactory;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import java.nio.file.Files;
@@ -96,6 +97,24 @@ class TextToSpeechCatalogStoreTest {
         var voices = subject.voices(provider, provider.defaultVoice());
 
         assertThat(voices).extracting(TextToSpeechCatalogItem::id).contains("voice-a");
+    }
+
+    @Test
+    @DisplayName("Deepgram stale cached voice-model catalogs are shown as model families")
+    void models_whenDeepgramCacheContainsLegacyVoiceModels_normalizesToFamilies() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
+        settingsRepo.put(
+                "chat4j.tts.catalog.deepgram.models",
+                "[{\"id\":\"aura-2-thalia-en\",\"label\":\"thalia\",\"description\":\"clear\"},"
+                        + "{\"id\":\"aura-2-zeus-en\",\"label\":\"zeus\",\"description\":\"deep\"}]"
+        );
+        var provider = new DeepgramTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var subject = new TextToSpeechCatalogStore(settingsRepo);
+
+        var models = subject.models(provider, TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"));
+
+        assertThat(models).extracting(TextToSpeechCatalogItem::id).containsExactly("aura-2");
+        assertThat(models.getFirst().label()).isEqualTo("Aura 2");
     }
 
     @Test

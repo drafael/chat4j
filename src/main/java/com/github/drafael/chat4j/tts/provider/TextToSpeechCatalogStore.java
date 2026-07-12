@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 
 import static java.util.Collections.emptyList;
 
@@ -25,11 +26,19 @@ public class TextToSpeechCatalogStore {
     }
 
     public List<TextToSpeechCatalogItem> models(TextToSpeechProvider provider, TextToSpeechCatalogItem selected) {
-        return merged(readItems(settings(provider.id()).catalogModelsKey()), provider.bundledModels(), selected);
+        return merged(
+                normalized(readItems(settings(provider.id()).catalogModelsKey()), provider::normalizeModelSelection),
+                provider.bundledModels(),
+                normalized(selected, provider::normalizeModelSelection)
+        );
     }
 
     public List<TextToSpeechCatalogItem> voices(TextToSpeechProvider provider, TextToSpeechCatalogItem selected) {
-        return merged(readItems(settings(provider.id()).catalogVoicesKey()), provider.bundledVoices(), selected);
+        return merged(
+                normalized(readItems(settings(provider.id()).catalogVoicesKey()), provider::normalizeVoiceSelection),
+                provider.bundledVoices(),
+                normalized(selected, provider::normalizeVoiceSelection)
+        );
     }
 
     public void saveCatalogs(String providerId, List<TextToSpeechCatalogItem> models, List<TextToSpeechCatalogItem> voices) {
@@ -89,6 +98,27 @@ public class TextToSpeechCatalogStore {
 
     private TextToSpeechProviderSettings settings(String providerId) {
         return TextToSpeechProviderSettingsFactory.forProvider(settingsRepo, providerId);
+    }
+
+    private static TextToSpeechCatalogItem normalized(
+            TextToSpeechCatalogItem item,
+            Function<TextToSpeechCatalogItem, TextToSpeechCatalogItem> normalizer
+    ) {
+        return item == null ? null : normalizer.apply(item);
+    }
+
+    private static List<TextToSpeechCatalogItem> normalized(
+            List<TextToSpeechCatalogItem> items,
+            Function<TextToSpeechCatalogItem, TextToSpeechCatalogItem> normalizer
+    ) {
+        if (items == null) {
+            return emptyList();
+        }
+        return items.stream()
+                .filter(Objects::nonNull)
+                .map(normalizer)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private static List<TextToSpeechCatalogItem> merged(

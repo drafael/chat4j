@@ -10,6 +10,8 @@ import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,12 +27,18 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     private static final int SAMPLE_RATE = 24000;
     private static final short CHANNELS = 1;
     private static final short BITS_PER_SAMPLE = 16;
-    private static final TextToSpeechCatalogItem DEFAULT_VOICE_MODEL = new TextToSpeechCatalogItem(
+    private static final TextToSpeechCatalogItem DEFAULT_MODEL = new TextToSpeechCatalogItem(
+            "aura-2",
+            "Aura 2",
+            "Deepgram TTS model family"
+    );
+    private static final TextToSpeechCatalogItem DEFAULT_VOICE = new TextToSpeechCatalogItem(
             "aura-2-thalia-en",
             "thalia",
             "Clear, confident, energetic, enthusiastic"
     );
-    private static final List<TextToSpeechCatalogItem> BUNDLED_VOICE_MODELS = List.of(DEFAULT_VOICE_MODEL);
+    private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
+    private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
     public DeepgramTextToSpeechProvider(TtsHttpTransport transport) {
         super(transport);
@@ -53,22 +61,22 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
 
     @Override
     public TextToSpeechCatalogItem defaultModel() {
-        return DEFAULT_VOICE_MODEL;
+        return DEFAULT_MODEL;
     }
 
     @Override
     public TextToSpeechCatalogItem defaultVoice() {
-        return DEFAULT_VOICE_MODEL;
+        return DEFAULT_VOICE;
     }
 
     @Override
     public List<TextToSpeechCatalogItem> bundledModels() {
-        return BUNDLED_VOICE_MODELS;
+        return BUNDLED_MODELS;
     }
 
     @Override
     public List<TextToSpeechCatalogItem> bundledVoices() {
-        return BUNDLED_VOICE_MODELS;
+        return BUNDLED_VOICES;
     }
 
     @Override
@@ -78,12 +86,59 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
 
     @Override
     public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
-        return fetchVoiceModels();
+        Map<String, TextToSpeechCatalogItem> modelFamilies = new LinkedHashMap<>();
+        fetchVoiceModels().stream()
+                .map(TextToSpeechCatalogItem::id)
+                .map(DeepgramTextToSpeechProvider::modelFamilyId)
+                .filter(StringUtils::isNotBlank)
+                .map(DeepgramTextToSpeechProvider::modelFamilyItem)
+                .forEach(model -> modelFamilies.putIfAbsent(model.id(), model));
+        return nonEmptyOrBundled(List.copyOf(modelFamilies.values()), BUNDLED_MODELS);
     }
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
         return fetchVoiceModels();
+    }
+
+    @Override
+    public TextToSpeechCatalogItem normalizeModelSelection(TextToSpeechCatalogItem model) {
+        if (model == null) {
+            return DEFAULT_MODEL;
+        }
+        String familyId = modelFamilyId(model.id());
+        return StringUtils.isBlank(familyId) ? DEFAULT_MODEL : modelFamilyItem(familyId);
+    }
+
+    @Override
+    public TextToSpeechCatalogItem normalizeVoiceSelection(TextToSpeechCatalogItem voice) {
+        if (voice == null) {
+            return DEFAULT_VOICE;
+        }
+        String originalId = StringUtils.trimToEmpty(voice.id()).toLowerCase(Locale.ROOT);
+        String id = normalizeVoiceModelId(originalId);
+        if (!id.equals(originalId)) {
+            return DEFAULT_VOICE;
+        }
+        String description = DEFAULT_VOICE.id().equals(id) || !DEFAULT_VOICE.description().equals(voice.description())
+                ? voice.description()
+                : "";
+        return new TextToSpeechCatalogItem(id, voice.label(), description);
+    }
+
+    @Override
+    public List<TextToSpeechCatalogItem> voicesForModel(TextToSpeechCatalogItem model, List<TextToSpeechCatalogItem> voices) {
+        if (voices == null || voices.isEmpty()) {
+            return List.of();
+        }
+        String familyId = model == null ? DEFAULT_MODEL.id() : modelFamilyId(model.id());
+        if (StringUtils.isBlank(familyId)) {
+            return voices;
+        }
+        List<TextToSpeechCatalogItem> matchingVoices = voices.stream()
+                .filter(voice -> Strings.CS.startsWith(voice.id(), "%s-".formatted(familyId)))
+                .toList();
+        return matchingVoices.isEmpty() ? voices : matchingVoices;
     }
 
     @Override
@@ -108,7 +163,7 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
                 voiceModels.add(new TextToSpeechCatalogItem(id, voiceLabel(id, model), voiceDescription(model)));
             }
         });
-        return nonEmptyOrBundled(voiceModels, BUNDLED_VOICE_MODELS);
+        return nonEmptyOrBundled(voiceModels, BUNDLED_VOICES);
     }
 
     private Map<String, String> authHeaders() {
@@ -181,19 +236,55 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     }
 
     private static String normalizeVoiceModelId(String id) {
-        String normalized = StringUtils.defaultIfBlank(id, DEFAULT_VOICE_MODEL.id()).trim().toLowerCase(Locale.ROOT);
-        return isDeepgramTtsVoiceModelId(normalized) ? normalized : DEFAULT_VOICE_MODEL.id();
+        String normalized = StringUtils.defaultIfBlank(id, DEFAULT_VOICE.id()).trim().toLowerCase(Locale.ROOT);
+        return isDeepgramTtsVoiceModelId(normalized) ? normalized : DEFAULT_VOICE.id();
     }
 
     private static boolean isDeepgramTtsVoiceModelId(String value) {
-        return Strings.CS.startsWith(value, "aura-")
-                && Strings.CS.endsWith(value, "-en")
-                && value.split("-").length >= 4
-                && value.chars().allMatch(DeepgramTextToSpeechProvider::isSafeModelIdCharacter);
+        String normalized = StringUtils.trimToEmpty(value);
+        String[] parts = normalized.split("-", -1);
+        return parts.length >= 4
+                && "aura".equals(parts[0])
+                && "en".equals(parts[parts.length - 1])
+                && Arrays.stream(parts).allMatch(StringUtils::isNotBlank)
+                && normalized.chars().allMatch(DeepgramTextToSpeechProvider::isSafeModelIdCharacter);
     }
 
     private static boolean isSafeModelIdCharacter(int value) {
         return Character.isLetterOrDigit(value) || value == '-';
+    }
+
+    private static String modelFamilyId(String id) {
+        String normalized = StringUtils.trimToEmpty(id).toLowerCase(Locale.ROOT);
+        if (isDeepgramTtsModelFamilyId(normalized)) {
+            return normalized;
+        }
+        if (!isDeepgramTtsVoiceModelId(normalized)) {
+            return "";
+        }
+        String[] parts = normalized.split("-");
+        return "%s-%s".formatted(parts[0], parts[1]);
+    }
+
+    private static boolean isDeepgramTtsModelFamilyId(String value) {
+        String normalized = StringUtils.trimToEmpty(value);
+        String[] parts = normalized.split("-", -1);
+        return parts.length == 2
+                && "aura".equals(parts[0])
+                && StringUtils.isNotBlank(parts[1])
+                && normalized.chars().allMatch(DeepgramTextToSpeechProvider::isSafeModelIdCharacter);
+    }
+
+    private static TextToSpeechCatalogItem modelFamilyItem(String id) {
+        return new TextToSpeechCatalogItem(id, modelFamilyLabel(id), "Deepgram TTS model family");
+    }
+
+    private static String modelFamilyLabel(String id) {
+        String[] parts = id.split("-");
+        if (parts.length != 2) {
+            return id;
+        }
+        return "%s %s".formatted(StringUtils.capitalize(parts[0]), parts[1]);
     }
 
     private static String voiceLabel(String id, JsonNode model) {

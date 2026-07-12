@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -182,6 +183,43 @@ class TextToSpeechPanelTest {
                 assertThat(subject.statusLabel().getText()).contains("Could not save Text to Speech voice selection.");
             });
             assertThat(repo.get("chat4j.tts.limited-voice.voice.id")).isEmpty();
+        } finally {
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Deepgram legacy cached model catalog is displayed as model families")
+    void refreshControlsFromSettings_whenDeepgramCachedModelsContainVoiceIds_showsModelFamilies() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-deepgram-legacy-cache.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, DeepgramTextToSpeechProvider.ID);
+        repo.put(
+                ttsCatalogModelsKey(DeepgramTextToSpeechProvider.ID),
+                "[{\"id\":\"aura-2-thalia-en\",\"label\":\"thalia\",\"description\":\"clear\"},"
+                        + "{\"id\":\"aura-2-zeus-en\",\"label\":\"zeus\",\"description\":\"deep\"}]"
+        );
+        repo.put(
+                ttsCatalogVoicesKey(DeepgramTextToSpeechProvider.ID),
+                "[{\"id\":\"aura-2-thalia-en\",\"label\":\"thalia\",\"description\":\"clear\"},"
+                        + "{\"id\":\"aura-2-zeus-en\",\"label\":\"zeus\",\"description\":\"deep\"}]"
+        );
+        var subject = createPanel(
+                repo,
+                new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(request -> {
+                    throw new AssertionError("Unavailable Deepgram provider should not refresh catalogs");
+                }) {
+                    @Override
+                    public boolean available() {
+                        return false;
+                    }
+                }))
+        );
+        try {
+            List<String> modelIds = callOnEdt(() -> comboItemIds(catalogComboBox(subject, "modelComboBox")));
+            List<String> voiceIds = callOnEdt(() -> comboItemIds(catalogComboBox(subject, "voiceComboBox")));
+
+            assertThat(modelIds).containsExactly("aura-2");
+            assertThat(voiceIds).containsExactly("aura-2-thalia-en", "aura-2-zeus-en");
         } finally {
             removePanel(subject);
         }
@@ -506,6 +544,12 @@ class TextToSpeechPanelTest {
             Thread.sleep(10);
         }
         assertThat(fieldValue(subject, "previewThread")).isNull();
+    }
+
+    private JComboBox<TextToSpeechCatalogItem> catalogComboBox(TextToSpeechPanel subject, String fieldName) throws Exception {
+        @SuppressWarnings("unchecked")
+        JComboBox<TextToSpeechCatalogItem> comboBox = (JComboBox<TextToSpeechCatalogItem>) fieldValue(subject, fieldName);
+        return comboBox;
     }
 
     private List<String> comboItemIds(JComboBox<TextToSpeechCatalogItem> comboBox) {

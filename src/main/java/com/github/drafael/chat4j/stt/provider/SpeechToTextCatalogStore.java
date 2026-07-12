@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
@@ -31,7 +32,11 @@ public class SpeechToTextCatalogStore {
                     .filter(item -> AssemblyAiSpeechToTextProvider.isBundledModelId(item.id()))
                     .toList();
         }
-        return mergeWithSelected(cachedModels(provider.id()), provider.bundledModels(), selected);
+        return mergeWithSelected(
+                normalized(cachedModels(provider.id()), provider::normalizeModelSelection),
+                provider.bundledModels(),
+                normalized(selected, provider::normalizeModelSelection)
+        );
     }
 
     public List<SpeechToTextCatalogItem> cachedModels(String providerId) {
@@ -101,6 +106,27 @@ public class SpeechToTextCatalogStore {
 
     private SpeechToTextProviderSettings settings(String providerId) {
         return SpeechToTextProviderSettingsFactory.forProvider(settingsRepo, providerId);
+    }
+
+    private static SpeechToTextCatalogItem normalized(
+            SpeechToTextCatalogItem item,
+            Function<SpeechToTextCatalogItem, SpeechToTextCatalogItem> normalizer
+    ) {
+        return item == null ? null : normalizer.apply(item);
+    }
+
+    private static List<SpeechToTextCatalogItem> normalized(
+            List<SpeechToTextCatalogItem> items,
+            Function<SpeechToTextCatalogItem, SpeechToTextCatalogItem> normalizer
+    ) {
+        if (items == null) {
+            return emptyList();
+        }
+        return items.stream()
+                .filter(item -> item != null && StringUtils.isNotBlank(item.id()))
+                .map(normalizer)
+                .filter(item -> item != null && StringUtils.isNotBlank(item.id()))
+                .toList();
     }
 
     private static void addAll(Map<String, SpeechToTextCatalogItem> target, List<SpeechToTextCatalogItem> items) {

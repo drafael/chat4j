@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.stt.provider.deepgram;
 
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
+import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
@@ -75,15 +76,17 @@ class DeepgramSpeechToTextProviderTest {
     }
 
     @Test
-    @DisplayName("Deepgram model fetch parses batch STT models and ignores non-STT families")
-    void fetchModels_whenCatalogContainsMixedModels_returnsBatchSttModels() throws Exception {
+    @DisplayName("Deepgram model fetch parses canonical batch STT models and ignores aliases")
+    void fetchModels_whenCatalogContainsMixedModels_returnsCanonicalBatchSttModels() throws Exception {
         String body = """
                 {
                   "tts":[{"canonical_name":"aura-2","name":"Aura"}],
                   "stt":[
-                    {"canonical_name":"nova-3-general","name":"Nova 3 General","architecture":"nova-3","version":"2025-01-01","batch":true,"streaming":true},
+                    {"canonical_name":"nova-3-general","name":"general","architecture":"nova-3","version":"2025-01-01","batch":true,"streaming":true},
                     {"canonical_name":"flux-general-en","name":"Flux Streaming","batch":false,"streaming":true},
                     {"name":"custom-batch","batch":true},
+                    {"canonical_name":"general","name":"general","batch":true},
+                    {"canonical_name":"general-dQw4w9WgXcQ","name":"general","batch":true},
                     {"canonical_name":"bad\\tmodel","name":"Bad","batch":true},
                     {"canonical_name":"nova-3-general","name":"Duplicate","batch":true}
                   ]
@@ -93,9 +96,20 @@ class DeepgramSpeechToTextProviderTest {
 
         var models = subject.fetchModels(context(credentials(true)));
 
-        assertThat(models).extracting("id").containsExactly("nova-3-general", "custom-batch");
-        assertThat(models.getFirst().label()).isEqualTo("Nova 3 General");
+        assertThat(models).extracting("id").containsExactly("nova-3-general");
+        assertThat(models.getFirst().label()).isEqualTo("Deepgram Nova 3 General");
         assertThat(models.getFirst().description()).contains("Architecture: nova-3", "Version: 2025-01-01");
+    }
+
+    @Test
+    @DisplayName("Deepgram model normalization drops catalog aliases to the default model")
+    void normalizeModelSelection_whenModelIsAlias_usesDefaultModel() {
+        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(success("{}")));
+
+        var normalized = subject.normalizeModelSelection(SpeechToTextCatalogItem.of("general", "general"));
+
+        assertThat(normalized.id()).isEqualTo("nova-3");
+        assertThat(normalized.label()).isEqualTo("Deepgram Nova 3");
     }
 
     @Test

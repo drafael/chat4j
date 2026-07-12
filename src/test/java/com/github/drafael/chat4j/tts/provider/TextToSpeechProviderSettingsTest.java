@@ -42,18 +42,17 @@ class TextToSpeechProviderSettingsTest {
     }
 
     @Test
-    @DisplayName("Deepgram TTS keeps model and voice key families separate")
-    void deepgramSettings_whenSameAuraValueSaved_writesSeparateModelAndVoiceKeys() {
+    @DisplayName("Deepgram TTS keeps model-family and voice keys separate")
+    void deepgramSettings_whenModelAndVoiceSaved_writesSeparateModelAndVoiceKeys() {
         var repo = repo("deepgram.properties");
         var subject = new DeepgramTextToSpeechSettings(repo);
-        var auraVoiceModel = TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia");
 
-        subject.saveModel(auraVoiceModel);
-        subject.saveVoice(auraVoiceModel);
+        subject.saveModel(TextToSpeechCatalogItem.of("aura-2", "Aura 2"));
+        subject.saveVoice(TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"));
 
-        assertThat(repo.get("chat4j.tts.deepgram.model.id")).contains("aura-2-thalia-en");
+        assertThat(repo.get("chat4j.tts.deepgram.model.id")).contains("aura-2");
         assertThat(repo.get("chat4j.tts.deepgram.voice.id")).contains("aura-2-thalia-en");
-        assertThat(repo.get("chat4j.tts.deepgram.model.label")).contains("thalia");
+        assertThat(repo.get("chat4j.tts.deepgram.model.label")).contains("Aura 2");
         assertThat(repo.get("chat4j.tts.deepgram.voice.label")).contains("thalia");
     }
 

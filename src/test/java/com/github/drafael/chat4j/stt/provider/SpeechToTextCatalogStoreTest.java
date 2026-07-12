@@ -57,6 +57,25 @@ class SpeechToTextCatalogStoreTest {
     }
 
     @Test
+    @DisplayName("Deepgram cached alias models are normalized out of the displayed catalog")
+    void models_whenDeepgramCachedModelsContainAliases_showsBundledCanonicalModelsOnly() throws Exception {
+        var repo = repo("deepgram-aliases.properties");
+        repo.put(
+                "chat4j.stt.catalog.deepgram.models",
+                "[{\"id\":\"general\",\"label\":\"general\",\"description\":\"\"},"
+                        + "{\"id\":\"finance\",\"label\":\"finance\",\"description\":\"\"},"
+                        + "{\"id\":\"general-dQw4w9WgXcQ\",\"label\":\"general-dQw4w9WgXcQ\",\"description\":\"\"}]"
+        );
+        var provider = new DeepgramSpeechToTextProvider((request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0]));
+        var subject = new SpeechToTextCatalogStore(repo);
+
+        var models = subject.models(provider, SpeechToTextCatalogItem.of("general", "general"));
+
+        assertThat(models).extracting(SpeechToTextCatalogItem::id)
+                .containsExactly("nova-3", "nova-3-general", "nova-2-general");
+    }
+
+    @Test
     @DisplayName("Invalidating STT catalog clears stale selected model")
     void invalidate_whenProviderHasSelectedModel_removesTimestampAndSelection() throws Exception {
         var repo = repo("invalidate.properties");
