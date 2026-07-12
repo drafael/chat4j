@@ -38,6 +38,7 @@ Use this skill for every Java Swing/UI test change in this project. The goal is 
 - After completing background work that queues EDT callbacks, flush the EDT with `SwingUtilities.invokeAndWait(() -> {})` before asserting final UI state or letting `@TempDir` cleanup run.
 - Never rely on arbitrary sleeps to prove callbacks did or did not run. Poll with a deadline only when no deterministic signal exists, and keep the poll tied to a concrete state.
 - Avoid leaving virtual threads, timers, or executor tasks able to touch test temp files after the test returns.
+- Do not use an available provider/component that starts automatic catalog refresh, preview, download, or persistence work in a test that is not specifically about that behavior. Prefer an empty registry, disabled provider, unavailable provider, or a provider with explicit latches so the test owns every background write.
 
 ### TempDir and Windows CI
 
@@ -49,6 +50,7 @@ Use this skill for every Java Swing/UI test change in this project. The goal is 
   - join workers when possible,
   - flush the EDT queue.
 - If a test intentionally makes settings reads/writes fail, reset the failure flag before cleanup so panel disposal and final EDT flushes cannot fail for the wrong reason.
+- For tests using `@TempDir`, treat component construction as potentially asynchronous. If the constructor can auto-refresh catalogs or persist default selections, either disable that path for unrelated tests or wait/join/flush it before returning. A passing assertion is not enough; the temp directory must be quiet before JUnit cleanup.
 
 ### Blocked-EDT tests
 

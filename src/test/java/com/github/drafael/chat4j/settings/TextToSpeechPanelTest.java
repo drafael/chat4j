@@ -230,7 +230,7 @@ class TextToSpeechPanelTest {
     void savePendingChangesAsync_whenTokenFieldRebuiltBeforeFailure_usesOriginalError() throws Exception {
         var subject = createPanel(
                 new SettingsRepository(tempDir.resolve("tts-token-rebuild.properties")),
-                new TextToSpeechProviderRegistry(List.of(new AvailableSystemProvider()))
+                new TextToSpeechProviderRegistry(List.of())
         );
         ApiTokenFieldPanel originalField = mock(ApiTokenFieldPanel.class);
         ApiTokenFieldPanel replacementField = mock(ApiTokenFieldPanel.class);
