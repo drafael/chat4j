@@ -787,11 +787,27 @@ class SpeechToTextPanelTest {
     void updateAvailability_whenAssemblyAiAvailable_showsAssemblyAiPrivacyCopy() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-helper.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
-        var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider()))));
-        assertThat(helperLabelText(subject))
-                .contains("Using AssemblyAI.")
-                .contains("Recorded audio is sent to AssemblyAI for transcription.");
-        runOnEdt(subject::removeNotify);
+        new SpeechToTextCatalogStore(repo).saveModels(AssemblyAiSpeechToTextProvider.ID, new AssemblyAiTestProvider().bundledModels());
+        Path defaultModels = tempDir.resolve("assemblyai-helper-models");
+        try (
+                var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("assemblyai-helper-vosk-temp"));
+                var whisperModels = new WhisperModelManagementService(repo, defaultModels, tempDir.resolve("assemblyai-helper-whisper-temp"), fakeWhisperRuntime(), new WhisperModelUsageTracker())
+        ) {
+            var subject = callOnEdt(() -> new SpeechToTextPanel(
+                    repo,
+                    defaultModels,
+                    new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider())),
+                    voskModels,
+                    whisperModels
+            ));
+            try {
+                assertThat(helperLabelText(subject))
+                        .contains("Using AssemblyAI.")
+                        .contains("Recorded audio is sent to AssemblyAI for transcription.");
+            } finally {
+                runOnEdt(subject::removeNotify);
+            }
+        }
     }
 
     @Test
