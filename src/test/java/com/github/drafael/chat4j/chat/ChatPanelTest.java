@@ -25,6 +25,8 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.CitationKind;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
@@ -40,6 +42,7 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
+import com.github.drafael.chat4j.web.WebSearchAvailabilityResolver;
 import com.github.drafael.chat4j.web.WebSearchMode;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
@@ -189,6 +192,362 @@ class ChatPanelTest {
         awaitCondition(2, TimeUnit.SECONDS, () -> observedStates.contains(false));
 
         assertThat(observedStates).containsSubsequence(true, false);
+    }
+
+    @Test
+    @DisplayName("xAI native web search activity is disabled for non-text attachments")
+    void nativeWebSearchEnabled_whenXaiRequestContainsAttachment_returnsFalse() throws Exception {
+        List<Message> history = List.of(new Message(
+                Role.USER,
+                List.of(
+                        new TextPart("Describe this image"),
+                        new ImagePart(new AttachmentRef(UUID.randomUUID(), "/tmp/image.png", "image.png", "image/png", 128L, "sha"), 64, 64)
+                ),
+                Instant.now()
+        ));
+        var sendJob = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                "xAI",
+                "grok-4",
+                "https://api.x.ai/v1",
+                "test-key",
+                ProviderCapabilities.chatAndModels(),
+                immediateProvider("pong"),
+                history,
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                false,
+                null,
+                ""
+        );
+
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+
+        assertThat(enabled).isFalse();
+    }
+
+    @Test
+    @DisplayName("Native web search activity is disabled for unsupported xAI models")
+    void nativeWebSearchEnabled_whenXaiModelDoesNotSupportNativeSearch_returnsFalse() throws Exception {
+        List<Message> history = List.of(Message.user("Search with unsupported xAI model"));
+        var sendJob = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                "xAI",
+                "gpt-5",
+                "https://api.x.ai/v1",
+                "test-key",
+                ProviderCapabilities.chatAndModels(),
+                immediateProvider("pong"),
+                history,
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                false,
+                null,
+                ""
+        );
+
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+
+        assertThat(enabled).isFalse();
+    }
+
+    @Test
+    @DisplayName("Native web search honors explicit provider capability declarations")
+    void nativeWebSearchEnabled_whenProviderCapabilitiesDeclareNativeSearch_returnsTrue() throws Exception {
+        List<Message> history = List.of(Message.user("Search with custom native provider"));
+        ProviderCapabilities capabilities = new ProviderCapabilities(true, true, false, false, true, false);
+        var sendJob = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                "Custom Provider",
+                "custom-web-model",
+                "https://provider.example/v1",
+                "test-key",
+                capabilities,
+                immediateProvider("pong"),
+                history,
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                false,
+                null,
+                ""
+        );
+
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+
+        assertThat(enabled).isTrue();
+    }
+
+    @Test
+    @DisplayName("Structured web citations append a Sources section when answer has no source references")
+    void appendCitationSourcesIfNeeded_whenAnswerLacksSourceReferences_appendsSources() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+
+        String text = invokeAppendCitationSourcesIfNeeded(
+                subject,
+                "JNA docs are at https://github.com/java-native-access/jna.",
+                citations
+        );
+
+        assertThat(text).contains("Sources:\n[1] [JNA GitHub](<https://github.com/java-native-access/jna>)");
+    }
+
+    @Test
+    @DisplayName("Structured web citation sources use the URL domain when title is missing")
+    void appendCitationSourcesIfNeeded_whenCitationTitleIsMissing_usesDomainLabel() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .url("https://www.example.com/articles/jna")
+                .build());
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, "Answer", citations);
+
+        assertThat(text).contains("Sources:\n[1] [example.com](<https://www.example.com/articles/jna>)");
+    }
+
+    @Test
+    @DisplayName("Web search activity uses readable structured citation labels")
+    void mergeAssistantWebSearchWithAnswerSources_whenCitationsAreAvailable_usesReadableLabels() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Wikipedia Source")
+                .url("https://example.com/Foo_(bar)")
+                .build());
+
+        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
+                subject,
+                webSearchSendJob(),
+                "Answer\n\nSources:\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)",
+                "",
+                citations
+        );
+
+        assertThat(activity).isEqualTo("**Sources**\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)");
+    }
+
+    @Test
+    @DisplayName("Web search activity preserves readable source labels from answer text")
+    void mergeAssistantWebSearchWithAnswerSources_whenAnswerHasLabeledSourceLink_preservesLabel() throws Exception {
+        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
+                subject,
+                webSearchSendJob(),
+                "Answer\n\nSources:\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)",
+                "",
+                emptyList()
+        );
+
+        assertThat(activity).isEqualTo("**Sources**\n- [Wikipedia Source](<https://example.com/Foo_(bar)>)");
+    }
+
+    @Test
+    @DisplayName("Web search activity preserves parenthesized URLs in non-angle markdown links")
+    void mergeAssistantWebSearchWithAnswerSources_whenNonAngleSourceUrlContainsParentheses_preservesFullLink() throws Exception {
+        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
+                subject,
+                webSearchSendJob(),
+                "Answer\n\nSources:\n[1] [Wikipedia Source](https://example.com/Foo_(bar))",
+                "",
+                emptyList()
+        );
+
+        assertThat(activity).isEqualTo("**Sources**\n- [Wikipedia Source](https://example.com/Foo_(bar))");
+    }
+
+    @Test
+    @DisplayName("Web search activity preserves parenthesized raw source URLs")
+    void mergeAssistantWebSearchWithAnswerSources_whenRawSourceUrlContainsParentheses_preservesFullUrl() throws Exception {
+        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
+                subject,
+                webSearchSendJob(),
+                "Answer\n\nSources:\nhttps://example.com/Foo_(bar)",
+                "",
+                emptyList()
+        );
+
+        assertThat(activity).isEqualTo("**Sources**\n- <https://example.com/Foo_(bar)>");
+    }
+
+    @Test
+    @DisplayName("Structured web citation sources are ordered by citation number")
+    void appendCitationSourcesIfNeeded_whenCitationsArriveOutOfOrder_ordersSourcesByNumber() throws Exception {
+        List<CitationRef> citations = List.of(
+                CitationRef.builder()
+                        .number(2)
+                        .kind(CitationKind.WEB)
+                        .title("Second")
+                        .url("https://example.com/two")
+                        .build(),
+                CitationRef.builder()
+                        .number(1)
+                        .kind(CitationKind.WEB)
+                        .title("First")
+                        .url("https://example.com/one")
+                        .build()
+        );
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, "Answer", citations);
+
+        assertThat(text).containsSubsequence(
+                "[1] [First](<https://example.com/one>)",
+                "[2] [Second](<https://example.com/two>)"
+        );
+    }
+
+    @Test
+    @DisplayName("Structured web citations do not duplicate existing labeled markdown source references")
+    void appendCitationSourcesIfNeeded_whenAnswerAlreadyHasLabeledMarkdownSourceReference_keepsAnswer() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String existing = "Answer [1]\n\n[1] [JNA GitHub](<https://github.com/java-native-access/jna>)";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, existing, citations);
+
+        assertThat(text).isEqualTo(existing);
+    }
+
+    @Test
+    @DisplayName("Structured web citations with unsafe URLs are not appended as source links")
+    void appendCitationSourcesIfNeeded_whenWebCitationUrlIsNotHttp_doesNotAppendSource() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Unsafe")
+                .url("javascript:alert(1)")
+                .build());
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, "Answer", citations);
+
+        assertThat(text).isEqualTo("Answer");
+    }
+
+    @Test
+    @DisplayName("Structured non-web citations are not appended as web source URLs")
+    void appendCitationSourcesIfNeeded_whenCitationIsNotWeb_doesNotAppendSource() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.DOCUMENT_PAGE)
+                .title("doc.pdf")
+                .startPage(1L)
+                .build());
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, "Answer", citations);
+
+        assertThat(text).isEqualTo("Answer");
+    }
+
+    @Test
+    @DisplayName("Structured web citations do not duplicate existing source references")
+    void appendCitationSourcesIfNeeded_whenAnswerAlreadyHasSourceReferences_keepsAnswer() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String existing = "Answer [1]\n\nSources:\n[1] https://github.com/java-native-access/jna";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, existing, citations);
+
+        assertThat(text).isEqualTo(existing);
+    }
+
+    @Test
+    @DisplayName("Structured web citations append sources when an empty Sources heading is followed by another section")
+    void appendCitationSourcesIfNeeded_whenEmptySourcesHeadingEndsBeforeUrl_appendsSources() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String answer = "Answer\n\nSources:\n\n## More reading\nhttps://example.com/unrelated";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, answer, citations);
+
+        assertThat(text).endsWith("Sources:\n[1] [JNA GitHub](<https://github.com/java-native-access/jna>)");
+    }
+
+    @Test
+    @DisplayName("Structured web citations do not duplicate existing provider Sources section")
+    void appendCitationSourcesIfNeeded_whenAnswerAlreadyHasSourcesSection_keepsAnswer() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String existing = "Answer [1]\n\nSources:\n1. [JNA GitHub](<https://github.com/java-native-access/jna>)";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, existing, citations);
+
+        assertThat(text).isEqualTo(existing);
+    }
+
+    @Test
+    @DisplayName("Structured web citations do not duplicate existing bold Sources headings with trailing colons")
+    void appendCitationSourcesIfNeeded_whenAnswerHasBoldSourcesHeadingWithColon_keepsAnswer() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String existing = "Answer [1]\n\n**Sources**:\n- <https://github.com/java-native-access/jna>";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, existing, citations);
+
+        assertThat(text).isEqualTo(existing);
+    }
+
+    @Test
+    @DisplayName("Structured web citations append sources when a bold heading ends an empty Sources section")
+    void appendCitationSourcesIfNeeded_whenEmptySourcesHeadingEndsBeforeBoldHeadingWithColon_appendsSources() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String answer = "Answer\n\n**Sources**:\n\n**More reading**:\nhttps://example.com/unrelated";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, answer, citations);
+
+        assertThat(text).endsWith("Sources:\n[1] [JNA GitHub](<https://github.com/java-native-access/jna>)");
+    }
+
+    @Test
+    @DisplayName("Structured web citations do not duplicate existing markdown source links")
+    void appendCitationSourcesIfNeeded_whenAnswerAlreadyHasMarkdownSourceLinks_keepsAnswer() throws Exception {
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("JNA GitHub")
+                .url("https://github.com/java-native-access/jna")
+                .build());
+        String existing = "Answer [1]\n\nSources:\n[1](https://github.com/java-native-access/jna)";
+
+        String text = invokeAppendCitationSourcesIfNeeded(subject, existing, citations);
+
+        assertThat(text).isEqualTo(existing);
     }
 
     @Test
@@ -2921,6 +3280,61 @@ class ChatPanelTest {
         );
         method.setAccessible(true);
         method.invoke(chatPanel, session, sendJob, allowBlankContent);
+    }
+
+    private static boolean invokeNativeWebSearchEnabled(ChatPanel chatPanel, SendJob sendJob, List<Message> requestHistory) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("nativeWebSearchEnabled", SendJob.class, List.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(chatPanel, sendJob, requestHistory);
+    }
+
+    private static String invokeAppendCitationSourcesIfNeeded(
+            ChatPanel chatPanel,
+            String assistantText,
+            List<CitationRef> citations
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("appendCitationSourcesIfNeeded", String.class, List.class);
+        method.setAccessible(true);
+        return (String) method.invoke(chatPanel, assistantText, citations);
+    }
+
+    private static String invokeMergeAssistantWebSearchWithAnswerSources(
+            ChatPanel chatPanel,
+            SendJob sendJob,
+            String assistantText,
+            String existingActivity,
+            List<CitationRef> citations
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "mergeAssistantWebSearchWithAnswerSources",
+                SendJob.class,
+                String.class,
+                String.class,
+                List.class
+        );
+        method.setAccessible(true);
+        return (String) method.invoke(chatPanel, sendJob, assistantText, existingActivity, citations);
+    }
+
+    private static SendJob webSearchSendJob() {
+        return new SendJob(
+                1L,
+                UUID.randomUUID(),
+                "Google AI",
+                "gemini-3.5-flash",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "test-key",
+                ProviderCapabilities.chatAndModels(),
+                immediateProvider("pong"),
+                List.of(Message.user("Search")),
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                false,
+                null,
+                ""
+        );
     }
 
     @SuppressWarnings("unchecked")

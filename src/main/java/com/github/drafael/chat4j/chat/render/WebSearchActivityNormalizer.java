@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 
 public final class WebSearchActivityNormalizer {
 
-    private static final Pattern SOURCE_URL_PATTERN = Pattern.compile("(?:\\[[^]]+])?\\(?(https?://[^\\s)<>]+)\\)?|<?(https?://[^\\s)<>]+)>?");
+    private static final Pattern SOURCE_URL_PATTERN = Pattern.compile("(?:\\[[^]]+])?\\(<(https?://[^>\\s]+)>\\)|<(https?://[^>\\s]+)>|(?:\\[[^]]+])?\\((https?://(?:[^\\s()<>]|\\([^\\s()<>]*\\))+)\\)|(https?://(?:[^\\s()<>]|\\([^\\s()<>]*\\))+)");
 
     private WebSearchActivityNormalizer() {
     }
@@ -37,7 +37,7 @@ public final class WebSearchActivityNormalizer {
             addLine(searched, sources, section, line);
         }
 
-        removeNativePlaceholderWhenRealSourcesExist(sources);
+        removeNativePlaceholders(sources);
         return render(searched, sources);
     }
 
@@ -45,6 +45,7 @@ public final class WebSearchActivityNormalizer {
         String heading = line.replaceFirst("^#+\\s*", "").trim();
         heading = Strings.CS.removeEnd(heading, ":").trim();
         heading = Strings.CS.removeEnd(Strings.CS.removeStart(heading, "**"), "**").trim();
+        heading = Strings.CS.removeEnd(heading, ":").trim();
         return switch (heading.toLowerCase()) {
             case "searched" -> {
                 yield WebActivitySection.SEARCHED;
@@ -76,12 +77,27 @@ public final class WebSearchActivityNormalizer {
                 searched.add(item);
             }
             case SOURCES -> {
-                sources.putIfAbsent(dedupeKey(item), "- %s".formatted(item));
+                sources.merge(dedupeKey(item), "- %s".formatted(item), WebSearchActivityNormalizer::preferSourceLine);
             }
             case NONE -> {
                 // Ignore stray markdown outside known sections.
             }
         }
+    }
+
+    private static String preferSourceLine(String existing, String candidate) {
+        return sourceLineScore(candidate) > sourceLineScore(existing) ? candidate : existing;
+    }
+
+    private static int sourceLineScore(String line) {
+        String item = stripListMarker(line);
+        if (item.matches("^<?https?://\\S+>?$")) {
+            return 0;
+        }
+        if (item.matches("^\\[\\d+]\\(<?https?://.*>?\\)$")) {
+            return 1;
+        }
+        return item.contains("](") ? 2 : 1;
     }
 
     private static String stripListMarker(String line) {
@@ -93,10 +109,20 @@ public final class WebSearchActivityNormalizer {
     private static String dedupeKey(String item) {
         Matcher matcher = SOURCE_URL_PATTERN.matcher(item);
         if (matcher.find()) {
-            String url = normalizeUrl(StringUtils.defaultIfBlank(matcher.group(1), matcher.group(2)));
+            String url = normalizeUrl(matchedSourceUrl(matcher));
             return "url:%s".formatted(url);
         }
         return "text:%s".formatted(item.toLowerCase());
+    }
+
+    private static String matchedSourceUrl(Matcher matcher) {
+        for (int i = 1; i <= matcher.groupCount(); i++) {
+            String value = matcher.group(i);
+            if (StringUtils.isNotBlank(value)) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private static String normalizeUrl(String url) {
@@ -107,12 +133,9 @@ public final class WebSearchActivityNormalizer {
         return normalized;
     }
 
-    private static void removeNativePlaceholderWhenRealSourcesExist(LinkedHashMap<String, String> sources) {
-        boolean hasRealSourceUrl = sources.keySet().stream().anyMatch(key -> key.startsWith("url:"));
-        if (hasRealSourceUrl) {
-            sources.entrySet().removeIf(entry -> !entry.getKey().startsWith("url:")
-                    && entry.getValue().contains("Native web search is handled"));
-        }
+    private static void removeNativePlaceholders(LinkedHashMap<String, String> sources) {
+        sources.entrySet().removeIf(entry -> !entry.getKey().startsWith("url:")
+                && entry.getValue().contains("Native web search is handled"));
     }
 
     private static String render(LinkedHashSet<String> searched, LinkedHashMap<String, String> sources) {

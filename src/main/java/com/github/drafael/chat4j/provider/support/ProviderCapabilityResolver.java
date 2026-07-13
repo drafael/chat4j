@@ -170,6 +170,29 @@ public final class ProviderCapabilityResolver {
         return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, null);
     }
 
+    public static boolean supportsRuntimeNativeWebSearch(ProviderCapabilities capabilities, String providerName, String modelId) {
+        return supportsNativeWebSearch(capabilities, providerName, modelId);
+    }
+
+    public static boolean supportsRuntimeNativeWebSearch(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey
+    ) {
+        if (supportsRuntimeDynamicNativeWebSearchProbe(providerName)) {
+            return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, apiKey);
+        }
+        return supportsNativeWebSearch(capabilities, providerName, modelId);
+    }
+
+    private static boolean supportsRuntimeDynamicNativeWebSearchProbe(String providerName) {
+        String provider = normalize(providerName);
+        return OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                || containsAny(provider, GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS);
+    }
+
     public static boolean supportsNativeWebSearch(
             ProviderCapabilities capabilities,
             String providerName,
@@ -185,6 +208,10 @@ public final class ProviderCapabilityResolver {
 
         if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
             return PerplexityModelIds.isSonarModel(modelId);
+        }
+
+        if (GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
+            return supportsGroqNativeWebSearch(model);
         }
 
         if (capabilities != null && capabilities.supportsNativeWebSearch()) {
@@ -209,8 +236,12 @@ public final class ProviderCapabilityResolver {
             return containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
         }
 
+        if (XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
+            return containsAny(model, XAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
+        }
+
         if (containsAny(provider, GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS)) {
-            return false;
+            return containsAny(model, GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
         }
 
         if (OPENROUTER_PROVIDER_HINTS.contains(provider)) {

@@ -13,10 +13,12 @@ This document captures current provider support for native web search / groundin
 ## Current Chat4J state
 
 - Anthropic already supports native web search through `WebSearchTool20250305` and maps citation deltas through `AnthropicCitationMapper`.
-- OpenAI native search is partially implemented: `OpenAiChatCompletionClient` switches to Responses API with `WebSearchTool` for OpenAI when web search is enabled, but it currently streams text only and does not emit structured `CitationRef` metadata from URL annotations.
+- OpenAI native search uses the Responses API with `WebSearchTool` for OpenAI when web search is enabled, and streams structured `CitationRef` metadata from `response.output_text.annotation.added` URL annotations.
 - Perplexity search is supported through `PerplexityChatCompletionClient`; Phase 1 emits structured `CitationRef` metadata from the same canonical `citations` / `search_results` source list while preserving the rendered Markdown links and Sources section.
-- Google AI normal chat currently routes through the OpenAI-compatible fallback. Native Gemini `google_search` grounding is not implemented for normal text chat.
-- xAI, Groq Compound, Mistral websearch, and OpenRouter web plugins are not implemented as first-class native search paths.
+- xAI Grok web-capable models use the same Responses-native web search and citation extraction path as OpenAI.
+- OpenRouter `:online` / Sonar paths and Groq Compound chat-completions paths parse URL/search-result citation metadata from OpenAI-compatible streaming additional properties when providers emit it.
+- Google AI uses native Gemini `google_search` grounding for Gemini 2.x/3.x models when Native web search is enabled and emits `CitationRef` metadata from grounding chunks.
+- Mistral websearch is not implemented as a first-class native search path.
 - `WebSearchAvailabilityResolver` already models two user-visible choices: native provider search and external Perplexity search.
 
 ## Provider findings
@@ -25,10 +27,10 @@ This document captures current provider support for native web search / groundin
 | --- | --- | --- | --- |
 | Anthropic | Claude web search tool | Streaming citation deltas, including web-search result locations | Already implemented; keep as reference design. |
 | Perplexity | Sonar models search by default; API exposes search controls | Top-level `citations` URL list and `search_results` objects | Text rendering is preserved; Phase 1 adds structured `CitationRef` emission. |
-| OpenAI | Responses API `web_search`; Chat Completions has specialized search models | `message.content[].annotations[]` with `url_citation` URL/title/offsets; `web_search_call` can expose searched sources | Parse annotations and emit `CitationRef`; later expose context-size/domain controls. |
-| Google Gemini | `google_search` grounding for supported Gemini 2.x/3.x models | `model_output.content[].annotations[]` with `url_citation`, plus `google_search_call` / `google_search_result` steps | Needs native Gemini text-generation path when web search is enabled. |
-| xAI / Grok | Responses-compatible `web_search`; xAI SDK also supports web and X search | Response citations plus inline `url_citation` annotations | Likely implement through OpenAI-compatible Responses path for xAI models. |
-| Groq | Built-in search for `groq/compound` and `groq/compound-mini` | `message.executed_tools[].search_results` with title/url/content/score | Enable only for Compound systems, not arbitrary Groq models. |
+| OpenAI | Responses API `web_search`; Chat Completions has specialized search models | `response.output_text.annotation.added` URL annotations with URL/title/offsets | Implemented for streaming Responses path; later expose context-size/domain controls. |
+| Google Gemini | `google_search` grounding for Gemini 2.x/3.x models | `groundingMetadata.groundingChunks[].web` plus `groundingSupports[].segment.text` | Implemented on the native generateContent path when Native web search is enabled. |
+| xAI / Grok | Responses-compatible `web_search`; xAI SDK also supports web and X search | Response citations plus inline `url_citation` annotations | Implemented through the OpenAI-compatible Responses path for Grok 3/4 models. |
+| Groq | Built-in search for `groq/compound` and `groq/compound-mini` | `message.executed_tools[].search_results` with title/url/content/score | Compound models expose Native search and parse search-result metadata from streaming additional properties. |
 | Mistral | `web_search` / `web_search_premium` in Agents/Conversations API | `message.output.content[]` interleaves `text` and `tool_reference` chunks | Do not enable on current Chat Completions path; requires separate Conversations/Agents client. |
 | OpenRouter | `:online` model variant or `plugins: [{"id":"web"}]` | Standardized OpenAI-style `message.annotations[].url_citation` | Support by adding plugin request body / `:online` handling and annotation parsing. |
 
@@ -90,31 +92,40 @@ Inspected the resolved `com.openai:openai-java:4.30.0` SDK sources in `openai-ja
 
 ## Phase 2: OpenAI and xAI Responses-native web search
 
-- Generalize the OpenAI-compatible Responses path so providers with Responses-compatible web search can use it, not only provider name `OpenAI`.
-- Add capability hints for xAI/Grok web-capable models.
-- Parse OpenAI/xAI `url_citation` annotations into `CitationRef`.
-- Add tests for provider gating so xAI can use native search while unrelated OpenAI-compatible providers cannot accidentally receive Responses web-search requests.
-- Consider exposing search context size (`low`, `medium`, `high`) after the base citation path is stable.
+Status: implemented for the current streaming path.
+
+- Generalized the OpenAI-compatible Responses path so xAI can use Responses web search while unrelated OpenAI-compatible providers cannot accidentally receive Responses web-search requests.
+- Added capability hints for xAI/Grok web-capable models.
+- Parsed OpenAI/xAI `url_citation` annotations into `CitationRef` through the streaming `response.output_text.annotation.added` event.
+- Added provider-gating and citation-mapper tests.
+- Still deferred: exposing search context size (`low`, `medium`, `high`) and domain filters.
 
 ## Phase 3: Google Gemini grounding
 
-- Add a native Gemini text-generation path for web-search-enabled Google AI requests.
-- Send `tools: [{"type":"google_search"}]` for supported Gemini models.
-- Parse `model_output.content[].annotations[]` URL citations.
-- Preserve the existing image-output native Gemini path.
-- Update capability detection so Google native search is visible only for supported Gemini models and only when the native path is implemented.
+Status: implemented for native `generateContent` responses.
+
+- Added a native Gemini text-generation path for web-search-enabled Google AI requests.
+- Sends `tools: [{"google_search": {}}]` for supported Gemini models.
+- Parses `groundingMetadata.groundingChunks[].web` URLs/titles and `groundingSupports[].segment.text` excerpts into `CitationRef`.
+- Preserves the existing image-output native Gemini path.
+- Updates capability detection so Gemini 2.x/3.x models expose Native web search only after the native path exists.
 
 ## Phase 4: Groq Compound
 
-- Mark only `groq/compound` and `groq/compound-mini` as native-web-search capable.
-- Parse `executed_tools[].search_results` into `CitationRef` and/or web-search activity metadata.
-- Add tests confirming ordinary Groq models do not show the Native option.
+Status: partially implemented on the existing OpenAI-compatible streaming path.
+
+- Mark only `compound`, `compound-mini`, `groq/compound`, and `groq/compound-mini` as native-web-search capable.
+- Parse `executed_tools[].search_results` into `CitationRef` when Groq emits those fields in streaming additional properties.
+- Added tests confirming ordinary Groq models do not show the Native option.
+- Still deferred: any provider-specific request controls beyond the built-in Compound model behavior.
 
 ## Phase 5: OpenRouter web plugin
 
-- Support `:online` model variants and/or explicit `plugins: [{"id":"web"}]` when native search is selected.
-- Parse OpenRouter `message.annotations[].url_citation` into `CitationRef`.
-- Decide whether Chat4J should expose engine selection (`native`, `exa`, `perplexity`, etc.) or keep a single Native option initially.
+Status: partially implemented for currently advertised native-search models.
+
+- `:online` model variants and OpenRouter Perplexity Sonar models are already the only OpenRouter models advertised as native-search capable.
+- OpenRouter-style `annotations[].url_citation` metadata is parsed into `CitationRef` when it appears in streaming additional properties.
+- Still deferred: explicit `plugins: [{"id":"web"}]` request injection for regular models, engine selection (`native`, `exa`, `perplexity`, etc.), and broader availability gating.
 
 ## Phase 6: Mistral Conversations/Agents API
 

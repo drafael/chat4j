@@ -1218,12 +1218,63 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("Google Gemini models do not expose native web search until Gemini native request path exists")
-    void supportsNativeWebSearch_whenGoogleAiGeminiRequestPathMissing_returnsFalse() {
+    @DisplayName("xAI Grok web-capable models expose native web search capability")
+    void supportsNativeWebSearch_whenXaiGrokModelMatchesWebSearchHints_returnsTrue() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "xAI",
+                "grok-4"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Groq Compound models expose native web search capability")
+    void supportsNativeWebSearch_whenGroqCompoundModelSelected_returnsTrue() {
+        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "Groq",
+                "compound"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "Groq",
+                "compound-mini"
+        )).isTrue();
+    }
+
+    @Test
+    @DisplayName("Ordinary Groq models do not expose native web search capability")
+    void supportsNativeWebSearch_whenGroqModelIsNotCompound_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "Groq",
+                "llama-3.3-70b-versatile"
+        );
+
+        assertThat(supported).isFalse();
+    }
+
+    @Test
+    @DisplayName("Supported Google Gemini models expose native web search capability")
+    void supportsNativeWebSearch_whenGoogleAiSupportedGeminiModelSelected_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
                 ProviderCapabilities.chatAndModels(),
                 "Google AI",
                 "gemini-2.5-flash"
+        );
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("Unsupported Google Gemini versions do not expose native web search capability")
+    void supportsNativeWebSearch_whenGoogleAiUnsupportedGeminiVersionSelected_returnsFalse() {
+        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "Google AI",
+                "gemini-1.5-flash"
         );
 
         assertThat(supported).isFalse();
@@ -1375,6 +1426,75 @@ class ProviderCapabilityResolverTest {
             );
 
             assertThat(supported).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Runtime native web search lets dynamic metadata disable fallback OpenAI hints")
+    void supportsRuntimeNativeWebSearch_whenOpenAiMetadataDeclaresWebSearchFalse_returnsFalse() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "gpt-5",
+                200,
+                """
+                        {
+                          "id": "gpt-5",
+                          "capabilities": {
+                            "web_search": false
+                          }
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
+                    ProviderCapabilities.chatAndModels(),
+                    "OpenAI",
+                    "gpt-5",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    null
+            );
+
+            assertThat(supported).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Runtime native web search ignores dynamic metadata for providers without an implemented native path")
+    void supportsRuntimeNativeWebSearch_whenCustomProviderMetadataDeclaresWebSearch_returnsFalse() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "web-model-runtime",
+                200,
+                """
+                        {
+                          "id": "web-model-runtime",
+                          "capabilities": {
+                            "web_search": true
+                          }
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    "web-model-runtime",
+                    baseUrl
+            )).isTrue();
+            assertThat(ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    "web-model-runtime",
+                    baseUrl,
+                    null
+            )).isFalse();
         } finally {
             server.stop(0);
         }

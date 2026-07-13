@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import org.apache.commons.lang3.StringUtils;
@@ -17,6 +18,7 @@ final class SendJob {
     final String modelId;
     final String baseUrl;
     final String apiKey;
+    final ProviderCapabilities capabilities;
     final ProviderService provider;
     final List<Message> historySnapshot;
     final ReasoningLevel reasoningLevel;
@@ -39,6 +41,7 @@ final class SendJob {
             String modelId,
             String baseUrl,
             String apiKey,
+            ProviderCapabilities capabilities,
             ProviderService provider,
             List<Message> historySnapshot,
             ReasoningLevel reasoningLevel,
@@ -55,6 +58,7 @@ final class SendJob {
         this.modelId = modelId;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
+        this.capabilities = capabilities;
         this.provider = provider;
         this.historySnapshot = List.copyOf(historySnapshot);
         this.reasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;

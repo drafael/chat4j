@@ -300,6 +300,37 @@ class TranscriptDocumentRendererTest {
     }
 
     @Test
+    @DisplayName("Metadata-backed source lists render readable labels instead of raw URLs")
+    void renderEntriesHtml_whenSourceListUsesMarkdownLabel_keepsRawUrlOutOfVisibleText() {
+        var citation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Example Source")
+                .url("https://vertexaisearch.cloud.google.com/grounding-api-redirect/very-long-token")
+                .build();
+        var entry = ConversationEntry.message(
+                Role.ASSISTANT,
+                """
+                        Fact [1]
+
+                        Sources:
+                        [1] [Example Source](<https://vertexaisearch.cloud.google.com/grounding-api-redirect/very-long-token>)
+                        """,
+                0,
+                List.of(),
+                List.of(),
+                new MessageMeta(List.of(), List.of(), false, "", "", "", List.of(), List.of(citation))
+        );
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false));
+        var document = Jsoup.parseBodyFragment(html);
+
+        assertThat(document.select("a.source-citation.citation-ref").eachText()).containsExactly("1", "1");
+        assertThat(document.select("a.source-link").eachText()).contains("Example Source");
+        assertThat(document.body().text()).doesNotContain("https://vertexaisearch.cloud.google.com/grounding-api-redirect/very-long-token");
+    }
+
+    @Test
     @DisplayName("Unsafe metadata-backed web citation URLs do not become navigable links")
     void renderEntriesHtml_whenWebCitationUrlIsNotHttp_removesHref() {
         var citation = CitationRef.builder()

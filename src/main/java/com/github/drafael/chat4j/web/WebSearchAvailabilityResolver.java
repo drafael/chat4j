@@ -58,7 +58,7 @@ public class WebSearchAvailabilityResolver {
         }
 
         ProviderCapabilities capabilities = selectedProvider.capabilities();
-        return ProviderCapabilityResolver.supportsNativeWebSearch(
+        return ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
                 capabilities,
                 selectedProvider.name(),
                 selectedModelId

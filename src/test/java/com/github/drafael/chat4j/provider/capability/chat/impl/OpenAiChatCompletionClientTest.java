@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
@@ -145,6 +146,23 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("Responses-native web search is enabled only for supported OpenAI and xAI models")
+    void shouldUseResponsesNativeWebSearch_whenProviderAndModelSupportResponsesSearch_returnsExpectedValue() throws Exception {
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenAI", "gpt-5"), new WebSearchRequestOptions(true, "native"))).isTrue();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "grok-4"), new WebSearchRequestOptions(true, "native"))).isTrue();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "gpt-5"), new WebSearchRequestOptions(true, "native"))).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenRouter", "openai/gpt-5:online"), new WebSearchRequestOptions(true, "native"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("Responses-native web search is disabled when request option is disabled")
+    void shouldUseResponsesNativeWebSearch_whenRequestOptionDisabled_returnsFalse() throws Exception {
+        boolean enabled = invokeShouldUseResponsesNativeWebSearch(runtime("OpenAI", "gpt-5"), WebSearchRequestOptions.disabled());
+
+        assertThat(enabled).isFalse();
+    }
+
+    @Test
     @DisplayName("Responses output delta emission keeps newline tokens")
     void shouldEmitOutputDelta_whenDeltaContainsOnlyNewline_returnsTrue() throws Exception {
         boolean shouldEmit = invokeShouldEmitOutputDelta("\n");
@@ -196,6 +214,36 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("shouldEmitOutputDelta", String.class);
         method.setAccessible(true);
         return (boolean) method.invoke(subject, delta);
+    }
+
+    private boolean invokeShouldUseResponsesNativeWebSearch(ProviderRuntime runtime, WebSearchRequestOptions webSearchOptions) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "shouldUseResponsesNativeWebSearch",
+                ProviderRuntime.class,
+                WebSearchRequestOptions.class
+        );
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, runtime, webSearchOptions);
+    }
+
+    private ProviderRuntime runtime(String providerName, String modelId) {
+        return new ProviderRuntime(
+                new ProviderDescriptor(
+                        providerName,
+                        AuthType.ENV_VAR,
+                        null,
+                        null,
+                        "https://example.test/v1",
+                        emptyList(),
+                        ProviderCapabilities.chatAndModels(),
+                        UnaryOperator.identity()
+                ),
+                null,
+                "https://example.test/v1",
+                "test-token",
+                modelId,
+                emptyList()
+        );
     }
 
     private ProviderRuntime copilotRuntime(List<String> supportedEndpoints) {

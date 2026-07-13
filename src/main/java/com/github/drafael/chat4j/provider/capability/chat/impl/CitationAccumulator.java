@@ -5,6 +5,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 final class CitationAccumulator {
 
@@ -17,10 +18,19 @@ final class CitationAccumulator {
 
         String key = dedupeKey(citation);
         CitationRef existing = citationsByKey.get(key);
-        if (existing != null) {
-            return existing;
+        return existing == null ? addWithKey(key, citation) : existing;
+    }
+
+    Optional<CitationRef> addNew(CitationRef citation) {
+        if (citation == null) {
+            return Optional.empty();
         }
 
+        String key = dedupeKey(citation);
+        return citationsByKey.containsKey(key) ? Optional.empty() : Optional.of(addWithKey(key, citation));
+    }
+
+    private CitationRef addWithKey(String key, CitationRef citation) {
         CitationRef numbered = citation.withNumber(citationsByKey.size() + 1);
         citationsByKey.put(key, numbered);
         return numbered;

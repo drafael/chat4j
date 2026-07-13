@@ -42,6 +42,137 @@ class WebSearchActivityNormalizerTest {
     }
 
     @Test
+    @DisplayName("Native web search placeholder sources are not persisted without real source URLs")
+    void normalize_whenNativePlaceholderHasNoRealSources_removesPlaceholderSource() {
+        String activity = """
+                **Searched**
+                - jna examples
+
+                **Sources**
+                - Native web search is handled by Google AI (gemini-3.1-pro-preview). Source URLs will appear here if the provider returns citation metadata in the answer.
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Searched**
+                - jna examples
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Bold headings with trailing colon are recognized")
+    void normalize_whenBoldHeadingsContainColon_recognizesSections() {
+        String activity = """
+                **Searched:**
+                - jna examples
+
+                **Sources:**
+                - https://github.com/java-native-access/jna
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Searched**
+                - jna examples
+
+                **Sources**
+                - https://github.com/java-native-access/jna
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Bold headings with colon after bold marker are recognized")
+    void normalize_whenBoldHeadingsHaveColonAfterBoldMarker_recognizesSections() {
+        String activity = """
+                **Searched**:
+                - jna examples
+
+                **Sources**:
+                - https://github.com/java-native-access/jna
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Searched**
+                - jna examples
+
+                **Sources**
+                - https://github.com/java-native-access/jna
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Angle-bracket source URLs preserve literal parentheses")
+    void normalize_whenAngleBracketSourceUrlContainsParentheses_deduplicatesUsingFullUrl() {
+        String activity = """
+                **Sources**
+                - [Wikipedia Source](<https://example.com/Foo_(bar)>)
+                - <https://example.com/Foo_(bar)>
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Sources**
+                - [Wikipedia Source](<https://example.com/Foo_(bar)>)
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Non-angle markdown source URLs preserve balanced parentheses")
+    void normalize_whenNonAngleMarkdownSourceUrlContainsParentheses_deduplicatesUsingFullUrl() {
+        String activity = """
+                **Sources**
+                - [Wikipedia Source](https://example.com/Foo_(bar))
+                - <https://example.com/Foo_(bar)>
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Sources**
+                - [Wikipedia Source](https://example.com/Foo_(bar))
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Raw source URLs preserve balanced parentheses")
+    void normalize_whenRawSourceUrlContainsParentheses_deduplicatesUsingFullUrl() {
+        String activity = """
+                **Sources**
+                - https://example.com/Foo_(bar)
+                - <https://example.com/Foo_(bar)>
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Sources**
+                - https://example.com/Foo_(bar)
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Labeled source links replace raw URLs for the same source")
+    void normalize_whenRawUrlAppearsBeforeLabeledLink_prefersReadableLabel() {
+        String activity = """
+                **Sources**
+                - <https://example.com/source>
+                - [Readable Source](<https://example.com/source>)
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Sources**
+                - [Readable Source](<https://example.com/source>)
+                """.trim());
+    }
+
+    @Test
     @DisplayName("Markdown link sources are de-duplicated by URL")
     void normalize_whenSourcesUseDifferentLabels_deduplicatesByUrl() {
         String activity = """

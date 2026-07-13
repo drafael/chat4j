@@ -925,7 +925,7 @@ public class ModelSelectorPopup extends JDialog {
                 modelId
         );
 
-        boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsNativeWebSearch(
+        boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
                 entry.def.capabilities(),
                 entry.name(),
                 modelId
@@ -962,7 +962,7 @@ public class ModelSelectorPopup extends JDialog {
                         apiKey
                 );
 
-                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsNativeWebSearch(
+                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
                         entry.def.capabilities(),
                         entry.name(),
                         modelId,

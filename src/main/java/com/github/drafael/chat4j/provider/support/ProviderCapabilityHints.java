@@ -33,6 +33,8 @@ final class ProviderCapabilityHints {
     );
     static final Set<String> ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("anthropic");
     static final Set<String> OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("openai");
+    static final Set<String> XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("xai");
+    static final Set<String> GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("groq");
     static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
     static final Set<String> OPENROUTER_PROVIDER_HINTS = Set.of("openrouter");
     static final Set<String> NATIVE_WEB_SEARCH_MODEL_DENY_HINTS = Set.of(
@@ -52,6 +54,14 @@ final class ProviderCapabilityHints {
             "gpt-5",
             "o3",
             "o4"
+    );
+    static final Set<String> XAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
+            "grok-3",
+            "grok-4"
+    );
+    static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
+            "gemini-2",
+            "gemini-3"
     );
     static final Set<String> OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(":online");
     static final Set<String> OLLAMA_PROVIDER_HINTS = Set.of("ollama");
@@ -319,6 +329,10 @@ final class ProviderCapabilityHints {
     static boolean supportsOpenRouterNativeWebSearch(String model) {
         return containsAny(model, OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
                 || PerplexityModelIds.isNamespacedSonarModel(model);
+    }
+
+    static boolean supportsGroqNativeWebSearch(String model) {
+        return StringUtils.equalsAny(model, "compound", "compound-mini", "groq/compound", "groq/compound-mini");
     }
 
     static boolean supportsDeepSeekReasoning(String model) {
