@@ -784,6 +784,20 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Loading a known OAuth provider before discovery preserves its model selection")
+    void setSelectedModel_whenKnownProviderIsStillBeingDiscovered_preservesSelection() throws Exception {
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of());
+            subject.setSelectedModel("GitHub Copilot > claude-sonnet-4.6");
+
+            assertThat(subject.getSelectedModel()).isEqualTo("GitHub Copilot > claude-sonnet-4.6");
+            assertThat(subject.getModelSelectorButton().getProviderName()).isEqualTo("GitHub Copilot");
+            assertThat(subject.getModelSelectorButton().getModelName()).isEqualTo("claude-sonnet-4.6");
+            assertThat(subject.getInputBar().isSendable()).isFalse();
+        });
+    }
+
+    @Test
     @DisplayName("Selecting an unavailable provider clears runtime and composer readiness")
     void setSelectedModel_whenProviderIsUnavailable_clearsRuntimeAndComposerReadiness() throws Exception {
         runOnEdt(() -> {

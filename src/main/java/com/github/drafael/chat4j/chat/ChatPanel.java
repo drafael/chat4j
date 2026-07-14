@@ -3787,7 +3787,10 @@ public class ChatPanel extends JPanel {
     private String safeModelId(String providerName, String modelId) {
         ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
         if (providerDef == null) {
-            return null;
+            boolean knownProvider = ProviderRegistry.allProviders().stream()
+                    .map(ProviderRegistry.ProviderDef::name)
+                    .anyMatch(providerName::equals);
+            return knownProvider ? modelId : null;
         }
         if (!modelCacheService.isInvalidated(providerName)) {
             return modelId;
