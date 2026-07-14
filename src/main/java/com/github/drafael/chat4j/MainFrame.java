@@ -87,6 +87,7 @@ import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
 import com.github.drafael.chat4j.settings.ApiTokenChange;
+import com.github.drafael.chat4j.settings.SettingsCredentialChangeListener;
 import com.github.drafael.chat4j.settings.CredentialChangeEffects;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
 import com.github.drafael.chat4j.settings.FontMenuApplyDispatchCoordinator;
@@ -1376,7 +1377,7 @@ public class MainFrame extends JFrame {
                         sttModelsDirectory,
                         voskModelManagementService,
                         whisperModelManagementService,
-                        this::onSettingsCredentialChanged
+                        settingsCredentialChangeListener()
                 )),
                 () -> {
                     applyProviderSettings();
@@ -1388,14 +1389,41 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private SettingsCredentialChangeListener settingsCredentialChangeListener() {
+        return new SettingsCredentialChangeListener() {
+            @Override
+            public void credentialChanged(ApiTokenChange change) {
+                onSettingsCredentialChanged(change);
+            }
+
+            @Override
+            public void providerAuthChanged(String providerName) {
+                onProviderAuthChanged(providerName);
+            }
+        };
+    }
+
     private void onSettingsCredentialChanged(ApiTokenChange change) {
-        Runnable invalidate = () -> invalidateCredentialBackedCaches(change);
-        Runnable refreshUi = this::refreshCredentialBackedUi;
+        applyCredentialChangeAsync(
+                () -> invalidateCredentialBackedCaches(change),
+                this::refreshCredentialBackedUi,
+                change.canonicalTokenId()
+        );
+    }
+
+    private void onProviderAuthChanged(String providerName) {
+        applyCredentialChangeAsync(() -> {
+            ProviderRegistry.invalidateAuthStatus(providerName);
+            modelCacheService.invalidate(providerName);
+        }, this::applyProviderSettings, providerName);
+    }
+
+    private void applyCredentialChangeAsync(Runnable invalidate, Runnable refreshUi, String credentialName) {
         if (SwingUtilities.isEventDispatchThread()) {
             CompletableFuture.runAsync(invalidate)
                     .whenComplete((ignored, error) -> {
                         if (error != null) {
-                            log.warn("Failed to invalidate credential-backed caches after {} changed", change.canonicalTokenId(), error);
+                            log.warn("Failed to invalidate credential-backed caches after {} changed", credentialName, error);
                             return;
                         }
                         SwingUtilities.invokeLater(refreshUi);
@@ -1747,7 +1775,7 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private void onSelectedModelChanged(String modelKey) {
+    private void onSelectedModelChanged() {
         modelMenuCoordinator.onSelectedModelChanged(modelMenuContext());
     }
 

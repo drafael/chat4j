@@ -5,8 +5,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.*;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -14,23 +12,23 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ExecutionException;
 
 @Slf4j
 public final class LocalServiceHealth {
 
     private static final Duration REQUEST_TIMEOUT = Duration.ofMillis(350);
-    private static final Duration SOCKET_TIMEOUT = Duration.ofMillis(120);
     private static final Duration CACHE_TTL = Duration.ofSeconds(2);
     private static final ConcurrentHashMap<String, HealthSnapshot> SNAPSHOT_BY_BASE_URL = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, AtomicBoolean> REFRESH_IN_FLIGHT_BY_BASE_URL = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, CompletableFuture<Boolean>> REFRESH_BY_BASE_URL = new ConcurrentHashMap<>();
 
     private LocalServiceHealth() {
     }
 
     public static boolean isReachable(String baseUrl) {
-        if (StringUtils.isBlank(baseUrl)) {
+        if (StringUtils.isBlank(baseUrl) || Thread.currentThread().isInterrupted()) {
             return false;
         }
 
@@ -41,25 +39,24 @@ public final class LocalServiceHealth {
         }
 
         if (SwingUtilities.isEventDispatchThread()) {
-            boolean fastReachable = probeFast(baseUrl);
-            if (fastReachable) {
-                SNAPSHOT_BY_BASE_URL.put(baseUrl, new HealthSnapshot(true, now));
-                triggerRefresh(baseUrl);
-                return true;
-            }
-
-            if (cached != null) {
-                triggerRefresh(baseUrl);
-                return cached.reachable();
-            }
-
             triggerRefresh(baseUrl);
-            return false;
+            return cached != null && cached.reachable();
         }
 
-        boolean reachable = probe(baseUrl);
-        SNAPSHOT_BY_BASE_URL.put(baseUrl, new HealthSnapshot(reachable, now));
-        return reachable;
+        try {
+            return refreshAsync(baseUrl).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException e) {
+            log.debug("Health refresh failed for {}: {}", baseUrl, ExceptionUtils.getMessage(e.getCause()));
+            return false;
+        }
+    }
+
+    public static boolean lastKnownReachable(String baseUrl) {
+        HealthSnapshot cached = StringUtils.isBlank(baseUrl) ? null : SNAPSHOT_BY_BASE_URL.get(baseUrl);
+        return cached != null && cached.reachable();
     }
 
     public static boolean isReachableNonBlocking(String baseUrl) {
@@ -77,65 +74,70 @@ public final class LocalServiceHealth {
         return cached != null && cached.reachable();
     }
 
-    private static boolean probeFast(String baseUrl) {
-        return modelEndpoints(baseUrl).stream().anyMatch(LocalServiceHealth::isSocketReachable);
+    private static void triggerRefresh(String baseUrl) {
+        refreshAsync(baseUrl);
     }
 
-    private static void triggerRefresh(String baseUrl) {
-        AtomicBoolean inFlight = REFRESH_IN_FLIGHT_BY_BASE_URL.computeIfAbsent(baseUrl, ignored -> new AtomicBoolean());
-        if (!inFlight.compareAndSet(false, true)) {
-            return;
+    private static CompletableFuture<Boolean> refreshAsync(String baseUrl) {
+        CompletableFuture<Boolean> current = REFRESH_BY_BASE_URL.get(baseUrl);
+        if (current != null) {
+            return current;
         }
 
-        Thread.startVirtualThread(() -> {
-            try {
-                boolean reachable = probe(baseUrl);
-                SNAPSHOT_BY_BASE_URL.put(baseUrl, new HealthSnapshot(reachable, Instant.now()));
-            } finally {
-                inFlight.set(false);
-            }
-        });
+        var created = new CompletableFuture<Boolean>();
+        CompletableFuture<Boolean> existing = REFRESH_BY_BASE_URL.putIfAbsent(baseUrl, created);
+        if (existing != null) {
+            return existing;
+        }
+
+        try {
+            Thread.startVirtualThread(() -> {
+                try {
+                    boolean reachable = probe(baseUrl);
+                    SNAPSHOT_BY_BASE_URL.put(baseUrl, new HealthSnapshot(reachable, Instant.now()));
+                    created.complete(reachable);
+                } catch (RuntimeException e) {
+                    created.completeExceptionally(e);
+                } catch (Error e) {
+                    created.completeExceptionally(e);
+                    throw e;
+                } finally {
+                    REFRESH_BY_BASE_URL.remove(baseUrl, created);
+                }
+            });
+        } catch (RuntimeException e) {
+            REFRESH_BY_BASE_URL.remove(baseUrl, created);
+            created.completeExceptionally(e);
+        } catch (Error e) {
+            REFRESH_BY_BASE_URL.remove(baseUrl, created);
+            created.completeExceptionally(e);
+            throw e;
+        }
+        return created;
     }
 
     private static boolean probe(String baseUrl) {
-        return modelEndpoints(baseUrl).stream().anyMatch(LocalServiceHealth::isEndpointReachable);
-    }
-
-    private static boolean isSocketReachable(String endpoint) {
-        try {
-            URI uri = URI.create(endpoint);
-            String host = uri.getHost();
-            if (StringUtils.isBlank(host)) {
-                return false;
-            }
-
-            int port = uri.getPort();
-            if (port <= 0) {
-                port = "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
-            }
-
-            try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(host, port), (int) SOCKET_TIMEOUT.toMillis());
-                return true;
-            }
-        } catch (Exception e) {
-            log.debug("Socket reachability check failed for {}: {}", endpoint, ExceptionUtils.getMessage(e));
-            return false;
-        }
+        return modelEndpoints(baseUrl).stream()
+                .takeWhile(endpoint -> !Thread.currentThread().isInterrupted())
+                .anyMatch(LocalServiceHealth::isEndpointReachable);
     }
 
     private static boolean isEndpointReachable(String endpoint) {
         try {
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(REQUEST_TIMEOUT)
-                    .build();
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(endpoint))
                     .timeout(REQUEST_TIMEOUT)
                     .GET()
                     .build();
-            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            HttpResponse<Void> response = HttpClientHolder.INSTANCE.send(
+                    request,
+                    HttpResponse.BodyHandlers.discarding()
+            );
             return response.statusCode() < 500;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.debug("Endpoint reachability check interrupted for {}", endpoint);
+            return false;
         } catch (Exception e) {
             log.debug("Endpoint reachability check failed for {}: {}", endpoint, ExceptionUtils.getMessage(e));
             return false;
@@ -156,6 +158,12 @@ public final class LocalServiceHealth {
         return baseUrl.endsWith("/")
                 ? "%smodels".formatted(baseUrl)
                 : "%s/models".formatted(baseUrl);
+    }
+
+    private static final class HttpClientHolder {
+        private static final HttpClient INSTANCE = HttpClient.newBuilder()
+                .connectTimeout(REQUEST_TIMEOUT)
+                .build();
     }
 
     private record HealthSnapshot(boolean reachable, Instant checkedAt) {

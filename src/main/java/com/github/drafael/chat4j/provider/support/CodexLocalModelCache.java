@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -10,15 +12,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.SequencedSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.stream.StreamSupport;
+
 import static java.util.Collections.emptyList;
 
 @Slf4j
 public final class CodexLocalModelCache {
 
-    private static final Pattern CODEX_SLUG_PATTERN = Pattern.compile("\\\"slug\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
     private static final List<String> BUILTIN_CODEX_MODELS = List.of(
             "gpt-5.5",
@@ -37,43 +38,81 @@ public final class CodexLocalModelCache {
     private CodexLocalModelCache() {
     }
 
-    public static List<String> readModels() {
-        LinkedHashSet<String> models = new LinkedHashSet<>(BUILTIN_CODEX_MODELS);
-        models.addAll(readLocalCacheModels());
-        return ModelOrdering.sanitizeAndSortByProvider(CODEX_PROVIDER_NAME, models.stream().toList());
+    public static Snapshot builtinSnapshot() {
+        return new Snapshot(BUILTIN_CODEX_MODELS, emptyList());
     }
 
-    private static List<String> readLocalCacheModels() {
+    public static Snapshot readSnapshot() {
+        return readSnapshot(Path.of(System.getProperty("user.home")));
+    }
+
+    static Snapshot readSnapshot(Path userHome) {
+        LocalModels localModels = readLocalCacheModels(userHome);
+        LinkedHashSet<String> models = new LinkedHashSet<>(BUILTIN_CODEX_MODELS);
+        models.addAll(localModels.visible());
+        models.removeAll(localModels.hidden());
+        return new Snapshot(
+                ModelOrdering.sanitizeAndSortByProvider(CODEX_PROVIDER_NAME, models.stream().toList()),
+                localModels.hidden(),
+                localModels.loadedSuccessfully()
+        );
+    }
+
+    private static LocalModels readLocalCacheModels(Path userHome) {
         try {
-            Path modelCache = Path.of(System.getProperty("user.home"), ".codex", "models_cache.json");
+            Path modelCache = userHome.resolve(".codex").resolve("models_cache.json");
             if (!Files.exists(modelCache)) {
-                return emptyList();
+                return LocalModels.empty(true);
             }
 
-            String content = Files.readString(modelCache, StandardCharsets.UTF_8);
-            Matcher matcher = CODEX_SLUG_PATTERN.matcher(content);
-            LinkedHashSet<String> slugs = new LinkedHashSet<>();
-            while (matcher.find()) {
-                slugs.add(matcher.group(1));
+            JsonNode models = JSON.readTree(Files.readString(modelCache, StandardCharsets.UTF_8)).path("models");
+            if (!models.isArray()) {
+                return LocalModels.empty(false);
             }
 
-            return slugs.stream().toList();
+            List<String> visible = modelSlugs(models, false);
+            List<String> hidden = modelSlugs(models, true);
+            return new LocalModels(visible, hidden, true);
         } catch (Exception e) {
             log.warn("Failed reading OpenAI Codex models cache: {}", ExceptionUtils.getMessage(e));
-            return emptyList();
+            return LocalModels.empty(false);
         }
     }
 
-    public static List<String> mergeIfCodexProvider(String providerName, List<String> modelIds) {
-        if (!Strings.CS.equals(providerName, CODEX_PROVIDER_NAME)) {
-            return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
-        }
+    private static List<String> modelSlugs(JsonNode models, boolean hidden) {
+        return StreamSupport.stream(models.spliterator(), false)
+                .filter(model -> Strings.CI.equals(model.path("visibility").asText(""), "hide") == hidden)
+                .map(model -> model.path("slug").asText(""))
+                .filter(StringUtils::isNotBlank)
+                .map(String::trim)
+                .distinct()
+                .toList();
+    }
 
-        SequencedSet<String> merged = new LinkedHashSet<>(readModels());
+    public static List<String> merge(List<String> modelIds, Snapshot localSnapshot) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
         if (modelIds != null) {
             merged.addAll(modelIds);
         }
-
+        merged.addAll(localSnapshot.models());
+        merged.removeAll(localSnapshot.hiddenModels());
         return ModelOrdering.sanitizeAndSortByProvider(CODEX_PROVIDER_NAME, merged.stream().toList());
+    }
+
+    public record Snapshot(List<String> models, List<String> hiddenModels, boolean loadedSuccessfully) {
+        public Snapshot(List<String> models, List<String> hiddenModels) {
+            this(models, hiddenModels, true);
+        }
+
+        public Snapshot {
+            models = List.copyOf(models);
+            hiddenModels = List.copyOf(hiddenModels);
+        }
+    }
+
+    private record LocalModels(List<String> visible, List<String> hidden, boolean loadedSuccessfully) {
+        private static LocalModels empty(boolean loadedSuccessfully) {
+            return new LocalModels(emptyList(), emptyList(), loadedSuccessfully);
+        }
     }
 }

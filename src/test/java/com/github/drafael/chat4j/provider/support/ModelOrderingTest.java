@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,6 +24,18 @@ class ModelOrderingTest {
                 "claude-3-7-sonnet-20250219",
                 "claude-3-5-haiku-20241022"
         );
+    }
+
+    @Test
+    @DisplayName("Control characters are rejected from provider model IDs")
+    void sanitizeAndSortByRecency_whenModelIdsContainControlCharacters_removesUnsafeEntries() {
+        List<String> sorted = ModelOrdering.sanitizeAndSortByRecency(List.of(
+                "safe-model",
+                "injected-model\nphantom-model",
+                "tabbed\tmodel"
+        ));
+
+        assertThat(sorted).containsExactly("safe-model");
     }
 
     @Test
@@ -125,6 +138,24 @@ class ModelOrderingTest {
                 "llama3.2:latest",
                 "llama3.10:latest"
         );
+    }
+
+    @Test
+    @DisplayName("Copilot alias filtering is independent of the system locale")
+    void sanitizeAndSortByProvider_whenDefaultLocaleIsTurkish_filtersLegacyAliases() {
+        Locale previousLocale = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
+            List<String> sorted = ModelOrdering.sanitizeAndSortByProvider("GitHub Copilot", List.of(
+                    "GPT-4O-MINI-2024-07-18",
+                    "gpt-4o-mini"
+            ));
+
+            assertThat(sorted).containsExactly("gpt-4o-mini");
+        } finally {
+            Locale.setDefault(previousLocale);
+        }
     }
 
     @Test

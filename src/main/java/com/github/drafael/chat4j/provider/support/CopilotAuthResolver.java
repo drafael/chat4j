@@ -28,6 +28,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import static java.util.Collections.emptyMap;
 
 @Slf4j
@@ -41,6 +43,7 @@ public class CopilotAuthResolver {
     private static final String DEVICE_CODE_ENDPOINT_PROPERTY = "chat4j.copilot.deviceCodeEndpoint";
     private static final String ACCESS_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.accessTokenEndpoint";
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
+    private static final String COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.allowCustomTokenEndpoint";
 
     private static final String OAUTH_CLIENT_ID_PROPERTY = "chat4j.copilot.oauthClientId";
     private static final String OAUTH_CLIENT_ID_ENV = "CHAT4J_COPILOT_OAUTH_CLIENT_ID";
@@ -180,10 +183,31 @@ public class CopilotAuthResolver {
     }
 
     public CopilotLoginChallenge beginLogin() {
+        return beginLogin(() -> false);
+    }
+
+    public CopilotLoginChallenge beginLogin(BooleanSupplier cancellationRequested) {
+        return beginLogin(cancellationRequested, action -> {
+            action.run();
+            return true;
+        });
+    }
+
+    public CopilotLoginChallenge beginLogin(
+            BooleanSupplier cancellationRequested,
+            Predicate<Runnable> promptActionGate
+    ) {
+        if (isCancellationRequested(cancellationRequested)) {
+            throw new IllegalStateException("GitHub Copilot login cancelled.");
+        }
+
         try {
             String enterpriseDomain = resolveEnterpriseDomain();
             DeviceCodeResponse deviceCode = requestDeviceCode(enterpriseDomain);
-            triggerLoginPromptActions(deviceCode);
+            if (isCancellationRequested(cancellationRequested)) {
+                throw new IllegalStateException("GitHub Copilot login cancelled.");
+            }
+            triggerLoginPromptActions(deviceCode, cancellationRequested, promptActionGate);
             return new CopilotLoginChallenge(
                     deviceCode.deviceCode(),
                     deviceCode.userCode(),
@@ -193,14 +217,24 @@ public class CopilotAuthResolver {
                     deviceCode.oauthScopes(),
                     enterpriseDomain
             );
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("GitHub Copilot login cancelled.", e);
         } catch (Exception e) {
             throw new IllegalStateException(firstLine(e.getMessage()), e);
         }
     }
 
     public CopilotAuthActionResult completeLogin(CopilotLoginChallenge challenge) {
+        return completeLogin(challenge, () -> false);
+    }
+
+    public CopilotAuthActionResult completeLogin(CopilotLoginChallenge challenge, BooleanSupplier cancellationRequested) {
         if (challenge == null) {
             return CopilotAuthActionResult.failure("Login challenge is missing");
+        }
+        if (isCancellationRequested(cancellationRequested)) {
+            return cancelledLoginResult();
         }
 
         try {
@@ -213,7 +247,14 @@ public class CopilotAuthResolver {
                     challenge.oauthScopes()
             );
 
-            String githubAccessToken = pollForAccessToken(deviceCode, challenge.enterpriseDomain());
+            String githubAccessToken = pollForAccessToken(
+                    deviceCode,
+                    challenge.enterpriseDomain(),
+                    cancellationRequested
+            );
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             if (StringUtils.isBlank(githubAccessToken)) {
                 return CopilotAuthActionResult.failure(
                         "Login timed out. Complete sign in at %s using code %s."
@@ -222,10 +263,16 @@ public class CopilotAuthResolver {
             }
 
             CopilotSessionToken sessionToken = exchangeCopilotSessionToken(githubAccessToken, challenge.enterpriseDomain(), true);
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             if (sessionToken == null || StringUtils.isBlank(sessionToken.sessionToken())) {
                 return CopilotAuthActionResult.failure("GitHub Copilot token exchange failed");
             }
 
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             storeChat4jToken(
                     sessionToken.sessionToken(),
                     deviceCode.oauthScopes(),
@@ -236,23 +283,42 @@ public class CopilotAuthResolver {
 
             log.info("GitHub Copilot OAuth login completed");
             return CopilotAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return cancelledLoginResult();
         } catch (Exception e) {
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             log.warn("GitHub Copilot OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
             return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
     }
 
     public CopilotAuthActionResult logout() {
+        return logout(() -> false);
+    }
+
+    public CopilotAuthActionResult logout(BooleanSupplier cancellationRequested) {
         try {
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             Path tokenFile = chat4jAuthFile();
             if (!Files.exists(tokenFile)) {
                 return CopilotAuthActionResult.success("Chat4J OAuth session was already signed out.");
             }
 
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             Files.delete(tokenFile);
             log.info("GitHub Copilot OAuth logout completed");
             return CopilotAuthActionResult.success("Logged out from Chat4J OAuth session.");
         } catch (Exception e) {
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
             log.warn("GitHub Copilot OAuth logout failed: {}", ExceptionUtils.getMessage(e));
             return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
         }
@@ -310,12 +376,16 @@ public class CopilotAuthResolver {
         );
     }
 
-    private String pollForAccessToken(DeviceCodeResponse deviceCode, String enterpriseDomain) throws Exception {
+    private String pollForAccessToken(
+            DeviceCodeResponse deviceCode,
+            String enterpriseDomain,
+            BooleanSupplier cancellationRequested
+    ) throws Exception {
         String clientId = resolveOAuthClientId();
         long deadlineEpochMs = System.currentTimeMillis() + Duration.ofSeconds(deviceCode.expiresInSeconds()).toMillis();
         int intervalSeconds = deviceCode.intervalSeconds();
 
-        while (System.currentTimeMillis() < deadlineEpochMs) {
+        while (System.currentTimeMillis() < deadlineEpochMs && !isCancellationRequested(cancellationRequested)) {
             String formBody = "client_id=%s&device_code=%s&grant_type=%s".formatted(
                     urlEncode(clientId),
                     urlEncode(deviceCode.deviceCode()),
@@ -332,6 +402,9 @@ public class CopilotAuthResolver {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (isCancellationRequested(cancellationRequested)) {
+                return null;
+            }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("OAuth token exchange failed with HTTP %d".formatted(response.statusCode()));
             }
@@ -411,6 +484,9 @@ public class CopilotAuthResolver {
                     expiresAtSeconds * 1000L - TOKEN_REFRESH_SKEW.toMillis()
             );
             return new CopilotSessionToken(sessionToken, expiresAtEpochMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         } catch (Exception e) {
             if (failOnError) {
                 throw new IllegalStateException(firstLine(ExceptionUtils.getMessage(e)), e);
@@ -473,15 +549,41 @@ public class CopilotAuthResolver {
         }
     }
 
-    private void triggerLoginPromptActions(DeviceCodeResponse deviceCode) {
+    private void triggerLoginPromptActions(
+            DeviceCodeResponse deviceCode,
+            BooleanSupplier cancellationRequested,
+            Predicate<Runnable> promptActionGate
+    ) {
+        if (isCancellationRequested(cancellationRequested)) {
+            return;
+        }
         try {
-            userPromptActions.copyCodeToClipboard(deviceCode.userCode());
+            promptActionGate.test(() -> copyCodeToClipboard(deviceCode.userCode()));
         } catch (Exception ignored) {
             // Keep login flow running even if clipboard interaction fails.
         }
 
+        if (isCancellationRequested(cancellationRequested)) {
+            return;
+        }
         try {
-            userPromptActions.openBrowser(deviceCode.verificationUri());
+            promptActionGate.test(() -> openBrowser(deviceCode.verificationUri()));
+        } catch (Exception ignored) {
+            // Keep login flow running even if browser interaction fails.
+        }
+    }
+
+    private void copyCodeToClipboard(String userCode) {
+        try {
+            userPromptActions.copyCodeToClipboard(userCode);
+        } catch (Exception ignored) {
+            // Keep login flow running even if clipboard interaction fails.
+        }
+    }
+
+    private void openBrowser(String verificationUri) {
+        try {
+            userPromptActions.openBrowser(verificationUri);
         } catch (Exception ignored) {
             // Keep login flow running even if browser interaction fails.
         }
@@ -609,17 +711,29 @@ public class CopilotAuthResolver {
         return "https://%s/login/oauth/access_token".formatted(domain);
     }
 
-    private String copilotTokenEndpoint(String enterpriseDomain) {
+    String copilotTokenEndpoint(String enterpriseDomain) {
+        String defaultEndpoint = StringUtils.isBlank(enterpriseDomain)
+                ? "https://api.github.com/copilot_internal/v2/token"
+                : "https://api.%s/copilot_internal/v2/token".formatted(enterpriseDomain);
         String configured = StringUtils.trimToNull(System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY));
-        if (configured != null) {
+        if (configured == null || Strings.CS.equals(configured, defaultEndpoint)) {
+            return defaultEndpoint;
+        }
+        if (Boolean.getBoolean(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY)) {
             return configured;
         }
 
-        if (StringUtils.isBlank(enterpriseDomain)) {
-            return "https://api.github.com/copilot_internal/v2/token";
-        }
+        log.warn("Ignoring untrusted Copilot token endpoint override");
+        return defaultEndpoint;
+    }
 
-        return "https://api.%s/copilot_internal/v2/token".formatted(enterpriseDomain);
+    private static boolean isCancellationRequested(BooleanSupplier cancellationRequested) {
+        return Thread.currentThread().isInterrupted()
+                || cancellationRequested != null && cancellationRequested.getAsBoolean();
+    }
+
+    private static CopilotAuthActionResult cancelledLoginResult() {
+        return CopilotAuthActionResult.failure("GitHub Copilot login cancelled.");
     }
 
     private Path chat4jAuthFile() {

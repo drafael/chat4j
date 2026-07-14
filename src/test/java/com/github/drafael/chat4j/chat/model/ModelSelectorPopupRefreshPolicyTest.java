@@ -16,7 +16,8 @@ class ModelSelectorPopupRefreshPolicyTest {
         List<String> models = ModelSelectorPopup.initialModels(
                 "Perplexity",
                 List.of("sonar-pro", "sonar"),
-                List.of("sonar", "sonar-pro")
+                List.of("sonar", "sonar-pro"),
+                false
         );
 
         assertThat(models).containsExactly(
@@ -54,6 +55,18 @@ class ModelSelectorPopupRefreshPolicyTest {
         Duration ttl = ModelSelectorPopup.refreshTtl("Ollama");
 
         assertThat(ttl).isEqualTo(Duration.ofMinutes(5));
+    }
+
+    @Test
+    @DisplayName("Local providers without a base URL remain unavailable")
+    void isProviderSelectable_whenLocalBaseUrlIsBlank_returnsFalse() {
+        assertThat(ModelSelectorPopup.isProviderSelectable("Ollama", " ")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Cloud provider selection does not depend on local health state")
+    void isProviderSelectable_whenProviderIsCloud_returnsTrue() {
+        assertThat(ModelSelectorPopup.isProviderSelectable("OpenAI", null)).isTrue();
     }
 
     @Test

@@ -6,8 +6,10 @@ import org.apache.commons.lang3.StringUtils;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 import static java.util.Collections.emptyList;
 
 public final class ModelOrdering {
@@ -35,6 +37,7 @@ public final class ModelOrdering {
                 .map(String::trim)
                 .map(modelId -> normalizeForProvider(providerName, modelId))
                 .filter(modelId -> !modelId.isBlank())
+                .filter(ModelOrdering::hasNoControlCharacters)
                 .distinct()
                 .toList();
 
@@ -206,6 +209,10 @@ public final class ModelOrdering {
                 : left.compareToIgnoreCase(right);
     }
 
+    private static boolean hasNoControlCharacters(String modelId) {
+        return modelId.chars().noneMatch(Character::isISOControl);
+    }
+
     private static String normalizeForProvider(String providerName, String modelId) {
         if (isGoogleAi(providerName) && modelId.regionMatches(true, 0, "models/", 0, "models/".length())) {
             return modelId.substring("models/".length()).trim();
@@ -223,7 +230,7 @@ public final class ModelOrdering {
 
         return modelIds.stream()
                 .filter(modelId -> {
-                    String normalized = modelId.trim().toLowerCase();
+                    String normalized = modelId.trim().toLowerCase(Locale.ROOT);
                     if (normalized.startsWith("gpt-3.5")) {
                         return false;
                     }
@@ -252,7 +259,7 @@ public final class ModelOrdering {
     private static List<String> tokenize(String value) {
         Matcher matcher = TOKEN_PATTERN.matcher(value);
         return matcher.results()
-                .map(result -> result.group().toLowerCase())
+                .map(result -> result.group().toLowerCase(Locale.ROOT))
                 .toList();
     }
 

@@ -6,7 +6,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import static java.util.stream.Collectors.toMap;
@@ -30,20 +29,16 @@ public class ProviderModelsResolver {
                             }
 
                             if (modelCacheService.isInvalidated(provider.name())) {
-                                return sanitize(provider.name(), provider.seedModels());
+                                return modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels());
                             }
 
-                            List<String> models = sanitize(provider.name(), modelCacheService.getModels(provider.name()));
+                            List<String> models = modelCacheService.getModels(provider.name());
                             return models.isEmpty()
-                                    ? sanitize(provider.name(), provider.seedModels())
+                                    ? modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels())
                                     : models;
                         },
                         (existing, replacement) -> existing,
                         LinkedHashMap::new
                 ));
-    }
-
-    private static List<String> sanitize(String providerName, List<String> modelIds) {
-        return CodexLocalModelCache.mergeIfCodexProvider(providerName, modelIds);
     }
 }

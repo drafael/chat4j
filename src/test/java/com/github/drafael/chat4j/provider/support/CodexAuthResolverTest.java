@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,8 +17,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.Collections.emptyMap;
@@ -34,18 +39,35 @@ class CodexAuthResolverTest {
     private static final String OAUTH_CALLBACK_HOST_PROPERTY = "chat4j.codex.oauthCallbackHost";
     private static final String OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY = "chat4j.codex.oauthLoginTimeoutSeconds";
     private static final String DUMMY_CODEX_ACCESS_TOKEN = "DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS";
+    private static final Set<String> MANAGED_SYSTEM_PROPERTIES = Set.of(
+            OAUTH_ISSUER_PROPERTY,
+            OAUTH_CLIENT_ID_PROPERTY,
+            OAUTH_SCOPES_PROPERTY,
+            OAUTH_REDIRECT_URI_PROPERTY,
+            OAUTH_CALLBACK_HOST_PROPERTY,
+            OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY
+    );
 
     @TempDir
     Path tempDir;
 
+    private final Map<String, String> originalSystemProperties = new HashMap<>();
+
+    @BeforeEach
+    void setUp() {
+        MANAGED_SYSTEM_PROPERTIES.forEach(property -> originalSystemProperties.put(property, System.getProperty(property)));
+        MANAGED_SYSTEM_PROPERTIES.forEach(System::clearProperty);
+    }
+
     @AfterEach
     void tearDown() {
-        System.clearProperty(OAUTH_ISSUER_PROPERTY);
-        System.clearProperty(OAUTH_CLIENT_ID_PROPERTY);
-        System.clearProperty(OAUTH_SCOPES_PROPERTY);
-        System.clearProperty(OAUTH_REDIRECT_URI_PROPERTY);
-        System.clearProperty(OAUTH_CALLBACK_HOST_PROPERTY);
-        System.clearProperty(OAUTH_LOGIN_TIMEOUT_SECONDS_PROPERTY);
+        originalSystemProperties.forEach((property, value) -> {
+            if (value == null) {
+                System.clearProperty(property);
+            } else {
+                System.setProperty(property, value);
+            }
+        });
     }
 
     @Test
@@ -213,6 +235,57 @@ class CodexAuthResolverTest {
                         .isEqualTo(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
             }
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Cancelling a blocked token exchange prevents credential persistence")
+    void completeLoginWithAuthorizationInput_whenExchangeIsCancelled_stopsWorkerWithoutWritingToken() throws Exception {
+        Path userHome = tempDir.resolve("home");
+        var requestStarted = new CountDownLatch(1);
+        var releaseRequest = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/oauth/token", exchange -> {
+            requestStarted.countDown();
+            try {
+                releaseRequest.await(5, TimeUnit.SECONDS);
+                byte[] payload = "{\"access_token\":\"DUMMY_CODEX_ACCESS_TOKEN_FOR_TESTS\",\"expires_in\":3600}"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, payload.length);
+                exchange.getResponseBody().write(payload);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+
+        var cancelled = new AtomicBoolean();
+        var result = new AtomicReference<CodexAuthResolver.CodexAuthActionResult>();
+        try {
+            System.setProperty(OAUTH_ISSUER_PROPERTY, "http://127.0.0.1:%d".formatted(server.getAddress().getPort()));
+            System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-codex-client-id");
+            System.setProperty(OAUTH_REDIRECT_URI_PROPERTY, "http://localhost:1459/auth/callback");
+            var subject = new CodexAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+            CodexAuthResolver.CodexLoginChallenge challenge = subject.beginLogin();
+            String input = "%s?code=auth-code-123&state=%s".formatted(challenge.redirectUri(), challenge.state());
+            Thread worker = Thread.startVirtualThread(() -> result.set(
+                    subject.completeLoginWithAuthorizationInput(challenge, input, cancelled::get)
+            ));
+
+            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            cancelled.set(true);
+            worker.interrupt();
+            worker.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertThat(worker.isAlive()).isFalse();
+            assertThat(worker.isInterrupted()).isTrue();
+            assertThat(result.get().success()).isFalse();
+            assertThat(userHome.resolve(".config/chat4j/codex-auth.json")).doesNotExist();
+        } finally {
+            releaseRequest.countDown();
             server.stop(0);
         }
     }

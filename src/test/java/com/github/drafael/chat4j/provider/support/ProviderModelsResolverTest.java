@@ -6,9 +6,9 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,8 +25,13 @@ class ProviderModelsResolverTest {
     @DisplayName("Resolve prefers cached models when cache contains entries")
     void resolve_whenCacheContainsModels_prefersCachedModels() {
         var modelCacheService = modelCacheService();
-        String providerName = "TestProvider-%s".formatted(UUID.randomUUID());
-        modelCacheService.update(providerName, List.of("z-model", "a-model"));
+        String providerName = "TestProvider";
+        updateModels(
+                modelCacheService,
+                providerName,
+                "https://example.invalid",
+                List.of("z-model", "a-model")
+        );
 
         var subject = new ProviderModelsResolver(modelCacheService);
         var provider = provider(providerName, "https://example.invalid", List.of("seed-1"));
@@ -42,8 +47,13 @@ class ProviderModelsResolverTest {
     @DisplayName("Resolve uses seed models instead of stale cached models after invalidation")
     void resolve_whenProviderIsInvalidated_usesSeedModels() {
         var modelCacheService = modelCacheService();
-        String providerName = "InvalidatedProvider-%s".formatted(UUID.randomUUID());
-        modelCacheService.update(providerName, List.of("old-account-model"));
+        String providerName = "InvalidatedProvider";
+        updateModels(
+                modelCacheService,
+                providerName,
+                "https://example.invalid",
+                List.of("old-account-model")
+        );
         modelCacheService.invalidate(providerName);
 
         var subject = new ProviderModelsResolver(modelCacheService);
@@ -59,7 +69,7 @@ class ProviderModelsResolverTest {
     @DisplayName("Resolve uses Perplexity seed models even when stale cache entries exist")
     void resolve_whenPerplexityCacheContainsStaleModels_usesSeedModels() {
         var modelCacheService = modelCacheService();
-        modelCacheService.update("Perplexity", List.of("sonar-pro", "sonar"));
+        updateModels(modelCacheService, "Perplexity", "https://api.perplexity.ai", List.of("sonar-pro", "sonar"));
 
         var subject = new ProviderModelsResolver(modelCacheService);
         var provider = provider("Perplexity", "https://api.perplexity.ai", PerplexityModelIds.SONAR_MODELS);
@@ -78,7 +88,7 @@ class ProviderModelsResolverTest {
     @DisplayName("Resolve falls back to seed models when cache is empty")
     void resolve_whenCacheIsEmpty_usesSeedModels() {
         var modelCacheService = modelCacheService();
-        String providerName = "SeedProvider-%s".formatted(UUID.randomUUID());
+        String providerName = "SeedProvider";
 
         var subject = new ProviderModelsResolver(modelCacheService);
         var provider = provider(providerName, "https://example.invalid", List.of("model-b", "model-a"));
@@ -91,6 +101,20 @@ class ProviderModelsResolverTest {
 
     private ProviderModelCacheService modelCacheService() {
         return new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(tempDir)));
+    }
+
+    private static void updateModels(
+            ProviderModelCacheService modelCacheService,
+            String providerName,
+            String scope,
+            List<String> models
+    ) {
+        long scopeVersion = modelCacheService.nextScopeVersion();
+        modelCacheService.synchronizeScope(providerName, scope, scopeVersion);
+        ProviderModelCacheService.RefreshAttempt attempt = modelCacheService
+                .tryBeginRefreshIfNeeded(providerName, scope, Duration.ZERO)
+                .orElseThrow();
+        assertThat(modelCacheService.update(attempt, models)).isTrue();
     }
 
     private ProviderRegistry.ProviderDef provider(String name, String baseUrl, List<String> seedModels) {

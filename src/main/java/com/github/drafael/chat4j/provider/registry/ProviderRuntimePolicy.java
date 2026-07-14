@@ -9,11 +9,13 @@ import lombok.extern.slf4j.Slf4j;
 import javax.swing.SwingUtilities;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import static java.util.Collections.emptyMap;
 
 @Slf4j
@@ -26,10 +28,10 @@ final class ProviderRuntimePolicy {
 
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
-    private final ConcurrentHashMap<String, CopilotAuthStatusSnapshot> copilotAuthStatusByProvider = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AtomicBoolean> copilotAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CodexAuthStatusSnapshot> codexAuthStatusByProvider = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AtomicBoolean> codexAuthRefreshInFlightByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AuthStatusSnapshot> authStatusByProvider = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AtomicBoolean> authRefreshInFlightByProvider = new ConcurrentHashMap<>();
+    private final Object authStatusLock = new Object();
+    private final Map<String, Long> authStatusGenerationByProvider = new HashMap<>();
     private volatile Map<String, RuntimeConfig> runtimeConfigByProvider = emptyMap();
 
     ProviderRuntimePolicy() {
@@ -64,7 +66,7 @@ final class ProviderRuntimePolicy {
 
     private boolean hasCopilotAuthCredentials(ProviderDefinition providerDefinition) {
         String providerName = providerDefinition.name();
-        CopilotAuthStatusSnapshot cached = copilotAuthStatusByProvider.get(providerName);
+        AuthStatusSnapshot cached = authStatusByProvider.get(providerName);
         Instant now = Instant.now();
         if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
             return cached.authorized();
@@ -80,7 +82,7 @@ final class ProviderRuntimePolicy {
 
     private boolean hasCodexAuthCredentials(ProviderDefinition providerDefinition) {
         String providerName = providerDefinition.name();
-        CodexAuthStatusSnapshot cached = codexAuthStatusByProvider.get(providerName);
+        AuthStatusSnapshot cached = authStatusByProvider.get(providerName);
         Instant now = Instant.now();
         if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_STATUS_CACHE_TTL))) {
             return cached.authorized();
@@ -95,35 +97,64 @@ final class ProviderRuntimePolicy {
     }
 
     private boolean refreshCopilotAuthStatus(ProviderDefinition providerDefinition, Instant checkedAt) {
-        boolean authorized = copilotAuthResolver.resolveStatus().authorized();
-        copilotAuthStatusByProvider.put(providerDefinition.name(), new CopilotAuthStatusSnapshot(authorized, checkedAt));
-        return authorized;
+        return refreshAuthStatus(providerDefinition, checkedAt, () -> copilotAuthResolver.resolveStatus().authorized());
     }
 
     private boolean refreshCodexAuthStatus(ProviderDefinition providerDefinition, Instant checkedAt) {
-        boolean authorized = codexAuthResolver.resolveStatus().authorized();
-        codexAuthStatusByProvider.put(providerDefinition.name(), new CodexAuthStatusSnapshot(authorized, checkedAt));
-        return authorized;
+        return refreshAuthStatus(providerDefinition, checkedAt, () -> codexAuthResolver.resolveStatus().authorized());
+    }
+
+    private boolean refreshAuthStatus(
+            ProviderDefinition providerDefinition,
+            Instant checkedAt,
+            BooleanSupplier resolveAuthorized
+    ) {
+        String providerName = providerDefinition.name();
+        long generation = currentAuthStatusGeneration(providerName);
+        boolean authorized = resolveAuthorized.getAsBoolean();
+        synchronized (authStatusLock) {
+            if (currentAuthStatusGenerationLocked(providerName) != generation) {
+                return false;
+            }
+            authStatusByProvider.put(providerName, new AuthStatusSnapshot(authorized, checkedAt));
+            return authorized;
+        }
+    }
+
+    private long currentAuthStatusGeneration(String providerName) {
+        synchronized (authStatusLock) {
+            return currentAuthStatusGenerationLocked(providerName);
+        }
+    }
+
+    private long currentAuthStatusGenerationLocked(String providerName) {
+        return authStatusGenerationByProvider.getOrDefault(providerName, 0L);
+    }
+
+    void invalidateAuthStatus(String providerName) {
+        synchronized (authStatusLock) {
+            authStatusGenerationByProvider.merge(providerName, 1L, Long::sum);
+            authStatusByProvider.remove(providerName);
+            authRefreshInFlightByProvider.remove(providerName);
+        }
     }
 
     private void triggerCopilotAuthStatusRefresh(ProviderDefinition providerDefinition) {
-        AtomicBoolean inFlight = copilotAuthRefreshInFlightByProvider
-                .computeIfAbsent(providerDefinition.name(), ignored -> new AtomicBoolean());
-        if (!inFlight.compareAndSet(false, true)) {
-            return;
-        }
-
-        CompletableFuture.runAsync(() -> {
-            try {
-                refreshCopilotAuthStatus(providerDefinition, Instant.now());
-            } finally {
-                inFlight.set(false);
-            }
-        });
+        triggerAuthStatusRefresh(
+                providerDefinition,
+                () -> refreshCopilotAuthStatus(providerDefinition, Instant.now())
+        );
     }
 
     private void triggerCodexAuthStatusRefresh(ProviderDefinition providerDefinition) {
-        AtomicBoolean inFlight = codexAuthRefreshInFlightByProvider
+        triggerAuthStatusRefresh(
+                providerDefinition,
+                () -> refreshCodexAuthStatus(providerDefinition, Instant.now())
+        );
+    }
+
+    private void triggerAuthStatusRefresh(ProviderDefinition providerDefinition, Runnable refresh) {
+        AtomicBoolean inFlight = authRefreshInFlightByProvider
                 .computeIfAbsent(providerDefinition.name(), ignored -> new AtomicBoolean());
         if (!inFlight.compareAndSet(false, true)) {
             return;
@@ -131,7 +162,7 @@ final class ProviderRuntimePolicy {
 
         CompletableFuture.runAsync(() -> {
             try {
-                refreshCodexAuthStatus(providerDefinition, Instant.now());
+                refresh.run();
             } finally {
                 inFlight.set(false);
             }
@@ -168,15 +199,14 @@ final class ProviderRuntimePolicy {
 
     String effectiveBaseUrl(ProviderDefinition providerDefinition) {
         RuntimeConfig runtimeConfig = runtimeConfigByProvider.get(providerDefinition.name());
-        if (runtimeConfig == null || runtimeConfig.baseUrl() == null || runtimeConfig.baseUrl().isBlank()) {
-            return providerDefinition.baseUrl();
-        }
-        return runtimeConfig.baseUrl().trim();
+        String configuredBaseUrl = runtimeConfig == null
+                || runtimeConfig.baseUrl() == null
+                || runtimeConfig.baseUrl().isBlank()
+                ? providerDefinition.baseUrl()
+                : runtimeConfig.baseUrl().trim();
+        return providerDefinition.descriptor().normalizeBaseUrl(configuredBaseUrl);
     }
 
-    private record CopilotAuthStatusSnapshot(boolean authorized, Instant checkedAt) {
-    }
-
-    private record CodexAuthStatusSnapshot(boolean authorized, Instant checkedAt) {
+    private record AuthStatusSnapshot(boolean authorized, Instant checkedAt) {
     }
 }

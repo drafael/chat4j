@@ -6,7 +6,6 @@ import com.github.drafael.chat4j.provider.api.ProviderFactory;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toMap;
 
@@ -69,6 +68,10 @@ public class ProviderRegistry {
                 .filter(RUNTIME_POLICY::hasRequiredCredentials)
                 .map(ProviderRegistry::toEffectiveProvider)
                 .toList();
+    }
+
+    public static void invalidateAuthStatus(String providerName) {
+        RUNTIME_POLICY.invalidateAuthStatus(providerName);
     }
 
     public static List<ProviderStatus> providerStatuses() {

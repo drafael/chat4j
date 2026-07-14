@@ -7,36 +7,54 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.UnaryOperator;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static java.util.Collections.emptyList;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class OpenAiModelCatalogClientTest {
 
-    private static final OpenAiModelCatalogClient subject = new OpenAiModelCatalogClient();
     private static final String COPILOT_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.tokenEndpoint";
     private static final String COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY = "chat4j.copilot.allowCustomTokenEndpoint";
 
-    private String originalUserHome;
+    @TempDir
+    private Path tempDir;
+
     private String originalCopilotTokenEndpoint;
     private String originalCopilotAllowCustomTokenEndpoint;
+    private OpenAiModelCatalogClient subject;
+
+    @BeforeEach
+    void setUp() {
+        originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
+        originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+        subject = new OpenAiModelCatalogClient(new CopilotModelMetadataStore(tempDir.resolve("default-metadata")));
+    }
 
     @AfterEach
     void tearDown() {
-        if (originalUserHome != null) {
-            System.setProperty("user.home", originalUserHome);
-        }
-
         if (originalCopilotTokenEndpoint == null) {
             System.clearProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
         } else {
@@ -51,11 +69,69 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("Interrupted Copilot model listing stops without starting fallback requests")
+    void fetchModels_whenCopilotRequestIsInterrupted_stopsFallbackChain() throws Exception {
+        var requests = new AtomicInteger();
+        var requestStarted = new CountDownLatch(1);
+        var releaseRequest = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            requests.incrementAndGet();
+            requestStarted.countDown();
+            try {
+                releaseRequest.await(2, TimeUnit.SECONDS);
+                exchange.sendResponseHeaders(200, -1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+
+        Thread worker = null;
+        try {
+            String baseUrl = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            ProviderRuntime runtime = new ProviderRuntime(descriptor, null, baseUrl, "copilot-token", null);
+            var models = new AtomicReference<List<String>>();
+
+            worker = Thread.startVirtualThread(() -> models.set(subject.fetchModels(runtime)));
+            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            worker.interrupt();
+            releaseRequest.countDown();
+            worker.join(2_000);
+
+            assertThat(worker.isAlive()).isFalse();
+            assertThat(worker.isInterrupted()).isTrue();
+            assertThat(models.get()).isEmpty();
+            assertThat(requests).hasValue(1);
+        } finally {
+            releaseRequest.countDown();
+            if (worker != null) {
+                worker.interrupt();
+                worker.join(2_000);
+            }
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Copilot model listing exchanges GitHub OAuth token and returns modern GPT models")
     void fetchModels_whenCopilotUsesGithubOAuthToken_exchangesTokenAndReturnsModernModels() throws Exception {
-        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("oauth-exchange-metadata"));
         var subject = new OpenAiModelCatalogClient(metadataStore);
         AtomicInteger tokenExchangeCalls = new AtomicInteger();
+        var modelAuthorizationHeaders = new CopyOnWriteArrayList<String>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/copilot_internal/v2/token", exchange -> {
             tokenExchangeCalls.incrementAndGet();
@@ -72,6 +148,7 @@ class OpenAiModelCatalogClientTest {
 
         server.createContext("/models", exchange -> {
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+            modelAuthorizationHeaders.add(authHeader);
             String integrationHeader = exchange.getRequestHeaders().getFirst("Copilot-Integration-Id");
 
             String body;
@@ -91,8 +168,6 @@ class OpenAiModelCatalogClientTest {
         server.start();
 
         try {
-            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
-            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
             int port = server.getAddress().getPort();
             System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
             System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
@@ -122,6 +197,10 @@ class OpenAiModelCatalogClientTest {
             assertThat(firstModels).doesNotContain("gpt-3.5-turbo", "claude-messages-only");
             assertThat(secondModels).isEqualTo(firstModels);
             assertThat(tokenExchangeCalls.get()).isEqualTo(1);
+            assertThat(modelAuthorizationHeaders)
+                    .isNotEmpty()
+                    .containsOnly("Bearer copilot-internal-token")
+                    .noneMatch(header -> header.contains("gho_generic_token_success"));
             assertThat(metadataStore.supportedEndpoints("http://127.0.0.1:%d".formatted(port), "gpt-5.4"))
                     .containsExactly("/chat/completions");
             assertThat(metadataStore.supportedEndpoints("http://127.0.0.1:%d".formatted(port), "gpt-5.4-mini"))
@@ -132,14 +211,145 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("Failed GitHub OAuth exchange never sends the raw token to a custom model endpoint")
+    void fetchModels_whenGithubOAuthExchangeFails_doesNotSendRawTokenToModelEndpoint() throws Exception {
+        var tokenAuthorizationHeaders = new CopyOnWriteArrayList<String>();
+        var modelAuthorizationHeaders = new CopyOnWriteArrayList<String>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/copilot_internal/v2/token", exchange -> {
+            tokenAuthorizationHeaders.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            byte[] payload = "{\"token\":\"\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.createContext("/models", exchange -> {
+            modelAuthorizationHeaders.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            int port = server.getAddress().getPort();
+            String baseUrl = "http://127.0.0.1:%d".formatted(port);
+            System.setProperty(
+                    COPILOT_TOKEN_ENDPOINT_PROPERTY,
+                    "%s/copilot_internal/v2/token".formatted(baseUrl)
+            );
+            System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            String freshToken = "gho_failed_exchange_%s".formatted(UUID.randomUUID());
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    baseUrl,
+                    freshToken,
+                    null
+            );
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).isEmpty();
+            assertThat(tokenAuthorizationHeaders).containsExactly("token %s".formatted(freshToken));
+            assertThat(modelAuthorizationHeaders).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Unapproved Copilot token endpoint receives no request from a fresh OAuth exchange")
+    void fetchModels_whenTokenEndpointIsUnapproved_usesTrustedEndpointWithoutLeakingCredential() throws Exception {
+        var maliciousEndpointRequests = new AtomicInteger();
+        var maliciousAuthorizationHeaders = new CopyOnWriteArrayList<String>();
+        HttpServer maliciousServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        maliciousServer.createContext("/copilot_internal/v2/token", exchange -> {
+            maliciousEndpointRequests.incrementAndGet();
+            maliciousAuthorizationHeaders.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        maliciousServer.start();
+
+        try {
+            String maliciousBaseUrl = "http://127.0.0.1:%d".formatted(maliciousServer.getAddress().getPort());
+            System.setProperty(
+                    COPILOT_TOKEN_ENDPOINT_PROPERTY,
+                    "%s/copilot_internal/v2/token".formatted(maliciousBaseUrl)
+            );
+            System.clearProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
+
+            var requestedUris = new CopyOnWriteArrayList<URI>();
+            var requestedAuthorizationHeaders = new CopyOnWriteArrayList<String>();
+            HttpClient httpClient = mock(HttpClient.class);
+            HttpResponse<String> unauthorizedResponse = mock(HttpResponse.class);
+            when(unauthorizedResponse.statusCode()).thenReturn(401);
+            when(httpClient.send(
+                    any(HttpRequest.class),
+                    org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+            )).thenAnswer(invocation -> {
+                HttpRequest request = invocation.getArgument(0);
+                requestedUris.add(request.uri());
+                requestedAuthorizationHeaders.add(request.headers().firstValue("Authorization").orElse(null));
+                return unauthorizedResponse;
+            });
+
+            var subject = new OpenAiModelCatalogClient(
+                    new CopilotModelMetadataStore(tempDir.resolve("unapproved-endpoint-metadata")),
+                    httpClient
+            );
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    maliciousBaseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            String freshToken = "gho_unapproved_endpoint_%s".formatted(UUID.randomUUID());
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    maliciousBaseUrl,
+                    freshToken,
+                    null
+            );
+
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(requestedUris).containsExactly(
+                    URI.create("https://api.github.com/copilot_internal/v2/token")
+            );
+            assertThat(requestedAuthorizationHeaders).containsExactly("token %s".formatted(freshToken));
+            assertThat(maliciousEndpointRequests).hasValue(0);
+            assertThat(maliciousAuthorizationHeaders).isEmpty();
+        } finally {
+            maliciousServer.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Copilot model listing preserves previously known endpoint metadata when degraded refresh omits endpoints")
     void fetchModels_whenDegradedCopilotRefreshOmitsEndpoints_keepsExistingEndpointMetadata() throws Exception {
-        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("degraded-refresh-metadata"));
         var subject = new OpenAiModelCatalogClient(metadataStore);
+        var authorizationHeader = new AtomicReference<String>();
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
-            String body = "{\"data\":[{\"id\":\"gpt-4o\"}]}";
+            authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            String body = "{\"data\":[{\"id\":\"gpt-4o\",\"supported_endpoints\":[\"/chat/completions\"]}]}";
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);
@@ -149,8 +359,6 @@ class OpenAiModelCatalogClientTest {
         server.start();
 
         try {
-            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
-            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
             int port = server.getAddress().getPort();
             String baseUrl = "http://127.0.0.1:%d".formatted(port);
             metadataStore.update(
@@ -171,19 +379,23 @@ class OpenAiModelCatalogClientTest {
                     ProviderCapabilities.chatAndModels(),
                     UnaryOperator.identity());
 
+            String sessionToken = "tid=test-tenant;exp=4102444800";
             ProviderRuntime runtime = new ProviderRuntime(
                     descriptor,
                     null,
                     baseUrl,
-                    "gho_generic_token_failure",
+                    sessionToken,
                     null
             );
 
             List<String> models = subject.fetchModels(runtime);
 
             assertThat(models).contains("gpt-4o");
+            assertThat(authorizationHeader).hasValue("Bearer %s".formatted(sessionToken));
             assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
                     .containsExactly("/responses");
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-4o"))
+                    .containsExactly("/chat/completions");
         } finally {
             server.stop(0);
         }
@@ -192,7 +404,7 @@ class OpenAiModelCatalogClientTest {
     @Test
     @DisplayName("Copilot model listing filters websocket-only endpoint models from selection")
     void fetchModels_whenCopilotModelIsWebsocketOnly_excludesItFromSelection() throws Exception {
-        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-model-metadata"));
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("websocket-filter-metadata"));
         var subject = new OpenAiModelCatalogClient(metadataStore);
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -343,96 +555,39 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
-    @DisplayName("Copilot model listing ignores untrusted token endpoint override unless explicitly allowed")
-    void fetchModels_whenCopilotTokenEndpointOverrideIsUntrusted_ignoresOverrideByDefault() throws Exception {
-        AtomicInteger tokenExchangeCalls = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/copilot_internal/v2/token", exchange -> {
-            tokenExchangeCalls.incrementAndGet();
-            byte[] payload = "{\"token\":\"copilot-internal-token\"}".getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, payload.length);
-            exchange.getResponseBody().write(payload);
-            exchange.close();
-        });
+    @DisplayName("Untrusted Copilot token endpoint overrides require explicit opt-in")
+    void copilotTokenEndpoint_whenOverrideIsUntrusted_requiresExplicitOptIn() {
+        String customEndpoint = "http://127.0.0.1:8080/copilot_internal/v2/token";
+        System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, customEndpoint);
+        System.clearProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
 
-        server.createContext("/models", exchange -> {
-            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
-            String body = "Bearer gho_generic_token_untrusted".equals(authHeader)
-                    ? "{\"data\":[{\"id\":\"gpt-4o\"}]}"
-                    : "{\"data\":[{\"id\":\"gpt-5.4\"}]}";
+        assertThat(subject.copilotTokenEndpoint())
+                .isEqualTo("https://api.github.com/copilot_internal/v2/token");
 
-            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, payload.length);
-            exchange.getResponseBody().write(payload);
-            exchange.close();
-        });
-        server.start();
+        System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
 
-        try {
-            originalCopilotTokenEndpoint = System.getProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY);
-            originalCopilotAllowCustomTokenEndpoint = System.getProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
-            int port = server.getAddress().getPort();
-            System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
-            System.clearProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY);
-
-            ProviderDescriptor descriptor = new ProviderDescriptor(
-                    "GitHub Copilot",
-                    AuthType.COPILOT_OAUTH,
-                    null,
-                    null,
-                    "http://127.0.0.1:%d".formatted(port),
-                    emptyList(),
-                    ProviderCapabilities.chatAndModels(),
-                    UnaryOperator.identity());
-
-            ProviderRuntime runtime = new ProviderRuntime(
-                    descriptor,
-                    null,
-                    "http://127.0.0.1:%d".formatted(port),
-                    "gho_generic_token_untrusted",
-                    null
-            );
-
-            List<String> models = subject.fetchModels(runtime);
-
-            assertThat(models).contains("gpt-4o");
-            assertThat(models).doesNotContain("gpt-5.4");
-            assertThat(tokenExchangeCalls.get()).isZero();
-        } finally {
-            server.stop(0);
-        }
+        assertThat(subject.copilotTokenEndpoint()).isEqualTo(customEndpoint);
     }
 
     @Test
-    @DisplayName("Codex OAuth provider merges local codex cache with API model listing")
-    void fetchModels_whenCodexApiListingSucceeds_mergesLocalCodexModelsFromCache() throws Exception {
-        originalUserHome = System.getProperty("user.home");
-        Path tempHome = Files.createTempDirectory("chat4j-codex-home");
-        System.setProperty("user.home", tempHome.toString());
-
-        Path codexDir = tempHome.resolve(".codex");
-        Files.createDirectories(codexDir);
-        Files.writeString(codexDir.resolve("models_cache.json"), """
-                {
-                  "models": [
-                    {"slug": "gpt-5.5"},
-                    {"slug": "gpt-5.4"}
-                  ]
-                }
-                """);
-
+    @DisplayName("Codex OAuth provider retries the tolerant HTTP path when the SDK catalog is empty")
+    void fetchModels_whenCodexSdkListingIsEmpty_usesHttpFallback() throws Exception {
+        var requests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
-            byte[] payload = """
-                    {
-                      "object": "list",
-                      "data": [
-                        {"id":"gpt-4o","object":"model","created":1,"owned_by":"openai"}
-                      ]
-                    }
-                    """.getBytes(StandardCharsets.UTF_8);
+            boolean firstRequest = requests.incrementAndGet() == 1;
+            byte[] payload = (firstRequest
+                    ? """
+                            {"object":"list","data":[]}
+                            """
+                    : """
+                            {
+                              "object": "list",
+                              "data": [
+                                {"id":"gpt-4o","object":"model","created":1,"owned_by":"openai"}
+                              ]
+                            }
+                            """).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);
             exchange.getResponseBody().write(payload);
@@ -462,34 +617,20 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).contains("gpt-5.5", "gpt-5.4", "gpt-4o");
-            assertThat(models).doesNotHaveDuplicates();
+            assertThat(models).containsExactly("gpt-4o");
+            assertThat(requests).hasValue(2);
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    @DisplayName("Codex OAuth provider falls back to local codex models cache when API listing fails")
-    void fetchModels_whenCodexApiListingFails_returnsLocalCodexModelsFromCache() throws Exception {
-        originalUserHome = System.getProperty("user.home");
-        Path tempHome = Files.createTempDirectory("chat4j-codex-home");
-        System.setProperty("user.home", tempHome.toString());
-
-        Path codexDir = tempHome.resolve(".codex");
-        Files.createDirectories(codexDir);
-        Files.writeString(codexDir.resolve("models_cache.json"), """
-                {
-                  "models": [
-                    {"slug": "gpt-5-codex"},
-                    {"slug": "gpt-5-codex-mini"},
-                    {"slug": "gpt-5-codex"}
-                  ]
-                }
-                """);
-
+    @DisplayName("Codex OAuth provider leaves local fallback models to the cache overlay")
+    void fetchModels_whenCodexApiListingFails_returnsEmptyRemoteCatalog() throws Exception {
+        var requests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/v1/models", exchange -> {
+        server.createContext("/models", exchange -> {
+            requests.incrementAndGet();
             byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(500, payload.length);
             exchange.getResponseBody().write(payload);
@@ -519,8 +660,8 @@ class OpenAiModelCatalogClientTest {
 
             List<String> models = subject.fetchModels(runtime);
 
-            assertThat(models).contains("gpt-5-codex", "gpt-5-codex-mini");
-            assertThat(models).doesNotHaveDuplicates();
+            assertThat(models).isEmpty();
+            assertThat(requests).hasValueGreaterThan(0);
         } finally {
             server.stop(0);
         }

@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.chat;
 
-import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
 import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
@@ -11,7 +10,6 @@ import com.github.drafael.chat4j.chat.ui.ActivityBubble;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
-import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
@@ -48,9 +46,11 @@ import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
@@ -62,6 +62,7 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -69,9 +70,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -82,14 +85,28 @@ import static org.assertj.core.api.Assertions.tuple;
 
 class ChatPanelTest {
 
+    @TempDir
+    private Path tempDir;
+
     private ChatPanel subject;
 
     @BeforeEach
-    void setUp() {
-        subject = new ChatPanel();
-        subject.getInputBar().setWebSearchLockedEnabled(false);
-        subject.getInputBar().setWebSearchOptions(emptyList(), null);
-        subject.getInputBar().setWebSearchEnabled(false);
+    void setUp() throws Exception {
+        ProviderModelCacheService cacheService = modelCacheService(tempDir.resolve("subject-cache"));
+        runOnEdt(() -> {
+            subject = new ChatPanel(cacheService);
+            subject.getInputBar().setWebSearchLockedEnabled(false);
+            subject.getInputBar().setWebSearchOptions(emptyList(), null);
+            subject.getInputBar().setWebSearchEnabled(false);
+        });
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        if (subject != null) {
+            runOnEdt(subject::removeNotify);
+            runOnEdt(() -> {});
+        }
     }
 
     @Test
@@ -650,60 +667,81 @@ class ChatPanelTest {
     @Test
     @DisplayName("Refreshing providers after cache invalidation drops stale selected model")
     void refreshProviders_whenSelectedProviderCacheInvalidated_selectsSeedModel() throws Exception {
-        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-test");
-        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
-        cacheService.update("OpenAI", List.of("old-account-model"));
-        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
-        var provider = new ProviderRegistry.ProviderDef(
-                "OpenAI",
-                "OPENAI_API_KEY",
-                null,
-                List.of("seed-model"),
-                ProviderCapabilities.chatAndModels(),
-                model -> immediateProvider("ok"),
-                List::of
-        );
-        setField(panel, "selectedProviderName", "OpenAI");
-        setField(panel, "selectedModelId", "old-account-model");
+        Path cacheHome = tempDir.resolve("model-cache-invalidation");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var provider = providerDef(null);
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            updateModels(cacheService, "OpenAI", "", List.of("old-account-model"));
+            cacheService.invalidate("OpenAI");
+            runOnEdt(() -> {
+                setField(panel, "selectedProviderName", "OpenAI");
+                setField(panel, "selectedModelId", "old-account-model");
+                invokeApplyProviderModels(panel, List.of(provider));
+                assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+            });
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
+    }
 
-        cacheService.invalidate("OpenAI");
-        invokeApplyProviderModels(panel, List.of(provider));
+    @Test
+    @DisplayName("Re-enabling a provider after its base URL changed invalidates models from the previous endpoint")
+    void applyProviderModels_whenProviderReenabledWithChangedBaseUrl_invalidatesProviderCache() throws Exception {
+        Path cacheHome = tempDir.resolve("model-cache-base-url");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            var previousProvider = providerDef("https://old.example.com/v1");
+            var updatedProvider = providerDef("https://new.example.com/v1");
+            invokePrepareProviderModels(panel, List.of(previousProvider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(previousProvider)));
+            updateModels(cacheService, "OpenAI", previousProvider.baseUrl(), List.of("old-endpoint-model"));
 
-        assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+            runOnEdt(() -> invokeApplyProviderModels(panel, emptyList()));
+            invokePrepareProviderModels(panel, List.of(updatedProvider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(updatedProvider)));
+
+            assertThat(cacheService.isInvalidated("OpenAI")).isTrue();
+            assertThat(cacheService.shouldRefresh("OpenAI")).isTrue();
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
     }
 
     @Test
     @DisplayName("Loading an invalidated non-seed model selection falls back to seed model")
     void setSelectedModel_whenProviderCacheInvalidated_usesSeedModel() throws Exception {
-        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-load-test");
-        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
-        cacheService.update("OpenAI", List.of("old-account-model"));
-        cacheService.invalidate("OpenAI");
-        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
-        var provider = new ProviderRegistry.ProviderDef(
-                "OpenAI",
-                "OPENAI_API_KEY",
-                null,
-                List.of("seed-model"),
-                ProviderCapabilities.chatAndModels(),
-                model -> immediateProvider("ok"),
-                List::of
-        );
-        setField(panel, "providerMap", Map.of(provider.name(), provider));
-
-        panel.setSelectedModel("OpenAI > old-account-model");
-
-        assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+        Path cacheHome = tempDir.resolve("model-cache-load");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var provider = providerDef(null);
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            updateModels(cacheService, "OpenAI", "", List.of("old-account-model"));
+            cacheService.invalidate("OpenAI");
+            runOnEdt(() -> {
+                setField(panel, "providerMap", Map.of(provider.name(), provider));
+                panel.setSelectedModel("OpenAI > old-account-model");
+                assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
+            });
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
     }
 
     @Test
     @DisplayName("Loading an invalidated non-seed model selection without seed models is ignored")
     void setSelectedModel_whenProviderCacheInvalidatedAndNoSeedModels_doesNotSelectStaleModel() throws Exception {
-        Path cacheHome = Files.createTempDirectory("chat4j-model-cache-empty-seed-test");
-        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(cacheHome)));
-        cacheService.update("EmptySeed", List.of("old-account-model"));
-        cacheService.invalidate("EmptySeed");
-        ChatPanel panel = new ChatPanel(cacheService, ModelFavoritesService.createInMemory());
+        Path cacheHome = tempDir.resolve("model-cache-empty-seed");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
         var provider = new ProviderRegistry.ProviderDef(
                 "EmptySeed",
                 "EMPTY_SEED_API_KEY",
@@ -713,38 +751,157 @@ class ChatPanelTest {
                 model -> immediateProvider("ok"),
                 () -> emptyList()
         );
-        setField(panel, "providerMap", Map.of(provider.name(), provider));
-        setField(panel, "selectedProviderName", null);
-        setField(panel, "selectedModelId", null);
-
-        panel.setSelectedModel("EmptySeed > old-account-model");
-
-        assertThat(panel.getSelectedModel()).isNull();
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            updateModels(cacheService, "EmptySeed", "", List.of("old-account-model"));
+            cacheService.invalidate("EmptySeed");
+            runOnEdt(() -> {
+                setField(panel, "providerMap", Map.of(provider.name(), provider));
+                setField(panel, "selectedProviderName", null);
+                setField(panel, "selectedModelId", null);
+                panel.setSelectedModel("EmptySeed > old-account-model");
+                assertThat(panel.getSelectedModel()).isNull();
+            });
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
     }
 
     @Test
     @DisplayName("Selecting a non-seed model still creates a runtime provider for the selected provider")
     void setSelectedModel_whenModelIsNotPartOfSeedModels_createsProviderForSelectedProvider() throws Exception {
-        subject.setSelectedModel("Ollama > llama3.2:latest");
+        runOnEdt(() -> subject.setSelectedModel("Ollama > llama3.2:latest"));
 
         awaitProviderResolved(subject);
 
         Object currentProvider = readCurrentProvider(subject);
-        assertThat(subject.getSelectedModel()).isEqualTo("Ollama > llama3.2:latest");
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Ollama > llama3.2:latest");
         assertThat(currentProvider).isNotNull();
         assertThat(currentProvider).isInstanceOf(ProviderService.class);
     }
 
     @Test
-    @DisplayName("Selecting an unavailable provider clears any previously selected runtime provider")
-    void setSelectedModel_whenProviderIsUnavailable_clearsPreviousRuntimeProvider() throws Exception {
-        subject.setSelectedModel("Ollama > llama3.2:latest");
+    @DisplayName("Selecting an unavailable provider clears runtime and composer readiness")
+    void setSelectedModel_whenProviderIsUnavailable_clearsRuntimeAndComposerReadiness() throws Exception {
+        runOnEdt(() -> {
+            subject.getInputBar().setText("ready to send");
+            subject.setSelectedModel("Ollama > llama3.2:latest");
+        });
         awaitProviderResolved(subject);
         assertThat(readCurrentProvider(subject)).isNotNull();
+        assertThat(callOnEdt(() -> subject.getInputBar().isSendable())).isTrue();
 
-        subject.setSelectedModel("UnavailableProvider > some-model");
+        runOnEdt(() -> subject.setSelectedModel("UnavailableProvider > some-model"));
 
         assertThat(readCurrentProvider(subject)).isNull();
+        assertThat(callOnEdt(subject::getSelectedModel)).isNull();
+        assertThat(callOnEdt(() -> subject.getInputBar().isSendable())).isFalse();
+    }
+
+    @Test
+    @DisplayName("Providers discovered by the model popup can be selected immediately")
+    void updateProviderModelsFromPopup_whenProviderAppearsLater_allowsProviderSelection() throws Exception {
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "LateProvider",
+                null,
+                "https://example.invalid/v1",
+                List.of("late-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        runOnEdt(() -> {
+            invokeUpdateProviderModelsFromPopup(subject, List.of(provider));
+            subject.setSelectedModel("LateProvider > late-model");
+        });
+        awaitProviderResolved(subject);
+
+        runOnEdt(() -> {
+            assertThat(subject.getSelectedModel()).isEqualTo("LateProvider > late-model");
+            assertThat(readCurrentProvider(subject)).isNotNull();
+        });
+    }
+
+    @Test
+    @DisplayName("Older provider snapshots cannot overwrite a newer popup provider list")
+    void updateProviderModelsFromPopup_whenOlderSnapshotArrivesLater_keepsNewerProviders() throws Exception {
+        ProviderRegistry.ProviderDef newerProvider = new ProviderRegistry.ProviderDef(
+                "NewerProvider",
+                null,
+                null,
+                List.of("newer-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        ProviderRegistry.ProviderDef staleProvider = new ProviderRegistry.ProviderDef(
+                "StaleProvider",
+                null,
+                null,
+                List.of("stale-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("stale"),
+                List::of
+        );
+
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long staleScopeVersion = cacheService.nextScopeVersion();
+        long newerScopeVersion = cacheService.nextScopeVersion();
+        runOnEdt(() -> {
+            assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(staleProvider), staleScopeVersion)).isFalse();
+            Map<?, ?> providersAfterSupersededUpdate = (Map<?, ?>) readField(subject, "providerMap");
+            assertThat(providersAfterSupersededUpdate.containsKey(staleProvider.name())).isFalse();
+
+            assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(newerProvider), newerScopeVersion)).isTrue();
+            assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(staleProvider), staleScopeVersion)).isFalse();
+            subject.setSelectedModel("NewerProvider > newer-model");
+        });
+        awaitProviderResolved(subject);
+
+        runOnEdt(() -> {
+            assertThat(subject.getSelectedModel()).isEqualTo("NewerProvider > newer-model");
+            assertThat(readCurrentProvider(subject)).isNotNull();
+        });
+    }
+
+    @Test
+    @DisplayName("Popup provider updates clear selections invalidated by an endpoint change")
+    void updateProviderModelsFromPopup_whenSelectedProviderIsInvalidated_clearsSelection() throws Exception {
+        var selectionChanges = new AtomicInteger();
+        var catalogChanges = new AtomicInteger();
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "ChangedProvider",
+                null,
+                "https://new.example.invalid/v1",
+                List.of("changed-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+        runOnEdt(() -> {
+            subject.setOnSelectedModelChanged(selectionChanges::incrementAndGet);
+            subject.setOnModelCatalogChanged(catalogChanges::incrementAndGet);
+            invokeUpdateProviderModelsFromPopup(subject, List.of(provider));
+            subject.setSelectedModel("ChangedProvider > changed-model");
+        });
+        awaitProviderResolved(subject);
+        selectionChanges.set(0);
+        catalogChanges.set(0);
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+
+        cacheService.invalidate(provider.name());
+        runOnEdt(() -> invokeUpdateProviderModelsFromPopup(subject, List.of(provider)));
+
+        runOnEdt(() -> {
+            assertThat(subject.getSelectedModel()).isNull();
+            assertThat(readCurrentProvider(subject)).isNull();
+            assertThat(selectionChanges).hasValue(1);
+            assertThat(catalogChanges).hasValue(1);
+        });
     }
 
     @Test
@@ -769,13 +926,16 @@ class ChatPanelTest {
                 },
                 List::of
         );
-        setField(subject, "providerMap", Map.of(provider.name(), provider));
-
-        SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("SlowProvider > slow-model"));
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("SlowProvider > slow-model");
+        });
 
         assertThat(factoryStarted.await(1, TimeUnit.SECONDS)).isTrue();
-        assertThat(readCurrentProvider(subject)).isNull();
-        assertThat((boolean) readField(subject, "currentProviderResolving")).isTrue();
+        runOnEdt(() -> {
+            assertThat(readCurrentProvider(subject)).isNull();
+            assertThat((boolean) readField(subject, "currentProviderResolving")).isTrue();
+        });
 
         releaseFactory.countDown();
         awaitProviderResolved(subject);
@@ -808,9 +968,10 @@ class ChatPanelTest {
                     model -> immediateProvider("ok"),
                     List::of
             );
-            setField(subject, "providerMap", Map.of(provider.name(), provider));
-
-            SwingUtilities.invokeAndWait(() -> subject.setSelectedModel("LM Studio > local-model"));
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                subject.setSelectedModel("LM Studio > local-model");
+            });
 
             awaitCondition(2, TimeUnit.SECONDS, () -> requestCount.get() > 0);
         } finally {
@@ -843,19 +1004,20 @@ class ChatPanelTest {
         Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
         customProviders.put(reasoningProvider.name(), reasoningProvider);
         customProviders.put(plainProvider.name(), plainProvider);
-        setField(subject, "providerMap", customProviders);
+        runOnEdt(() -> {
+            setField(subject, "providerMap", customProviders);
+            JButton thinkingButton = readThinkingButton(subject.getInputBar());
 
-        JButton thinkingButton = readThinkingButton(subject.getInputBar());
+            subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+            assertThat(thinkingButton.isVisible()).isTrue();
 
-        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
-        assertThat(thinkingButton.isVisible()).isTrue();
+            subject.getInputBar().setThinkingEnabled(true);
+            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
 
-        subject.getInputBar().setThinkingEnabled(true);
-        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
-
-        subject.setSelectedModel("LocalTest > basic-model");
-        assertThat(thinkingButton.isVisible()).isFalse();
-        assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+            subject.setSelectedModel("LocalTest > basic-model");
+            assertThat(thinkingButton.isVisible()).isFalse();
+            assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
+        });
     }
 
     @Test
@@ -883,27 +1045,28 @@ class ChatPanelTest {
         Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
         customProviders.put(reasoningProvider.name(), reasoningProvider);
         customProviders.put(plainProvider.name(), plainProvider);
-        setField(subject, "providerMap", customProviders);
+        runOnEdt(() -> {
+            setField(subject, "providerMap", customProviders);
+            JButton thinkingButton = readThinkingButton(subject.getInputBar());
 
-        JButton thinkingButton = readThinkingButton(subject.getInputBar());
+            // Conversation A
+            subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+            subject.getInputBar().setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
 
-        // Conversation A
-        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
-        subject.getInputBar().setReasoningLevel(ReasoningLevel.EXTRA_HIGH);
-        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+            // Switch to conversation B (non-reasoning model)
+            subject.setSelectedModel("LocalTest > basic-model");
+            assertThat(thinkingButton.isVisible()).isFalse();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+            assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
 
-        // Switch to conversation B (non-reasoning model)
-        subject.setSelectedModel("LocalTest > basic-model");
-        assertThat(thinkingButton.isVisible()).isFalse();
-        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-        assertThat(subject.getInputBar().isThinkingEnabled()).isFalse();
-
-        // Switch back to conversation A
-        subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
-        assertThat(thinkingButton.isVisible()).isTrue();
-        assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
-        assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+            // Switch back to conversation A
+            subject.setSelectedModel("OpenRouter > claude-3.7-sonnet");
+            assertThat(thinkingButton.isVisible()).isTrue();
+            assertThat(subject.getInputBar().getReasoningLevel()).isEqualTo(ReasoningLevel.EXTRA_HIGH);
+            assertThat(subject.getInputBar().isThinkingEnabled()).isTrue();
+        });
     }
 
     @Test
@@ -931,20 +1094,22 @@ class ChatPanelTest {
         Map<String, ProviderRegistry.ProviderDef> customProviders = new LinkedHashMap<>();
         customProviders.put(toolProvider.name(), toolProvider);
         customProviders.put(plainProvider.name(), plainProvider);
-        setField(subject, "providerMap", customProviders);
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-project"));
+        runOnEdt(() -> {
+            setField(subject, "providerMap", customProviders);
+            JToggleButton agentModeButton = readAgentModeButton(subject.getInputBar());
 
-        JToggleButton agentModeButton = readAgentModeButton(subject.getInputBar());
+            subject.setSelectedModel("OpenRouter > gpt-5-mini");
+            assertThat(agentModeButton.isVisible()).isTrue();
 
-        subject.setSelectedModel("OpenRouter > gpt-5-mini");
-        assertThat(agentModeButton.isVisible()).isTrue();
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            assertThat(subject.getInputBar().isAgentModeEnabled()).isTrue();
 
-        subject.getInputBar().setAgentProjectRoot(Files.createTempDirectory("chat4j-agent-project"));
-        subject.getInputBar().setAgentModeEnabled(true);
-        assertThat(subject.getInputBar().isAgentModeEnabled()).isTrue();
-
-        subject.setSelectedModel("LocalTest > basic-model");
-        assertThat(agentModeButton.isVisible()).isFalse();
-        assertThat(subject.getInputBar().isAgentModeEnabled()).isFalse();
+            subject.setSelectedModel("LocalTest > basic-model");
+            assertThat(agentModeButton.isVisible()).isFalse();
+            assertThat(subject.getInputBar().isAgentModeEnabled()).isFalse();
+        });
     }
 
     @Test
@@ -1657,26 +1822,29 @@ class ChatPanelTest {
     @Test
     @DisplayName("Showing bubble action buttons keeps message spacing stable")
     void loadHistory_whenBubbleActionButtonsBecomeVisible_keepsWrapperHeightStable() throws Exception {
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("hello"),
                 Message.assistant("hi")
-        ));
+        )));
         flushEdt();
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        MessageBubble userBubble = findComponents(messagesPanel, MessageBubble.class).stream()
-                .filter(bubble -> bubble.getRole() == Role.USER)
-                .findFirst()
-                .orElseThrow();
-        Container hoverGroup = userBubble.getParent();
-        List<JButton> buttons = findComponents(hoverGroup, JButton.class);
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            MessageBubble userBubble = findComponents(messagesPanel, MessageBubble.class).stream()
+                    .filter(bubble -> bubble.getRole() == Role.USER)
+                    .findFirst()
+                    .orElseThrow();
+            Container hoverGroup = userBubble.getParent();
+            List<JButton> buttons = findComponents(hoverGroup, JButton.class);
 
-        Dimension before = hoverGroup.getPreferredSize();
-        SwingUtilities.invokeAndWait(() -> buttons.forEach(button -> button.setVisible(true)));
-        Dimension after = hoverGroup.getPreferredSize();
+            Dimension before = hoverGroup.getPreferredSize();
+            buttons.forEach(button -> button.setVisible(true));
+            Dimension after = hoverGroup.getPreferredSize();
 
-        assertThat(buttons).hasSize(3);
-        assertThat(after.height).isEqualTo(before.height);
+            assertThat(buttons).hasSize(3);
+            assertThat(after.height).isEqualTo(before.height);
+            return null;
+        });
     }
 
     @Test
@@ -1684,20 +1852,21 @@ class ChatPanelTest {
     void readAloudButton_whenClicked_invokesTextToSpeechService() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
-        subject.loadHistory(List.of(Message.assistant("assistant answer")));
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("assistant answer"))));
         flushEdt();
 
-        JButton readAloudButton = findComponents(subject, JButton.class).stream()
+        JButton readAloudButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .filter(button -> "Read aloud".equals(button.getToolTipText()))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow());
 
-        SwingUtilities.invokeAndWait(readAloudButton::doClick);
+        runOnEdt(readAloudButton::doClick);
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
-        assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
-                .contains("Stop");
+        assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .map(JButton::getToolTipText)
+                .toList())).contains("Stop");
     }
 
     @Test
@@ -1705,15 +1874,15 @@ class ChatPanelTest {
     void handleWebTranscriptAction_whenReadAloudAfterUserMessage_invokesTextToSpeechService() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("question"),
                 Message.assistant("assistant answer")
-        ));
+        )));
         flushEdt();
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", 1, "");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, ""));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -1724,12 +1893,12 @@ class ChatPanelTest {
     void handleWebTranscriptAction_whenReadAloudIndexIsValid_usesStoredMessageText() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
-        subject.loadHistory(List.of(Message.assistant("stored assistant answer")));
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("stored assistant answer"))));
         flushEdt();
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", 0, "browser rendered answer");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 0, "browser rendered answer"));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("stored assistant answer");
@@ -1743,7 +1912,7 @@ class ChatPanelTest {
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", -1, "assistant answer");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", -1, "assistant answer"));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -1760,16 +1929,16 @@ class ChatPanelTest {
                 Instant.now(),
                 new MessageMeta(emptyList(), emptyList(), false, "", "thinking", "searching")
         );
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("question"),
                 activityOnlyAssistant,
                 Message.assistant("assistant answer")
-        ));
+        )));
         flushEdt();
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", 2, "assistant answer");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 2, "assistant answer"));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -1787,16 +1956,16 @@ class ChatPanelTest {
                 Instant.now(),
                 new MessageMeta(emptyList(), emptyList(), false, "", "thinking", "searching")
         );
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("question"),
                 activityOnlyAssistant,
                 Message.assistant("assistant answer")
-        ));
+        )));
         flushEdt();
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", 1, "assistant answer");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, "assistant answer"));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -1814,16 +1983,18 @@ class ChatPanelTest {
                 Instant.now(),
                 new MessageMeta(emptyList(), emptyList(), false, "", "", "**Searched**\n- java copy message")
         );
-        subject.loadHistory(List.of(Message.user("question"), assistantMessage));
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), assistantMessage)));
         flushEdt();
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        method.invoke(subject, "read-aloud", 1, "");
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, ""));
         flushEdt();
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ActivityBubble.class)).hasSize(1);
+        assertThat(callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class);
+        })).hasSize(1);
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
         assertThat(textToSpeechService.requestedKey()).isEqualTo("web:1");
     }
@@ -3234,18 +3405,21 @@ class ChatPanelTest {
     }
 
     private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
-        return readField(chatPanel, "currentProvider");
+        return callOnEdt(() -> readField(chatPanel, "currentProvider"));
     }
 
     private static void setCurrentProvider(ChatPanel chatPanel, ProviderService provider) throws Exception {
-        setField(chatPanel, "currentProvider", provider);
-        // Direct provider injection represents a ready provider; constructor-started async model resolution may still be running.
-        setField(chatPanel, "currentProviderResolving", false);
+        runOnEdt(() -> {
+            AtomicLong providerSelectionCounter = (AtomicLong) readField(chatPanel, "providerSelectionCounter");
+            providerSelectionCounter.incrementAndGet();
+            setField(chatPanel, "currentProvider", provider);
+            setField(chatPanel, "currentProviderResolving", false);
+        });
     }
 
     private static void awaitProviderResolved(ChatPanel chatPanel) throws Exception {
-        awaitCondition(2, TimeUnit.SECONDS, () -> readCurrentProvider(chatPanel) != null
-                && !(boolean) readField(chatPanel, "currentProviderResolving"));
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> readField(chatPanel, "currentProvider") != null
+                && !(boolean) readField(chatPanel, "currentProviderResolving")));
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
@@ -3261,9 +3435,109 @@ class ChatPanelTest {
     }
 
     private static void invokeApplyProviderModels(ChatPanel chatPanel, List<ProviderRegistry.ProviderDef> providers) throws Exception {
-        Method method = ChatPanel.class.getDeclaredMethod("applyProviderModels", List.class);
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(chatPanel, "modelCacheService");
+        long scopeVersion = cacheService.nextScopeVersion();
+        Method method = ChatPanel.class.getDeclaredMethod("applyProviderModels", List.class, long.class);
         method.setAccessible(true);
-        method.invoke(chatPanel, providers);
+        method.invoke(chatPanel, providers, scopeVersion);
+    }
+
+    private static void invokePrepareProviderModels(
+            ChatPanel chatPanel,
+            List<ProviderRegistry.ProviderDef> providers,
+            long scopeVersion
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("prepareProviderModels", List.class, long.class);
+        method.setAccessible(true);
+        method.invoke(chatPanel, providers, scopeVersion);
+    }
+
+    private static boolean invokeUpdateProviderModelsFromPopup(
+            ChatPanel chatPanel,
+            List<ProviderRegistry.ProviderDef> providers
+    ) throws Exception {
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(chatPanel, "modelCacheService");
+        return invokeUpdateProviderModelsFromPopup(chatPanel, providers, cacheService.nextScopeVersion());
+    }
+
+    private static boolean invokeUpdateProviderModelsFromPopup(
+            ChatPanel chatPanel,
+            List<ProviderRegistry.ProviderDef> providers,
+            long scopeVersion
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("updateProviderModelsFromPopup", List.class, long.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(chatPanel, providers, scopeVersion);
+    }
+
+    private static ProviderRegistry.ProviderDef providerDef(String baseUrl) {
+        return new ProviderRegistry.ProviderDef(
+                "OpenAI",
+                "OPENAI_API_KEY",
+                baseUrl,
+                List.of("seed-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+    }
+
+    private static ProviderModelCacheService modelCacheService(Path configHome) {
+        var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(configHome)));
+        cacheService.primeFromDisk(ProviderRegistry.availableProviders().stream()
+                .map(ProviderRegistry.ProviderDef::name)
+                .toList());
+        return cacheService;
+    }
+
+    private static void updateModels(
+            ProviderModelCacheService cacheService,
+            String providerName,
+            String scope,
+            List<String> models
+    ) {
+        ProviderModelCacheService.RefreshAttempt attempt = cacheService
+                .tryBeginRefreshIfNeeded(providerName, scope, Duration.ZERO)
+                .orElseThrow();
+        assertThat(cacheService.update(attempt, models)).isTrue();
+    }
+
+    private static void runOnEdt(ThrowingAction action) throws Exception {
+        callOnEdt(() -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private static <T> T callOnEdt(Callable<T> action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return action.call();
+        }
+
+        var result = new AtomicReference<T>();
+        var error = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.call());
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        if (error.get() instanceof Exception e) {
+            throw e;
+        }
+        if (error.get() instanceof Error e) {
+            throw e;
+        }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return result.get();
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
     }
 
     private static void invokePersistAssistantResponse(
@@ -3454,14 +3728,18 @@ class ChatPanelTest {
         return layout.getConstraints(row).gridy;
     }
 
-    private static ChatPanel chatPanelWithTextToSpeech(TextToSpeechService textToSpeechService) {
-        return new ChatPanel(
-                ProviderModelCacheService.createDefault(),
+    private ChatPanel chatPanelWithTextToSpeech(TextToSpeechService textToSpeechService) throws Exception {
+        runOnEdt(subject::removeNotify);
+        var panelRef = new AtomicReference<ChatPanel>();
+        ProviderModelCacheService cacheService = modelCacheService(tempDir.resolve("tts-subject-cache"));
+        runOnEdt(() -> panelRef.set(new ChatPanel(
+                cacheService,
                 ModelFavoritesService.createInMemory(),
                 new ChatMessageViewFactory(),
                 WebViewEngine.JEDITOR_PANE,
                 textToSpeechService
-        );
+        )));
+        return panelRef.get();
     }
 
     private static JPopupMenu contentPopupMenu(MessageBubble bubble) {

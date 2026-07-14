@@ -35,6 +35,7 @@ Configuration:
 - Scopes: `chat4j.copilot.oauthScopes` (default `read:user`).
 - Enterprise domain: `chat4j.copilot.enterpriseDomain` / `CHAT4J_COPILOT_ENTERPRISE_DOMAIN`.
 - Endpoint overrides for tests/custom setups: `chat4j.copilot.deviceCodeEndpoint`, `chat4j.copilot.accessTokenEndpoint`, `chat4j.copilot.tokenEndpoint`.
+- Non-GitHub `chat4j.copilot.tokenEndpoint` overrides also require the explicit opt-in `chat4j.copilot.allowCustomTokenEndpoint=true`; otherwise Chat4J uses the trusted GitHub endpoint.
 
 Runtime behavior:
 
@@ -99,8 +100,9 @@ Configuration:
 Runtime behavior:
 
 - Codex chat uses `CodexCliChatCompletionClient` by design.
-- Model listing tries OpenAI-compatible `/v1/models` first, then falls back to `~/.codex/models_cache.json`.
-- Chat4J persists the final model list in `<app-config>/models-cache/OpenAI_Codex.txt`.
+- Remote model listing uses the OpenAI-compatible `/v1/models` endpoint.
+- Chat4J keeps that remote catalog in `<app-config>/models-cache/OpenAI_Codex.txt` and overlays it in memory with the current visible models from `~/.codex/models_cache.json`.
+- Local Codex visibility changes are refreshed without persisting local-only model IDs into Chat4J's remote catalog cache. Chat4J treats the current file contents as authoritative and does not reject them based on its `fetched_at` value.
 - Agent Mode chooses the Codex CLI-first adapter path for OpenAI Codex to avoid noisy HTTP tool-calling fallback warnings.
 
 Troubleshooting:

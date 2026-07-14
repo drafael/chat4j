@@ -52,7 +52,6 @@ final class ModelRowComponent {
     private final JLabel webCapabilityLabel;
     private final String providerName;
     private final String modelId;
-    private final String displayLabel;
     private final boolean selectable;
     private int lastNameLabelWidth = -1;
     private String lastRenderedNameText;
@@ -60,7 +59,6 @@ final class ModelRowComponent {
     ModelRowComponent(
             String providerName,
             String modelId,
-            String displayLabel,
             boolean selectable,
             boolean initiallyFavorite,
             boolean supportsImageInput,
@@ -70,11 +68,10 @@ final class ModelRowComponent {
     ) {
         this.providerName = providerName;
         this.modelId = modelId;
-        this.displayLabel = displayLabel;
         this.selectable = selectable;
 
         this.panel = buildPanel();
-        this.nameLabel = buildNameLabel(displayLabel);
+        this.nameLabel = buildNameLabel(modelId);
         this.checkLabel = buildCheckLabel();
         this.favoriteLabel = buildFavoriteLabel();
         this.imageCapabilityLabel = buildCapabilityLabel();
@@ -92,6 +89,10 @@ final class ModelRowComponent {
 
     JPanel panel() {
         return panel;
+    }
+
+    boolean selectable() {
+        return selectable;
     }
 
     String providerName() {
@@ -132,7 +133,10 @@ final class ModelRowComponent {
         favoriteLabel.setIcon(loadTintedIcon(FAVORITE_ICON_CACHE, iconPath, tint, iconSize));
         favoriteLabel.setText(null);
         favoriteLabel.setForeground(tint);
-        favoriteLabel.setToolTipText(favorite ? "Remove from favorites" : "Add to favorites");
+        String tooltip = selectable
+                ? (favorite ? "Remove from favorites" : "Add to favorites")
+                : "%s server is unavailable".formatted(providerName);
+        favoriteLabel.setToolTipText(tooltip);
     }
 
     void updateCapabilities(boolean supportsImageInput, boolean supportsReasoning, boolean supportsNativeWebSearch) {
@@ -220,13 +224,17 @@ final class ModelRowComponent {
     private void wireFavoriteLabel(Listener listener) {
         if (!selectable) {
             favoriteLabel.setEnabled(false);
-            favoriteLabel.setToolTipText("%s server is unavailable".formatted(providerName));
+            favoriteLabel.setCursor(Cursor.getDefaultCursor());
             return;
         }
 
         favoriteLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
+                if (!SwingUtilities.isLeftMouseButton(e)) {
+                    return;
+                }
+
                 e.consume();
                 listener.onToggleFavorite(providerName, modelId);
             }
@@ -268,7 +276,7 @@ final class ModelRowComponent {
 
             @Override
             public void mousePressed(MouseEvent e) {
-                if (!selectable) {
+                if (!selectable || !SwingUtilities.isLeftMouseButton(e)) {
                     return;
                 }
 
@@ -301,11 +309,11 @@ final class ModelRowComponent {
     private void updateModelLabelText() {
         int availableWidth = nameLabel.getWidth();
         if (availableWidth <= 0) {
-            if (!Objects.equals(nameLabel.getText(), displayLabel)) {
-                nameLabel.setText(displayLabel);
+            if (!Objects.equals(nameLabel.getText(), modelId)) {
+                nameLabel.setText(modelId);
             }
             lastNameLabelWidth = availableWidth;
-            lastRenderedNameText = displayLabel;
+            lastRenderedNameText = modelId;
             return;
         }
 
@@ -313,11 +321,11 @@ final class ModelRowComponent {
             return;
         }
 
-        String clipped = clipTextToWidth(displayLabel, nameLabel.getFontMetrics(nameLabel.getFont()), availableWidth);
+        String clipped = clipTextToWidth(modelId, nameLabel.getFontMetrics(nameLabel.getFont()), availableWidth);
         if (!Objects.equals(nameLabel.getText(), clipped)) {
             nameLabel.setText(clipped);
         }
-        nameLabel.setToolTipText(clipped.equals(displayLabel) ? null : displayLabel);
+        nameLabel.setToolTipText(clipped.equals(modelId) ? null : modelId);
         lastNameLabelWidth = availableWidth;
         lastRenderedNameText = clipped;
     }

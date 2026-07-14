@@ -7,9 +7,9 @@ import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderDef;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
+import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.util.Fonts;
@@ -25,12 +25,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -40,11 +43,15 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.toMap;
+
 @Slf4j
 public class ModelSelectorPopup extends JDialog {
 
     private static final Duration MODEL_REFRESH_TTL = Duration.ofHours(12);
     private static final Duration LOCAL_PROVIDER_REFRESH_TTL = Duration.ofMinutes(5);
+    private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
     private static final int POPUP_MIN_WIDTH = 340;
     private static final int POPUP_MAX_WIDTH = 768;
@@ -56,7 +63,7 @@ public class ModelSelectorPopup extends JDialog {
             Map.entry("Anthropic", "/icons/providers/anthropic.svg"),
             Map.entry("OpenAI", "/icons/providers/openai.svg"),
             Map.entry("Perplexity", "/icons/providers/perplexity.svg"),
-            Map.entry("OpenAI Codex", "/icons/providers/codex.svg"),
+            Map.entry(CODEX_PROVIDER_NAME, "/icons/providers/codex.svg"),
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),
             Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
@@ -75,6 +82,7 @@ public class ModelSelectorPopup extends JDialog {
     private final JToggleButton allToggle;
     private final JToggleButton favoritesToggle;
     private final BiConsumer<String, String> onSelect;
+    private final BiPredicate<List<ProviderDef>, Long> onProvidersLoaded;
     private final Runnable onFavoritesChanged;
     private final Runnable onModelsChanged;
 
@@ -83,8 +91,17 @@ public class ModelSelectorPopup extends JDialog {
     private final List<ProviderGroup> groups = new ArrayList<>();
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
-    private final Set<ModelCapabilityKey> capabilityRefreshInFlight = ConcurrentHashMap.newKeySet();
+    private final ConcurrentMap<ModelCapabilityKey, Long> capabilityRefreshInFlight = new ConcurrentHashMap<>();
+    private final Set<ProviderModelCacheService.RefreshAttempt> catalogRefreshInFlight = ConcurrentHashMap.newKeySet();
+    private final Object capabilityRefreshLock = new Object();
     private final AtomicLong providerLoadCounter = new AtomicLong();
+    private final AtomicLong localHealthRefreshCounter = new AtomicLong();
+    private final AtomicLong codexLocalRefreshCounter = new AtomicLong();
+    private final AtomicBoolean codexModelsChangedPending = new AtomicBoolean();
+    private final Object codexLocalRefreshLock = new Object();
+    private boolean codexLocalRefreshInFlight;
+    private boolean codexLocalRefreshPending;
+    private volatile boolean disposed;
 
     private boolean preloaded;
     private boolean loadingProviders;
@@ -102,10 +119,7 @@ public class ModelSelectorPopup extends JDialog {
         FAVORITES
     }
 
-    private record ProviderGroup(JLabel header, String groupName, List<ModelRowComponent> rows) {
-    }
-
-    private record DisplayModel(String providerName, String modelId, String displayLabel) {
+    private record ProviderGroup(JLabel header, List<ModelRowComponent> rows) {
     }
 
     private record ModelCapabilityKey(String providerName, String modelId) {
@@ -117,18 +131,20 @@ public class ModelSelectorPopup extends JDialog {
     private static final class ProviderEntry {
         final ProviderDef def;
         List<String> models;
-        String baseUrl;
         boolean selectable;
 
-        ProviderEntry(ProviderDef def, List<String> models, String baseUrl, boolean selectable) {
+        ProviderEntry(ProviderDef def, List<String> models, boolean selectable) {
             this.def = def;
             this.models = models;
-            this.baseUrl = baseUrl;
             this.selectable = selectable;
         }
 
         String name() {
             return def.name();
+        }
+
+        String baseUrl() {
+            return def.baseUrl();
         }
     }
 
@@ -137,11 +153,13 @@ public class ModelSelectorPopup extends JDialog {
             ProviderModelCacheService modelCacheService,
             ModelFavoritesService modelFavoritesService,
             BiConsumer<String, String> onSelect,
+            BiPredicate<List<ProviderDef>, Long> onProvidersLoaded,
             Runnable onFavoritesChanged,
             Runnable onModelsChanged
     ) {
         super(owner);
         this.onSelect = onSelect;
+        this.onProvidersLoaded = onProvidersLoaded;
         this.onFavoritesChanged = onFavoritesChanged;
         this.onModelsChanged = onModelsChanged;
         this.modelCacheService = modelCacheService;
@@ -187,8 +205,12 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void preparePopup() {
+        boolean refreshLocalModels = preloaded && entries.containsKey(CODEX_PROVIDER_NAME);
         ensureListBuilt();
-        refreshProviderSelectableState();
+        if (refreshLocalModels) {
+            refreshCodexLocalModelsAsync();
+        }
+        refreshLocalProviderSelectableStateAsync();
         updateSelectionMarkers();
         highlightedIndex = -1;
         searchField.setText("");
@@ -295,16 +317,28 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public void invalidateModelList() {
-        providerLoadCounter.incrementAndGet();
+        synchronized (capabilityRefreshLock) {
+            providerLoadCounter.incrementAndGet();
+            capabilityCache.clear();
+            capabilityRefreshInFlight.clear();
+        }
+        localHealthRefreshCounter.incrementAndGet();
+        codexLocalRefreshCounter.incrementAndGet();
+        catalogRefreshInFlight.forEach(modelCacheService::clearRefreshInFlight);
+        catalogRefreshInFlight.clear();
         preloaded = false;
         loadingProviders = false;
         entries.clear();
-        capabilityCache.clear();
-        capabilityRefreshInFlight.clear();
     }
 
     @Override
     public void dispose() {
+        synchronized (codexLocalRefreshLock) {
+            disposed = true;
+            codexLocalRefreshPending = false;
+        }
+        codexModelsChangedPending.set(false);
+        invalidateModelList();
         uninstallOutsideClickListener();
         super.dispose();
     }
@@ -453,7 +487,7 @@ public class ModelSelectorPopup extends JDialog {
         List<ModelRowComponent> visible = new ArrayList<>();
         for (ProviderGroup group : groups) {
             for (ModelRowComponent row : group.rows()) {
-                if (row.panel().isVisible() && row.panel().getParent() != null) {
+                if (row.selectable() && row.panel().isVisible() && row.panel().getParent() != null) {
                     visible.add(row);
                 }
             }
@@ -678,18 +712,88 @@ public class ModelSelectorPopup extends JDialog {
         loadingProviders = true;
         long loadId = providerLoadCounter.incrementAndGet();
         Thread.startVirtualThread(() -> {
-            List<ProviderDef> providers = ProviderRegistry.availableProviders();
-            SwingUtilities.invokeLater(() -> applyLoadedProviders(loadId, providers));
+            long scopeVersion = -1L;
+            try {
+                if (!isCurrentProviderLoad(loadId)) {
+                    return;
+                }
+
+                List<ProviderDef> providers = ProviderRegistry.availableProviders();
+                scopeVersion = synchronizeProviderScopes(loadId, providers);
+                if (scopeVersion < 0L) {
+                    SwingUtilities.invokeLater(() -> applySupersededProviderLoad(loadId));
+                    return;
+                }
+
+                boolean codexAvailable = providers.stream()
+                        .map(ProviderDef::name)
+                        .anyMatch(CODEX_PROVIDER_NAME::equals);
+                List<String> previousCodexModels = codexAvailable
+                        ? modelCacheService.getModels(CODEX_PROVIDER_NAME)
+                        : emptyList();
+                List<String> codexModels = codexAvailable
+                        ? modelCacheService.refreshCodexLocalModels()
+                        : emptyList();
+                if (codexAvailable && !codexModels.equals(previousCodexModels)) {
+                    codexModelsChangedPending.set(true);
+                }
+                if (!isCurrentProviderLoad(loadId)) {
+                    return;
+                }
+
+                long loadedScopeVersion = scopeVersion;
+                SwingUtilities.invokeLater(() -> applyLoadedProviders(loadId, loadedScopeVersion, providers));
+            } catch (Exception e) {
+                log.warn("Failed to load provider models: {}", ExceptionUtils.getMessage(e));
+                long failedScopeVersion = scopeVersion;
+                SwingUtilities.invokeLater(() -> applyProviderLoadFailure(loadId, failedScopeVersion));
+            }
         });
     }
 
-    private void applyLoadedProviders(long loadId, List<ProviderDef> providers) {
-        if (providerLoadCounter.get() != loadId) {
+    private long synchronizeProviderScopes(long loadId, List<ProviderDef> providers) {
+        long scopeVersion = modelCacheService.nextScopeVersion();
+        for (ProviderDef provider : providers) {
+            if (!isCurrentProviderLoad(loadId)) {
+                modelCacheService.cancelScopeVersion(scopeVersion);
+                return -1L;
+            }
+            modelCacheService.synchronizeScope(provider.name(), provider.baseUrl(), scopeVersion);
+        }
+        if (!isCurrentProviderLoad(loadId) || !modelCacheService.isScopeVersionCurrent(scopeVersion)) {
+            modelCacheService.cancelScopeVersion(scopeVersion);
+            return -1L;
+        }
+        return scopeVersion;
+    }
+
+    private boolean isCurrentProviderLoad(long loadId) {
+        return providerLoadCounter.get() == loadId;
+    }
+
+    private void applyLoadedProviders(
+            long loadId,
+            long scopeVersion,
+            List<ProviderDef> providers
+    ) {
+        if (!isCurrentProviderLoad(loadId)) {
+            return;
+        }
+        if (!modelCacheService.isScopeVersionCurrent(scopeVersion)) {
+            applySupersededProviderLoad(loadId);
             return;
         }
 
         loadingProviders = false;
+        if (!onProvidersLoaded.test(List.copyOf(providers), scopeVersion)) {
+            applySupersededProviderLoad(loadId);
+            return;
+        }
         buildList(providers);
+        refreshLocalProviderSelectableStateAsync();
+        if (codexModelsChangedPending.getAndSet(false) && onModelsChanged != null) {
+            onModelsChanged.run();
+        }
         if (isVisible()) {
             setSize(computePopupSize());
             if (triggerComponent != null && triggerComponent.isShowing()) {
@@ -701,14 +805,42 @@ public class ModelSelectorPopup extends JDialog {
         }
     }
 
+    private void applySupersededProviderLoad(long loadId) {
+        if (!isCurrentProviderLoad(loadId)) {
+            return;
+        }
+
+        loadingProviders = false;
+        if (isVisible()) {
+            ensureListBuilt();
+        }
+    }
+
+    private void applyProviderLoadFailure(long loadId, long scopeVersion) {
+        if (!isCurrentProviderLoad(loadId)) {
+            return;
+        }
+        if (scopeVersion >= 0L && !modelCacheService.isScopeVersionCurrent(scopeVersion)) {
+            applySupersededProviderLoad(loadId);
+            return;
+        }
+
+        loadingProviders = false;
+        showProviderState("Failed to load models");
+    }
+
     private void showProviderLoadingState() {
+        showProviderState("Loading models...");
+    }
+
+    private void showProviderState(String message) {
         listPanel.removeAll();
         groups.clear();
-        JLabel loadingState = new JLabel("Loading models...");
-        loadingState.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        loadingState.setForeground(UIManager.getColor("Label.disabledForeground"));
-        loadingState.setAlignmentX(Component.LEFT_ALIGNMENT);
-        listPanel.add(loadingState);
+        JLabel stateLabel = new JLabel(message);
+        stateLabel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        stateLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
+        stateLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        listPanel.add(stateLabel);
         listPanel.revalidate();
         listPanel.repaint();
     }
@@ -720,13 +852,12 @@ public class ModelSelectorPopup extends JDialog {
             List<String> models = initialModels(
                     provider.name(),
                     modelCacheService.getModels(provider.name()),
-                    provider.seedModels(),
+                    modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels()),
                     modelCacheService.isInvalidated(provider.name())
             );
             entries.put(provider.name(), new ProviderEntry(
                     provider,
                     models,
-                    provider.baseUrl(),
                     isProviderSelectable(provider)));
         });
 
@@ -739,10 +870,9 @@ public class ModelSelectorPopup extends JDialog {
         groups.clear();
 
         entries.values().forEach(entry -> {
-            List<DisplayModel> models = entry.models.stream()
+            List<String> models = entry.models.stream()
                     .filter(modelId -> viewMode != ViewMode.FAVORITES
                             || modelFavoritesService.isFavorite(entry.name(), modelId))
-                    .map(modelId -> new DisplayModel(entry.name(), modelId, modelId))
                     .toList();
 
             if (!models.isEmpty()) {
@@ -767,7 +897,7 @@ public class ModelSelectorPopup extends JDialog {
         listPanel.repaint();
     }
 
-    private void addProviderGroup(ProviderEntry entry, List<DisplayModel> models) {
+    private void addProviderGroup(ProviderEntry entry, List<String> models) {
         String groupName = entry.name();
         boolean selectable = entry.selectable;
         String label = selectable ? groupName : "%s (offline)".formatted(groupName);
@@ -782,47 +912,66 @@ public class ModelSelectorPopup extends JDialog {
         listPanel.add(header);
 
         List<ModelRowComponent> rows = new ArrayList<>();
-        models.forEach(model -> {
-            ModelRowComponent row = createModelRow(entry, model.providerName(), model.modelId(), model.displayLabel(), selectable);
+        models.forEach(modelId -> {
+            ModelRowComponent row = createModelRow(entry, modelId, selectable);
             rows.add(row);
             row.panel().setAlignmentX(Component.LEFT_ALIGNMENT);
             listPanel.add(row.panel());
         });
 
-        groups.add(new ProviderGroup(header, groupName, rows));
+        groups.add(new ProviderGroup(header, rows));
     }
 
     private void fetchModelsAsync() {
+        long providerGeneration = providerLoadCounter.get();
         entries.values().forEach(entry -> {
             if (Strings.CS.equals(entry.name(), "Perplexity")) {
                 return;
             }
 
             Duration ttl = refreshTtl(entry.name());
-            boolean refreshRequired = modelCacheService.shouldRefresh(entry.name(), ttl);
-            ProviderModelCacheService.RefreshAttempt refreshAttempt = refreshRequired
-                    ? modelCacheService.tryBeginRefresh(entry.name()).orElse(null)
-                    : null;
+            ProviderModelCacheService.RefreshAttempt refreshAttempt = modelCacheService
+                    .tryBeginRefreshIfNeeded(entry.name(), entry.baseUrl(), ttl)
+                    .orElse(null);
             if (refreshAttempt == null) {
                 return;
             }
 
+            catalogRefreshInFlight.add(refreshAttempt);
             Thread.startVirtualThread(() -> {
                 try {
-                    boolean updated = modelCacheService.update(refreshAttempt, entry.def.fetcher().fetchModels());
-                    if (updated) {
-                        List<String> fetched = sanitizeModels(entry.name(), modelCacheService.getModels(entry.name()));
-                        SwingUtilities.invokeLater(() -> refreshProvider(entry.name(), fetched));
+                    if (!isCatalogRefreshCurrent(providerGeneration)) {
+                        return;
+                    }
+                    List<String> fetchedModels = entry.def.fetcher().fetchModels();
+                    if (!isCatalogRefreshCurrent(providerGeneration)) {
+                        return;
+                    }
+                    boolean updated = modelCacheService.update(refreshAttempt, fetchedModels);
+                    if (updated && isCatalogRefreshCurrent(providerGeneration)) {
+                        SwingUtilities.invokeLater(() -> {
+                            if (isCatalogRefreshCurrent(providerGeneration)) {
+                                refreshProviderFromCache(entry.name());
+                            }
+                        });
                     }
                 } catch (Exception e) {
-                    log.warn("Failed to refresh models for provider {}. Keeping cached/seed models: {}",
-                            entry.name(), ExceptionUtils.getMessage(e));
+                    if (isCatalogRefreshCurrent(providerGeneration)) {
+                        modelCacheService.recordRefreshFailure(refreshAttempt);
+                        log.warn("Failed to refresh models for provider {}. Keeping cached/seed models: {}",
+                                entry.name(), ExceptionUtils.getMessage(e));
+                    }
                 } finally {
+                    catalogRefreshInFlight.remove(refreshAttempt);
                     modelCacheService.clearRefreshInFlight(refreshAttempt);
                     modelCacheService.logMetricsSnapshot("refresh-complete:%s".formatted(entry.name()));
                 }
             });
         });
+    }
+
+    private boolean isCatalogRefreshCurrent(long providerGeneration) {
+        return !disposed && isCurrentProviderLoad(providerGeneration);
     }
 
     static Duration refreshTtl(String providerName) {
@@ -831,41 +980,98 @@ public class ModelSelectorPopup extends JDialog {
                 : MODEL_REFRESH_TTL;
     }
 
-    private void refreshProvider(String providerName, List<String> models) {
+    private void refreshProviderFromCache(String providerName) {
         ProviderEntry entry = entries.get(providerName);
         if (entry == null) {
             return;
         }
 
-        entry.models = List.copyOf(models);
-        entry.selectable = isProviderCurrentlySelectable(providerName);
-
-        if (onModelsChanged != null) {
-            onModelsChanged.run();
+        List<String> models = modelCacheService.isInvalidated(providerName)
+                ? emptyList()
+                : modelCacheService.getModels(providerName);
+        if (models.isEmpty()) {
+            models = modelCacheService.modelsWithLocalOverlay(providerName, entry.def.seedModels());
         }
+        refreshProvider(entry, models);
+    }
 
-        if (!preloaded) {
+    private void refreshProvider(ProviderEntry entry, List<String> models) {
+        List<String> refreshedModels = List.copyOf(models);
+        boolean modelsChanged = !refreshedModels.equals(entry.models);
+        boolean selectable = isProviderSelectable(entry.name(), entry.baseUrl());
+        boolean selectableChanged = selectable != entry.selectable;
+        if (!modelsChanged && !selectableChanged) {
             return;
         }
 
-        rebuildVisibleList();
+        entry.models = refreshedModels;
+        entry.selectable = selectable;
+        if (modelsChanged && onModelsChanged != null) {
+            onModelsChanged.run();
+        }
+
+        if (preloaded) {
+            rebuildVisibleList();
+        }
+    }
+
+    private void refreshCodexLocalModelsAsync() {
+        long refreshId = codexLocalRefreshCounter.incrementAndGet();
+        synchronized (codexLocalRefreshLock) {
+            if (disposed) {
+                return;
+            }
+            if (codexLocalRefreshInFlight) {
+                codexLocalRefreshPending = true;
+                return;
+            }
+            codexLocalRefreshInFlight = true;
+            startCodexLocalRefresh(refreshId);
+        }
+    }
+
+    private void startCodexLocalRefresh(long refreshId) {
+        Thread.startVirtualThread(() -> {
+            try {
+                modelCacheService.refreshCodexLocalModels();
+                SwingUtilities.invokeLater(() -> {
+                    if (codexLocalRefreshCounter.get() == refreshId) {
+                        refreshProviderFromCache(CODEX_PROVIDER_NAME);
+                    }
+                });
+            } catch (Exception e) {
+                log.warn("Failed to refresh local OpenAI Codex models: {}", ExceptionUtils.getMessage(e));
+            } finally {
+                completeCodexLocalRefresh();
+            }
+        });
+    }
+
+    private void completeCodexLocalRefresh() {
+        long pendingRefreshId;
+        synchronized (codexLocalRefreshLock) {
+            if (disposed || !codexLocalRefreshPending) {
+                codexLocalRefreshInFlight = false;
+                return;
+            }
+            codexLocalRefreshPending = false;
+            pendingRefreshId = codexLocalRefreshCounter.get();
+            startCodexLocalRefresh(pendingRefreshId);
+        }
     }
 
     private ModelRowComponent createModelRow(
             ProviderEntry entry,
-            String providerName,
             String modelId,
-            String displayLabel,
             boolean selectable
     ) {
         ModelCapabilities initialCapabilities = resolveCachedCapabilities(entry, modelId);
 
         ModelRowComponent row = new ModelRowComponent(
-                providerName,
+                entry.name(),
                 modelId,
-                displayLabel,
                 selectable,
-                modelFavoritesService.isFavorite(providerName, modelId),
+                modelFavoritesService.isFavorite(entry.name(), modelId),
                 initialCapabilities.supportsImageInput(),
                 initialCapabilities.supportsReasoning(),
                 initialCapabilities.supportsNativeWebSearch(),
@@ -897,7 +1103,9 @@ public class ModelSelectorPopup extends JDialog {
                     }
                 });
 
-        refreshCapabilitiesAsync(entry, modelId);
+        if (selectable) {
+            refreshCapabilitiesAsync(entry, modelId);
+        }
         return row;
     }
 
@@ -935,38 +1143,53 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
-        if (StringUtils.isBlank(entry.baseUrl)) {
+        if (StringUtils.isBlank(entry.baseUrl())) {
             return;
         }
 
         ModelCapabilityKey key = new ModelCapabilityKey(entry.name(), modelId);
-        if (!capabilityRefreshInFlight.add(key)) {
-            return;
+        long providerGeneration;
+        synchronized (capabilityRefreshLock) {
+            providerGeneration = providerLoadCounter.get();
+            if (capabilityRefreshInFlight.putIfAbsent(key, providerGeneration) != null) {
+                return;
+            }
         }
 
         Thread.startVirtualThread(() -> {
             try {
+                if (!isCurrentProviderLoad(providerGeneration)) {
+                    return;
+                }
+
                 String apiKey = CredentialResolver.resolveApiKey(entry.def.envVar(), null);
                 boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
                         entry.def.capabilities(),
                         entry.name(),
                         modelId,
-                        entry.baseUrl,
+                        entry.baseUrl(),
                         apiKey
                 );
+                if (!isCurrentProviderLoad(providerGeneration)) {
+                    return;
+                }
+
                 boolean supportsReasoning = ProviderCapabilityResolver.supportsReasoning(
                         entry.def.capabilities(),
                         entry.name(),
                         modelId,
-                        entry.baseUrl,
+                        entry.baseUrl(),
                         apiKey
                 );
+                if (!isCurrentProviderLoad(providerGeneration)) {
+                    return;
+                }
 
                 boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
                         entry.def.capabilities(),
                         entry.name(),
                         modelId,
-                        entry.baseUrl,
+                        entry.baseUrl(),
                         apiKey
                 );
 
@@ -975,10 +1198,19 @@ public class ModelSelectorPopup extends JDialog {
                         supportsReasoning,
                         supportsNativeWebSearch
                 );
-                capabilityCache.put(key, resolved);
-                SwingUtilities.invokeLater(() -> applyCapabilitiesToVisibleRows(key, resolved));
+                synchronized (capabilityRefreshLock) {
+                    if (!isCurrentProviderLoad(providerGeneration)) {
+                        return;
+                    }
+                    capabilityCache.put(key, resolved);
+                }
+                SwingUtilities.invokeLater(() -> {
+                    if (isCurrentProviderLoad(providerGeneration)) {
+                        applyCapabilitiesToVisibleRows(key, resolved);
+                    }
+                });
             } finally {
-                capabilityRefreshInFlight.remove(key);
+                capabilityRefreshInFlight.remove(key, providerGeneration);
             }
         });
     }
@@ -1024,14 +1256,14 @@ public class ModelSelectorPopup extends JDialog {
 
     private void filterModels() {
         resetHighlight();
-        String query = searchField.getText().trim().toLowerCase();
+        String query = searchField.getText().trim().toLowerCase(Locale.ROOT);
 
         for (ProviderGroup group : groups) {
             boolean anyVisible = false;
             for (ModelRowComponent row : group.rows()) {
                 boolean matches = query.isEmpty()
-                        || row.modelId().toLowerCase().contains(query)
-                        || row.providerName().toLowerCase().contains(query);
+                        || row.modelId().toLowerCase(Locale.ROOT).contains(query)
+                        || row.providerName().toLowerCase(Locale.ROOT).contains(query);
                 row.panel().setVisible(matches);
                 if (matches) {
                     anyVisible = true;
@@ -1046,10 +1278,6 @@ public class ModelSelectorPopup extends JDialog {
 
     private static Color colorOrDefault(Color candidate, Color fallback) {
         return candidate != null ? candidate : fallback;
-    }
-
-    static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels) {
-        return initialModels(providerName, cachedModels, seedModels, false);
     }
 
     static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels, boolean invalidated) {
@@ -1068,7 +1296,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private static List<String> sanitizeModels(String providerName, List<String> modelIds) {
-        return CodexLocalModelCache.mergeIfCodexProvider(providerName, modelIds);
+        return ModelOrdering.sanitizeAndSortByProvider(providerName, modelIds);
     }
 
     private static Icon providerIcon(String providerName, int size) {
@@ -1102,44 +1330,63 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private boolean isProviderSelectable(ProviderDef provider) {
-        if (!LOCAL_HEALTH_GATED_PROVIDERS.contains(provider.name())) {
-            return true;
-        }
-
-        return SwingUtilities.isEventDispatchThread()
-                ? LocalServiceHealth.isReachableNonBlocking(provider.baseUrl())
-                : LocalServiceHealth.isReachable(provider.baseUrl());
+        return isProviderSelectable(provider.name(), provider.baseUrl());
     }
 
-    private boolean isProviderCurrentlySelectable(String providerName) {
+    static boolean isProviderSelectable(String providerName, String baseUrl) {
         if (!LOCAL_HEALTH_GATED_PROVIDERS.contains(providerName)) {
             return true;
         }
 
-        ProviderEntry entry = entries.get(providerName);
-        if (entry == null || StringUtils.isBlank(entry.baseUrl)) {
-            return true;
-        }
-
-        return SwingUtilities.isEventDispatchThread()
-                ? LocalServiceHealth.isReachableNonBlocking(entry.baseUrl)
-                : LocalServiceHealth.isReachable(entry.baseUrl);
+        return StringUtils.isNotBlank(baseUrl) && LocalServiceHealth.lastKnownReachable(baseUrl);
     }
 
-    private void refreshProviderSelectableState() {
-        boolean changed = false;
+    private void refreshLocalProviderSelectableStateAsync() {
+        Map<String, String> baseUrlByProvider = entries.values().stream()
+                .filter(entry -> LOCAL_HEALTH_GATED_PROVIDERS.contains(entry.name()))
+                .filter(entry -> StringUtils.isNotBlank(entry.baseUrl()))
+                .collect(toMap(
+                        ProviderEntry::name,
+                        ProviderEntry::baseUrl,
+                        (existing, replacement) -> existing,
+                        LinkedHashMap::new
+                ));
+        if (baseUrlByProvider.isEmpty()) {
+            return;
+        }
 
-        for (ProviderEntry entry : entries.values()) {
-            boolean selectable = isProviderCurrentlySelectable(entry.name());
-            if (entry.selectable != selectable) {
-                entry.selectable = selectable;
-                changed = true;
+        long providerGeneration = providerLoadCounter.get();
+        long healthRefreshId = localHealthRefreshCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            if (!isCurrentProviderLoad(providerGeneration)
+                    || localHealthRefreshCounter.get() != healthRefreshId) {
+                return;
             }
-        }
 
-        if (changed && preloaded) {
-            rebuildVisibleList();
-        }
+            Map<String, Boolean> selectableByProvider = baseUrlByProvider.entrySet().stream()
+                    .collect(toMap(
+                            Map.Entry::getKey,
+                            entry -> LocalServiceHealth.isReachable(entry.getValue())
+                    ));
+            SwingUtilities.invokeLater(() -> {
+                if (!isCurrentProviderLoad(providerGeneration)
+                        || localHealthRefreshCounter.get() != healthRefreshId) {
+                    return;
+                }
+
+                boolean changed = false;
+                for (Map.Entry<String, Boolean> selectableEntry : selectableByProvider.entrySet()) {
+                    ProviderEntry entry = entries.get(selectableEntry.getKey());
+                    if (entry != null && entry.selectable != selectableEntry.getValue()) {
+                        entry.selectable = selectableEntry.getValue();
+                        changed = true;
+                    }
+                }
+                if (changed && preloaded) {
+                    rebuildVisibleList();
+                }
+            });
+        });
     }
 
     private static class ScrollableListPanel extends JPanel implements Scrollable {

@@ -7,4 +7,7 @@ public interface SettingsCredentialChangeListener {
     };
 
     void credentialChanged(ApiTokenChange change);
+
+    default void providerAuthChanged(String providerName) {
+    }
 }
