@@ -1,16 +1,16 @@
 package com.github.drafael.chat4j.persistence.migration;
 
+import com.github.drafael.chat4j.persistence.FileIdentity;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
 /** Deletes only recognized top-level legacy cache files; legacy content is never read. */
@@ -22,12 +22,12 @@ public final class LegacyCacheCleanupService {
 
     private final Path legacyRoot;
 
-    public LegacyCacheCleanupService(StoragePaths storagePaths) {
+    public LegacyCacheCleanupService(@NonNull StoragePaths storagePaths) {
         this(storagePaths.legacyModelsCacheDirectory());
     }
 
-    public LegacyCacheCleanupService(Path legacyRoot) {
-        this.legacyRoot = Validate.notNull(legacyRoot, "legacyRoot should not be null").toAbsolutePath().normalize();
+    public LegacyCacheCleanupService(@NonNull Path legacyRoot) {
+        this.legacyRoot = legacyRoot.toAbsolutePath().normalize();
     }
 
     public void cleanup() {
@@ -35,12 +35,8 @@ public final class LegacyCacheCleanupService {
             if (Files.notExists(legacyRoot, LinkOption.NOFOLLOW_LINKS)) {
                 return;
             }
-            BasicFileAttributes rootAttributes = readAttributes(legacyRoot);
-            if (!isDirectory(rootAttributes)) {
-                log.warn("Legacy cache root is not a directory; preserving it");
-                return;
-            }
-            if (rootAttributes.fileKey() == null) {
+            Optional<FileIdentity> rootIdentity = FileIdentity.directory(legacyRoot);
+            if (rootIdentity.isEmpty()) {
                 log.warn("Legacy cache root identity is unavailable; preserving it");
                 return;
             }
@@ -57,36 +53,30 @@ public final class LegacyCacheCleanupService {
             entries.stream()
                     .map(this::recognizedRegularFile)
                     .flatMap(Optional::stream)
-                    .forEach(entry -> deleteSafely(entry, rootAttributes.fileKey()));
-            removeIfEmpty(rootAttributes.fileKey());
+                    .forEach(entry -> deleteSafely(entry, rootIdentity.orElseThrow()));
+            removeIfEmpty(rootIdentity.orElseThrow());
         } catch (IOException | SecurityException e) {
             log.warn("Legacy cache cleanup skipped: {}", ExceptionUtils.getMessage(e));
         }
     }
 
     private Optional<RecognizedEntry> recognizedRegularFile(Path entry) {
-        try {
-            BasicFileAttributes attributes = readAttributes(entry);
-            String name = entry.getFileName().toString();
-            boolean recognized = legacyRoot.equals(entry.toAbsolutePath().normalize().getParent())
-                    && attributes.isRegularFile()
-                    && !attributes.isSymbolicLink()
-                    && (name.endsWith(".txt") || COPILOT_FILE.equals(name));
-            return recognized ? Optional.of(new RecognizedEntry(entry, attributes.fileKey())) : Optional.empty();
-        } catch (IOException | SecurityException e) {
-            log.warn("Legacy cache entry inspection failed; preserving entry: {}", ExceptionUtils.getMessage(e));
-            return Optional.empty();
-        }
+        String name = entry.getFileName().toString();
+        boolean recognized = legacyRoot.equals(entry.toAbsolutePath().normalize().getParent())
+                && (name.endsWith(".txt") || COPILOT_FILE.equals(name));
+        return recognized
+                ? FileIdentity.regularFile(entry).map(identity -> new RecognizedEntry(entry, identity))
+                : Optional.empty();
     }
 
-    private void deleteSafely(RecognizedEntry entry, Object rootFileKey) {
+    private void deleteSafely(RecognizedEntry entry, FileIdentity rootIdentity) {
         try {
-            if (!sameRoot(rootFileKey)) {
+            if (!sameRoot(rootIdentity)) {
                 log.warn("Legacy cache root changed during cleanup; preserving remaining entries");
                 return;
             }
             Optional<RecognizedEntry> current = recognizedRegularFile(entry.path());
-            if (current.isEmpty() || !sameIdentity(entry.fileKey(), current.orElseThrow().fileKey())) {
+            if (current.isEmpty() || !entry.fileIdentity().equals(current.orElseThrow().fileIdentity())) {
                 log.warn("Legacy cache entry changed during cleanup; preserving it");
                 return;
             }
@@ -96,8 +86,8 @@ public final class LegacyCacheCleanupService {
         }
     }
 
-    private void removeIfEmpty(Object rootFileKey) {
-        if (!sameRoot(rootFileKey)) {
+    private void removeIfEmpty(FileIdentity rootIdentity) {
+        if (!sameRoot(rootIdentity)) {
             log.warn("Legacy cache root changed during cleanup; preserving it");
             return;
         }
@@ -106,7 +96,7 @@ public final class LegacyCacheCleanupService {
             try (Stream<Path> children = Files.list(legacyRoot)) {
                 empty = children.findAny().isEmpty();
             }
-            if (empty && sameRoot(rootFileKey)) {
+            if (empty && sameRoot(rootIdentity)) {
                 Files.delete(legacyRoot);
             }
         } catch (IOException | SecurityException e) {
@@ -114,27 +104,10 @@ public final class LegacyCacheCleanupService {
         }
     }
 
-    private boolean sameRoot(Object expectedFileKey) {
-        try {
-            BasicFileAttributes attributes = readAttributes(legacyRoot);
-            return isDirectory(attributes) && sameIdentity(expectedFileKey, attributes.fileKey());
-        } catch (IOException | SecurityException e) {
-            return false;
-        }
+    private boolean sameRoot(FileIdentity expectedIdentity) {
+        return FileIdentity.directory(legacyRoot).filter(expectedIdentity::equals).isPresent();
     }
 
-    private static boolean sameIdentity(Object expectedFileKey, Object actualFileKey) {
-        return expectedFileKey != null && expectedFileKey.equals(actualFileKey);
-    }
-
-    private static BasicFileAttributes readAttributes(Path path) throws IOException {
-        return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-    }
-
-    private static boolean isDirectory(BasicFileAttributes attributes) {
-        return attributes.isDirectory() && !attributes.isSymbolicLink();
-    }
-
-    private record RecognizedEntry(Path path, Object fileKey) {
+    private record RecognizedEntry(Path path, FileIdentity fileIdentity) {
     }
 }

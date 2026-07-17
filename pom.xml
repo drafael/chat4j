@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.7.42</version>
+    <version>26.7.43</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -175,6 +175,11 @@
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
+            <version>${jna.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
             <version>${jna.version}</version>
         </dependency>
         <dependency>

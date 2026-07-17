@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence.catalog;
 
 import com.github.drafael.chat4j.persistence.CacheRootHandle;
+import com.github.drafael.chat4j.persistence.FileIdentity;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.io.IOException;
 import java.io.InputStream;
@@ -361,12 +362,12 @@ public final class CatalogSnapshotStore {
                     }
                 }
                 publishCandidate(temp, finalFile);
-                Object fileKey = regularFileKey(finalFile)
+                FileIdentity fileIdentity = FileIdentity.regularFile(finalFile)
                         .orElseThrow(() -> new IOException("Published catalog snapshot identity is unavailable"));
                 if (root.availableRoot().isEmpty()) {
                     throw new IOException("Cache root identity changed during catalog publication");
                 }
-                return new Candidate(slot, finalFile, fileKey);
+                return new Candidate(slot, finalFile, fileIdentity);
             } catch (FileAlreadyExistsException e) {
                 if (tempOwned) {
                     deleteQuietly(temp);
@@ -517,29 +518,14 @@ public final class CatalogSnapshotStore {
     private boolean isCandidateOwned(Candidate candidate) {
         return root.directChild(candidate.basename())
                 .filter(expected -> expected.equals(candidate.finalFile().toAbsolutePath().normalize()))
-                .flatMap(this::regularFileKey)
-                .filter(candidate.fileKey()::equals)
+                .flatMap(FileIdentity::regularFile)
+                .filter(candidate.fileIdentity()::equals)
                 .isPresent();
     }
 
     private void deleteCandidate(Candidate candidate) {
         if (isCandidateOwned(candidate)) {
             deleteQuietly(candidate.finalFile());
-        }
-    }
-
-    private Optional<Object> regularFileKey(Path file) {
-        try {
-            BasicFileAttributes attributes = Files.readAttributes(
-                    file,
-                    BasicFileAttributes.class,
-                    LinkOption.NOFOLLOW_LINKS
-            );
-            return attributes.isRegularFile() && !attributes.isSymbolicLink()
-                    ? Optional.ofNullable(attributes.fileKey())
-                    : Optional.empty();
-        } catch (IOException | SecurityException e) {
-            return Optional.empty();
         }
     }
 
@@ -601,7 +587,7 @@ public final class CatalogSnapshotStore {
         return slot.referenceKey().substring(0, slot.referenceKey().length() - "File".length());
     }
 
-    private record Candidate(SnapshotSlot slot, Path finalFile, Object fileKey) {
+    private record Candidate(SnapshotSlot slot, Path finalFile, FileIdentity fileIdentity) {
         private String basename() {
             return finalFile.getFileName().toString();
         }

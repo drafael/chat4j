@@ -487,6 +487,39 @@ class CatalogSnapshotStoreTest {
     }
 
     @Test
+    @DisplayName("A same-path candidate replacement cannot be committed or deleted")
+    void saveIf_whenCandidateIsReplacedDuringCondition_preservesReplacementAndPriorPointer() throws Exception {
+        var settings = new SettingsRepository(tempDir.resolve("settings.properties"));
+        var root = CacheRootHandle.of(tempDir.resolve("cache"));
+        var group = SpeechCatalogKeySchema.sttModels("deepgram");
+        Path cacheDirectory = root.availableRoot().orElseThrow();
+        String priorReference = "stt-deepgram-models-dddddddddddddddddddddddddddddddd.json";
+        Path priorFile = Files.writeString(cacheDirectory.resolve(priorReference), "prior");
+        settings.put(group.slots().getFirst().referenceKey(), priorReference);
+        settings.put(group.updatedAtKey(), "2026-07-15T00:00:00Z");
+        UUID candidateId = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+        String candidateReference = "stt-deepgram-models-%s.json".formatted(uuidHex(candidateId));
+        Path candidate = cacheDirectory.resolve(candidateReference);
+        var subject = new CatalogSnapshotStore(root, settings, Clock.systemUTC(), uuidSupplier(candidateId));
+
+        boolean saved = subject.saveIf(group, List.of(CatalogPayload.of("candidate")), () -> {
+            try {
+                Files.delete(candidate);
+                Files.writeString(candidate, "unrelated replacement");
+                return true;
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to replace candidate", e);
+            }
+        });
+
+        assertThat(saved).isFalse();
+        assertThat(settings.get(group.slots().getFirst().referenceKey())).contains(priorReference);
+        assertThat(settings.get(group.updatedAtKey())).contains("2026-07-15T00:00:00Z");
+        assertThat(priorFile).hasContent("prior");
+        assertThat(candidate).hasContent("unrelated replacement");
+    }
+
+    @Test
     @DisplayName("A false save condition cannot delete a same-named file after cache root substitution")
     void saveIf_whenFalseConditionSubstitutesRoot_preservesReplacementRootFileAndPriorPointer() throws Exception {
         assertRootSubstitutionDuringCondition(false);

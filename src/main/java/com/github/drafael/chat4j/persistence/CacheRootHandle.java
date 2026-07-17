@@ -26,7 +26,7 @@ public final class CacheRootHandle {
 
     private final Path root;
     private final Object lock = new Object();
-    private Object establishedRootFileKey;
+    private FileIdentity establishedRootIdentity;
 
     private CacheRootHandle(Path root) {
         this.root = root;
@@ -59,20 +59,18 @@ public final class CacheRootHandle {
     public Optional<Path> availableRoot() {
         synchronized (lock) {
             try {
-                if (establishedRootFileKey != null) {
-                    return hasEstablishedIdentity(readAttributes(root))
-                            ? Optional.of(root)
-                            : Optional.empty();
+                if (establishedRootIdentity != null) {
+                    return hasEstablishedIdentity() ? Optional.of(root) : Optional.empty();
                 }
                 if (Files.notExists(root, LinkOption.NOFOLLOW_LINKS)) {
                     Files.createDirectories(root);
                 }
-                BasicFileAttributes attributes = readAttributes(root);
-                if (!isDirectory(attributes) || attributes.fileKey() == null) {
+                Optional<FileIdentity> identity = FileIdentity.directory(root);
+                if (identity.isEmpty()) {
                     log.warn("Cache root is unavailable or unsafe");
                     return Optional.empty();
                 }
-                establishedRootFileKey = attributes.fileKey();
+                establishedRootIdentity = identity.orElseThrow();
                 return Optional.of(root);
             } catch (IOException | SecurityException e) {
                 log.warn("Cache root is unavailable: {}", ExceptionUtils.getMessage(e));
@@ -143,20 +141,12 @@ public final class CacheRootHandle {
         }
     }
 
-    private boolean hasEstablishedIdentity(BasicFileAttributes attributes) {
-        boolean matches = isDirectory(attributes) && establishedRootFileKey.equals(attributes.fileKey());
+    private boolean hasEstablishedIdentity() {
+        boolean matches = FileIdentity.directory(root).filter(establishedRootIdentity::equals).isPresent();
         if (!matches) {
             log.warn("Cache root identity changed; treating it as unavailable");
         }
         return matches;
-    }
-
-    private static BasicFileAttributes readAttributes(Path path) throws IOException {
-        return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-    }
-
-    private static boolean isDirectory(BasicFileAttributes attributes) {
-        return attributes.isDirectory() && !attributes.isSymbolicLink();
     }
 
     private static boolean isRegularFile(Path path) {
