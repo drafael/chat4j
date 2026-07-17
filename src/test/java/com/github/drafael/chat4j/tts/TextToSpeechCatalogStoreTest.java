@@ -93,6 +93,26 @@ class TextToSpeechCatalogStoreTest {
     }
 
     @Test
+    @DisplayName("Authoritative TTS catalogs include bundled fallback without restoring saved items")
+    void authoritativeVoices_whenSavedVoiceAbsent_omitsSavedVoice() {
+        var settingsRepo = new SettingsRepository(tempDir.resolve("authoritative-voices.properties"));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var subject = new TextToSpeechCatalogStore(settingsRepo);
+
+        var voices = subject.authoritativeVoices(
+                provider,
+                List.of(
+                        TextToSpeechCatalogItem.of("account-voice", "Account Voice"),
+                        TextToSpeechCatalogItem.of("account-voice", "Duplicate Account Voice")
+                )
+        );
+
+        assertThat(voices).extracting(TextToSpeechCatalogItem::id)
+                .containsExactly("account-voice", provider.defaultVoice().id())
+                .doesNotContain("saved-voice");
+    }
+
+    @Test
     @DisplayName("Cached catalog ignores null entries")
     void voices_cachedCatalogContainsNull_ignoresNullEntry() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));

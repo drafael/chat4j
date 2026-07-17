@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 import static java.util.Collections.emptyList;
@@ -43,8 +44,8 @@ public class TextToSpeechCatalogStore {
         this(CatalogSnapshotStore.forSettings(settingsRepo));
     }
 
-    public TextToSpeechCatalogStore(CatalogSnapshotStore snapshots) {
-        this.snapshots = Validate.notNull(snapshots, "snapshots should not be null");
+    public TextToSpeechCatalogStore(@NonNull CatalogSnapshotStore snapshots) {
+        this.snapshots = snapshots;
     }
 
     public List<TextToSpeechCatalogItem> models(TextToSpeechProvider provider, TextToSpeechCatalogItem selected) {
@@ -72,7 +73,11 @@ public class TextToSpeechCatalogStore {
         );
     }
 
-    public void saveCatalogs(String providerId, List<TextToSpeechCatalogItem> models, List<TextToSpeechCatalogItem> voices) {
+    public void saveCatalogs(
+            String providerId,
+            @NonNull List<TextToSpeechCatalogItem> models,
+            @NonNull List<TextToSpeechCatalogItem> voices
+    ) {
         if (!saveCatalogsIf(providerId, models, voices, () -> true)) {
             throw new IllegalStateException("Failed to save Text to Speech catalogs");
         }
@@ -80,13 +85,14 @@ public class TextToSpeechCatalogStore {
 
     public boolean saveCatalogsIf(
             String providerId,
-            List<TextToSpeechCatalogItem> models,
-            List<TextToSpeechCatalogItem> voices,
-            BooleanSupplier condition
+            @NonNull List<TextToSpeechCatalogItem> models,
+            @NonNull List<TextToSpeechCatalogItem> voices,
+            @NonNull BooleanSupplier condition
     ) {
+        Validate.notBlank(providerId, "providerId should not be blank");
         try {
-            String modelsJson = OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models);
-            String voicesJson = OBJECT_MAPPER.writeValueAsString(voices == null ? emptyList() : voices);
+            String modelsJson = OBJECT_MAPPER.writeValueAsString(models);
+            String voicesJson = OBJECT_MAPPER.writeValueAsString(voices);
             Validate.isTrue(parseItems(modelsJson).isPresent(), "Text to Speech models exceed structural limits");
             Validate.isTrue(parseItems(voicesJson).isPresent(), "Text to Speech voices exceed structural limits");
             return snapshots.saveIf(
@@ -121,6 +127,26 @@ public class TextToSpeechCatalogStore {
             TextToSpeechCatalogItem selected
     ) {
         return merged(discovered, fallback, selected);
+    }
+
+    public List<TextToSpeechCatalogItem> authoritativeModels(
+            @NonNull TextToSpeechProvider provider,
+            @NonNull List<TextToSpeechCatalogItem> fetched
+    ) {
+        return authoritative(
+                normalized(fetched, provider::normalizeModelSelection),
+                normalized(provider.bundledModels(), provider::normalizeModelSelection)
+        );
+    }
+
+    public List<TextToSpeechCatalogItem> authoritativeVoices(
+            @NonNull TextToSpeechProvider provider,
+            @NonNull List<TextToSpeechCatalogItem> fetched
+    ) {
+        return authoritative(
+                normalized(fetched, provider::normalizeVoiceSelection),
+                normalized(provider.bundledVoices(), provider::normalizeVoiceSelection)
+        );
     }
 
     private List<TextToSpeechCatalogItem> models(
@@ -207,6 +233,16 @@ public class TextToSpeechCatalogStore {
         if (selected != null) {
             byId.putIfAbsent(selected.id(), selected);
         }
+        return List.copyOf(byId.values());
+    }
+
+    private static List<TextToSpeechCatalogItem> authoritative(
+            List<TextToSpeechCatalogItem> fetched,
+            List<TextToSpeechCatalogItem> bundled
+    ) {
+        var byId = new LinkedHashMap<String, TextToSpeechCatalogItem>();
+        addAll(byId, fetched);
+        addAll(byId, bundled);
         return List.copyOf(byId.values());
     }
 

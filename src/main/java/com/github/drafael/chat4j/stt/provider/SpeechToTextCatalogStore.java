@@ -107,7 +107,7 @@ public class SpeechToTextCatalogStore {
         }
     }
 
-    public void saveModels(String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
+    public void saveModels(String providerId, @NonNull List<SpeechToTextCatalogItem> models) throws Exception {
         if (!saveModelsIf(providerId, models, () -> true)) {
             throw new IllegalStateException("Failed to save Speech to Text catalog");
         }
@@ -115,10 +115,11 @@ public class SpeechToTextCatalogStore {
 
     public boolean saveModelsIf(
             String providerId,
-            List<SpeechToTextCatalogItem> models,
+            @NonNull List<SpeechToTextCatalogItem> models,
             @NonNull BooleanSupplier condition
     ) throws Exception {
-        String modelsJson = OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models);
+        Validate.notBlank(providerId, "providerId should not be blank");
+        String modelsJson = OBJECT_MAPPER.writeValueAsString(models);
         Validate.isTrue(deserialize(modelsJson).isPresent(), "Speech to Text catalog exceeds structural limits");
         return snapshots.saveIf(
                 SpeechCatalogKeySchema.sttModels(providerId),
@@ -139,6 +140,16 @@ public class SpeechToTextCatalogStore {
             merged.putIfAbsent(selected.id(), selected);
         }
         return merged.values().stream().toList();
+    }
+
+    public List<SpeechToTextCatalogItem> authoritativeModels(
+            @NonNull SpeechToTextProvider provider,
+            @NonNull List<SpeechToTextCatalogItem> fetched
+    ) {
+        var authoritative = new LinkedHashMap<String, SpeechToTextCatalogItem>();
+        addAll(authoritative, normalized(fetched, provider::normalizeModelSelection));
+        addAll(authoritative, normalized(provider.bundledModels(), provider::normalizeModelSelection));
+        return authoritative.values().stream().toList();
     }
 
     private Optional<List<SpeechToTextCatalogItem>> readCachedModels(

@@ -156,6 +156,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1440,33 +1441,44 @@ public class MainFrame extends JFrame {
     }
 
     private void onProviderAuthChanged(String providerName) {
-        applyCredentialChangeAsync(() -> {
-            ProviderRegistry.invalidateAuthStatus(providerName);
-            modelCacheService.invalidate(providerName);
-        }, this::applyProviderSettings, providerName);
+        applyCredentialChangeAsync(
+                () -> CredentialInvalidationSupport.runAll(List.of(
+                        () -> ProviderRegistry.invalidateAuthStatus(providerName),
+                        () -> modelCacheService.invalidate(providerName)
+                )),
+                this::applyProviderSettings,
+                providerName
+        );
     }
 
     private void applyCredentialChangeAsync(Runnable invalidate, Runnable refreshUi, String credentialName) {
+        Runnable invalidateAndRefresh = () -> CredentialInvalidationSupport.invalidateAndRefresh(
+                invalidate,
+                refreshUi,
+                error -> log.warn(
+                        "Failed to invalidate credential-backed caches after {} changed",
+                        credentialName,
+                        error
+                )
+        );
         if (SwingUtilities.isEventDispatchThread()) {
-            CompletableFuture.runAsync(invalidate)
-                    .whenComplete((ignored, error) -> {
-                        if (error != null) {
-                            log.warn("Failed to invalidate credential-backed caches after {} changed", credentialName, error);
-                            return;
-                        }
-                        SwingUtilities.invokeLater(refreshUi);
-                    });
+            CompletableFuture.runAsync(invalidateAndRefresh);
             return;
         }
-        invalidate.run();
-        SwingUtilities.invokeLater(refreshUi);
+        invalidateAndRefresh.run();
     }
 
     private void invalidateCredentialBackedCaches(ApiTokenChange change) {
         CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(change.canonicalTokenId());
-        effect.chatProviders().forEach(modelCacheService::invalidate);
-        effect.speechToTextProviderIds().forEach(sttCatalogStore::invalidate);
-        effect.textToSpeechProviderIds().forEach(ttsCatalogStore::invalidate);
+        List<Runnable> invalidations = new ArrayList<>();
+        effect.chatProviders().forEach(provider -> invalidations.add(() -> modelCacheService.invalidate(provider)));
+        effect.speechToTextProviderIds().forEach(
+                provider -> invalidations.add(() -> sttCatalogStore.invalidate(provider))
+        );
+        effect.textToSpeechProviderIds().forEach(
+                provider -> invalidations.add(() -> ttsCatalogStore.invalidate(provider))
+        );
+        CredentialInvalidationSupport.runAll(invalidations);
     }
 
     private void refreshCredentialBackedUi() {

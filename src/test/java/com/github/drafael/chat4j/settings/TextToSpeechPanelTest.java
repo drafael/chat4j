@@ -10,9 +10,11 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -70,6 +72,35 @@ class TextToSpeechPanelTest {
             SwingUtilities.invokeAndWait(() -> selectCatalogItem(subject, "voiceComboBox", "system-voice-alt"));
 
             assertThat(repo.get(TextToSpeechSettings.PROVIDER_KEY)).contains(SystemTextToSpeechProvider.ID);
+        } finally {
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("System catalog fallback retains a saved OS voice")
+    void applyCatalogRefresh_whenSystemDiscoveryFallsBack_retainsSavedVoice() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-system-fallback.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
+        repo.put("chat4j.tts.system.voice.id", "saved-os-voice");
+        repo.put("chat4j.tts.system.voice.label", "Saved OS Voice");
+        var provider = new AvailableSystemProvider();
+        var registry = new TextToSpeechProviderRegistry(List.of(provider));
+        var subject = createPanel(repo, registry);
+        try {
+            TextToSpeechSettings.Selection selection = new TextToSpeechSettings(repo, registry).resolve();
+            runOnEdt(() -> invokeCatalogRefresh(
+                    subject,
+                    selection,
+                    List.of(provider.defaultModel()),
+                    List.of(provider.defaultVoice())
+            ));
+
+            assertThat(callOnEdt(() -> comboItemIds(catalogComboBox(subject, "voiceComboBox"))))
+                    .contains("saved-os-voice");
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "voiceComboBox")))
+                    .isEqualTo("saved-os-voice");
+            assertThat(repo.get("chat4j.tts.system.voice.id")).contains("saved-os-voice");
         } finally {
             removePanel(subject);
         }
@@ -243,6 +274,136 @@ class TextToSpeechPanelTest {
 
             assertThat(pendingSave.get(2, TimeUnit.SECONDS)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("original token save failed");
+        } finally {
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Successful ElevenLabs refresh removes account A selections and persists account B fallbacks")
+    void refreshCatalogs_whenElevenLabsAccountChanges_repairsModelBeforeVoiceSelection() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-elevenlabs-authoritative-refresh.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, ElevenLabsTextToSpeechProvider.ID);
+        repo.put("chat4j.tts.elevenlabs.model.id", "account-a-model");
+        repo.put("chat4j.tts.elevenlabs.model.label", "Account A Model");
+        repo.put("chat4j.tts.elevenlabs.voice.id", "account-a-voice");
+        repo.put("chat4j.tts.elevenlabs.voice.label", "Account A Voice");
+        new TextToSpeechCatalogStore(repo).saveCatalogs(
+                ElevenLabsTextToSpeechProvider.ID,
+                List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
+                List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
+        try {
+            assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
+            Thread refreshThread = provider.refreshThread.get();
+            assertThat(refreshThread).isNotNull();
+            refreshThread.join(2_000);
+            assertThat(refreshThread.isAlive()).isFalse();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            List<String> modelIds = callOnEdt(() -> comboItemIds(catalogComboBox(subject, "modelComboBox")));
+            List<String> voiceIds = callOnEdt(() -> comboItemIds(catalogComboBox(subject, "voiceComboBox")));
+            assertThat(modelIds)
+                    .contains("account-b-model", provider.defaultModel().id())
+                    .doesNotContain("account-a-model");
+            assertThat(voiceIds)
+                    .contains("account-b-voice", provider.defaultVoice().id())
+                    .doesNotContain("account-a-voice");
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "modelComboBox")))
+                    .isEqualTo(provider.defaultModel().id());
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "voiceComboBox")))
+                    .isEqualTo(provider.defaultVoice().id());
+            assertThat(provider.modelUsedToScopeVoices).hasValue(provider.defaultModel().id());
+            assertThat(repo.get("chat4j.tts.elevenlabs.model.id")).contains(provider.defaultModel().id());
+            assertThat(repo.get("chat4j.tts.elevenlabs.model.label")).contains("Account B Default Model");
+            assertThat(repo.get("chat4j.tts.elevenlabs.voice.id")).contains(provider.defaultVoice().id());
+            assertThat(repo.get("chat4j.tts.elevenlabs.voice.label")).contains("Account B Default Voice");
+        } finally {
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Authoritative refresh save failure keeps stale ElevenLabs items out of the controls")
+    void refreshCatalogs_whenSelectionRepairSaveFails_doesNotRestoreStaleItems() throws Exception {
+        var repo = new FailingSettingsRepository(tempDir.resolve("tts-elevenlabs-repair-save-failure.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, ElevenLabsTextToSpeechProvider.ID);
+        repo.put("chat4j.tts.elevenlabs.model.id", "account-a-model");
+        repo.put("chat4j.tts.elevenlabs.model.label", "Account A Model");
+        repo.put("chat4j.tts.elevenlabs.voice.id", "account-a-voice");
+        repo.put("chat4j.tts.elevenlabs.voice.label", "Account A Voice");
+        new TextToSpeechCatalogStore(repo).saveCatalogs(
+                ElevenLabsTextToSpeechProvider.ID,
+                List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
+                List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
+        );
+        var provider = new BlockingAuthoritativeElevenLabsProvider();
+        var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
+        try {
+            assertThat(provider.started.await(2, TimeUnit.SECONDS)).isTrue();
+            repo.failBatch = true;
+            provider.release.countDown();
+            assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
+            Thread refreshThread = provider.refreshThread.get();
+            assertThat(refreshThread).isNotNull();
+            refreshThread.join(2_000);
+            assertThat(refreshThread.isAlive()).isFalse();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(callOnEdt(() -> comboItemIds(catalogComboBox(subject, "modelComboBox"))))
+                    .doesNotContain("account-a-model");
+            assertThat(callOnEdt(() -> comboItemIds(catalogComboBox(subject, "voiceComboBox"))))
+                    .doesNotContain("account-a-voice");
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "modelComboBox"))).isNull();
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "voiceComboBox"))).isNull();
+            assertThat(callOnEdt(() -> subject.statusLabel().getText()))
+                    .contains("Could not save Text to Speech model selection.");
+        } finally {
+            repo.failBatch = false;
+            provider.release.countDown();
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Failed ElevenLabs refresh retains the cached account selection")
+    void refreshCatalogs_whenElevenLabsFetchFails_retainsCachedSelection() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-elevenlabs-failed-refresh.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, ElevenLabsTextToSpeechProvider.ID);
+        repo.put("chat4j.tts.elevenlabs.model.id", "account-a-model");
+        repo.put("chat4j.tts.elevenlabs.model.label", "Account A Model");
+        repo.put("chat4j.tts.elevenlabs.voice.id", "account-a-voice");
+        repo.put("chat4j.tts.elevenlabs.voice.label", "Account A Voice");
+        new TextToSpeechCatalogStore(repo).saveCatalogs(
+                ElevenLabsTextToSpeechProvider.ID,
+                List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
+                List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
+        );
+        var provider = new FailingElevenLabsProvider();
+        var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
+        try {
+            assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
+            Thread refreshThread = provider.refreshThread.get();
+            assertThat(refreshThread).isNotNull();
+            refreshThread.join(2_000);
+            assertThat(refreshThread.isAlive()).isFalse();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(callOnEdt(() -> comboItemIds(catalogComboBox(subject, "modelComboBox"))))
+                    .contains("account-a-model");
+            assertThat(callOnEdt(() -> comboItemIds(catalogComboBox(subject, "voiceComboBox"))))
+                    .contains("account-a-voice");
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "modelComboBox")))
+                    .isEqualTo("account-a-model");
+            assertThat(callOnEdt(() -> selectedCatalogItemId(subject, "voiceComboBox")))
+                    .isEqualTo("account-a-voice");
+            assertThat(repo.get("chat4j.tts.elevenlabs.model.id")).contains("account-a-model");
+            assertThat(repo.get("chat4j.tts.elevenlabs.voice.id")).contains("account-a-voice");
         } finally {
             removePanel(subject);
         }
@@ -496,6 +657,24 @@ class TextToSpeechPanelTest {
         return field.get(target);
     }
 
+    private void invokeCatalogRefresh(
+            TextToSpeechPanel subject,
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> models,
+            List<TextToSpeechCatalogItem> voices
+    ) throws Exception {
+        Method method = TextToSpeechPanel.class.getDeclaredMethod(
+                "applyCatalogRefresh",
+                long.class,
+                TextToSpeechSettings.Selection.class,
+                List.class,
+                List.class,
+                boolean.class
+        );
+        method.setAccessible(true);
+        method.invoke(subject, 0L, selection, models, voices, false);
+    }
+
     private ApiTokenFieldPanel tokenField(TextToSpeechPanel subject) {
         try {
             return (ApiTokenFieldPanel) fieldValue(subject, "tokenField");
@@ -666,6 +845,113 @@ class TextToSpeechPanelTest {
         @Override
         public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
             return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+        }
+    }
+
+    private static final class AuthoritativeElevenLabsProvider extends ElevenLabsTextToSpeechProvider {
+        private final CountDownLatch completed = new CountDownLatch(1);
+        private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
+        private final AtomicReference<String> modelUsedToScopeVoices = new AtomicReference<>();
+
+        private AuthoritativeElevenLabsProvider() {
+            super(request -> {
+                throw new AssertionError("HTTP transport should not be called");
+            });
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchModels() {
+            refreshThread.set(Thread.currentThread());
+            return List.of(
+                    TextToSpeechCatalogItem.of(defaultModel().id(), "Account B Default Model"),
+                    TextToSpeechCatalogItem.of("account-b-model", "Account B Model")
+            );
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchVoices() {
+            try {
+                return List.of(
+                        TextToSpeechCatalogItem.of(defaultVoice().id(), "Account B Default Voice"),
+                        TextToSpeechCatalogItem.of("account-b-voice", "Account B Voice")
+                );
+            } finally {
+                completed.countDown();
+            }
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> voicesForModel(
+                TextToSpeechCatalogItem model,
+                List<TextToSpeechCatalogItem> voices
+        ) {
+            modelUsedToScopeVoices.set(model == null ? null : model.id());
+            return voices;
+        }
+    }
+
+    private static final class FailingElevenLabsProvider extends ElevenLabsTextToSpeechProvider {
+        private final CountDownLatch completed = new CountDownLatch(1);
+        private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
+
+        private FailingElevenLabsProvider() {
+            super(request -> {
+                throw new AssertionError("HTTP transport should not be called");
+            });
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchModels() {
+            refreshThread.set(Thread.currentThread());
+            completed.countDown();
+            throw new IllegalStateException("catalog unavailable");
+        }
+    }
+
+    private static final class BlockingAuthoritativeElevenLabsProvider extends ElevenLabsTextToSpeechProvider {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+        private final CountDownLatch completed = new CountDownLatch(1);
+        private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
+
+        private BlockingAuthoritativeElevenLabsProvider() {
+            super(request -> {
+                throw new AssertionError("HTTP transport should not be called");
+            });
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
+            refreshThread.set(Thread.currentThread());
+            started.countDown();
+            if (!release.await(2, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting to release catalog refresh");
+            }
+            return List.of(TextToSpeechCatalogItem.of("account-b-model", "Account B Model"));
+        }
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchVoices() {
+            try {
+                return List.of(TextToSpeechCatalogItem.of("account-b-voice", "Account B Voice"));
+            } finally {
+                completed.countDown();
+            }
         }
     }
 

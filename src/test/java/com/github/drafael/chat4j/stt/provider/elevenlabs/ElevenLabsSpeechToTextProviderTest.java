@@ -52,14 +52,14 @@ class ElevenLabsSpeechToTextProviderTest {
     }
 
     @Test
-    @DisplayName("ElevenLabs model fetch returns bundled models without credentials")
-    void fetchModels_whenCredentialsMissing_returnsBundledModels() throws Exception {
+    @DisplayName("ElevenLabs model fetch without credentials is not authoritative")
+    void fetchModels_whenCredentialsMissing_throwsWithoutRequest() throws Exception {
         var transport = new CapturingTransport(success("[]"));
         var subject = new ElevenLabsSpeechToTextProvider(transport);
 
-        var models = subject.fetchModels(context(credentials(false)));
-
-        assertThat(models).extracting("id").containsExactly("scribe_v2");
+        assertThatThrownBy(() -> subject.fetchModels(context(credentials(false))))
+                .isInstanceOf(SpeechToTextException.class)
+                .hasMessageContaining("requires credentials");
         assertThat(transport.request).isNull();
     }
 

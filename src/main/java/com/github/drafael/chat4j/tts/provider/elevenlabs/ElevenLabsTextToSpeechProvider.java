@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
+import static java.util.stream.StreamSupport.stream;
+
 public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
     public static final String ID = "elevenlabs";
@@ -71,7 +73,14 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
         TtsHttpResponse response = get(URI.create("%s/v1/models".formatted(BASE_URL)), authHeaders());
         List<TextToSpeechCatalogItem> models = new ArrayList<>();
         JsonNode root = jsonBody(response);
-        JsonNode modelArray = root.isArray() ? root : root.path("models");
+        JsonNode modelArray = root == null ? null : (root.isArray() ? root : root.path("models"));
+        if (modelArray == null || !modelArray.isArray()) {
+            throw new IllegalStateException("ElevenLabs model catalog response was invalid.");
+        }
+        if (!modelArray.isEmpty() && stream(modelArray.spliterator(), false)
+                .noneMatch(model -> StringUtils.isNotBlank(firstText(model, "model_id", "id")))) {
+            throw new IllegalStateException("ElevenLabs model catalog response did not contain valid model IDs.");
+        }
         modelArray.forEach(model -> {
             if (model.has("can_do_text_to_speech") && !model.path("can_do_text_to_speech").asBoolean(false)) {
                 return;
@@ -89,7 +98,12 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
         TtsHttpResponse response = get(URI.create("%s/v1/voices".formatted(BASE_URL)), authHeaders());
         List<TextToSpeechCatalogItem> voices = new ArrayList<>();
-        jsonBody(response).path("voices").forEach(voice -> {
+        JsonNode root = jsonBody(response);
+        JsonNode voiceArray = root == null ? null : root.path("voices");
+        if (voiceArray == null || !voiceArray.isArray()) {
+            throw new IllegalStateException("ElevenLabs voice catalog response was invalid.");
+        }
+        voiceArray.forEach(voice -> {
             String id = firstText(voice, "voice_id", "id");
             String label = firstText(voice, "name", "label", "voice_id", "id");
             String description = firstText(voice, "description", "category");
@@ -97,6 +111,9 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
                 voices.add(new TextToSpeechCatalogItem(id, label, description));
             }
         });
+        if (!voiceArray.isEmpty() && voices.isEmpty()) {
+            throw new IllegalStateException("ElevenLabs voice catalog response did not contain valid voices.");
+        }
         return nonEmptyOrBundled(voices, BUNDLED_VOICES);
     }
 

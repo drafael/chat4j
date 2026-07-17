@@ -29,7 +29,10 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvide
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
 
 public class SpeechToTextSettings {
 
@@ -144,6 +147,18 @@ public class SpeechToTextSettings {
         provider(providerId).saveModel(model);
     }
 
+    public boolean saveModelIf(
+            String providerId,
+            @NonNull SpeechToTextCatalogItem model,
+            @NonNull BooleanSupplier condition
+    ) {
+        return provider(providerId).saveModelIf(model, condition);
+    }
+
+    public boolean clearModelIf(String providerId, @NonNull BooleanSupplier condition) {
+        return provider(providerId).clearModelIf(condition);
+    }
+
     public void saveMaxDurationSeconds(int seconds) {
         validateMaxDurationSeconds(seconds);
         settingsRepo.put(RECORDING_MAX_DURATION_SECONDS_KEY, Integer.toString(seconds));
@@ -158,6 +173,7 @@ public class SpeechToTextSettings {
     }
 
     public SpeechToTextProviderSettings provider(String providerId) {
+        Validate.notBlank(providerId, "providerId should not be blank");
         return SpeechToTextProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 

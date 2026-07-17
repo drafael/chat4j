@@ -41,6 +41,38 @@ class SpeechToTextProviderSettingsTest {
     }
 
     @Test
+    @DisplayName("Clearing an STT model removes both saved selection keys")
+    void clearModel_whenSelectionSaved_removesIdAndLabel() {
+        var repo = repo("clear-model.properties");
+        var subject = new GroqSpeechToTextSettings(repo);
+        subject.saveModel(SpeechToTextCatalogItem.of("saved-model", "Saved Model"));
+
+        subject.clearModelIf(() -> true);
+
+        assertThat(repo.get("chat4j.stt.groq.model.id")).isEmpty();
+        assertThat(repo.get("chat4j.stt.groq.model.label")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Conditional STT selection writes leave settings unchanged when rejected")
+    void saveModelIf_whenConditionRejected_preservesSelection() {
+        var repo = repo("conditional-model.properties");
+        var subject = new GroqSpeechToTextSettings(repo);
+        subject.saveModel(SpeechToTextCatalogItem.of("saved-model", "Saved Model"));
+
+        boolean modelSaved = subject.saveModelIf(
+                SpeechToTextCatalogItem.of("replacement-model", "Replacement Model"),
+                () -> false
+        );
+        boolean modelCleared = subject.clearModelIf(() -> false);
+
+        assertThat(modelSaved).isFalse();
+        assertThat(modelCleared).isFalse();
+        assertThat(repo.get("chat4j.stt.groq.model.id")).contains("saved-model");
+        assertThat(repo.get("chat4j.stt.groq.model.label")).contains("Saved Model");
+    }
+
+    @Test
     @DisplayName("Blank STT selected model id falls back to provider default")
     void selectedModel_whenSavedIdBlank_returnsFallbackId() {
         var repo = repo("blank-model.properties");

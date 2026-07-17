@@ -64,14 +64,14 @@ class DeepgramSpeechToTextProviderTest {
     }
 
     @Test
-    @DisplayName("Deepgram model fetch returns bundled models without credentials")
-    void fetchModels_whenCredentialsMissing_returnsBundledModels() throws Exception {
+    @DisplayName("Deepgram model fetch without credentials is not authoritative")
+    void fetchModels_whenCredentialsMissing_throwsWithoutRequest() throws Exception {
         var transport = new CapturingTransport(success("{}"));
         var subject = new DeepgramSpeechToTextProvider(transport);
 
-        var models = subject.fetchModels(context(credentials(false)));
-
-        assertThat(models).extracting("id").containsExactly("nova-3", "nova-3-general", "nova-2-general");
+        assertThatThrownBy(() -> subject.fetchModels(context(credentials(false))))
+                .isInstanceOf(SpeechToTextException.class)
+                .hasMessageContaining("requires credentials");
         assertThat(transport.request).isNull();
     }
 

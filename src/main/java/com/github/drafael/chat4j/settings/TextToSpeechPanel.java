@@ -16,13 +16,13 @@ import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.net.URL;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import javax.swing.*;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import static java.util.Collections.emptyList;
 
@@ -304,11 +304,11 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         }
         Thread.startVirtualThread(() -> {
             try {
-                List<TextToSpeechCatalogItem> models = selection.provider().fetchModels();
+                List<TextToSpeechCatalogItem> models = List.copyOf(selection.provider().fetchModels());
                 if (!catalogRefreshCurrent(requestId)) {
                     return;
                 }
-                List<TextToSpeechCatalogItem> voices = selection.provider().fetchVoices();
+                List<TextToSpeechCatalogItem> voices = List.copyOf(selection.provider().fetchVoices());
                 if (!saveCatalogsIfCurrent(requestId, selection, models, voices)) {
                     return;
                 }
@@ -354,25 +354,149 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
             return;
         }
         TextToSpeechSettings.Selection current = textToSpeechSettings.resolve();
-        if (!Objects.equals(current.providerId(), selection.providerId())) {
+        if (!Strings.CS.equals(current.providerId(), selection.providerId())) {
             return;
         }
-        List<TextToSpeechCatalogItem> currentModels = catalogStore.mergeWithSelected(models, selection.provider().bundledModels(), current.model());
+        if (SystemTextToSpeechProvider.ID.equals(current.providerId())) {
+            applyLocalCatalogRefresh(current, models, voices, explicit);
+            return;
+        }
+        List<TextToSpeechCatalogItem> currentModels = catalogStore.authoritativeModels(current.provider(), models);
+        TextToSpeechCatalogItem repairedModel = preferredCatalogItem(
+                current.model(),
+                current.provider().defaultModel(),
+                currentModels
+        );
+        boolean modelRepaired = repairModelSelection(current, currentModels, repairedModel);
+
+        List<TextToSpeechCatalogItem> authoritativeVoices = catalogStore.authoritativeVoices(
+                current.provider(),
+                voices
+        );
+        List<TextToSpeechCatalogItem> currentVoices = current.provider().voicesForModel(
+                repairedModel,
+                authoritativeVoices
+        );
+        TextToSpeechCatalogItem repairedVoice = preferredCatalogItem(
+                current.voice(),
+                current.provider().defaultVoice(),
+                currentVoices
+        );
+        boolean voiceRepaired = modelRepaired && repairVoiceSelection(current, currentVoices, repairedVoice);
+
+        updating = true;
+        try {
+            updateCatalogCombos(currentModels, currentVoices);
+            if (!modelRepaired || !selectCatalogItem(modelComboBox, repairedModel)) {
+                modelComboBox.setSelectedIndex(-1);
+            }
+            if (!voiceRepaired || !selectCatalogItem(voiceComboBox, repairedVoice)) {
+                voiceComboBox.setSelectedIndex(-1);
+            }
+        } finally {
+            updating = false;
+        }
+        if (explicit && modelRepaired && voiceRepaired) {
+            setStatusInfo("Catalogs refreshed");
+        }
+    }
+
+    private void applyLocalCatalogRefresh(
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> models,
+            List<TextToSpeechCatalogItem> voices,
+            boolean explicit
+    ) {
+        List<TextToSpeechCatalogItem> currentModels = catalogStore.mergeWithSelected(
+                models,
+                selection.provider().bundledModels(),
+                selection.model()
+        );
         List<TextToSpeechCatalogItem> currentVoices = voicesForModel(
-                current,
-                catalogStore.mergeWithSelected(voices, selection.provider().bundledVoices(), current.voice())
+                selection,
+                catalogStore.mergeWithSelected(voices, selection.provider().bundledVoices(), selection.voice())
         );
         updating = true;
         try {
             updateCatalogCombos(currentModels, currentVoices);
-            selectCatalogItem(modelComboBox, current.model());
-            saveFirstVoiceWhenSelectionIsUnavailable(current, currentVoices);
+            selectCatalogItem(modelComboBox, selection.model());
+            saveFirstVoiceWhenSelectionIsUnavailable(selection, currentVoices);
         } finally {
             updating = false;
         }
         if (explicit) {
             setStatusInfo("Catalogs refreshed");
         }
+    }
+
+    private static TextToSpeechCatalogItem preferredCatalogItem(
+            TextToSpeechCatalogItem selected,
+            TextToSpeechCatalogItem providerDefault,
+            List<TextToSpeechCatalogItem> items
+    ) {
+        TextToSpeechCatalogItem selectedItem = catalogItem(items, selected);
+        if (selectedItem != null) {
+            return selectedItem;
+        }
+        TextToSpeechCatalogItem defaultItem = catalogItem(items, providerDefault);
+        if (defaultItem != null) {
+            return defaultItem;
+        }
+        return items.isEmpty() ? null : items.getFirst();
+    }
+
+    private boolean repairModelSelection(
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> models,
+            TextToSpeechCatalogItem repairedModel
+    ) {
+        if (containsCatalogItem(models, selection.model())) {
+            return true;
+        }
+        return saveTextToSpeechSetting("model selection", () -> {
+            if (repairedModel == null) {
+                textToSpeechSettings.clearModel(selection.providerId());
+            } else {
+                textToSpeechSettings.saveModel(selection.providerId(), repairedModel);
+            }
+        }, false);
+    }
+
+    private boolean repairVoiceSelection(
+            TextToSpeechSettings.Selection selection,
+            List<TextToSpeechCatalogItem> voices,
+            TextToSpeechCatalogItem repairedVoice
+    ) {
+        if (containsCatalogItem(voices, selection.voice())) {
+            return true;
+        }
+        return saveTextToSpeechSetting("voice selection", () -> {
+            if (repairedVoice == null) {
+                textToSpeechSettings.clearVoice(selection.providerId());
+            } else {
+                textToSpeechSettings.saveVoice(selection.providerId(), repairedVoice);
+            }
+        }, false);
+    }
+
+    private static boolean containsCatalogItem(
+            List<TextToSpeechCatalogItem> items,
+            TextToSpeechCatalogItem selected
+    ) {
+        return catalogItem(items, selected) != null;
+    }
+
+    private static TextToSpeechCatalogItem catalogItem(
+            List<TextToSpeechCatalogItem> items,
+            TextToSpeechCatalogItem selected
+    ) {
+        if (selected == null) {
+            return null;
+        }
+        return items.stream()
+                .filter(item -> Strings.CS.equals(item.id(), selected.id()))
+                .findFirst()
+                .orElse(null);
     }
 
     private void previewSelection() {

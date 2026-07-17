@@ -157,12 +157,20 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     private List<TextToSpeechCatalogItem> fetchVoiceModels() throws Exception {
         TtsHttpResponse response = get(URI.create("%s/models".formatted(BASE_URL)), authHeaders());
         List<TextToSpeechCatalogItem> voiceModels = new ArrayList<>();
-        jsonBody(response).path("tts").forEach(model -> {
+        JsonNode root = jsonBody(response);
+        JsonNode ttsModels = root == null ? null : root.path("tts");
+        if (ttsModels == null || !ttsModels.isArray()) {
+            throw new IllegalStateException("Deepgram model catalog response was invalid.");
+        }
+        ttsModels.forEach(model -> {
             String id = voiceModelId(model);
             if (StringUtils.isNotBlank(id)) {
                 voiceModels.add(new TextToSpeechCatalogItem(id, voiceLabel(id, model), voiceDescription(model)));
             }
         });
+        if (!ttsModels.isEmpty() && voiceModels.isEmpty()) {
+            throw new IllegalStateException("Deepgram model catalog response did not contain valid TTS voices.");
+        }
         return nonEmptyOrBundled(voiceModels, BUNDLED_VOICES);
     }
 

@@ -42,6 +42,42 @@ class GroqSpeechToTextProviderTest {
     }
 
     @Test
+    @DisplayName("Groq model HTTP failures are not authoritative")
+    void fetchModels_whenResponseFails_throws() throws Exception {
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(
+                new SttHttpResponse(500, emptyMap(), "down".getBytes(StandardCharsets.UTF_8))
+        ));
+
+        assertThatThrownBy(() -> subject.fetchModels(context()))
+                .isInstanceOf(SpeechToTextException.class)
+                .hasMessageContaining("HTTP 500");
+    }
+
+    @Test
+    @DisplayName("Groq model discovery rejects a missing data array")
+    void fetchModels_whenDataArrayMissing_throws() throws Exception {
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(
+                new SttHttpResponse(200, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))
+        ));
+
+        assertThatThrownBy(() -> subject.fetchModels(context()))
+                .isInstanceOf(SpeechToTextException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("Groq model discovery rejects entries without model ids")
+    void fetchModels_whenModelIdsMissing_throws() throws Exception {
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(
+                new SttHttpResponse(200, emptyMap(), "{\"data\":[{}]}".getBytes(StandardCharsets.UTF_8))
+        ));
+
+        assertThatThrownBy(() -> subject.fetchModels(context()))
+                .isInstanceOf(SpeechToTextException.class)
+                .hasMessageContaining("valid model IDs");
+    }
+
+    @Test
     @DisplayName("Groq transcription sends path-backed multipart request and parses text")
     void transcribe_whenResponseSuccessful_returnsTranscript() throws Exception {
         Path audio = tempDir.resolve("recording.wav");

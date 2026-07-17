@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettingsFactor
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
 
 public class TextToSpeechSettings {
 
@@ -51,11 +52,20 @@ public class TextToSpeechSettings {
         provider(providerId).saveModel(model);
     }
 
+    public void clearModel(String providerId) {
+        provider(providerId).clearModel();
+    }
+
     public void saveVoice(String providerId, TextToSpeechCatalogItem voice) {
         provider(providerId).saveVoice(voice);
     }
 
+    public void clearVoice(String providerId) {
+        provider(providerId).clearVoice();
+    }
+
     public TextToSpeechProviderSettings provider(String providerId) {
+        Validate.notBlank(providerId, "providerId should not be blank");
         return TextToSpeechProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 

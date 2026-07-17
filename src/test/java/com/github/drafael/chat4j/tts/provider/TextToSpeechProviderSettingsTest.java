@@ -39,6 +39,32 @@ class TextToSpeechProviderSettingsTest {
     }
 
     @Test
+    @DisplayName("Clearing a TTS model removes its id and label keys")
+    void clearModel_whenSelectionSaved_removesModelSelectionKeys() {
+        var repo = repo("clear-model.properties");
+        var subject = new GroqTextToSpeechSettings(repo);
+        subject.saveModel(TextToSpeechCatalogItem.of("saved-model", "Saved Model"));
+
+        subject.clearModel();
+
+        assertThat(repo.get("chat4j.tts.groq.model.id")).isEmpty();
+        assertThat(repo.get("chat4j.tts.groq.model.label")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Clearing a TTS voice removes its id and label keys")
+    void clearVoice_whenSelectionSaved_removesVoiceSelectionKeys() {
+        var repo = repo("clear-voice.properties");
+        var subject = new GroqTextToSpeechSettings(repo);
+        subject.saveVoice(TextToSpeechCatalogItem.of("saved-voice", "Saved Voice"));
+
+        subject.clearVoice();
+
+        assertThat(repo.get("chat4j.tts.groq.voice.id")).isEmpty();
+        assertThat(repo.get("chat4j.tts.groq.voice.label")).isEmpty();
+    }
+
+    @Test
     @DisplayName("Deepgram TTS keeps model-family and voice keys separate")
     void deepgramSettings_whenModelAndVoiceSaved_writesSeparateModelAndVoiceKeys() {
         var repo = repo("deepgram.properties");

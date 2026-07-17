@@ -79,7 +79,7 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
     @Override
     public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
         if (!available(context.credentialSource())) {
-            return bundledModels();
+            throw new SpeechToTextException("Deepgram model catalog refresh requires credentials.");
         }
         SttHttpRequest request = new SttHttpRequest(
                 "GET",

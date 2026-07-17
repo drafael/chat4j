@@ -16,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -124,6 +125,44 @@ class SpeechToTextCatalogStoreTest {
 
         assertThat(models).extracting(SpeechToTextCatalogItem::id)
                 .containsExactly("nova-3", "nova-3-general", "nova-2-general");
+    }
+
+    @Test
+    @DisplayName("Cached STT catalogs retain a saved model that is unavailable offline")
+    void mergeWithSelected_whenSavedModelAbsent_retainsSavedModel() {
+        var subject = new SpeechToTextCatalogStore(repo("offline-merge.properties"));
+        var selected = SpeechToTextCatalogItem.of("saved-model", "Saved Model");
+
+        var models = subject.mergeWithSelected(
+                List.of(SpeechToTextCatalogItem.of("cached-model", "Cached Model")),
+                emptyList(),
+                selected
+        );
+
+        assertThat(models).extracting(SpeechToTextCatalogItem::id)
+                .containsExactly("cached-model", "saved-model");
+    }
+
+    @Test
+    @DisplayName("Authoritative STT catalogs include provider fallback without restoring saved models")
+    void authoritativeModels_whenSavedModelAbsent_omitsSavedModel() {
+        var subject = new SpeechToTextCatalogStore(repo("authoritative-merge.properties"));
+        var provider = new ElevenLabsSpeechToTextProvider(
+                (request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0])
+        );
+
+        var models = subject.authoritativeModels(
+                provider,
+                List.of(
+                        SpeechToTextCatalogItem.of("account-model", "Account Model"),
+                        SpeechToTextCatalogItem.of("account-model", "Duplicate Account Model")
+                )
+        );
+
+        assertThat(models).extracting(SpeechToTextCatalogItem::id)
+                .startsWith("account-model")
+                .contains(provider.defaultModel().id())
+                .doesNotContain("saved-model");
     }
 
     @Test

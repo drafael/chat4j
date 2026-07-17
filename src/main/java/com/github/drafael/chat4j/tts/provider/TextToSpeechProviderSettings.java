@@ -10,5 +10,9 @@ public interface TextToSpeechProviderSettings {
 
     void saveModel(TextToSpeechCatalogItem model);
 
+    void clearModel();
+
     void saveVoice(TextToSpeechCatalogItem voice);
+
+    void clearVoice();
 }

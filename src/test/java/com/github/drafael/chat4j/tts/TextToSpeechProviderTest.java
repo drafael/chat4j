@@ -73,8 +73,52 @@ class TextToSpeechProviderTest {
     }
 
     @Test
+    @DisplayName("ElevenLabs model discovery rejects a missing model array")
+    void fetchModels_whenElevenLabsModelArrayMissing_throws() {
+        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"));
+
+        assertThatThrownBy(subject::fetchModels)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs model discovery rejects entries without model ids")
+    void fetchModels_whenElevenLabsModelIdsMissing_throws() {
+        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("[{}]"));
+
+        assertThatThrownBy(subject::fetchModels)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("valid model IDs");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs voice discovery rejects a missing voice array")
+    void fetchVoices_whenElevenLabsVoiceArrayMissing_throws() {
+        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("ElevenLabs voice discovery rejects entries without voice ids")
+    void fetchVoices_whenElevenLabsVoiceIdsMissing_throws() {
+        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{\"voices\":[{}]}"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("valid voices");
+    }
+
+    @Test
     @DisplayName("Groq model discovery keeps current TTS models without showing obsolete PlayAI")
-    void groqFetchModels_ttsModelPresent_keepsCurrentTtsModel() throws Exception {
+    void fetchModels_whenGroqTtsModelPresent_keepsCurrentTtsModel() throws Exception {
         CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new GroqTextToSpeechProvider(request -> json("""
                 {"data":[{"id":"llama-3.3-70b"},{"id":"playai-tts"},{"id":"canopylabs/orpheus-v1-english"}]}
@@ -83,6 +127,28 @@ class TextToSpeechProviderTest {
         var models = subject.fetchModels();
 
         assertThat(models).extracting(TextToSpeechCatalogItem::id).containsExactly("canopylabs/orpheus-v1-english");
+    }
+
+    @Test
+    @DisplayName("Groq model discovery rejects a missing data array")
+    void fetchModels_whenGroqDataArrayMissing_throws() {
+        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new GroqTextToSpeechProvider(request -> json("{}"));
+
+        assertThatThrownBy(subject::fetchModels)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("Groq model discovery rejects entries without model ids")
+    void fetchModels_whenGroqModelIdsMissing_throws() {
+        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new GroqTextToSpeechProvider(request -> json("{\"data\":[{}]}"));
+
+        assertThatThrownBy(subject::fetchModels)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("valid model IDs");
     }
 
     @Test

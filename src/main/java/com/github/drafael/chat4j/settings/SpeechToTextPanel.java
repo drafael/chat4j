@@ -35,13 +35,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -78,6 +78,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private final boolean ownsWhisperModelManagementService;
     private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong saveCounter = new AtomicLong();
+    private final AtomicInteger pendingCloudModelSaves = new AtomicInteger();
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("chat4j-stt-settings-save-", 0).factory()
     );
@@ -767,10 +768,26 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 selectWhisperModel(item.id(), item.label());
                 return;
             }
-            scheduleSave(() -> settings.saveModel(snapshot.providerId(), item), () -> {
-                refreshLocalModelSelection(settings.resolve());
-                setStatusInfo(STATUS_SAVED);
-            });
+            long refreshId = refreshCounter.get();
+            var modelSaved = new AtomicBoolean();
+            pendingCloudModelSaves.incrementAndGet();
+            scheduleSave(
+                    () -> {
+                        try {
+                            modelSaved.set(settings.saveModelIf(
+                                    snapshot.providerId(),
+                                    item,
+                                    () -> catalogRefreshCurrent(refreshId)
+                            ));
+                        } finally {
+                            pendingCloudModelSaves.decrementAndGet();
+                        }
+                    },
+                    () -> {
+                        if (modelSaved.get()) {
+                            setStatusInfo(STATUS_SAVED);
+                        }
+                    });
         }
     }
 
@@ -895,7 +912,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                         () -> !catalogRefreshCurrent(refreshId),
                         Duration.ofSeconds(45)
                 );
-                List<SpeechToTextCatalogItem> models = snapshot.provider().fetchModels(context);
+                List<SpeechToTextCatalogItem> models = List.copyOf(snapshot.provider().fetchModels(context));
                 if (!saveCatalogModelsIfCurrent(refreshId, snapshot.providerId(), models)) {
                     return;
                 }
@@ -940,24 +957,129 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         if (!catalogRefreshCurrent(refreshId)) {
             return;
         }
+        boolean cloudModelSavePending = pendingCloudModelSaves.get() > 0;
         SpeechToTextSettingsSnapshot current = settings.resolve();
-        if (!Objects.equals(current.providerId(), previous.providerId())) {
+        if (!Strings.CS.equals(current.providerId(), previous.providerId())) {
             return;
         }
+        List<SpeechToTextCatalogItem> currentModels = catalogStore.authoritativeModels(current.provider(), models);
+        boolean selectionAvailable = containsCatalogItem(currentModels, current.model());
         updating = true;
-        List<SpeechToTextCatalogItem> currentModels;
         try {
-            currentModels = catalogStore.mergeWithSelected(models, current.provider().bundledModels(), current.model());
             updateModelCombo(currentModels);
-            selectCatalogItem(current.model());
+            if (selectionAvailable) {
+                selectCatalogItem(current.model());
+            } else {
+                modelComboBox.setSelectedIndex(-1);
+            }
         } finally {
             updating = false;
         }
         updateLocalModels(current, currentModels);
-        if (explicit) {
+        updateAvailability(current);
+        if (!selectionAvailable || cloudModelSavePending) {
+            scheduleModelSelectionRepair(refreshId, current, currentModels, explicit);
+        } else if (explicit) {
             setStatusInfo("Speech to Text catalogs refreshed");
         }
-        updateAvailability(current);
+    }
+
+    private static SpeechToTextCatalogItem preferredModel(
+            SpeechToTextSettingsSnapshot selection,
+            List<SpeechToTextCatalogItem> models
+    ) {
+        SpeechToTextCatalogItem selected = catalogItem(models, selection.model());
+        if (selected != null) {
+            return selected;
+        }
+        SpeechToTextCatalogItem providerDefault = catalogItem(models, selection.provider().defaultModel());
+        if (providerDefault != null) {
+            return providerDefault;
+        }
+        return models.isEmpty() ? null : models.getFirst();
+    }
+
+    private void scheduleModelSelectionRepair(
+            long refreshId,
+            SpeechToTextSettingsSnapshot selection,
+            List<SpeechToTextCatalogItem> models,
+            boolean explicit
+    ) {
+        var repairedModel = new AtomicReference<SpeechToTextCatalogItem>();
+        var changedProviderId = new AtomicReference<String>();
+        var repairApplied = new AtomicBoolean();
+        scheduleSave(
+                () -> {
+                    if (!catalogRefreshCurrent(refreshId)) {
+                        return;
+                    }
+                    SpeechToTextSettingsSnapshot latest = settings.resolve();
+                    if (!Strings.CS.equals(latest.providerId(), selection.providerId())) {
+                        changedProviderId.set(latest.providerId());
+                        return;
+                    }
+                    SpeechToTextCatalogItem latestModel = preferredModel(latest, models);
+                    if (!containsCatalogItem(models, latest.model())) {
+                        boolean saved = latestModel == null
+                                ? settings.clearModelIf(latest.providerId(), () -> catalogRefreshCurrent(refreshId))
+                                : settings.saveModelIf(
+                                        latest.providerId(),
+                                        latestModel,
+                                        () -> catalogRefreshCurrent(refreshId)
+                                );
+                        if (!saved) {
+                            return;
+                        }
+                    }
+                    repairedModel.set(latestModel);
+                    repairApplied.set(true);
+                },
+                () -> {
+                    if (changedProviderId.get() != null) {
+                        reloadProviderOptions();
+                        refreshControlsFromSettings(!localProvider(changedProviderId.get()));
+                        setStatusInfo(STATUS_SAVED);
+                        return;
+                    }
+                    if (!repairApplied.get() || !catalogRefreshCurrent(refreshId)) {
+                        return;
+                    }
+                    updating = true;
+                    try {
+                        selectCatalogItem(repairedModel.get());
+                    } finally {
+                        updating = false;
+                    }
+                    if (explicit) {
+                        setStatusInfo("Speech to Text catalogs refreshed");
+                    }
+                },
+                () -> {
+                    if (catalogRefreshCurrent(refreshId)) {
+                        setStatusError(lastSaveError);
+                        modelComboBox.setSelectedIndex(-1);
+                    }
+                });
+    }
+
+    private static boolean containsCatalogItem(
+            List<SpeechToTextCatalogItem> models,
+            SpeechToTextCatalogItem selected
+    ) {
+        return catalogItem(models, selected) != null;
+    }
+
+    private static SpeechToTextCatalogItem catalogItem(
+            List<SpeechToTextCatalogItem> models,
+            SpeechToTextCatalogItem selected
+    ) {
+        if (selected == null) {
+            return null;
+        }
+        return models.stream()
+                .filter(model -> Strings.CS.equals(model.id(), selected.id()))
+                .findFirst()
+                .orElse(null);
     }
 
     private void updateModelCombo(List<SpeechToTextCatalogItem> models) {
@@ -971,7 +1093,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             return;
         }
         for (int i = 0; i < modelComboBox.getItemCount(); i++) {
-            if (Objects.equals(modelComboBox.getItemAt(i).id(), selected.id())) {
+            if (Strings.CS.equals(modelComboBox.getItemAt(i).id(), selected.id())) {
                 modelComboBox.setSelectedIndex(i);
                 return;
             }
@@ -1162,14 +1284,14 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
         if (isVosk(snapshot)) {
             for (int row = 0; row < voskRows.size(); row++) {
-                if (Objects.equals(voskRows.get(row).id(), modelId)) {
+                if (Strings.CS.equals(voskRows.get(row).id(), modelId)) {
                     return row;
                 }
             }
         }
         if (isWhisper(snapshot)) {
             for (int row = 0; row < whisperRows.size(); row++) {
-                if (Objects.equals(whisperRows.get(row).id(), modelId)) {
+                if (Strings.CS.equals(whisperRows.get(row).id(), modelId)) {
                     return row;
                 }
             }
@@ -1230,7 +1352,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             localModelsTableModel.setRowCount(0);
             models.forEach(item -> localModelsTableModel.addRow(new Object[] {
                     item.label(),
-                    snapshot.model() != null && Objects.equals(item.id(), snapshot.model().id())
+                    snapshot.model() != null && Strings.CS.equals(item.id(), snapshot.model().id())
             }));
         } finally {
             updatingLocalModels = false;
@@ -1292,7 +1414,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         try {
             for (int row = 0; row < localModelItems.size(); row++) {
                 SpeechToTextCatalogItem item = localModelItems.get(row);
-                localModelsTableModel.setValueAt(snapshot.model() != null && Objects.equals(item.id(), snapshot.model().id()), row, 1);
+                localModelsTableModel.setValueAt(
+                        snapshot.model() != null && Strings.CS.equals(item.id(), snapshot.model().id()),
+                        row,
+                        1
+                );
             }
         } finally {
             updatingLocalModels = false;
@@ -1410,7 +1536,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             return null;
         }
         return localModelItems.stream()
-                .filter(item -> Objects.equals(item.id(), snapshot.model().id()))
+                .filter(item -> Strings.CS.equals(item.id(), snapshot.model().id()))
                 .findFirst()
                 .orElse(null);
     }
@@ -1716,7 +1842,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private ProviderOption findProviderOption(String providerId) {
         for (int i = 0; i < providerComboBox.getItemCount(); i++) {
             ProviderOption option = providerComboBox.getItemAt(i);
-            if (Objects.equals(option.providerId(), providerId)) {
+            if (Strings.CS.equals(option.providerId(), providerId)) {
                 return option;
             }
         }
@@ -1724,6 +1850,13 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     }
 
     private void scheduleSave(ThrowingRunnable action, Runnable onSuccess) {
+        scheduleSave(action, onSuccess, () -> {
+            setStatusError(lastSaveError);
+            refreshControlsFromSettings(false);
+        });
+    }
+
+    private void scheduleSave(ThrowingRunnable action, Runnable onSuccess, Runnable onFailure) {
         if (removed) {
             return;
         }
@@ -1760,8 +1893,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             if (saved) {
                 onSuccess.run();
             } else {
-                setStatusError(lastSaveError);
-                refreshControlsFromSettings(false);
+                onFailure.run();
             }
         }));
     }

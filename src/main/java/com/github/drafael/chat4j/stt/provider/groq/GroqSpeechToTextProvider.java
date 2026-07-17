@@ -22,6 +22,8 @@ import java.util.UUID;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static java.util.stream.StreamSupport.stream;
+
 public class GroqSpeechToTextProvider implements SpeechToTextProvider {
 
     public static final String ID = "groq";
@@ -66,7 +68,7 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
     @Override
     public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) throws Exception {
         if (!available(context.credentialSource())) {
-            return bundledModels();
+            throw new SpeechToTextException("Groq model catalog refresh requires credentials.");
         }
         SttHttpRequest request = new SttHttpRequest(
                 "GET",
@@ -78,18 +80,31 @@ public class GroqSpeechToTextProvider implements SpeechToTextProvider {
         );
         SttHttpResponse response = transport.send(request, context.cancellationToken());
         if (!response.successful()) {
-            return bundledModels();
+            throw new SpeechToTextException(
+                    "Groq model catalog refresh failed with HTTP %d.".formatted(response.statusCode())
+            );
         }
         List<SpeechToTextCatalogItem> models = new ArrayList<>();
         try {
-            OBJECT_MAPPER.readTree(response.body()).path("data").forEach(model -> {
+            JsonNode root = OBJECT_MAPPER.readTree(response.body());
+            JsonNode data = root == null ? null : root.path("data");
+            if (data == null || !data.isArray()) {
+                throw new SpeechToTextException("Groq model catalog response was invalid.");
+            }
+            if (!data.isEmpty() && stream(data.spliterator(), false)
+                    .noneMatch(model -> StringUtils.isNotBlank(model.path("id").asText("")))) {
+                throw new SpeechToTextException("Groq model catalog response did not contain valid model IDs.");
+            }
+            data.forEach(model -> {
                 String modelId = model.path("id").asText("");
                 if (isTranscriptionModel(modelId)) {
                     models.add(SpeechToTextCatalogItem.of(modelId, modelId));
                 }
             });
+        } catch (SpeechToTextException e) {
+            throw e;
         } catch (Exception e) {
-            return bundledModels();
+            throw new SpeechToTextException("Groq model catalog response was invalid.", e);
         }
         return models.isEmpty() ? bundledModels() : models;
     }

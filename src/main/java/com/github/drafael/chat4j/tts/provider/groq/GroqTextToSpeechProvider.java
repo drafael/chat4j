@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.util.ArrayList;
@@ -14,6 +15,8 @@ import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+
+import static java.util.stream.StreamSupport.stream;
 
 public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
@@ -106,7 +109,16 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
         TtsHttpResponse response = get(URI.create("%s/models".formatted(BASE_URL)), authHeaders());
         List<TextToSpeechCatalogItem> models = new ArrayList<>();
-        jsonBody(response).path("data").forEach(model -> {
+        JsonNode root = jsonBody(response);
+        JsonNode data = root == null ? null : root.path("data");
+        if (data == null || !data.isArray()) {
+            throw new IllegalStateException("Groq model catalog response was invalid.");
+        }
+        if (!data.isEmpty() && stream(data.spliterator(), false)
+                .noneMatch(model -> StringUtils.isNotBlank(model.path("id").asText("")))) {
+            throw new IllegalStateException("Groq model catalog response did not contain valid model IDs.");
+        }
+        data.forEach(model -> {
             String id = model.path("id").asText("");
             if (isCurrentSpeechModel(id)) {
                 models.add(TextToSpeechCatalogItem.of(id, id));

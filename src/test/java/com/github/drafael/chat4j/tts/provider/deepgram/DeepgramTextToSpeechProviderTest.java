@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DeepgramTextToSpeechProviderTest {
 
@@ -119,6 +120,39 @@ class DeepgramTextToSpeechProviderTest {
         assertThat(voices).extracting(TextToSpeechCatalogItem::id).containsExactly("aura-2-thalia-en");
         assertThat(voices.getFirst().label()).isEqualTo("thalia");
         assertThat(voices.getFirst().description()).isEqualTo("feminine, clear");
+    }
+
+    @Test
+    @DisplayName("Deepgram model discovery rejects a missing TTS array")
+    void fetchModels_whenTtsArrayMissing_throws() {
+        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+
+        assertThatThrownBy(subject::fetchModels)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("Deepgram voice discovery rejects a missing TTS array")
+    void fetchVoices_whenTtsArrayMissing_throws() {
+        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalid");
+    }
+
+    @Test
+    @DisplayName("Deepgram voice discovery rejects entries without canonical ids")
+    void fetchVoices_whenCanonicalIdsMissing_throws() {
+        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{\"tts\":[{}]}"));
+
+        assertThatThrownBy(subject::fetchVoices)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("valid TTS voices");
     }
 
     @Test

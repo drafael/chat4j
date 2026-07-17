@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.stt.provider;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsKeySlugs;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import java.util.function.BooleanSupplier;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
@@ -34,9 +35,25 @@ public abstract class AbstractSpeechToTextProviderSettings implements SpeechToTe
 
     @Override
     public void saveModel(SpeechToTextCatalogItem model) {
-        settingsRepo.updateBatch(batch -> {
+        saveModelIf(model, () -> true);
+    }
+
+    @Override
+    public boolean saveModelIf(
+            @NonNull SpeechToTextCatalogItem model,
+            @NonNull BooleanSupplier condition
+    ) {
+        return settingsRepo.updateBatchIf(condition, batch -> {
             batch.put(modelIdKey(), model.id());
             batch.put(modelLabelKey(), model.label());
+        });
+    }
+
+    @Override
+    public boolean clearModelIf(@NonNull BooleanSupplier condition) {
+        return settingsRepo.updateBatchIf(condition, batch -> {
+            batch.remove(modelIdKey());
+            batch.remove(modelLabelKey());
         });
     }
 
