@@ -23,13 +23,16 @@
         return selection ? String(selection.toString()) : '';
     }
     function dispatchTranscriptAction(action, messageIndex, text) {
+        var normalizedAction = String(action || '');
         var payloadText = text || '';
         var normalizedMessageIndex = Number(messageIndex);
         if (!isFinite(normalizedMessageIndex)) {
             normalizedMessageIndex = -1;
         }
-        if (window.chat4jTranscriptAction && (normalizedMessageIndex >= 0 || payloadText.length > 0)) {
-            window.chat4jTranscriptAction(JSON.stringify({args: [String(action || ''), normalizedMessageIndex, payloadText]}));
+        var hasPayload = normalizedMessageIndex >= 0 || payloadText.length > 0;
+        if (window.chat4jTranscriptAction && normalizedAction.length > 0
+                && (hasPayload || normalizedAction === 'webview-pointer-down')) {
+            window.chat4jTranscriptAction(JSON.stringify({args: [normalizedAction, normalizedMessageIndex, payloadText]}));
         }
     }
     window.chat4jDispatchTranscriptAction = dispatchTranscriptAction;
@@ -386,6 +389,9 @@
         if (closest(event.target, 'a[data-source-url]')) {
             hideSourcePreview();
         }
+    }, true);
+    document.addEventListener('mousedown', function() {
+        dispatchTranscriptAction('webview-pointer-down', -1, '');
     }, true);
     document.addEventListener('click', function (event) {
         hideSourcePreview();

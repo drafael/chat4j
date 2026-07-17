@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.chat.ui.ActivityBubble;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
+import com.github.drafael.chat4j.chat.model.ModelSelectorPopup;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
@@ -82,6 +83,8 @@ import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class ChatPanelTest {
 
@@ -1881,6 +1884,20 @@ class ChatPanelTest {
         assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .map(JButton::getToolTipText)
                 .toList())).contains("Stop");
+    }
+
+    @Test
+    @DisplayName("WebView pointer presses dismiss the model selector popup")
+    void handleWebTranscriptAction_whenWebViewPointerPressed_hidesModelPopup() throws Exception {
+        ModelSelectorPopup popup = mock(ModelSelectorPopup.class);
+        runOnEdt(() -> setField(subject, "modelPopup", popup));
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "webview-pointer-down", -1, ""));
+        flushEdt();
+
+        verify(popup).hidePopup();
     }
 
     @Test

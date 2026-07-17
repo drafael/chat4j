@@ -275,6 +275,40 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
+    @DisplayName("WebView mouse presses dispatch a payload-free pointer action through the transcript bridge")
+    void transcriptActionsScript_whenWebViewReceivesMouseDown_dispatchesPointerAction() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.eval("js", """
+                    var documentListeners = {};
+                    var documentListenerCapture = {};
+                    var bridgePayloads = [];
+                    var window = {
+                        addEventListener: function () {},
+                        chat4jTranscriptAction: function (payload) {
+                            bridgePayloads.push(payload);
+                        }
+                    };
+                    var document = {
+                        addEventListener: function (type, listener, capture) {
+                            documentListeners[type] = listener;
+                            documentListenerCapture[type] = capture;
+                        }
+                    };
+                    """);
+            context.eval("js", TranscriptBrowserAssets.transcriptActionsScript());
+
+            context.eval("js", "window.chat4jDispatchTranscriptAction('copy-text', -1, '');");
+            context.eval("js", "documentListeners.mousedown({});");
+            String rawPayload = context.eval("js", "bridgePayloads[0]").asString();
+            TranscriptCallbackPayloads.TranscriptAction action = TranscriptCallbackPayloads.transcriptAction(rawPayload);
+
+            assertThat(context.eval("js", "documentListenerCapture.mousedown").asBoolean()).isTrue();
+            assertThat(context.eval("js", "bridgePayloads.length").asInt()).isOne();
+            assertThat(action).isEqualTo(new TranscriptCallbackPayloads.TranscriptAction("webview-pointer-down", -1, ""));
+        }
+    }
+
+    @Test
     @DisplayName("Callback payload parsing supports WebView callback shapes")
     void transcriptCallbackPayloads_whenCallbackShapesDiffer_extractsValues() {
         assertThat(TranscriptCallbackPayloads.callbackArg("{\"args\":[\"https://example.test\"]}"))
