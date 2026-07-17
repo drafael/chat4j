@@ -23,7 +23,7 @@
         <commons-text.version>1.15.0</commons-text.version>
         <jackson.version>2.22.1</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
-        <jsoup.version>1.21.2</jsoup.version>
+        <jsoup.version>1.22.2</jsoup.version>
         <pdfbox.version>3.0.8</pdfbox.version>
         <jlayer.version>1.0.1</jlayer.version>
         <swingwebview.version>1.0.11</swingwebview.version>
