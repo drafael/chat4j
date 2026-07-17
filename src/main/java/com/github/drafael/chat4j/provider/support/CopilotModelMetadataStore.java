@@ -4,17 +4,26 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.persistence.CacheRootHandle;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
+import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -27,18 +36,30 @@ public class CopilotModelMetadataStore {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String DEFAULT_COPILOT_BASE_URL = "https://api.githubcopilot.com";
     private static final String STORE_FILE_NAME = "github-copilot-model-metadata.json";
+    private static final int MAX_STORE_BYTES = 8 * 1024 * 1024;
+    private static final CopilotModelMetadataStore DEFAULT_STORE = new CopilotModelMetadataStore(
+            CacheRootHandle.from(StoragePaths.defaultPaths())
+    );
 
-    private final Path storeFile;
+    private final CacheRootHandle cacheRoot;
     private final Object ioLock = new Object();
-    private final AtomicBoolean loaded = new AtomicBoolean(false);
+    private volatile boolean loaded;
     private final ConcurrentHashMap<String, Map<String, List<String>>> supportedEndpointsByBaseUrl = new ConcurrentHashMap<>();
 
-    public CopilotModelMetadataStore() {
-        this(StoragePaths.defaultPaths().modelsCacheDirectory());
+    public static CopilotModelMetadataStore sharedDefault() {
+        return DEFAULT_STORE;
     }
 
-    public CopilotModelMetadataStore(Path cacheDirectory) {
-        this.storeFile = cacheDirectory.resolve(STORE_FILE_NAME);
+    public CopilotModelMetadataStore(@NonNull CacheRootHandle cacheRoot) {
+        this.cacheRoot = cacheRoot;
+    }
+
+    public CopilotModelMetadataStore(@NonNull Path cacheDirectory) {
+        this(CacheRootHandle.of(cacheDirectory));
+    }
+
+    public void prime() {
+        loadIfNecessary();
     }
 
     public List<String> supportedEndpoints(String baseUrl, String modelId) {
@@ -62,7 +83,7 @@ public class CopilotModelMetadataStore {
 
         synchronized (ioLock) {
             Map<String, List<String>> mergedSupportedEndpoints = new LinkedHashMap<>(
-                    supportedEndpointsByBaseUrl.getOrDefault(normalizedBaseUrl, emptyMapCopy())
+                    supportedEndpointsByBaseUrl.getOrDefault(normalizedBaseUrl, emptyMap())
             );
 
             if (models != null) {
@@ -91,22 +112,22 @@ public class CopilotModelMetadataStore {
     }
 
     private void loadIfNecessary() {
-        if (loaded.get()) {
+        if (loaded) {
             return;
         }
 
         synchronized (ioLock) {
-            if (loaded.get()) {
-                return;
-            }
-
-            if (!Files.exists(storeFile)) {
-                loaded.set(true);
+            if (loaded) {
                 return;
             }
 
             try {
-                JsonNode root = JSON.readTree(Files.readString(storeFile, StandardCharsets.UTF_8));
+                Optional<Path> cacheFile = cacheFile();
+                if (cacheFile.isEmpty() || Files.notExists(cacheFile.get(), LinkOption.NOFOLLOW_LINKS)
+                        || !cacheRoot.isSafeRegularFile(cacheFile.get())) {
+                    return;
+                }
+                JsonNode root = JSON.readTree(readBoundedJson(cacheFile.get()));
                 JsonNode catalogs = root.path("catalogsByBaseUrl");
                 if (catalogs.isObject()) {
                     catalogs.fields().forEachRemaining(entry -> {
@@ -117,15 +138,38 @@ public class CopilotModelMetadataStore {
             } catch (Exception e) {
                 supportedEndpointsByBaseUrl.clear();
             } finally {
-                loaded.set(true);
+                loaded = true;
             }
+        }
+    }
+
+    private Optional<Path> cacheFile() {
+        return cacheRoot.directChild(STORE_FILE_NAME);
+    }
+
+    private String readBoundedJson(Path file) throws IOException {
+        byte[] bytes;
+        try (InputStream input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            bytes = input.readNBytes(MAX_STORE_BYTES + 1);
+            if (bytes.length > MAX_STORE_BYTES) {
+                throw new IOException("Copilot metadata cache exceeds 8 MiB");
+            }
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            throw new IOException("Copilot metadata cache is not valid UTF-8", e);
         }
     }
 
     private Map<String, List<String>> readCatalog(JsonNode catalogNode) {
         JsonNode models = catalogNode.path("models");
         if (!models.isObject()) {
-            return emptyMapCopy();
+            return emptyMap();
         }
 
         Map<String, List<String>> supportedEndpointsByModel = new LinkedHashMap<>();
@@ -150,8 +194,15 @@ public class CopilotModelMetadataStore {
     }
 
     private void persistUnderLock() {
+        Optional<Path> cacheFile = cacheFile();
+        if (cacheFile.isEmpty()) {
+            return;
+        }
         try {
-            Files.createDirectories(storeFile.getParent());
+            Path file = cacheFile.get();
+            if (Files.exists(file, LinkOption.NOFOLLOW_LINKS) && !cacheRoot.isSafeRegularFile(file)) {
+                return;
+            }
             ObjectNode root = JSON.createObjectNode();
             ObjectNode catalogs = root.putObject("catalogsByBaseUrl");
             supportedEndpointsByBaseUrl.forEach((baseUrl, models) -> {
@@ -162,12 +213,20 @@ public class CopilotModelMetadataStore {
                     sanitizeEndpoints(supportedEndpoints).forEach(endpointsNode::add);
                 });
             });
-            Files.writeString(
-                    storeFile,
-                    JSON.writerWithDefaultPrettyPrinter().writeValueAsString(root),
-                    StandardCharsets.UTF_8
-            );
-        } catch (IOException ignored) {
+            byte[] payload = JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(root);
+            if (payload.length > MAX_STORE_BYTES) {
+                return;
+            }
+            try (OutputStream output = Files.newOutputStream(
+                    file,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE,
+                    LinkOption.NOFOLLOW_LINKS
+            )) {
+                output.write(payload);
+            }
+        } catch (IOException | SecurityException ignored) {
             // Metadata cache write failure is non-critical.
         }
     }
@@ -186,10 +245,6 @@ public class CopilotModelMetadataStore {
                 .filter(StringUtils::isNotBlank)
                 .distinct()
                 .toList();
-    }
-
-    private Map<String, List<String>> emptyMapCopy() {
-        return emptyMap();
     }
 
     public record ModelMetadata(String modelId, List<String> supportedEndpoints) {

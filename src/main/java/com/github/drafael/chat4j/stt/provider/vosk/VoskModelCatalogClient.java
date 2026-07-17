@@ -1,16 +1,22 @@
 package com.github.drafael.chat4j.stt.provider.vosk;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.persistence.catalog.CatalogJsonStructure;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
@@ -19,8 +25,16 @@ public class VoskModelCatalogClient {
     public static final URI CATALOG_URI = URI.create("https://alphacephei.com/vosk/models/model-list.json");
     private static final int MAX_REDIRECTS = 3;
     private static final long MAX_CATALOG_BYTES = 2L * 1024L * 1024L;
+    private static final int MAX_CATALOG_ITEMS = 10_000;
+    private static final int MAX_CATALOG_TOKENS = 500_000;
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
+            .streamReadConstraints(StreamReadConstraints.builder()
+                    .maxNestingDepth(100)
+                    .maxStringLength(64 * 1024)
+                    .maxNumberLength(1_000)
+                    .build())
+            .build());
 
     private final HttpClient httpClient;
 
@@ -37,6 +51,9 @@ public class VoskModelCatalogClient {
     }
 
     public List<VoskModelCatalogEntry> parse(String json) throws Exception {
+        if (!CatalogJsonStructure.isBoundedArray(OBJECT_MAPPER, json, MAX_CATALOG_ITEMS, MAX_CATALOG_TOKENS)) {
+            throw new SpeechToTextException("Vosk catalog exceeds structural limits.");
+        }
         List<VoskModelCatalogEntry> entries = OBJECT_MAPPER.readValue(json, new TypeReference<>() {
         });
         return entries.stream()
@@ -110,7 +127,15 @@ public class VoskModelCatalogClient {
                 }
                 output.write(buffer, 0, read);
             }
-            return output.toString(StandardCharsets.UTF_8);
+            try {
+                return StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        .decode(ByteBuffer.wrap(output.toByteArray()))
+                        .toString();
+            } catch (CharacterCodingException e) {
+                throw new SpeechToTextException("Vosk catalog response was not valid UTF-8.", e);
+            }
         }
     }
 }

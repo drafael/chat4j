@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
@@ -582,7 +583,8 @@ class SpeechToTextPanelTest {
         var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider))));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
-        waitUntil(() -> repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "").contains("scribe_v2"));
+        waitUntil(() -> new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID).stream()
+                .anyMatch(model -> "scribe_v2".equals(model.id())));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.elevenlabs.io");
@@ -627,14 +629,20 @@ class SpeechToTextPanelTest {
             assertThat(provider.firstFinished.await(2, TimeUnit.SECONDS)).isTrue();
             waitUntil(() -> provider.calls.get() >= 1);
 
-            assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).doesNotContain("stale-scribe");
+            assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
+                    .extracting(SpeechToTextCatalogItem::id)
+                    .doesNotContain("stale-scribe");
             assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
 
             runOnEdt(() -> ((ApiTokenFieldPanel) fieldValue(subject, "tokenField")).reloadAfterPeerCredentialChanged());
 
             assertThat(provider.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            waitUntil(() -> repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "").contains("fresh-scribe"));
-            assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).doesNotContain("stale-scribe");
+            waitUntil(() -> new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID).stream()
+                    .anyMatch(model -> "fresh-scribe".equals(model.id())));
+            assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
+                    .extracting(SpeechToTextCatalogItem::id)
+                    .contains("fresh-scribe")
+                    .doesNotContain("stale-scribe");
         } finally {
             provider.releaseFirst.countDown();
             runOnEdt(subject::removeNotify);
@@ -672,6 +680,8 @@ class SpeechToTextPanelTest {
         var cached = List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"), SpeechToTextCatalogItem.of("scribe_v1", "Scribe v1 (deprecated)"));
         new SpeechToTextCatalogStore(repo).saveModels(ElevenLabsSpeechToTextProvider.ID, cached);
         repo.put(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "2000-01-01T00:00:00Z");
+        CatalogSnapshotStore.forSettings(repo).cleanupOrphans();
+        CatalogSnapshotStore.forSettings(repo).preloadActiveCatalogs();
         String originalModels = repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "");
         String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "");
         var provider = new FailingElevenLabsProvider();
@@ -696,7 +706,8 @@ class SpeechToTextPanelTest {
         var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(provider))));
 
         assertThat(provider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
-        waitUntil(() -> repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "").contains("nova-3"));
+        waitUntil(() -> new SpeechToTextCatalogStore(repo).cachedModels(DeepgramSpeechToTextProvider.ID).stream()
+                .anyMatch(model -> "nova-3".equals(model.id())));
         SwingUtilities.invokeAndWait(() -> {
         });
         assertThat(provider.context.get().baseUri()).hasToString("https://api.deepgram.com");
@@ -735,6 +746,8 @@ class SpeechToTextPanelTest {
         var cached = List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"), SpeechToTextCatalogItem.of("nova-2-general", "Deepgram Nova 2 General"));
         new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, cached);
         repo.put(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "2000-01-01T00:00:00Z");
+        CatalogSnapshotStore.forSettings(repo).cleanupOrphans();
+        CatalogSnapshotStore.forSettings(repo).preloadActiveCatalogs();
         String originalModels = repo.get(sttCatalogModelsKey(DeepgramSpeechToTextProvider.ID), "");
         String originalUpdatedAt = repo.get(sttCatalogUpdatedAtKey(DeepgramSpeechToTextProvider.ID), "");
         var provider = new FailingDeepgramProvider();
@@ -876,6 +889,7 @@ class SpeechToTextPanelTest {
     void refreshControlsFromSettings_whenProviderSupportsLocalModels_showsLocalModelList() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, "local-test");
+        new SpeechToTextCatalogStore(repo).saveModels("local-test", emptyList());
         Path defaultModels = tempDir.resolve("default-models");
         try (
                 var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp"));
@@ -914,7 +928,7 @@ class SpeechToTextPanelTest {
     }
 
     private String sttCatalogModelsKey(String providerId) {
-        return "chat4j.stt.catalog.%s.models".formatted(providerId);
+        return "chat4j.stt.catalog.%s.modelsFile".formatted(providerId);
     }
 
     private String sttCatalogUpdatedAtKey(String providerId) {

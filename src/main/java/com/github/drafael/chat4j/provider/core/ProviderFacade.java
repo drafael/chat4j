@@ -26,7 +26,7 @@ public class ProviderFacade {
                 credentialStrategy,
                 new CopilotAuthResolver(),
                 new CodexAuthResolver(),
-                new CopilotModelMetadataStore()
+                CopilotModelMetadataStore.sharedDefault()
         );
     }
 

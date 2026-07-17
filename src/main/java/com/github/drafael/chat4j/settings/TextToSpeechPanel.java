@@ -82,6 +82,16 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
+        this(settingsRepo, providerRegistry, tokenFieldRegistry, credentialChangeListener, true);
+    }
+
+    TextToSpeechPanel(
+            SettingsRepository settingsRepo,
+            TextToSpeechProviderRegistry providerRegistry,
+            ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener,
+            boolean automaticCatalogRefresh
+    ) {
         super(settingsRepo);
         this.providerRegistry = providerRegistry;
         this.textToSpeechSettings = new TextToSpeechSettings(settingsRepo, providerRegistry);
@@ -90,7 +100,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
-        buildUi();
+        buildUi(automaticCatalogRefresh);
     }
 
     @Override
@@ -108,7 +118,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         super.removeNotify();
     }
 
-    private void buildUi() {
+    private void buildUi(boolean automaticCatalogRefresh) {
         JPanel form = createFormPanel("Text to Speech");
         GridBagConstraints gbc = createFormConstraints();
         int row = 0;
@@ -151,7 +161,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         addVerticalSpacer(form, gbc, row);
 
         reloadProviderOptions();
-        refreshControlsFromSettings(true);
+        refreshControlsFromSettings(automaticCatalogRefresh);
     }
 
     private void reloadProviderOptions() {
@@ -176,8 +186,13 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
             if (!selection.enabled()) {
                 updateCatalogCombos(emptyList(), emptyList());
             } else {
-                List<TextToSpeechCatalogItem> models = catalogStore.models(selection.provider(), selection.model());
-                List<TextToSpeechCatalogItem> voices = voicesForModel(selection, catalogStore.voices(selection.provider(), selection.voice()));
+                TextToSpeechCatalogStore.Catalogs catalogs = catalogStore.catalogs(
+                        selection.provider(),
+                        selection.model(),
+                        selection.voice()
+                );
+                List<TextToSpeechCatalogItem> models = catalogs.models();
+                List<TextToSpeechCatalogItem> voices = voicesForModel(selection, catalogs.voices());
                 updateCatalogCombos(models, voices);
                 selectCatalogItem(modelComboBox, selection.model());
                 saveFirstVoiceWhenSelectionIsUnavailable(selection, voices);

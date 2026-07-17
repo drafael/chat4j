@@ -27,6 +27,7 @@ import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionDispatchCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionEventDispatchCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionFlowCoordinator;
@@ -234,6 +235,8 @@ public class MainFrame extends JFrame {
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
+    private final SpeechToTextCatalogStore sttCatalogStore;
+    private final TextToSpeechCatalogStore ttsCatalogStore;
     private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
     private final ProviderModelsResolver providerModelsResolver;
     private final ProviderFavoritesResolver providerFavoritesResolver;
@@ -408,13 +411,38 @@ public class MainFrame extends JFrame {
         @NonNull ModelFavoritesService modelFavoritesService,
         @NonNull StoragePaths storagePaths
     ) {
+        this(
+                conversationRepo,
+                settingsRepo,
+                modelCacheService,
+                modelFavoritesService,
+                storagePaths,
+                CatalogSnapshotStore.forSettings(settingsRepo)
+        );
+    }
+
+    public MainFrame(
+        @NonNull ConversationRepository conversationRepo,
+        @NonNull SettingsRepository settingsRepo,
+        @NonNull ProviderModelCacheService modelCacheService,
+        @NonNull ModelFavoritesService modelFavoritesService,
+        @NonNull StoragePaths storagePaths,
+        @NonNull CatalogSnapshotStore catalogSnapshots
+    ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
         this.sttModelsDirectory = storagePaths.sttModelsDirectory();
         this.sttTempDirectory = storagePaths.sttTempDirectory();
-        this.voskModelManagementService = new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory);
+        this.voskModelManagementService = new VoskModelManagementService(
+                settingsRepo,
+                sttModelsDirectory,
+                sttTempDirectory,
+                catalogSnapshots
+        );
         this.whisperModelManagementService = new WhisperModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory);
+        this.sttCatalogStore = new SpeechToTextCatalogStore(catalogSnapshots);
+        this.ttsCatalogStore = new TextToSpeechCatalogStore(catalogSnapshots);
         this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
         if (chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.SYSTEM
                 || chatWebViewRuntimeStatus.activeEngine() == WebViewEngine.JCEF
@@ -1437,9 +1465,7 @@ public class MainFrame extends JFrame {
     private void invalidateCredentialBackedCaches(ApiTokenChange change) {
         CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(change.canonicalTokenId());
         effect.chatProviders().forEach(modelCacheService::invalidate);
-        SpeechToTextCatalogStore sttCatalogStore = new SpeechToTextCatalogStore(settingsRepo);
         effect.speechToTextProviderIds().forEach(sttCatalogStore::invalidate);
-        TextToSpeechCatalogStore ttsCatalogStore = new TextToSpeechCatalogStore(settingsRepo);
         effect.textToSpeechProviderIds().forEach(ttsCatalogStore::invalidate);
     }
 

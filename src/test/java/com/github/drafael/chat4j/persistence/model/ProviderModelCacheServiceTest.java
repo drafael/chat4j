@@ -2,12 +2,15 @@ package com.github.drafael.chat4j.persistence.model;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -276,7 +280,7 @@ class ProviderModelCacheServiceTest {
     @Test
     @DisplayName("Malformed model cache scope metadata is ignored")
     void readCacheEntry_whenScopeMetadataIsMalformed_returnsEmpty() throws Exception {
-        Path cacheDir = tempDir.resolve("chat4j").resolve("models-cache");
+        Path cacheDir = tempDir.resolve("chat4j").resolve("cache");
         Files.createDirectories(cacheDir);
         Files.writeString(cacheDir.resolve("OpenAI.txt"), """
                 2026-04-10T10:00:00Z
@@ -286,6 +290,25 @@ class ProviderModelCacheServiceTest {
         var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
 
         assertThat(subject.readCacheEntry("OpenAI")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Malformed model cache scope input is rejected instead of being replaced")
+    void writeCache_whenScopeContainsMalformedSurrogate_rejectsSnapshot() throws Exception {
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+
+        boolean written = subject.writeCache(
+                "OpenAI",
+                Instant.parse("2026-04-10T10:00:00Z"),
+                "broken-\uD800",
+                List.of("model")
+        );
+
+        assertThat(written).isFalse();
+        assertThat(subject.readCacheEntry("OpenAI")).isEmpty();
+        try (var entries = Files.list(tempDir.resolve("chat4j").resolve("cache"))) {
+            assertThat(entries.toList()).isEmpty();
+        }
     }
 
     @Test
@@ -342,9 +365,99 @@ class ProviderModelCacheServiceTest {
     }
 
     @Test
+    @DisplayName("A provider cache symlink is rejected without replacing it")
+    void writeCache_whenTargetIsSymlink_preservesSymlinkAndExternalTarget() throws Exception {
+        Path cacheDirectory = tempDir.resolve("chat4j").resolve("cache");
+        Files.createDirectories(cacheDirectory);
+        Path external = tempDir.resolve("external.txt");
+        Files.writeString(external, "external");
+        Path cacheFile = cacheDirectory.resolve("OpenAI.txt");
+        createSymlinkOrSkip(cacheFile, external);
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+
+        boolean written = subject.writeCache(
+                "OpenAI",
+                Instant.parse("2026-04-10T10:00:00Z"),
+                "",
+                List.of("model")
+        );
+
+        assertThat(written).isFalse();
+        assertThat(cacheFile).isSymbolicLink();
+        assertThat(external).hasContent("external");
+    }
+
+    @Test
+    @DisplayName("Deleting an unsafe provider cache reports failure and preserves its target")
+    void deleteCache_whenTargetIsSymlink_returnsFalseAndPreservesTarget() throws Exception {
+        Path cacheDirectory = tempDir.resolve("chat4j").resolve("cache");
+        Files.createDirectories(cacheDirectory);
+        Path external = tempDir.resolve("external-delete.txt");
+        Files.writeString(external, "external");
+        Path cacheFile = cacheDirectory.resolve("OpenAI.txt");
+        createSymlinkOrSkip(cacheFile, external);
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+
+        assertThat(subject.deleteCache("OpenAI")).isFalse();
+        assertThat(cacheFile).isSymbolicLink();
+        assertThat(external).hasContent("external");
+    }
+
+    @Test
+    @DisplayName("A provider cache at exactly eight MiB can be written and read")
+    void writeCache_whenPayloadIsExactlyReadLimit_roundTripsSnapshot() throws Exception {
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+        Instant fetchedAt = Instant.parse("2026-04-10T10:00:00Z");
+        String lineSeparator = System.lineSeparator();
+        int fixedBytes = "%s%s# scope-v1 %s%s"
+                .formatted(fetchedAt, lineSeparator, lineSeparator, lineSeparator)
+                .getBytes(StandardCharsets.UTF_8)
+                .length;
+        String model = "a".repeat((8 * 1024 * 1024) - fixedBytes);
+
+        assertThat(subject.writeCache("OpenAI", fetchedAt, "", List.of(model))).isTrue();
+
+        Path cacheFile = tempDir.resolve("chat4j").resolve("cache").resolve("OpenAI.txt");
+        assertThat(Files.size(cacheFile)).isEqualTo(8 * 1024 * 1024);
+        assertThat(subject.readCacheEntry("OpenAI"))
+                .hasValueSatisfying(snapshot -> assertThat(snapshot.models()).containsExactly(model));
+    }
+
+    @Test
+    @DisplayName("Malformed UTF-8 provider caches are rejected")
+    void readCacheEntry_whenPayloadContainsMalformedUtf8_returnsEmpty() throws Exception {
+        Path cacheDirectory = tempDir.resolve("chat4j").resolve("cache");
+        Files.createDirectories(cacheDirectory);
+        byte[] timestamp = "2026-04-10T10:00:00Z\n".getBytes(StandardCharsets.UTF_8);
+        byte[] malformed = Arrays.copyOf(timestamp, timestamp.length + 2);
+        malformed[timestamp.length] = (byte) 0xc3;
+        malformed[timestamp.length + 1] = 0x28;
+        Files.write(cacheDirectory.resolve("OpenAI.txt"), malformed);
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+
+        assertThat(subject.readCacheEntry("OpenAI")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Oversized provider caches are rejected before publication")
+    void writeCache_whenPayloadExceedsReadLimit_returnsFalse() {
+        var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
+
+        boolean written = subject.writeCache(
+                "OpenAI",
+                Instant.parse("2026-04-10T10:00:00Z"),
+                "",
+                List.of("x".repeat(8 * 1024 * 1024))
+        );
+
+        assertThat(written).isFalse();
+        assertThat(subject.readCacheEntry("OpenAI")).isEmpty();
+    }
+
+    @Test
     @DisplayName("Legacy non-Codex invalidation markers remain readable")
     void readCacheEntry_whenLegacyCacheContainsOnlyEpochTimestamp_preservesInvalidation() throws Exception {
-        Path cacheDir = tempDir.resolve("chat4j").resolve("models-cache");
+        Path cacheDir = tempDir.resolve("chat4j").resolve("cache");
         Files.createDirectories(cacheDir);
         Files.writeString(cacheDir.resolve("OpenAI.txt"), "%s%n".formatted(Instant.EPOCH));
         var subject = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
@@ -360,7 +473,7 @@ class ProviderModelCacheServiceTest {
     @Test
     @DisplayName("Legacy OpenAI Codex caches are ignored because they mixed remote and local models")
     void readCacheEntry_whenCodexCacheHasNoRemoteMarker_returnsEmpty() throws Exception {
-        Path cacheDir = tempDir.resolve("chat4j").resolve("models-cache");
+        Path cacheDir = tempDir.resolve("chat4j").resolve("cache");
         Files.createDirectories(cacheDir);
         Files.writeString(cacheDir.resolve("OpenAI_Codex.txt"), """
                 2026-04-10T10:00:00Z
@@ -374,7 +487,7 @@ class ProviderModelCacheServiceTest {
     @Test
     @DisplayName("Legacy OpenAI Codex invalidation markers remain invalidated")
     void readCacheEntry_whenLegacyCodexCacheWasInvalidated_preservesInvalidation() throws Exception {
-        Path cacheDir = tempDir.resolve("chat4j").resolve("models-cache");
+        Path cacheDir = tempDir.resolve("chat4j").resolve("cache");
         Files.createDirectories(cacheDir);
         Files.writeString(cacheDir.resolve("OpenAI_Codex.txt"), "%s%n".formatted(Instant.EPOCH));
         var cache = new ProviderModelCache(StoragePaths.ofConfigHome(tempDir));
@@ -813,6 +926,14 @@ class ProviderModelCacheServiceTest {
 
     private static CodexLocalModelCache.Snapshot codexSnapshot(String... modelIds) {
         return new CodexLocalModelCache.Snapshot(List.of(modelIds), emptyList());
+    }
+
+    private static void createSymlinkOrSkip(Path link, Path target) throws Exception {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (IOException | UnsupportedOperationException | SecurityException e) {
+            Assumptions.abort("Symbolic links are unavailable: %s".formatted(e.getMessage()));
+        }
     }
 
     private static Clock fixedClock(String instant) {

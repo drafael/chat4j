@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.bootstrap;
 
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
@@ -14,6 +15,7 @@ public record AppServices(
     SettingsRepository settingsRepo,
     ProviderModelCacheService providerModelCacheService,
     ModelFavoritesService modelFavoritesService,
-    StoragePaths storagePaths
+    StoragePaths storagePaths,
+    CatalogSnapshotStore catalogSnapshots
 ) {
 }

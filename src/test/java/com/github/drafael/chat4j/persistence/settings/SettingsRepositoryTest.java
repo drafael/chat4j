@@ -38,6 +38,28 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    @DisplayName("Bounded prefix discovery rejects incomplete settings images")
+    void findByPrefix_whenMatchingEntriesExceedLimit_rejectsPartialResult() {
+        var subject = new SettingsRepository(tempDir.resolve("chat4j.properties"));
+        subject.put("chat4j.catalog.first", "one");
+        subject.put("chat4j.catalog.second", "two");
+
+        assertThatThrownBy(() -> subject.findByPrefix("chat4j.catalog.", 1))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("too many entries");
+    }
+
+    @Test
+    @DisplayName("Prefix batch diagnostics never expose settings values")
+    void updatePrefixBatch_whenValuesAreSensitive_usesSanitizedToString() {
+        var subject = new SettingsRepository(tempDir.resolve("chat4j.properties"));
+        subject.put("chat4j.example", "secret-value");
+
+        subject.updatePrefixBatch("chat4j.", 10, batch ->
+                assertThat(batch.toString()).isEqualTo("PrefixBatchUpdate[valueCount=1]"));
+    }
+
+    @Test
     @DisplayName("Model favorites persisted in settings are restored after service restart")
     void modelFavoritesService_whenRestarted_restoresPersistedFavorites() {
         Path settingsFile = tempDir.resolve("chat4j.properties");

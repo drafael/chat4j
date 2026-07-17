@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.stt;
 
+import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
 import com.github.drafael.chat4j.stt.provider.JavaNetSttHttpTransport;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
@@ -20,6 +21,7 @@ public class SpeechToTextProviderRegistry {
 
     public SpeechToTextProviderRegistry(@NonNull List<SpeechToTextProvider> providers) {
         this.providers = List.copyOf(providers);
+        SpeechCatalogKeySchema.validateUniqueProviderSlugs(this.providers.stream().map(SpeechToTextProvider::id).toList());
     }
 
     public static SpeechToTextProviderRegistry createDefault() {

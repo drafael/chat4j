@@ -20,7 +20,7 @@ final class ProviderCatalog {
 
     private static final String GOOGLE_AI_ENV_VARS = "GEMINI_API_KEY|GOOGLEAI_API_KEY";
 
-    private static final CopilotModelMetadataStore COPILOT_MODEL_METADATA_STORE = new CopilotModelMetadataStore();
+    private static final CopilotModelMetadataStore COPILOT_MODEL_METADATA_STORE = CopilotModelMetadataStore.sharedDefault();
     private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(
             new EnvVarCredentialStrategy(),
             COPILOT_MODEL_METADATA_STORE

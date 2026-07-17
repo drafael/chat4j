@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
 import com.github.drafael.chat4j.tts.provider.JavaNetTtsHttpTransport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
@@ -18,6 +19,7 @@ public class TextToSpeechProviderRegistry {
 
     public TextToSpeechProviderRegistry(List<TextToSpeechProvider> providers) {
         this.providers = List.copyOf(providers == null ? emptyList() : providers);
+        SpeechCatalogKeySchema.validateUniqueProviderSlugs(this.providers.stream().map(TextToSpeechProvider::id).toList());
     }
 
     public static TextToSpeechProviderRegistry createDefault() {

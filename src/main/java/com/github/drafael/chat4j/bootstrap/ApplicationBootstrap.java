@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.persistence.db.PersistenceDataSourceFactory;
 import com.github.drafael.chat4j.persistence.db.SqlDialect;
 import com.github.drafael.chat4j.persistence.db.SqlDialects;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
+import com.github.drafael.chat4j.persistence.CacheStorageInitializer;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.migration.PersistenceBackendMigrationService;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
@@ -17,6 +18,7 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettings;
 import java.util.concurrent.CompletableFuture;
@@ -97,8 +99,10 @@ public final class ApplicationBootstrap {
     private AppServices initializeStorage() {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
         SettingsRepository settingsRepo = new SettingsRepository(storagePaths);
+        CacheStorageInitializer.CacheStorage cacheStorage = new CacheStorageInitializer(storagePaths, settingsRepo).initialize();
+        CopilotModelMetadataStore.sharedDefault().prime();
         ProviderModelCacheService providerModelCacheService =
-                new ProviderModelCacheService(new ProviderModelCache(storagePaths));
+                new ProviderModelCacheService(new ProviderModelCache(cacheStorage.root()));
         ModelFavoritesService modelFavoritesService = new ModelFavoritesService(settingsRepo);
 
         DataSource dataSource;
@@ -128,7 +132,14 @@ public final class ApplicationBootstrap {
         modelFavoritesService.primeFromSettings();
         log.info("Storage initialized and model cache primed");
 
-        return new AppServices(conversationRepo, settingsRepo, providerModelCacheService, modelFavoritesService, storagePaths);
+        return new AppServices(
+                conversationRepo,
+                settingsRepo,
+                providerModelCacheService,
+                modelFavoritesService,
+                storagePaths,
+                cacheStorage.snapshots()
+        );
     }
 
     void applySavedAppearance(SettingsRepository settingsRepo) {
@@ -154,7 +165,8 @@ public final class ApplicationBootstrap {
                 services.settingsRepo(),
                 services.providerModelCacheService(),
                 services.modelFavoritesService(),
-                services.storagePaths());
+                services.storagePaths(),
+                services.catalogSnapshots());
             frame.setVisible(true);
         });
     }

@@ -20,8 +20,8 @@ class TextToSpeechProviderSettingsTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Known TTS provider settings preserve legacy model, voice, and catalog keys")
-    void knownProviderSettings_whenSaved_useLegacyKeys() {
+    @DisplayName("Known TTS provider settings preserve selected model and voice keys")
+    void knownProviderSettings_whenSaved_useSelectionKeys() {
         var repo = repo("known.properties");
         var subject = new GroqTextToSpeechSettings(repo);
         var fallbackModel = new TextToSpeechCatalogItem("fallback-model", "Fallback Model", "fallback description");
@@ -36,9 +36,6 @@ class TextToSpeechProviderSettingsTest {
         assertThat(repo.get("chat4j.tts.groq.voice.label")).contains("Arista");
         assertThat(subject.selectedModel(fallbackModel).description()).isEqualTo("fallback description");
         assertThat(subject.selectedVoice(fallbackVoice).description()).isEqualTo("voice description");
-        assertThat(subject.catalogModelsKey()).isEqualTo("chat4j.tts.catalog.groq.models");
-        assertThat(subject.catalogVoicesKey()).isEqualTo("chat4j.tts.catalog.groq.voices");
-        assertThat(subject.catalogUpdatedAtKey()).isEqualTo("chat4j.tts.catalog.groq.updatedAt");
     }
 
     @Test
@@ -81,8 +78,6 @@ class TextToSpeechProviderSettingsTest {
 
         assertThat(repo.get("chat4j.tts.custom-provider.model.id")).contains("custom-model");
         assertThat(repo.get("chat4j.tts.unknown.voice.id")).contains("custom-voice");
-        assertThat(mixedCase.catalogModelsKey()).isEqualTo("chat4j.tts.catalog.custom-provider.models");
-        assertThat(blank.catalogVoicesKey()).isEqualTo("chat4j.tts.catalog.unknown.voices");
     }
 
     private SettingsRepository repo(String fileName) {

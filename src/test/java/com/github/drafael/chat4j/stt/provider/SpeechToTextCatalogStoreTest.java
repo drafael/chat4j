@@ -1,16 +1,23 @@
 package com.github.drafael.chat4j.stt.provider;
 
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SpeechToTextCatalogStoreTest {
 
@@ -18,14 +25,16 @@ class SpeechToTextCatalogStoreTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Saved STT catalog uses legacy provider-scoped keys")
-    void saveModels_whenProviderKnown_writesLegacyKeys() throws Exception {
+    @DisplayName("Saved STT catalog uses immutable snapshot references")
+    void saveModels_whenProviderKnown_writesSnapshotReference() throws Exception {
         var repo = repo("save.properties");
         var subject = new SpeechToTextCatalogStore(repo);
 
         subject.saveModels(ElevenLabsSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2")));
 
-        assertThat(repo.get("chat4j.stt.catalog.elevenlabs.models", "")).contains("scribe_v2");
+        assertThat(repo.get("chat4j.stt.catalog.elevenlabs.modelsFile")).hasValueSatisfying(reference ->
+                assertThat(reference).startsWith("stt-elevenlabs-models-").endsWith(".json"));
+        assertThat(repo.get("chat4j.stt.catalog.elevenlabs.models")).isEmpty();
         assertThat(repo.get("chat4j.stt.catalog.elevenlabs.updatedAt")).isPresent();
         assertThat(subject.cachedModels(ElevenLabsSpeechToTextProvider.ID))
                 .extracting(SpeechToTextCatalogItem::id)
@@ -36,7 +45,7 @@ class SpeechToTextCatalogStoreTest {
     @DisplayName("Malformed STT catalog falls back to empty cached models")
     void cachedModels_whenJsonMalformed_returnsEmptyList() {
         var repo = repo("malformed.properties");
-        repo.put("chat4j.stt.catalog.deepgram.models", "not json");
+        repo.put("chat4j.stt.catalog.deepgram.modelsFile", "not json");
         var subject = new SpeechToTextCatalogStore(repo);
 
         assertThat(subject.cachedModels(DeepgramSpeechToTextProvider.ID)).isEmpty();
@@ -57,17 +66,59 @@ class SpeechToTextCatalogStoreTest {
     }
 
     @Test
+    @DisplayName("The exact 24-hour STT boundary remains valid and becomes stale one nanosecond later")
+    void stale_whenAtExactRefreshBoundary_preservesBoundaryBehavior() throws Exception {
+        var repo = repo("boundary.properties");
+        Instant updatedAt = Instant.parse("2026-07-15T00:00:00Z");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                DeepgramSpeechToTextProvider.ID,
+                List.of(SpeechToTextCatalogItem.of("nova-3", "Nova 3"))
+        );
+        repo.put("chat4j.stt.catalog.deepgram.updatedAt", updatedAt.toString());
+        CatalogSnapshotStore snapshots = CatalogSnapshotStore.forSettings(repo);
+        snapshots.cleanupOrphans();
+        snapshots.preloadActiveCatalogs();
+        var atBoundary = new SpeechToTextCatalogStore(
+                snapshots,
+                Clock.fixed(updatedAt.plusSeconds(24 * 60 * 60), ZoneOffset.UTC)
+        );
+        var afterBoundary = new SpeechToTextCatalogStore(
+                snapshots,
+                Clock.fixed(updatedAt.plusSeconds(24 * 60 * 60).plusNanos(1), ZoneOffset.UTC)
+        );
+
+        assertThat(atBoundary.stale(DeepgramSpeechToTextProvider.ID)).isFalse();
+        assertThat(afterBoundary.stale(DeepgramSpeechToTextProvider.ID)).isTrue();
+    }
+
+    @Test
+    @DisplayName("A recent timestamp is stale when its STT snapshot is malformed")
+    void stale_whenSnapshotIsMalformed_returnsTrue() throws Exception {
+        var repo = repo("malformed-snapshot.properties");
+        repo.put("chat4j.stt.catalog.deepgram.modelsFile", "stt-deepgram-models-12345678123412341234123456789012.json");
+        repo.put("chat4j.stt.catalog.deepgram.updatedAt", Instant.now().toString());
+        var cacheFile = tempDir.resolve("cache").resolve("stt-deepgram-models-12345678123412341234123456789012.json");
+        Files.createDirectories(cacheFile.getParent());
+        Files.writeString(cacheFile, "not json");
+        var subject = new SpeechToTextCatalogStore(repo);
+
+        assertThat(subject.stale(DeepgramSpeechToTextProvider.ID)).isTrue();
+    }
+
+    @Test
     @DisplayName("Deepgram cached alias models are normalized out of the displayed catalog")
     void models_whenDeepgramCachedModelsContainAliases_showsBundledCanonicalModelsOnly() throws Exception {
         var repo = repo("deepgram-aliases.properties");
-        repo.put(
-                "chat4j.stt.catalog.deepgram.models",
-                "[{\"id\":\"general\",\"label\":\"general\",\"description\":\"\"},"
-                        + "{\"id\":\"finance\",\"label\":\"finance\",\"description\":\"\"},"
-                        + "{\"id\":\"general-dQw4w9WgXcQ\",\"label\":\"general-dQw4w9WgXcQ\",\"description\":\"\"}]"
-        );
         var provider = new DeepgramSpeechToTextProvider((request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0]));
         var subject = new SpeechToTextCatalogStore(repo);
+        subject.saveModels(
+                DeepgramSpeechToTextProvider.ID,
+                List.of(
+                        SpeechToTextCatalogItem.of("general", "general"),
+                        SpeechToTextCatalogItem.of("finance", "finance"),
+                        SpeechToTextCatalogItem.of("general-dQw4w9WgXcQ", "general-dQw4w9WgXcQ")
+                )
+        );
 
         var models = subject.models(provider, SpeechToTextCatalogItem.of("general", "general"));
 
@@ -81,15 +132,34 @@ class SpeechToTextCatalogStoreTest {
         var repo = repo("invalidate.properties");
         var settings = SpeechToTextProviderSettingsFactory.forProvider(repo, DeepgramSpeechToTextProvider.ID);
         settings.saveModel(SpeechToTextCatalogItem.of("old-account-model", "Old Account Model"));
-        repo.put("chat4j.stt.catalog.deepgram.models", "[{\"id\":\"old-account-model\",\"label\":\"Old Account Model\",\"description\":\"\"}]");
+        repo.put("chat4j.stt.catalog.deepgram.modelsFile", "unsafe.json");
         repo.put("chat4j.stt.catalog.deepgram.updatedAt", "2026-07-11T00:00:00Z");
         var subject = new SpeechToTextCatalogStore(repo);
 
         subject.invalidate(DeepgramSpeechToTextProvider.ID);
 
-        assertThat(repo.get("chat4j.stt.catalog.deepgram.models")).isEmpty();
+        assertThat(repo.get("chat4j.stt.catalog.deepgram.modelsFile")).isEmpty();
         assertThat(repo.get("chat4j.stt.catalog.deepgram.updatedAt")).isEmpty();
         assertThat(settings.selectedModelId()).isBlank();
+    }
+
+    @Test
+    @DisplayName("Failed STT invalidation preserves both snapshot authority and selected model")
+    void invalidate_whenSettingsCommitFails_preservesExistingAuthority() {
+        var repo = new FailingBatchSettingsRepository(tempDir.resolve("failed-invalidation.properties"));
+        var settings = SpeechToTextProviderSettingsFactory.forProvider(repo, DeepgramSpeechToTextProvider.ID);
+        settings.saveModel(SpeechToTextCatalogItem.of("selected", "Selected"));
+        repo.put("chat4j.stt.catalog.deepgram.modelsFile", "stt-deepgram-models-77777777777777777777777777777777.json");
+        repo.put("chat4j.stt.catalog.deepgram.updatedAt", "2026-07-15T00:00:00Z");
+        repo.failBatchUpdates = true;
+        var subject = new SpeechToTextCatalogStore(repo);
+
+        assertThatThrownBy(() -> subject.invalidate(DeepgramSpeechToTextProvider.ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("invalidate");
+        assertThat(repo.get("chat4j.stt.catalog.deepgram.modelsFile")).isPresent();
+        assertThat(repo.get("chat4j.stt.catalog.deepgram.updatedAt")).isPresent();
+        assertThat(settings.selectedModelId()).isEqualTo("selected");
     }
 
     @Test
@@ -108,5 +178,21 @@ class SpeechToTextCatalogStoreTest {
 
     private SettingsRepository repo(String fileName) {
         return new SettingsRepository(tempDir.resolve(fileName));
+    }
+
+    private static final class FailingBatchSettingsRepository extends SettingsRepository {
+        private boolean failBatchUpdates;
+
+        private FailingBatchSettingsRepository(Path settingsFile) {
+            super(settingsFile);
+        }
+
+        @Override
+        public void updateBatch(Consumer<BatchUpdate> updates) {
+            if (failBatchUpdates) {
+                throw new IllegalStateException("simulated settings failure");
+            }
+            super.updateBatch(updates);
+        }
     }
 }

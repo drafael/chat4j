@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.stt.provider.vosk;
 
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
@@ -51,11 +52,20 @@ public class VoskModelManagementService implements AutoCloseable {
             @NonNull Path defaultModelDirectory,
             @NonNull Path tempDirectory
     ) {
+        this(settingsRepo, defaultModelDirectory, tempDirectory, CatalogSnapshotStore.forSettings(settingsRepo));
+    }
+
+    public VoskModelManagementService(
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull Path defaultModelDirectory,
+            @NonNull Path tempDirectory,
+            @NonNull CatalogSnapshotStore catalogSnapshots
+    ) {
         this.settings = new VoskSpeechToTextSettings(settingsRepo);
         this.modelDirectory = new SpeechToTextModelDirectory(settingsRepo, defaultModelDirectory);
         this.tempDirectory = tempDirectory;
         this.catalogClient = new VoskModelCatalogClient();
-        this.catalogCache = new VoskModelCatalogCache(settingsRepo);
+        this.catalogCache = new VoskModelCatalogCache(catalogSnapshots);
         this.bundledCatalogLoader = new VoskBundledCatalogLoader(catalogClient);
         this.validator = new VoskModelValidator();
         this.scanner = new VoskInstalledModelScanner(validator);
@@ -273,7 +283,9 @@ public class VoskModelManagementService implements AutoCloseable {
         if (online) {
             try {
                 String json = catalogClient.fetchRawJson(disposed::get);
-                catalogCache.saveRawJson(json);
+                if (!catalogCache.saveRawJson(json)) {
+                    throw new IllegalStateException("Unable to save Vosk catalog snapshot");
+                }
                 return catalogClient.parse(json);
             } catch (Exception ignored) {
             }

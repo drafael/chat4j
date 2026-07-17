@@ -1,76 +1,130 @@
 package com.github.drafael.chat4j.stt.provider;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.persistence.catalog.CatalogGroup;
+import com.github.drafael.chat4j.persistence.catalog.CatalogJsonStructure;
+import com.github.drafael.chat4j.persistence.catalog.CatalogPayload;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotRead;
+import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
+import com.github.drafael.chat4j.persistence.catalog.SnapshotSlot;
+import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
 
 import static java.util.Collections.emptyList;
 
 public class SpeechToTextCatalogStore {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int MAX_CATALOG_ITEMS = 10_000;
+    private static final int MAX_CATALOG_TOKENS = 500_000;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
+            .streamReadConstraints(StreamReadConstraints.builder()
+                    .maxNestingDepth(100)
+                    .maxStringLength(64 * 1024)
+                    .maxNumberLength(1_000)
+                    .build())
+            .build());
     private static final Duration STALE_AFTER = Duration.ofHours(24);
 
-    private final SettingsRepository settingsRepo;
+    private final CatalogSnapshotStore snapshots;
+    private final Clock clock;
 
-    public SpeechToTextCatalogStore(SettingsRepository settingsRepo) {
-        this.settingsRepo = settingsRepo;
+    public SpeechToTextCatalogStore(@NonNull SettingsRepository settingsRepo) {
+        this(CatalogSnapshotStore.forSettings(settingsRepo));
     }
 
-    public List<SpeechToTextCatalogItem> models(SpeechToTextProvider provider, SpeechToTextCatalogItem selected) {
-        if (AssemblyAiSpeechToTextProvider.ID.equals(provider.id())) {
-            return provider.bundledModels().stream()
-                    .filter(item -> AssemblyAiSpeechToTextProvider.isBundledModelId(item.id()))
-                    .toList();
-        }
-        return mergeWithSelected(
-                normalized(cachedModels(provider.id()), provider::normalizeModelSelection),
-                provider.bundledModels(),
-                normalized(selected, provider::normalizeModelSelection)
-        );
+    public SpeechToTextCatalogStore(@NonNull CatalogSnapshotStore snapshots) {
+        this(snapshots, Clock.systemUTC());
+    }
+
+    public SpeechToTextCatalogStore(@NonNull CatalogSnapshotStore snapshots, @NonNull Clock clock) {
+        this.snapshots = snapshots;
+        this.clock = clock;
+    }
+
+    public List<SpeechToTextCatalogItem> models(
+            @NonNull SpeechToTextProvider provider,
+            SpeechToTextCatalogItem selected
+    ) {
+        return catalog(provider, selected).models();
+    }
+
+    public CatalogState catalog(
+            @NonNull SpeechToTextProvider provider,
+            SpeechToTextCatalogItem selected
+    ) {
+        CatalogGroup group = SpeechCatalogKeySchema.sttModels(provider.id());
+        CatalogSnapshotRead snapshot = snapshots.read(group);
+        Optional<List<SpeechToTextCatalogItem>> cached = readCachedModels(snapshot, group.slots().getFirst());
+        List<SpeechToTextCatalogItem> models = AssemblyAiSpeechToTextProvider.ID.equals(provider.id())
+                ? provider.bundledModels().stream()
+                        .filter(item -> AssemblyAiSpeechToTextProvider.isBundledModelId(item.id()))
+                        .toList()
+                : mergeWithSelected(
+                        normalized(cached.orElse(emptyList()), provider::normalizeModelSelection),
+                        provider.bundledModels(),
+                        normalized(selected, provider::normalizeModelSelection)
+                );
+        boolean stale = cached.isEmpty() || snapshot.updatedAt().map(this::isStaleTimestamp).orElse(true);
+        return new CatalogState(models, stale);
     }
 
     public List<SpeechToTextCatalogItem> cachedModels(String providerId) {
-        return settingsRepo.get(settings(providerId).catalogModelsKey())
-                .map(this::deserialize)
-                .orElse(emptyList());
+        CatalogGroup group = SpeechCatalogKeySchema.sttModels(providerId);
+        return readCachedModels(snapshots.read(group), group.slots().getFirst()).orElse(emptyList());
     }
 
     public boolean stale(String providerId) {
-        return settingsRepo.get(settings(providerId).catalogUpdatedAtKey())
-                .map(this::isStaleTimestamp)
-                .orElse(true);
+        CatalogGroup group = SpeechCatalogKeySchema.sttModels(providerId);
+        CatalogSnapshotRead snapshot = snapshots.read(group);
+        return readCachedModels(snapshot, group.slots().getFirst()).isEmpty()
+                || snapshot.updatedAt().map(this::isStaleTimestamp).orElse(true);
     }
 
     public void invalidate(String providerId) {
-        SpeechToTextProviderSettings providerSettings = settings(providerId);
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(providerSettings.catalogModelsKey());
-            batch.remove(providerSettings.catalogUpdatedAtKey());
-        });
-        providerSettings.clearModel();
+        String slug = SpeechCatalogKeySchema.providerSlug(providerId);
+        boolean invalidated = snapshots.invalidate(
+                SpeechCatalogKeySchema.sttModels(providerId),
+                List.of("chat4j.stt.%s.model.id".formatted(slug), "chat4j.stt.%s.model.label".formatted(slug))
+        );
+        if (!invalidated) {
+            throw new IllegalStateException("Failed to invalidate Speech to Text catalog");
+        }
     }
 
     public void saveModels(String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
-        saveModelsIf(providerId, models, () -> true);
+        if (!saveModelsIf(providerId, models, () -> true)) {
+            throw new IllegalStateException("Failed to save Speech to Text catalog");
+        }
     }
 
-    public boolean saveModelsIf(String providerId, List<SpeechToTextCatalogItem> models, BooleanSupplier condition) throws Exception {
-        SpeechToTextProviderSettings providerSettings = settings(providerId);
+    public boolean saveModelsIf(
+            String providerId,
+            List<SpeechToTextCatalogItem> models,
+            @NonNull BooleanSupplier condition
+    ) throws Exception {
         String modelsJson = OBJECT_MAPPER.writeValueAsString(models == null ? emptyList() : models);
-        return settingsRepo.updateBatchIf(condition, batch -> {
-            batch.put(providerSettings.catalogModelsKey(), modelsJson);
-            batch.put(providerSettings.catalogUpdatedAtKey(), Instant.now().toString());
-        });
+        Validate.isTrue(deserialize(modelsJson).isPresent(), "Speech to Text catalog exceeds structural limits");
+        return snapshots.saveIf(
+                SpeechCatalogKeySchema.sttModels(providerId),
+                List.of(CatalogPayload.of(modelsJson)),
+                condition
+        );
     }
 
     public List<SpeechToTextCatalogItem> mergeWithSelected(
@@ -87,25 +141,32 @@ public class SpeechToTextCatalogStore {
         return merged.values().stream().toList();
     }
 
-    private List<SpeechToTextCatalogItem> deserialize(String json) {
+    private Optional<List<SpeechToTextCatalogItem>> readCachedModels(
+            CatalogSnapshotRead snapshot,
+            SnapshotSlot slot
+    ) {
+        return snapshot.payload(slot).map(CatalogPayload::value).flatMap(this::deserialize);
+    }
+
+    private Optional<List<SpeechToTextCatalogItem>> deserialize(String json) {
+        if (!CatalogJsonStructure.isBoundedArray(OBJECT_MAPPER, json, MAX_CATALOG_ITEMS, MAX_CATALOG_TOKENS)) {
+            return Optional.empty();
+        }
         try {
-            return OBJECT_MAPPER.readValue(json, new TypeReference<>() {
+            List<SpeechToTextCatalogItem> items = OBJECT_MAPPER.readValue(json, new TypeReference<>() {
             });
+            return Optional.ofNullable(items);
         } catch (Exception e) {
-            return emptyList();
+            return Optional.empty();
         }
     }
 
     private boolean isStaleTimestamp(String value) {
         try {
-            return Instant.parse(value).plus(STALE_AFTER).isBefore(Instant.now());
+            return Instant.parse(value).plus(STALE_AFTER).isBefore(clock.instant());
         } catch (Exception e) {
             return true;
         }
-    }
-
-    private SpeechToTextProviderSettings settings(String providerId) {
-        return SpeechToTextProviderSettingsFactory.forProvider(settingsRepo, providerId);
     }
 
     private static SpeechToTextCatalogItem normalized(
@@ -136,5 +197,11 @@ public class SpeechToTextCatalogStore {
         items.stream()
                 .filter(item -> item != null && StringUtils.isNotBlank(item.id()))
                 .forEach(item -> target.putIfAbsent(item.id(), item));
+    }
+
+    public record CatalogState(@NonNull List<SpeechToTextCatalogItem> models, boolean stale) {
+        public CatalogState {
+            models = List.copyOf(models);
+        }
     }
 }

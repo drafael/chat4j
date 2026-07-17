@@ -11,7 +11,7 @@ Key classes:
 - `TextToSpeechProvider` — provider metadata, credential availability, catalog fetch, and synthesis contract.
 - `TextToSpeechProviderRegistry` — TTS provider registry. Do not reuse the chat provider registry or chat model filters; chat filtering excludes TTS model IDs.
 - `TextToSpeechSettings` — selected provider plus provider-specific model and voice settings.
-- `TextToSpeechCatalogStore` — cached model/voice catalogs in settings with bundled fallback values.
+- `TextToSpeechCatalogStore` — snapshot-backed model/voice catalogs with bundled fallback values.
 - `TextToSpeechService` — async synthesis, stale-request cancellation, active message tracking, status/error callbacks, and playback handoff.
 - `AudioPlaybackService` / `JavaSoundAudioPlaybackService` — WAV/PCM playback through Java Sound and MP3 playback through JLayer.
 
@@ -39,22 +39,22 @@ Settings are file-backed through `SettingsRepository`; no database table is invo
 Persisted keys:
 
 ```text
-chat4j.tts.provider                         # off | system | groq | elevenlabs
+chat4j.tts.provider                         # off | system | deepgram | groq | elevenlabs
 chat4j.tts.<provider>.model.id
 chat4j.tts.<provider>.model.label
 chat4j.tts.<provider>.voice.id
 chat4j.tts.<provider>.voice.label
-chat4j.tts.catalog.<provider>.models
-chat4j.tts.catalog.<provider>.voices
+chat4j.tts.catalog.<provider>.modelsFile
+chat4j.tts.catalog.<provider>.voicesFile
 chat4j.tts.catalog.<provider>.updatedAt
 ```
 
-Catalog values are JSON arrays of catalog items with `id`, `label`, and optional `description`. Saved selections are preserved even when a refreshed catalog omits them.
+Catalog settings contain snapshot basenames under `<app-config>/cache`. The referenced files contain JSON arrays of catalog items with `id`, `label`, and optional `description`. Saved selections are preserved even when a refreshed catalog omits them.
 
 Settings UI behavior:
 
 1. Load cached catalogs immediately.
-2. Add bundled defaults when cache is empty or stale.
+2. Add bundled defaults when cached snapshots are unavailable or empty.
 3. Preserve saved model/voice selections.
 4. Refresh catalogs in the background when credentials are available.
 5. Update Swing controls only on the EDT and ignore stale refresh results.

@@ -41,31 +41,6 @@ public abstract class AbstractTextToSpeechProviderSettings implements TextToSpee
         saveItem(voiceIdKey(), voiceLabelKey(), voice);
     }
 
-    @Override
-    public void clearModel() {
-        clearItem(modelIdKey(), modelLabelKey());
-    }
-
-    @Override
-    public void clearVoice() {
-        clearItem(voiceIdKey(), voiceLabelKey());
-    }
-
-    @Override
-    public String catalogModelsKey() {
-        return "%scatalog.%s.models".formatted(PREFIX, providerSlug());
-    }
-
-    @Override
-    public String catalogVoicesKey() {
-        return "%scatalog.%s.voices".formatted(PREFIX, providerSlug());
-    }
-
-    @Override
-    public String catalogUpdatedAtKey() {
-        return "%scatalog.%s.updatedAt".formatted(PREFIX, providerSlug());
-    }
-
     private TextToSpeechCatalogItem selectedItem(String idKey, String labelKey, TextToSpeechCatalogItem fallback) {
         String id = settingsRepo.get(idKey, fallback.id());
         String label = settingsRepo.get(labelKey, fallback.label());
@@ -76,13 +51,6 @@ public abstract class AbstractTextToSpeechProviderSettings implements TextToSpee
         settingsRepo.updateBatch(batch -> {
             batch.put(idKey, item.id());
             batch.put(labelKey, item.label());
-        });
-    }
-
-    private void clearItem(String idKey, String labelKey) {
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(idKey);
-            batch.remove(labelKey);
         });
     }
 

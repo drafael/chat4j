@@ -57,6 +57,15 @@ class StoragePathsTest {
     }
 
     @Test
+    @DisplayName("Runtime and legacy cache paths are separate under the application config directory")
+    void cacheDirectories_whenResolved_useCanonicalAndLegacyLocations() {
+        var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.cacheDirectory()).isEqualTo(Path.of("/tmp/xdg", "chat4j", "cache"));
+        assertThat(subject.legacyModelsCacheDirectory()).isEqualTo(Path.of("/tmp/xdg", "chat4j", "models-cache"));
+    }
+
+    @Test
     @DisplayName("Speech to Text directories are rooted under the application config directory")
     void sttDirectories_whenResolved_useApplicationConfigDirectory() {
         var subject = StoragePaths.defaultPaths("Linux", "/home/me", "/tmp/xdg", null);

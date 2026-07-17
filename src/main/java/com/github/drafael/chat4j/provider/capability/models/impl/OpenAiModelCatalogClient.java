@@ -54,7 +54,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private final HttpClient httpClient;
 
     public OpenAiModelCatalogClient() {
-        this(new CopilotModelMetadataStore(), DEFAULT_HTTP_CLIENT);
+        this(CopilotModelMetadataStore.sharedDefault(), DEFAULT_HTTP_CLIENT);
     }
 
     public OpenAiModelCatalogClient(CopilotModelMetadataStore copilotModelMetadataStore) {

@@ -11,14 +11,4 @@ public interface TextToSpeechProviderSettings {
     void saveModel(TextToSpeechCatalogItem model);
 
     void saveVoice(TextToSpeechCatalogItem voice);
-
-    void clearModel();
-
-    void clearVoice();
-
-    String catalogModelsKey();
-
-    String catalogVoicesKey();
-
-    String catalogUpdatedAtKey();
 }

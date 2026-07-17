@@ -41,26 +41,8 @@ public abstract class AbstractSpeechToTextProviderSettings implements SpeechToTe
     }
 
     @Override
-    public void clearModel() {
-        settingsRepo.updateBatch(batch -> {
-            batch.remove(modelIdKey());
-            batch.remove(modelLabelKey());
-        });
-    }
-
-    @Override
     public String selectedModelId() {
         return settingsRepo.get(modelIdKey(), "");
-    }
-
-    @Override
-    public String catalogModelsKey() {
-        return "%scatalog.%s.models".formatted(PREFIX, providerSlug());
-    }
-
-    @Override
-    public String catalogUpdatedAtKey() {
-        return "%scatalog.%s.updatedAt".formatted(PREFIX, providerSlug());
     }
 
     protected String modelIdKey() {

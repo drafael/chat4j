@@ -144,10 +144,6 @@ public class SpeechToTextSettings {
         provider(providerId).saveModel(model);
     }
 
-    public void clearModel(String providerId) {
-        provider(providerId).clearModel();
-    }
-
     public void saveMaxDurationSeconds(int seconds) {
         validateMaxDurationSeconds(seconds);
         settingsRepo.put(RECORDING_MAX_DURATION_SECONDS_KEY, Integer.toString(seconds));

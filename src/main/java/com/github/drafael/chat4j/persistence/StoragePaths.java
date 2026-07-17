@@ -116,7 +116,17 @@ public final class StoragePaths {
         return secretsDirectory().resolve("token-vault.lock");
     }
 
-    public Path modelsCacheDirectory() {
+    /**
+     * The single cache root used by normal runtime cache consumers.
+     */
+    public Path cacheDirectory() {
+        return appConfigDirectory().resolve("cache");
+    }
+
+    /**
+     * Legacy cache location. This exists exclusively for deletion-only startup cleanup.
+     */
+    public Path legacyModelsCacheDirectory() {
         return appConfigDirectory().resolve("models-cache");
     }
 

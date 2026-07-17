@@ -27,8 +27,8 @@ class SpeechToTextProviderSettingsTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Known STT provider settings preserve legacy model and catalog keys")
-    void knownProviderSettings_whenSaved_useLegacyKeys() {
+    @DisplayName("Known STT provider settings preserve selected model keys")
+    void knownProviderSettings_whenSaved_useSelectedModelKeys() {
         var repo = repo("known.properties");
         var subject = new GroqSpeechToTextSettings(repo);
         var fallback = new SpeechToTextCatalogItem("fallback-model", "Fallback Model", "fallback description");
@@ -38,13 +38,6 @@ class SpeechToTextProviderSettingsTest {
         assertThat(repo.get("chat4j.stt.groq.model.id")).contains("whisper-large-v3-turbo");
         assertThat(repo.get("chat4j.stt.groq.model.label")).contains("Whisper Turbo");
         assertThat(subject.selectedModel(fallback).description()).isEqualTo("fallback description");
-        assertThat(subject.catalogModelsKey()).isEqualTo("chat4j.stt.catalog.groq.models");
-        assertThat(subject.catalogUpdatedAtKey()).isEqualTo("chat4j.stt.catalog.groq.updatedAt");
-
-        subject.clearModel();
-
-        assertThat(repo.get("chat4j.stt.groq.model.id")).isEmpty();
-        assertThat(repo.get("chat4j.stt.groq.model.label")).isEmpty();
     }
 
     @Test
@@ -100,13 +93,11 @@ class SpeechToTextProviderSettingsTest {
 
         assertThat(repo.get("chat4j.stt.custom-provider.model.id")).contains("custom-model");
         assertThat(repo.get("chat4j.stt.unknown.model.id")).contains("blank-model");
-        assertThat(mixedCase.catalogModelsKey()).isEqualTo("chat4j.stt.catalog.custom-provider.models");
-        assertThat(blank.catalogUpdatedAtKey()).isEqualTo("chat4j.stt.catalog.unknown.updatedAt");
     }
 
     @Test
-    @DisplayName("Vosk settings preserve selected model and raw catalog cache keys")
-    void voskSettings_whenSavingLocalState_preserveLegacyKeys() {
+    @DisplayName("Vosk settings preserve selected model state")
+    void voskSettings_whenSavingLocalState_preservesSelectedModelState() {
         var repo = repo("vosk.properties");
         var subject = new VoskSpeechToTextSettings(repo);
         var model = new VoskInstalledModel(
@@ -124,14 +115,11 @@ class SpeechToTextProviderSettingsTest {
         );
 
         subject.saveSelectedModel(model, tempDir.resolve("models").resolve("vosk"));
-        subject.saveRawCatalogJson("{\"models\":[]}");
 
         assertThat(repo.get("chat4j.stt.vosk.model.id")).contains("local:custom");
         assertThat(repo.get("chat4j.stt.vosk.model.label")).contains("Custom");
         assertThat(subject.savedRoot()).isEqualTo(tempDir.resolve("models").resolve("vosk").toString());
         assertThat(subject.savedFingerprint()).isEqualTo("fingerprint-1");
-        assertThat(subject.rawCatalogJson()).contains("{\"models\":[]}");
-        assertThat(repo.get("chat4j.stt.catalog.vosk.rawJson.updatedAt")).isPresent();
 
         subject.clearSelectedModel();
 

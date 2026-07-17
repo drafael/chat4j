@@ -258,11 +258,6 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    public ChatPanel() {
-        this(ProviderModelCacheService.createDefault(), ModelFavoritesService.createInMemory());
-        populateModels();
-    }
-
     public ChatPanel(ProviderModelCacheService modelCacheService) {
         this(modelCacheService, ModelFavoritesService.createInMemory());
         populateModels();

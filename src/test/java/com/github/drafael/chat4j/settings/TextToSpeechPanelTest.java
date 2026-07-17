@@ -193,16 +193,11 @@ class TextToSpeechPanelTest {
     void refreshControlsFromSettings_whenDeepgramCachedModelsContainVoiceIds_showsModelFamilies() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("tts-deepgram-legacy-cache.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, DeepgramTextToSpeechProvider.ID);
-        repo.put(
-                ttsCatalogModelsKey(DeepgramTextToSpeechProvider.ID),
-                "[{\"id\":\"aura-2-thalia-en\",\"label\":\"thalia\",\"description\":\"clear\"},"
-                        + "{\"id\":\"aura-2-zeus-en\",\"label\":\"zeus\",\"description\":\"deep\"}]"
+        var cachedItems = List.of(
+                new TextToSpeechCatalogItem("aura-2-thalia-en", "thalia", "clear"),
+                new TextToSpeechCatalogItem("aura-2-zeus-en", "zeus", "deep")
         );
-        repo.put(
-                ttsCatalogVoicesKey(DeepgramTextToSpeechProvider.ID),
-                "[{\"id\":\"aura-2-thalia-en\",\"label\":\"thalia\",\"description\":\"clear\"},"
-                        + "{\"id\":\"aura-2-zeus-en\",\"label\":\"zeus\",\"description\":\"deep\"}]"
-        );
+        new TextToSpeechCatalogStore(repo).saveCatalogs(DeepgramTextToSpeechProvider.ID, cachedItems, cachedItems);
         var subject = createPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(request -> {
@@ -259,7 +254,7 @@ class TextToSpeechPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("tts-token-catalog-refresh.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "credential-refreshing");
         var provider = new CredentialRefreshingProvider();
-        var subject = createPanel(
+        var subject = createRefreshingPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
@@ -270,17 +265,34 @@ class TextToSpeechPanelTest {
             provider.releaseFirst.countDown();
             assertThat(provider.firstFinished.await(2, TimeUnit.SECONDS)).isTrue();
 
-            assertThat(repo.get(ttsCatalogModelsKey(provider.id()), "")).doesNotContain("stale-model");
-            assertThat(repo.get(ttsCatalogVoicesKey(provider.id()), "")).doesNotContain("stale-voice");
+            TextToSpeechCatalogStore.Catalogs invalidatedCatalogs = new TextToSpeechCatalogStore(repo).catalogs(
+                    provider,
+                    provider.defaultModel(),
+                    provider.defaultVoice()
+            );
+            assertThat(invalidatedCatalogs.models()).extracting(TextToSpeechCatalogItem::id).doesNotContain("stale-model");
+            assertThat(invalidatedCatalogs.voices()).extracting(TextToSpeechCatalogItem::id).doesNotContain("stale-voice");
             assertThat(repo.get(ttsCatalogUpdatedAtKey(provider.id()), "")).isBlank();
 
             SwingUtilities.invokeAndWait(() -> tokenField(subject).reloadAfterPeerCredentialChanged());
 
             assertThat(provider.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            waitUntil(() -> repo.get(ttsCatalogModelsKey(provider.id()), "").contains("fresh-model"));
-            waitUntil(() -> repo.get(ttsCatalogVoicesKey(provider.id()), "").contains("fresh-voice"));
-            assertThat(repo.get(ttsCatalogModelsKey(provider.id()), "")).doesNotContain("stale-model");
-            assertThat(repo.get(ttsCatalogVoicesKey(provider.id()), "")).doesNotContain("stale-voice");
+            waitUntil(() -> new TextToSpeechCatalogStore(repo).catalogs(
+                    provider,
+                    provider.defaultModel(),
+                    provider.defaultVoice()
+            ).models().stream().anyMatch(model -> "fresh-model".equals(model.id())));
+            TextToSpeechCatalogStore.Catalogs refreshedCatalogs = new TextToSpeechCatalogStore(repo).catalogs(
+                    provider,
+                    provider.defaultModel(),
+                    provider.defaultVoice()
+            );
+            assertThat(refreshedCatalogs.models()).extracting(TextToSpeechCatalogItem::id)
+                    .contains("fresh-model")
+                    .doesNotContain("stale-model");
+            assertThat(refreshedCatalogs.voices()).extracting(TextToSpeechCatalogItem::id)
+                    .contains("fresh-voice")
+                    .doesNotContain("stale-voice");
         } finally {
             provider.releaseFirst.countDown();
             removePanel(subject);
@@ -293,7 +305,7 @@ class TextToSpeechPanelTest {
         var repo = new SettingsRepository(tempDir.resolve("tts-removed-settings.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "slow");
         var provider = new SlowProvider();
-        var subject = createPanel(
+        var subject = createRefreshingPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
@@ -332,7 +344,7 @@ class TextToSpeechPanelTest {
         var repo = new FailingSettingsRepository(tempDir.resolve("tts-refresh-apply-read-failure.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, "slow");
         var provider = new SlowProvider();
-        var subject = createPanel(
+        var subject = createRefreshingPanel(
                 repo,
                 new TextToSpeechProviderRegistry(List.of(provider))
         );
@@ -499,6 +511,19 @@ class TextToSpeechPanelTest {
     }
 
     private TextToSpeechPanel createPanel(SettingsRepository repo, TextToSpeechProviderRegistry registry) throws Exception {
+        return callOnEdt(() -> new TextToSpeechPanel(
+                repo,
+                registry,
+                new ApiTokenFieldRegistry(),
+                SettingsCredentialChangeListener.NO_OP,
+                false
+        ));
+    }
+
+    private TextToSpeechPanel createRefreshingPanel(
+            SettingsRepository repo,
+            TextToSpeechProviderRegistry registry
+    ) throws Exception {
         return callOnEdt(() -> new TextToSpeechPanel(repo, registry));
     }
 
@@ -560,11 +585,11 @@ class TextToSpeechPanelTest {
     }
 
     private String ttsCatalogModelsKey(String providerId) {
-        return "chat4j.tts.catalog.%s.models".formatted(providerId);
+        return "chat4j.tts.catalog.%s.modelsFile".formatted(providerId);
     }
 
     private String ttsCatalogVoicesKey(String providerId) {
-        return "chat4j.tts.catalog.%s.voices".formatted(providerId);
+        return "chat4j.tts.catalog.%s.voicesFile".formatted(providerId);
     }
 
     private String ttsCatalogUpdatedAtKey(String providerId) {

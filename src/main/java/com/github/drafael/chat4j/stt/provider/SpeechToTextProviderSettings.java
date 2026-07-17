@@ -8,11 +8,5 @@ public interface SpeechToTextProviderSettings {
 
     void saveModel(SpeechToTextCatalogItem model);
 
-    void clearModel();
-
     String selectedModelId();
-
-    String catalogModelsKey();
-
-    String catalogUpdatedAtKey();
 }

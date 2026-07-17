@@ -676,6 +676,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private void refreshControlsFromSettings(boolean refreshCatalogs) {
         SpeechToTextSettingsSnapshot snapshot = settings.resolve();
         List<SpeechToTextCatalogItem> models = emptyList();
+        boolean cloudCatalogStale = true;
         updating = true;
         try {
             modelDirectoryField.setText(snapshot.modelDirectory().toString());
@@ -691,7 +692,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 updateModelCombo(models);
                 selectCatalogItem(snapshot.model());
             } else {
-                models = catalogStore.models(snapshot.provider(), snapshot.model());
+                SpeechToTextCatalogStore.CatalogState catalog = catalogStore.catalog(snapshot.provider(), snapshot.model());
+                models = catalog.models();
+                cloudCatalogStale = catalog.stale();
                 updateModelCombo(models);
                 selectCatalogItem(snapshot.model());
             }
@@ -709,7 +712,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             whisperModelManagementService.refreshAsync(true);
             return;
         }
-        if (refreshCatalogs && snapshot.enabled() && !isVosk(snapshot) && !isWhisper(snapshot) && snapshot.available() && catalogStore.stale(snapshot.providerId())) {
+        if (refreshCatalogs && snapshot.enabled() && !isVosk(snapshot) && !isWhisper(snapshot)
+                && snapshot.available() && cloudCatalogStale) {
             refreshCatalogs(false);
         }
     }

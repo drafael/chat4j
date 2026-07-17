@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.persistence.model;
 
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CodexLocalModelCache;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
@@ -62,10 +61,6 @@ public class ProviderModelCacheService {
         this.metricsLoggingEnabled = metricsLoggingEnabled;
         this.codexLocalModelsSupplier = codexLocalModelsSupplier;
         this.codexLocalModels = CodexLocalModelCache.builtinSnapshot();
-    }
-
-    public static ProviderModelCacheService createDefault() {
-        return new ProviderModelCacheService(new ProviderModelCache(StoragePaths.defaultPaths()));
     }
 
     public void primeFromDisk(List<String> providerNames) {
