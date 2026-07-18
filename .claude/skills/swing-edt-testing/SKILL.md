@@ -53,6 +53,13 @@ Use this skill for every Java Swing/UI test change in this project. The goal is 
 - For tests using `@TempDir`, treat component construction as potentially asynchronous. If the constructor can auto-refresh catalogs or persist default selections, either disable that path for unrelated tests or wait/join/flush it before returning. A passing assertion is not enough; the temp directory must be quiet before JUnit cleanup.
 - For provider/settings helper-copy tests that only inspect text or visibility, pre-seed provider catalogs or use unavailable/disabled providers so constructors do not start automatic catalog refreshes. If model-management services are needed only to satisfy constructor dependencies, pass explicit services in try-with-resources, remove the panel on the EDT in `finally`, then close services before the test exits instead of relying on asynchronous owned-service cleanup.
 
+### Cross-platform file locking
+
+- Treat Unix/macOS file locks as advisory and Windows file locks as potentially mandatory. Code exercised by Swing settings tests must not assume a path can be reopened for content reads while another channel holds an exclusive `FileLock` on that file.
+- Never validate a locked file by opening a second content-reading channel on Windows. Use the already-open channel plus stable path metadata, and pin the visible path against replacement with Windows no-share-delete semantics. Gate that behavior on Windows, the default filesystem, and a known native provider implementation—not the OS name alone—and fail closed for unsupported providers. Perform second-channel content binding only on file systems where advisory-lock behavior is known and explicitly detected.
+- Jimfs `Configuration.windows()` does not emulate native mandatory locks or Windows share modes; its `FileLock` is effectively a fake validity token. Use Jimfs only for non-POSIX path/attribute branches, never as proof of lock behavior. A native Windows CI round-trip is mandatory for file-lock changes and remains authoritative.
+- A cascade of unrelated Swing credential failures can originate in a shared file-backed dependency. Diagnose the first low-level storage failure before changing UI timing or weakening EDT assertions.
+
 ### Blocked-EDT tests
 
 - Blocking the EDT is allowed only to verify ordering/race behavior.

@@ -6,7 +6,7 @@ public interface SettingsCredentialChangeListener {
     SettingsCredentialChangeListener NO_OP = change -> {
     };
 
-    void credentialChanged(ApiTokenChange change);
+    void credentialChanged(String canonicalTokenId);
 
     default void providerAuthChanged(String providerName) {
     }
