@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Arrays;
@@ -15,6 +16,7 @@ public final class CredentialResolver {
     private static volatile Map<String, String> shellEnv = emptyMap();
     private static volatile Function<String, String> processEnv = System::getenv;
     private static volatile ApiTokenVault tokenVault = ApiTokenVault.defaultVault();
+    private static volatile CredentialMutationService mutationService = new CredentialMutationService(tokenVault);
 
     private CredentialResolver() {
     }
@@ -24,9 +26,15 @@ public final class CredentialResolver {
         tokenVault.refreshFromDiskReadOnly();
     }
 
-    public static void configureTokenVault(ApiTokenVault vault) {
-        tokenVault = vault == null ? ApiTokenVault.defaultVault() : vault;
+    static void configureTokenVault(@NonNull ApiTokenVault vault) {
+        mutationService.closeSecrets();
+        tokenVault = vault;
+        mutationService = new CredentialMutationService(tokenVault);
         tokenVault.refreshFromDiskReadOnly();
+    }
+
+    static CredentialMutationService mutationService() {
+        return mutationService;
     }
 
     static void configureProcessEnv(Function<String, String> processEnvSupplier) {
@@ -49,10 +57,7 @@ public final class CredentialResolver {
     }
 
     public static boolean hasRequiredCredentials(String envVar) {
-        if (envVar == null) {
-            return true;
-        }
-        return resolveCredential(envVar, null).hasValue();
+        return envVar == null || resolveCredential(envVar, null).hasValue();
     }
 
     public static String resolveRequiredApiKey(String envVar, String fallbackApiKey) {
@@ -75,7 +80,7 @@ public final class CredentialResolver {
     }
 
     public static CredentialResolution resolveCredential(String envVar, String fallbackApiKey) {
-        List<String> candidates = envVarCandidates(envVar);
+        List<String> candidates = CredentialTokenIds.credentialCandidates(envVar);
         for (String candidate : candidates) {
             if (!CredentialTokenIds.supported(candidate)) {
                 continue;
@@ -105,7 +110,7 @@ public final class CredentialResolver {
     }
 
     public static ApiCredentialStatus resolveCredentialStatus(String envVar, String fallbackApiKey) {
-        List<String> candidates = envVarCandidates(envVar);
+        List<String> candidates = CredentialTokenIds.credentialCandidates(envVar);
         for (String candidate : candidates) {
             if (!CredentialTokenIds.supported(candidate)) {
                 continue;
@@ -140,46 +145,8 @@ public final class CredentialResolver {
         return tokenVault.hasRecord(tokenId);
     }
 
-    public static SaveTokenResult saveTokenOverride(String envVarExpression, char[] token) {
-        List<String> candidates = envVarCandidates(envVarExpression);
-        if (candidates.isEmpty()) {
-            throw new IllegalArgumentException("No API token id is configured.");
-        }
-        String canonicalTokenId = candidates.getFirst();
-        boolean savedRecordExists = candidates.stream().anyMatch(CredentialResolver::hasSavedTokenRecord);
-        if (isBlank(token)) {
-            if (savedRecordExists) {
-                tokenVault.deleteTokens(candidates);
-                tokenVault.refreshFromDiskReadOnly();
-                return new SaveTokenResult(canonicalTokenId, true, false, true);
-            }
-            tokenVault.refreshFromDiskReadOnly();
-            return new SaveTokenResult(canonicalTokenId, false, false, false);
-        }
-        if (matchesEffectiveRawEnvironment(candidates, token)) {
-            if (savedRecordExists) {
-                tokenVault.deleteTokens(candidates);
-                tokenVault.refreshFromDiskReadOnly();
-                return new SaveTokenResult(canonicalTokenId, true, false, true);
-            }
-            tokenVault.refreshFromDiskReadOnly();
-            return new SaveTokenResult(canonicalTokenId, false, false, false);
-        }
-        tokenVault.saveToken(canonicalTokenId, token);
-        candidates.stream()
-                .skip(1)
-                .forEach(tokenVault::deleteToken);
-        tokenVault.refreshFromDiskReadOnly();
-        return new SaveTokenResult(canonicalTokenId, false, true, true);
-    }
-
-    public static void recreateTokenVault() {
-        tokenVault.recreateVault();
-        tokenVault.refreshFromDiskReadOnly();
-    }
-
     public static Map<String, String> mergedEnvironment() {
-        Map<String, String> merged = new LinkedHashMap<>(System.getenv());
+        var merged = new LinkedHashMap<>(System.getenv());
         merged.putAll(shellEnv);
         return Map.copyOf(merged);
     }
@@ -192,7 +159,7 @@ public final class CredentialResolver {
         return CredentialTokenIds.canonicalTokenId(envVar);
     }
 
-    private static boolean matchesEffectiveRawEnvironment(List<String> candidates, char[] token) {
+    static boolean matchesEffectiveRawEnvironment(List<String> candidates, char[] token) {
         CredentialResolution rawCredential = resolveRawEnvironmentCredential(candidates);
         return rawCredential.hasValue() && equalsChars(rawCredential.value(), token);
     }
@@ -230,18 +197,6 @@ public final class CredentialResolver {
         return true;
     }
 
-    private static boolean isBlank(char[] token) {
-        if (token == null || token.length == 0) {
-            return true;
-        }
-        for (char c : token) {
-            if (!Character.isWhitespace(c)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static String processEnvValue(String name) {
         return StringUtils.trimToNull(processEnv.apply(name));
     }
@@ -250,6 +205,4 @@ public final class CredentialResolver {
         return StringUtils.trimToNull(shellEnv.get(name));
     }
 
-    public record SaveTokenResult(String canonicalTokenId, boolean cleared, boolean savedOverride, boolean changed) {
-    }
 }

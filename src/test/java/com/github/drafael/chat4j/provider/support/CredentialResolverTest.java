@@ -26,16 +26,14 @@ class CredentialResolverTest {
 
     @BeforeEach
     void setUp() {
-        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
         CredentialResolver.configureProcessEnv(System::getenv);
         CredentialResolver.init(emptyMap());
     }
 
     @AfterEach
     void tearDown() {
-        CredentialResolver.configureProcessEnv(System::getenv);
-        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
-        CredentialResolver.init(emptyMap());
+        CredentialTestSupport.reset();
     }
 
     @Test
@@ -91,6 +89,16 @@ class CredentialResolverTest {
         var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
 
         assertThat(hasCredentials).isTrue();
+    }
+
+    @Test
+    @DisplayName("Canonical process credentials resolve through a lone legacy alias expression")
+    void resolveRequiredApiKey_whenOnlyCanonicalAliasIsConfigured_returnsCanonicalValue() {
+        CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "gemini-key" : null);
+
+        String result = CredentialResolver.resolveRequiredApiKey("GOOGLEAI_API_KEY", null);
+
+        assertThat(result).isEqualTo("gemini-key");
     }
 
     @Test
@@ -179,7 +187,7 @@ class CredentialResolverTest {
     void resolveRequiredApiKey_whenSavedTokenExists_returnsSavedToken() {
         CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
         CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialResolver.saveTokenOverride("OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
 
         var resolved = CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key");
 
@@ -194,9 +202,9 @@ class CredentialResolverTest {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
         CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
         CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialResolver.saveTokenOverride("OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
         Files.delete(storagePaths.tokenVaultMasterKeyFile());
-        CredentialResolver.configureTokenVault(new ApiTokenVault(storagePaths));
+        CredentialTestSupport.configureVault(storagePaths);
 
         CredentialResolution resolution = CredentialResolver.resolveCredential("OPENAI_API_KEY", "fallback-key");
 
@@ -217,9 +225,9 @@ class CredentialResolverTest {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
         CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
         CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialResolver.saveTokenOverride("OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
         Files.writeString(storagePaths.tokenVaultMasterKeyFile(), "not-base64");
-        CredentialResolver.configureTokenVault(new ApiTokenVault(storagePaths));
+        CredentialTestSupport.configureVault(storagePaths);
 
         CredentialResolution resolution = CredentialResolver.resolveCredential("OPENAI_API_KEY", "fallback-key");
 
@@ -240,11 +248,11 @@ class CredentialResolverTest {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
         CredentialResolver.configureProcessEnv(name -> "GROQ_API_KEY".equals(name) ? "process-key" : null);
         CredentialResolver.init(Map.of("GROQ_API_KEY", "shell-key"));
-        CredentialResolver.saveTokenOverride("OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
         String json = Files.readString(storagePaths.tokenVaultFile())
                 .replace("OPENAI_API_KEY", "GROQ_API_KEY");
         Files.writeString(storagePaths.tokenVaultFile(), json);
-        CredentialResolver.configureTokenVault(new ApiTokenVault(storagePaths));
+        CredentialTestSupport.configureVault(storagePaths);
 
         CredentialResolution resolution = CredentialResolver.resolveCredential("GROQ_API_KEY", "fallback-key");
 
@@ -273,7 +281,7 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Merged environment does not include saved tokens")
     void mergedEnvironment_whenSavedTokenExists_doesNotExposeSavedToken() {
-        CredentialResolver.saveTokenOverride("OPENAI_API_KEY", "saved-secret".toCharArray());
+        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-secret".toCharArray());
 
         Map<String, String> merged = CredentialResolver.mergedEnvironment();
 
@@ -283,9 +291,9 @@ class CredentialResolverTest {
     @Test
     @DisplayName("Alias save normalizes to primary token id and clears secondary alias records")
     void saveTokenOverride_whenAliasExpressionUsed_savesPrimaryAndClearsAlias() {
-        CredentialResolver.saveTokenOverride("GOOGLEAI_API_KEY", "old-alias".toCharArray());
+        CredentialTestSupport.saveToken("GOOGLEAI_API_KEY", "old-alias".toCharArray());
 
-        CredentialResolver.saveTokenOverride("GEMINI_API_KEY|GOOGLEAI_API_KEY", "new-primary".toCharArray());
+        CredentialTestSupport.saveToken("GEMINI_API_KEY|GOOGLEAI_API_KEY", "new-primary".toCharArray());
 
         assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
                 .isEqualTo("new-primary");
@@ -299,13 +307,11 @@ class CredentialResolverTest {
         CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "process-primary" : null);
         CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "shell-alias"));
 
-        CredentialResolver.SaveTokenResult result = CredentialResolver.saveTokenOverride(
+        CredentialMutationResult result = CredentialTestSupport.saveToken(
                 "GEMINI_API_KEY|GOOGLEAI_API_KEY",
                 "shell-alias".toCharArray()
         );
-
-        assertThat(result.savedOverride()).isTrue();
-        assertThat(result.changed()).isTrue();
+        assertThat(result.applied()).isTrue();
         assertThat(CredentialResolver.resolveCredential("GEMINI_API_KEY|GOOGLEAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.SAVED_TOKEN);
         assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
@@ -321,13 +327,11 @@ class CredentialResolverTest {
             default -> null;
         });
 
-        CredentialResolver.SaveTokenResult result = CredentialResolver.saveTokenOverride(
+        CredentialMutationResult result = CredentialTestSupport.saveToken(
                 "GEMINI_API_KEY|GOOGLEAI_API_KEY",
                 "process-alias".toCharArray()
         );
-
-        assertThat(result.savedOverride()).isTrue();
-        assertThat(result.changed()).isTrue();
+        assertThat(result.applied()).isTrue();
         assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
                 .isEqualTo("process-alias");
     }
@@ -338,13 +342,11 @@ class CredentialResolverTest {
         CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "process-primary" : null);
         CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "shell-alias"));
 
-        CredentialResolver.SaveTokenResult result = CredentialResolver.saveTokenOverride(
+        CredentialMutationResult result = CredentialTestSupport.saveToken(
                 "GEMINI_API_KEY|GOOGLEAI_API_KEY",
                 "process-primary".toCharArray()
         );
-
-        assertThat(result.savedOverride()).isFalse();
-        assertThat(result.changed()).isFalse();
+        assertThat(result.applied()).isFalse();
         assertThat(CredentialResolver.hasSavedTokenRecord("GEMINI_API_KEY")).isFalse();
     }
 
