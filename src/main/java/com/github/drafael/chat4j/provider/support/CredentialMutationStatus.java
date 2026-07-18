@@ -1,0 +1,11 @@
+package com.github.drafael.chat4j.provider.support;
+
+public enum CredentialMutationStatus {
+    APPLIED,
+    APPLIED_WITH_NOTIFICATION_FAILURE,
+    UNCHANGED,
+    UNCHANGED_WITH_NOTIFICATION_FAILURE,
+    FAILED_RELOADED,
+    FAILED_RELOADED_WITH_NOTIFICATION_FAILURE,
+    REJECTED_CLOSED
+}

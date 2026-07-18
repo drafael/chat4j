@@ -4,6 +4,8 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
 import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
+import com.github.drafael.chat4j.provider.support.CredentialMutationResult;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolution;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.util.Fonts;
@@ -16,10 +18,14 @@ import java.awt.*;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.BooleanSupplier;
+
+import static java.util.Arrays.fill;
+import static java.util.Arrays.stream;
 
 public class ApiTokenFieldPanel extends JPanel {
 
@@ -40,8 +46,8 @@ public class ApiTokenFieldPanel extends JPanel {
     private boolean registered;
     private boolean updating;
     private boolean dirty;
-    private ApiTokenChange pendingCredentialChange;
-    private volatile String lastSaveError = "";
+    private CompletableFuture<Boolean> saveInFlight;
+    private String lastSaveError = "";
 
     public ApiTokenFieldPanel(
             String envVarExpression,
@@ -127,12 +133,15 @@ public class ApiTokenFieldPanel extends JPanel {
         try {
             return !Arrays.equals(currentPassword, otherPassword);
         } finally {
-            Arrays.fill(currentPassword, '\0');
-            Arrays.fill(otherPassword, '\0');
+            fill(currentPassword, '\0');
+            fill(otherPassword, '\0');
         }
     }
 
     public CompletableFuture<Boolean> savePendingChangesAsync() {
+        if (saveInFlight != null) {
+            return saveInFlight;
+        }
         return dirty ? saveTokenAsync() : CompletableFuture.completedFuture(true);
     }
 
@@ -259,6 +268,9 @@ public class ApiTokenFieldPanel extends JPanel {
     }
 
     private CompletableFuture<Boolean> saveTokenAsync() {
+        if (saveInFlight != null) {
+            return saveInFlight;
+        }
         String conflict = registry.conflictMessage(this);
         if (StringUtils.isNotBlank(conflict)) {
             lastSaveError = conflict;
@@ -273,16 +285,23 @@ public class ApiTokenFieldPanel extends JPanel {
         char[] password = tokenField.getPassword();
         setControlsEnabled(false);
         setInfo("Saving token...");
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Boolean> operation = CompletableFuture.supplyAsync(() -> {
             try {
-                CredentialResolver.SaveTokenResult result = CredentialResolver.saveTokenOverride(envVarExpression, password);
-                return new SaveOutcome(true, result, "");
+                CredentialMutationResult result = CredentialMutationService.shared().saveTokenOverride(
+                        envVarExpression,
+                        password,
+                        this::notifyCredentialMutation
+                );
+                return new SaveOutcome(result.successful(), result, result.message());
             } catch (Exception e) {
                 return new SaveOutcome(false, null, StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName()));
             } finally {
-                Arrays.fill(password, '\0');
+                fill(password, '\0');
             }
         }).thenCompose(this::completeSaveOutcomeAsync);
+        saveInFlight = operation;
+        operation.whenComplete((ignored, error) -> clearSaveInFlight(operation));
+        return operation;
     }
 
     CompletableFuture<Boolean> requestVaultRecreation() {
@@ -295,8 +314,12 @@ public class ApiTokenFieldPanel extends JPanel {
     private boolean confirmRecreateVault() {
         int result = JOptionPane.showConfirmDialog(
                 SwingUtilities.getWindowAncestor(this),
-                "Repairing/recreating the token vault will make all saved API tokens unavailable until they are re-entered. "
-                        + "Decryptable backups of the existing vault and key will be retained.\n\nRepair/recreate token vault?",
+                "%s %s %s%s".formatted(
+                        "Repairing/recreating the token vault will make all saved API tokens unavailable",
+                        "until they are re-entered.",
+                        "Bounded backups of existing regular vault and key files will be retained.",
+                        "\n\nRepair/recreate token vault?"
+                ),
                 "Repair/recreate token vault?",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE
@@ -312,14 +335,9 @@ public class ApiTokenFieldPanel extends JPanel {
         }
         setControlsEnabled(false);
         setInfo("Recreating token vault...");
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                CredentialResolver.recreateTokenVault();
-                return "";
-            } catch (Exception e) {
-                return StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
-            }
-        }).thenCompose(this::completeVaultRecreationAsync);
+        return CompletableFuture.supplyAsync(() -> CredentialMutationService.shared().recreateVault(
+                this::notifyCredentialMutation
+        )).thenCompose(this::completeVaultRecreationAsync);
     }
 
     private CompletableFuture<Boolean> failedCompletion(Throwable error) {
@@ -328,118 +346,115 @@ public class ApiTokenFieldPanel extends JPanel {
         return result;
     }
 
-    private CompletableFuture<Void> notifyVaultRecreatedAsync() {
-        CompletableFuture<Void> result = CompletableFuture.completedFuture(null);
-        for (String envVar : CredentialResolver.supportedProviderEnvVars()) {
-            String tokenId = CredentialResolver.canonicalTokenId(envVar);
-            if (StringUtils.isBlank(tokenId)) {
-                continue;
-            }
-            ApiTokenChange change = new ApiTokenChange(tokenId, true, false);
-            result = result.thenCompose(ignored -> notifyCredentialChangedAsync(change));
+    private void notifyCredentialMutation(CredentialMutationResult mutation) {
+        if (!mutation.requiresDependentRefresh()) {
+            return;
         }
-        return result;
-    }
-
-    private CompletableFuture<Void> notifyCredentialChangedAsync(ApiTokenChange change) {
-        return CompletableFuture.runAsync(() -> credentialChangeListener.credentialChanged(change));
+        var failures = new ArrayList<RuntimeException>();
+        mutation.affectedTokenIds().forEach(tokenId -> {
+            try {
+                credentialChangeListener.credentialChanged(tokenId);
+            } catch (RuntimeException e) {
+                failures.add(e);
+            }
+        });
+        if (!failures.isEmpty()) {
+            var failure = new IllegalStateException("Credential change dependent refresh failed.");
+            failures.forEach(failure::addSuppressed);
+            throw failure;
+        }
     }
 
     private CompletableFuture<Boolean> completeSaveOutcomeAsync(SaveOutcome outcome) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        SwingUtilities.invokeLater(() -> beginSaveOutcomeCompletion(outcome, result));
+        SwingUtilities.invokeLater(() -> finishSaveOutcome(outcome, result));
         return result;
     }
 
-    private void beginSaveOutcomeCompletion(SaveOutcome outcome, CompletableFuture<Boolean> result) {
-        try {
-            if (!outcome.success()) {
-                failCompletion(outcome.errorMessage(), result);
-                return;
+    private void finishSaveOutcome(SaveOutcome outcome, CompletableFuture<Boolean> result) {
+        if (!outcome.success()) {
+            if (outcome.result() != null) {
+                reloadAfterFailedMutation(outcome.result(), false);
             }
-            lastSaveError = "";
-            ApiTokenChange change = outcome.result().changed()
-                    ? new ApiTokenChange(
-                    outcome.result().canonicalTokenId(),
-                    outcome.result().cleared(),
-                    outcome.result().savedOverride()
-            )
-                    : pendingCredentialChange;
-            CompletableFuture<Void> invalidation = change == null
-                    ? CompletableFuture.completedFuture(null)
-                    : notifyCredentialChangedAsync(change);
-            invalidation.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> finishSaveOutcome(outcome, change, error, result)));
-        } catch (Exception e) {
-            failCompletion(e, result);
+            failCompletion(outcome.errorMessage(), result);
+            return;
         }
-    }
-
-    private void finishSaveOutcome(SaveOutcome outcome, ApiTokenChange change, Throwable error, CompletableFuture<Boolean> result) {
         try {
-            if (error != null) {
-                markDirtyAfterFailedCompletion(outcome, change);
-                failCompletion(error, result);
-                return;
-            }
-            pendingCredentialChange = null;
             reloadFromEffectiveCredential();
-            if (change != null) {
-                registry.broadcastSaved(this, change.canonicalTokenId());
+            if (outcome.result().applied()) {
+                registry.broadcastSaved(this, canonicalTokenId);
             }
             afterSaveRefresh.run();
             setControlsEnabled(true);
             dirty = false;
+            lastSaveError = outcome.errorMessage();
+            if (StringUtils.isNotBlank(outcome.errorMessage())) {
+                setError(outcome.errorMessage());
+            }
             result.complete(true);
         } catch (Exception e) {
-            markDirtyAfterFailedCompletion(outcome, change);
+            dirty = false;
             failCompletion(e, result);
         }
     }
 
-    private void markDirtyAfterFailedCompletion(SaveOutcome outcome, ApiTokenChange change) {
-        if (outcome != null && outcome.success()) {
-            dirty = true;
-        }
-        if (change != null) {
-            pendingCredentialChange = change;
-            dirty = true;
+    private void clearSaveInFlight(CompletableFuture<Boolean> operation) {
+        Runnable clear = () -> {
+            if (saveInFlight == operation) {
+                saveInFlight = null;
+            }
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            clear.run();
+        } else {
+            SwingUtilities.invokeLater(clear);
         }
     }
 
-    private CompletableFuture<Boolean> completeVaultRecreationAsync(String error) {
+    private CompletableFuture<Boolean> completeVaultRecreationAsync(CredentialMutationResult mutation) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        SwingUtilities.invokeLater(() -> beginVaultRecreationCompletion(error, result));
+        SwingUtilities.invokeLater(() -> finishVaultRecreation(mutation, result));
         return result;
     }
 
-    private void beginVaultRecreationCompletion(String error, CompletableFuture<Boolean> result) {
+    private void finishVaultRecreation(CredentialMutationResult mutation, CompletableFuture<Boolean> result) {
+        if (!mutation.successful()) {
+            reloadAfterFailedMutation(mutation, true);
+            failCompletion(mutation.message(), result);
+            return;
+        }
         try {
-            if (StringUtils.isNotBlank(error)) {
-                failCompletion(error, result);
-                return;
+            recreateVaultLink.setVisible(false);
+            reloadFromEffectiveCredential();
+            if (mutation.applied()) {
+                registry.broadcastVaultRecreated(this);
             }
-            notifyVaultRecreatedAsync().whenComplete((ignored, failure) ->
-                    SwingUtilities.invokeLater(() -> finishVaultRecreation(failure, result)));
+            afterSaveRefresh.run();
+            setControlsEnabled(true);
+            lastSaveError = mutation.message();
+            if (StringUtils.isNotBlank(mutation.message())) {
+                setError(mutation.message());
+            }
+            result.complete(true);
         } catch (Exception e) {
             failCompletion(e, result);
         }
     }
 
-    private void finishVaultRecreation(Throwable error, CompletableFuture<Boolean> result) {
+    private void reloadAfterFailedMutation(CredentialMutationResult mutation, boolean recreation) {
+        if (!mutation.requiresDependentRefresh()) {
+            return;
+        }
         try {
-            if (error != null) {
-                failCompletion(error, result);
-                return;
-            }
-            lastSaveError = "";
-            recreateVaultLink.setVisible(false);
             reloadFromEffectiveCredential();
-            registry.broadcastVaultRecreated(this);
+            if (recreation) {
+                registry.broadcastVaultRecreated(this);
+            } else {
+                registry.broadcastSaved(this, canonicalTokenId);
+            }
             afterSaveRefresh.run();
-            setControlsEnabled(true);
-            result.complete(true);
-        } catch (Exception e) {
-            failCompletion(e, result);
+        } catch (RuntimeException ignored) {
+            // The sanitized mutation failure remains the primary user-facing error.
         }
     }
 
@@ -542,7 +557,7 @@ public class ApiTokenFieldPanel extends JPanel {
     }
 
     private Icon flatLafPasteIcon() {
-        return Arrays.stream(new String[] {
+        return stream(new String[] {
                         "Actions.Paste",
                         "Actions.PasteIcon",
                         "Actions.MenuPaste",
@@ -568,7 +583,7 @@ public class ApiTokenFieldPanel extends JPanel {
     private record EffectiveCredential(CredentialResolution resolution, ApiCredentialStatus status) {
     }
 
-    private record SaveOutcome(boolean success, CredentialResolver.SaveTokenResult result, String errorMessage) {
+    private record SaveOutcome(boolean success, CredentialMutationResult result, String errorMessage) {
     }
 
     private static class RevealingPasswordField extends JPasswordField {
