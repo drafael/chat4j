@@ -322,6 +322,28 @@ class CredentialMutationServiceTest {
     }
 
     @Test
+    @DisplayName("Closed mutation listener failures are reported without leaking details")
+    void saveTokenOverride_whenClosedListenerFails_reportsNotificationFailure() {
+        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        subject.closeSecrets();
+        char[] token = "saved-secret".toCharArray();
+
+        CredentialMutationResult result = subject.saveTokenOverride(
+                "OPENAI_API_KEY",
+                token,
+                ignored -> {
+                    throw new IllegalStateException("listener detail");
+                }
+        );
+
+        assertThat(result.status()).isEqualTo(CredentialMutationStatus.REJECTED_CLOSED_WITH_NOTIFICATION_FAILURE);
+        assertThat(result.message())
+                .isEqualTo("Credential service is closed. Completion notification also failed.")
+                .doesNotContain("listener detail", "saved-secret");
+        assertThat(token).containsOnly('\0');
+    }
+
+    @Test
     @DisplayName("Vault recreation notifies every supported canonical credential without duplicate aliases")
     void recreateVault_whenRequested_notifiesEveryCanonicalToken() {
         var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));

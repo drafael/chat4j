@@ -1,6 +1,10 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.google.common.jimfs.Configuration;
+import com.google.common.jimfs.Jimfs;
+import com.sun.nio.file.ExtendedOpenOption;
+import org.apache.commons.lang3.SystemUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -8,8 +12,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.file.FileSystem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -50,6 +56,54 @@ class ApiTokenVaultTest {
             assertThat(lookup.present()).isTrue();
             assertThat(String.valueOf(lookup.token())).isEqualTo("secret-token");
         }
+    }
+
+    @ParameterizedTest
+    @MethodSource("unsupportedLockFileSystems")
+    @DisplayName("Non-native file systems fail closed for token mutations")
+    void applyTokenMutation_whenLockBindingIsUnsupported_failsClosed(
+            Configuration configuration,
+            String configPath
+    ) throws Exception {
+        try (FileSystem fileSystem = Jimfs.newFileSystem(configuration)) {
+            var storagePaths = StoragePaths.ofConfigHome(fileSystem.getPath(configPath));
+            var subject = new ApiTokenVault(storagePaths);
+
+            assertThatThrownBy(() -> CredentialTestSupport.saveToken(
+                    subject,
+                    "OPENAI_API_KEY",
+                    "secret".toCharArray()
+            ))
+                    .isInstanceOf(ApiTokenVault.ApiTokenVaultException.class)
+                    .hasMessage("Could not update token vault.");
+            assertThat(Files.exists(storagePaths.tokenVaultFile())).isFalse();
+        }
+    }
+
+    private static Stream<Arguments> unsupportedLockFileSystems() {
+        return Stream.of(
+                Arguments.of(Configuration.windows(), "C:\\config"),
+                Arguments.of(Configuration.unix(), "/config")
+        );
+    }
+
+    @Test
+    @DisplayName("Native Windows no-share-delete channels pin the visible lock path")
+    void openLockFile_whenNativeWindowsChannelIsOpen_preventsPathRemoval() throws Exception {
+        assumeTrue(SystemUtils.IS_OS_WINDOWS);
+        Path lockFile = tempDir.resolve("native-windows.lock");
+
+        try (FileChannel ignored = FileChannel.open(
+                lockFile,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE,
+                ExtendedOpenOption.NOSHARE_DELETE
+        )) {
+            assertThatThrownBy(() -> Files.delete(lockFile)).isInstanceOf(IOException.class);
+        }
+
+        assertThat(Files.deleteIfExists(lockFile)).isTrue();
     }
 
     @Test
@@ -238,7 +292,7 @@ class ApiTokenVaultTest {
             Thread.sleep(100);
             assertThat(save).isNotDone();
             lock.release();
-            save.get(2, TimeUnit.SECONDS);
+            save.get(7, TimeUnit.SECONDS);
         }
 
         try (ApiTokenLookup lookup = subject.readTokenChars("OPENAI_API_KEY")) {

@@ -41,7 +41,8 @@ public record CredentialMutationResult(
                     CredentialMutationStatus.UNCHANGED_WITH_NOTIFICATION_FAILURE;
             case FAILED_RELOADED, FAILED_RELOADED_WITH_NOTIFICATION_FAILURE ->
                     CredentialMutationStatus.FAILED_RELOADED_WITH_NOTIFICATION_FAILURE;
-            default -> status;
+            case REJECTED_CLOSED, REJECTED_CLOSED_WITH_NOTIFICATION_FAILURE ->
+                    CredentialMutationStatus.REJECTED_CLOSED_WITH_NOTIFICATION_FAILURE;
         };
         if (updatedStatus == status) {
             return this;
@@ -51,6 +52,8 @@ public record CredentialMutationResult(
                     "Credential change completed, but dependent refresh failed.";
             case FAILED_RELOADED_WITH_NOTIFICATION_FAILURE ->
                     "%s Dependent refresh also failed.".formatted(message);
+            case REJECTED_CLOSED_WITH_NOTIFICATION_FAILURE ->
+                    "%s Completion notification also failed.".formatted(message);
             default -> message;
         };
         return new CredentialMutationResult(updatedStatus, affectedTokenIds, updatedMessage);

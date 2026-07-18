@@ -6,14 +6,15 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.sun.nio.file.ExtendedOpenOption;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.SystemUtils;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import javax.swing.SwingUtilities;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -26,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.FileSystems;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.OpenOption;
@@ -46,6 +48,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -67,6 +70,11 @@ public class ApiTokenVault {
     static final int MAX_VAULT_BYTES = 4 * 1024 * 1024;
     static final int MAX_KEY_FILE_BYTES = 1024;
 
+    private static final String NATIVE_WINDOWS_PROVIDER = "sun.nio.fs.WindowsFileSystemProvider";
+    private static final Set<String> NATIVE_POSIX_PROVIDERS = Set.of(
+            "sun.nio.fs.LinuxFileSystemProvider",
+            "sun.nio.fs.MacOSXFileSystemProvider"
+    );
     private static final int SCHEMA_VERSION = 1;
     private static final int MASTER_KEY_BYTES = 32;
     private static final int NONCE_BYTES = 12;
@@ -245,12 +253,7 @@ public class ApiTokenVault {
             snapshot = VaultSnapshot.closed();
             snapshotGeneration++;
         }
-        Runnable clearAction = () -> clear(discarded.masterKey());
-        if (SwingUtilities.isEventDispatchThread()) {
-            Thread.ofVirtual().name("chat4j-vault-secret-clear-").start(clearAction);
-        } else {
-            clearAction.run();
-        }
+        clear(discarded.masterKey());
     }
 
     static void validateTokenInput(char[] token) {
@@ -915,22 +918,11 @@ public class ApiTokenVault {
 
     private FileChannel openLockFile(Path lockFile) throws IOException {
         readRegularFileAttributes(lockFile, false);
-        Set<OpenOption> createOptions = Set.of(
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.READ,
-                StandardOpenOption.WRITE,
-                LinkOption.NOFOLLOW_LINKS
-        );
         FileChannel channel;
         try {
-            channel = FileChannel.open(lockFile, createOptions, ownerOnlyFileAttributes());
+            channel = FileChannel.open(lockFile, lockOpenOptions(lockFile, true), ownerOnlyFileAttributes());
         } catch (FileAlreadyExistsException e) {
-            channel = FileChannel.open(
-                    lockFile,
-                    StandardOpenOption.READ,
-                    StandardOpenOption.WRITE,
-                    LinkOption.NOFOLLOW_LINKS
-            );
+            channel = FileChannel.open(lockFile, lockOpenOptions(lockFile, false));
         }
         try {
             applyOwnerOnlyFilePermissions(lockFile);
@@ -942,6 +934,20 @@ public class ApiTokenVault {
         }
     }
 
+    private static Set<OpenOption> lockOpenOptions(Path lockFile, boolean create) {
+        Set<OpenOption> options = new HashSet<>();
+        if (create) {
+            options.add(StandardOpenOption.CREATE_NEW);
+        }
+        options.add(StandardOpenOption.READ);
+        options.add(StandardOpenOption.WRITE);
+        options.add(LinkOption.NOFOLLOW_LINKS);
+        if (usesNativeWindowsFileSystem(lockFile)) {
+            options.add(ExtendedOpenOption.NOSHARE_DELETE);
+        }
+        return Set.copyOf(options);
+    }
+
     private LockBinding bindLockChannelToPath(FileChannel channel, Path lockFile) throws IOException {
         byte[] marker = new byte[LOCK_MARKER_BYTES];
         secureRandom.nextBytes(marker);
@@ -949,26 +955,40 @@ public class ApiTokenVault {
             channel.position(0);
             channel.truncate(0);
             writeAndForce(channel, marker);
-            BoundedFile pathFile = readBoundedRegularFile(lockFile, LOCK_MARKER_BYTES, "token vault lock");
-            try {
-                if (pathFile == null || !Arrays.equals(marker, pathFile.content())) {
-                    throw new IOException("Token vault lock path changed after opening.");
+            FileIdentity identity = fileIdentity(lockFile, true);
+            boolean nativeWindows = usesNativeWindowsFileSystem(lockFile);
+            if (!nativeWindows) {
+                if (!usesNativePosixFileSystem(lockFile)) {
+                    throw new IOException("Safe token vault lock binding is unavailable.");
                 }
-                LockBinding binding = new LockBinding(
-                        lockFile,
-                        copyOf(marker, marker.length),
-                        pathFile.version().identity()
-                );
-                clear(marker);
-                return binding;
-            } finally {
-                if (pathFile != null) {
-                    clear(pathFile.content());
-                }
+                verifyLockMarker(lockFile, marker, identity);
             }
+            LockBinding binding = new LockBinding(
+                    lockFile,
+                    nativeWindows ? null : copyOf(marker, marker.length),
+                    identity
+            );
+            clear(marker);
+            return binding;
         } catch (Exception e) {
             clear(marker);
             throw e;
+        }
+    }
+
+    private void verifyLockMarker(Path lockFile, byte[] marker, FileIdentity identity) throws IOException {
+        BoundedFile pathFile = readBoundedRegularFile(lockFile, LOCK_MARKER_BYTES, "token vault lock");
+        try {
+            if (pathFile == null
+                    || !identity.matches(pathFile.version().identity())
+                    || !Arrays.equals(marker, pathFile.content())
+            ) {
+                throw new IOException("Token vault lock path changed after opening.");
+            }
+        } finally {
+            if (pathFile != null) {
+                clear(pathFile.content());
+            }
         }
     }
 
@@ -977,12 +997,16 @@ public class ApiTokenVault {
         if (binding == null) {
             throw new IOException("Token vault lock binding is unavailable.");
         }
+        if (!binding.identity().matches(fileIdentity(binding.path(), true))) {
+            throw new IOException("Token vault lock path changed during mutation.");
+        }
+        if (usesNativeWindowsFileSystem(binding.path())) {
+            // NOSHARE_DELETE pins the visible lock path while Windows prevents a second content read.
+            return;
+        }
         BoundedFile pathFile = readBoundedRegularFile(binding.path(), LOCK_MARKER_BYTES, "token vault lock");
         try {
-            if (pathFile == null
-                    || !binding.identity().matches(pathFile.version().identity())
-                    || !Arrays.equals(binding.marker(), pathFile.content())
-            ) {
+            if (pathFile == null || !Arrays.equals(binding.marker(), pathFile.content())) {
                 throw new IOException("Token vault lock path changed during mutation.");
             }
         } finally {
@@ -990,6 +1014,18 @@ public class ApiTokenVault {
                 clear(pathFile.content());
             }
         }
+    }
+
+    private static boolean usesNativeWindowsFileSystem(Path path) {
+        return SystemUtils.IS_OS_WINDOWS
+                && path.getFileSystem().equals(FileSystems.getDefault())
+                && NATIVE_WINDOWS_PROVIDER.equals(path.getFileSystem().provider().getClass().getName());
+    }
+
+    private static boolean usesNativePosixFileSystem(Path path) {
+        return !SystemUtils.IS_OS_WINDOWS
+                && path.getFileSystem().equals(FileSystems.getDefault())
+                && NATIVE_POSIX_PROVIDERS.contains(path.getFileSystem().provider().getClass().getName());
     }
 
     private FileLock acquireLock(FileChannel channel, long deadlineNanos) throws IOException, InterruptedException {

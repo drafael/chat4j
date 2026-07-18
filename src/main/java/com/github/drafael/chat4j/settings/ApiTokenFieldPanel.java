@@ -44,8 +44,10 @@ public class ApiTokenFieldPanel extends JPanel {
     private final JLabel recreateVaultLink = new JLabel("Recreate token vault…");
     private final JPanel statusRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
     private boolean registered;
+    private boolean removed;
     private boolean updating;
     private boolean dirty;
+    private int pendingCompletions;
     private CompletableFuture<Boolean> saveInFlight;
     private String lastSaveError = "";
 
@@ -102,14 +104,27 @@ public class ApiTokenFieldPanel extends JPanel {
 
     @Override
     public void addNotify() {
+        boolean readded = removed;
+        removed = false;
         registerField();
         super.addNotify();
+        if (readded && pendingCompletions == 0) {
+            reloadFromEffectiveCredential();
+        }
     }
 
     @Override
     public void removeNotify() {
-        unregisterFromRegistry();
-        super.removeNotify();
+        removed = true;
+        updating = true;
+        try {
+            tokenField.setText("");
+            dirty = false;
+        } finally {
+            updating = false;
+            unregisterFromRegistry();
+            super.removeNotify();
+        }
     }
 
     public String canonicalTokenId() {
@@ -283,6 +298,7 @@ public class ApiTokenFieldPanel extends JPanel {
             return failedCompletion(e);
         }
         char[] password = tokenField.getPassword();
+        pendingCompletions++;
         setControlsEnabled(false);
         setInfo("Saving token...");
         CompletableFuture<Boolean> operation = CompletableFuture.supplyAsync(() -> {
@@ -333,6 +349,7 @@ public class ApiTokenFieldPanel extends JPanel {
         } catch (Exception e) {
             return failedCompletion(e);
         }
+        pendingCompletions++;
         setControlsEnabled(false);
         setInfo("Recreating token vault...");
         return CompletableFuture.supplyAsync(() -> CredentialMutationService.shared().recreateVault(
@@ -367,8 +384,32 @@ public class ApiTokenFieldPanel extends JPanel {
 
     private CompletableFuture<Boolean> completeSaveOutcomeAsync(SaveOutcome outcome) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        SwingUtilities.invokeLater(() -> finishSaveOutcome(outcome, result));
+        SwingUtilities.invokeLater(() -> {
+            if (removed) {
+                boolean successful = completeRemovedSaveOutcome(outcome);
+                pendingCompletions--;
+                result.complete(successful);
+                return;
+            }
+            try {
+                finishSaveOutcome(outcome, result);
+            } finally {
+                pendingCompletions--;
+            }
+        });
         return result;
+    }
+
+    private boolean completeRemovedSaveOutcome(SaveOutcome outcome) {
+        if (outcome.result() == null || !outcome.result().requiresDependentRefresh()) {
+            return outcome.success();
+        }
+        try {
+            registry.broadcastSaved(this, canonicalTokenId);
+            return outcome.success();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private void finishSaveOutcome(SaveOutcome outcome, CompletableFuture<Boolean> result) {
@@ -413,8 +454,32 @@ public class ApiTokenFieldPanel extends JPanel {
 
     private CompletableFuture<Boolean> completeVaultRecreationAsync(CredentialMutationResult mutation) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        SwingUtilities.invokeLater(() -> finishVaultRecreation(mutation, result));
+        SwingUtilities.invokeLater(() -> {
+            if (removed) {
+                boolean successful = completeRemovedVaultRecreation(mutation);
+                pendingCompletions--;
+                result.complete(successful);
+                return;
+            }
+            try {
+                finishVaultRecreation(mutation, result);
+            } finally {
+                pendingCompletions--;
+            }
+        });
         return result;
+    }
+
+    private boolean completeRemovedVaultRecreation(CredentialMutationResult mutation) {
+        if (!mutation.requiresDependentRefresh()) {
+            return mutation.successful();
+        }
+        try {
+            registry.broadcastVaultRecreated(this);
+            return mutation.successful();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private void finishVaultRecreation(CredentialMutationResult mutation, CompletableFuture<Boolean> result) {

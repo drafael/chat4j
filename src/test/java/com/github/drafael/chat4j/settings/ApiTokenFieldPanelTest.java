@@ -215,6 +215,107 @@ class ApiTokenFieldPanelTest {
     }
 
     @Test
+    @DisplayName("Removed token fields skip local completion and refresh active peers")
+    void savePendingChangesAsync_whenFieldIsRemoved_refreshesActivePeers() throws Exception {
+        var listenerStarted = new CountDownLatch(1);
+        var releaseListener = new CountDownLatch(1);
+        var sourceRefreshes = new AtomicInteger();
+        var peerRefreshes = new AtomicInteger();
+        var registry = new ApiTokenFieldRegistry();
+        ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                registry,
+                change -> {
+                    listenerStarted.countDown();
+                    try {
+                        releaseListener.await(2, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
+                },
+                sourceRefreshes::incrementAndGet
+        ));
+        onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                registry,
+                null,
+                peerRefreshes::incrementAndGet
+        ));
+        JPasswordField tokenField = onEdt(() -> findPasswordField(subject));
+        CompletableFuture<Boolean> save = onEdt(() -> {
+            tokenField.setText("saved-token");
+            return subject.savePendingChangesAsync();
+        });
+        try {
+            assertThat(listenerStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            onEdt(() -> {
+                subject.removeNotify();
+                assertThat(tokenField.getPassword()).isEmpty();
+                return null;
+            });
+        } finally {
+            releaseListener.countDown();
+        }
+
+        assertThat(save.get(2, TimeUnit.SECONDS)).isTrue();
+        onEdt(() -> null);
+        assertThat(sourceRefreshes).hasValue(0);
+        assertThat(peerRefreshes).hasValue(1);
+        onEdt(() -> {
+            subject.addNotify();
+            assertTokenControlsEnabled(subject, true);
+            assertThat(subject.dirty()).isFalse();
+            return null;
+        });
+    }
+
+    @Test
+    @DisplayName("Re-added token fields reconcile queued save completion")
+    void savePendingChangesAsync_whenFieldIsRemovedAndReadded_restoresCurrentUi() throws Exception {
+        var listenerStarted = new CountDownLatch(1);
+        var releaseListener = new CountDownLatch(1);
+        var refreshes = new AtomicInteger();
+        ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                new ApiTokenFieldRegistry(),
+                change -> {
+                    listenerStarted.countDown();
+                    try {
+                        releaseListener.await(2, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(e);
+                    }
+                },
+                refreshes::incrementAndGet
+        ));
+        JPasswordField tokenField = onEdt(() -> findPasswordField(subject));
+        CompletableFuture<Boolean> save = onEdt(() -> {
+            tokenField.setText("saved-token");
+            return subject.savePendingChangesAsync();
+        });
+        try {
+            assertThat(listenerStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            onEdt(() -> {
+                subject.removeNotify();
+                subject.addNotify();
+                return null;
+            });
+        } finally {
+            releaseListener.countDown();
+        }
+
+        assertThat(save.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(refreshes).hasValue(1);
+        onEdt(() -> {
+            assertTokenControlsEnabled(subject, true);
+            assertThat(subject.dirty()).isFalse();
+            return null;
+        });
+    }
+
+    @Test
     @DisplayName("API token field clears saved override when blank dirty field loses focus")
     void focusLost_whenBlankAndSavedTokenExists_deletesOverrideAndNotifiesListener() throws Exception {
         char[] savedToken = "saved-token".toCharArray();
@@ -583,6 +684,57 @@ class ApiTokenFieldPanelTest {
             assertTokenControlsEnabled(subject, true);
             return null;
         });
+    }
+
+    @Test
+    @DisplayName("Removed token fields propagate completed vault recreation to active peers")
+    void requestVaultRecreation_whenFieldIsRemoved_refreshesActivePeers() throws Exception {
+        makeVaultCorrupt();
+        var listenerStarted = new CountDownLatch(1);
+        var releaseListener = new CountDownLatch(1);
+        var listenerCalls = new AtomicInteger();
+        var sourceRefreshes = new AtomicInteger();
+        var peerRefreshes = new AtomicInteger();
+        var registry = new ApiTokenFieldRegistry();
+        ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                registry,
+                change -> {
+                    if (listenerCalls.incrementAndGet() == 1) {
+                        listenerStarted.countDown();
+                        try {
+                            releaseListener.await(2, TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                },
+                sourceRefreshes::incrementAndGet,
+                () -> true
+        ));
+        onEdt(() -> new ApiTokenFieldPanel(
+                "ANTHROPIC_API_KEY",
+                registry,
+                null,
+                peerRefreshes::incrementAndGet
+        ));
+        assertRecreateVaultLinkVisible(subject);
+        CompletableFuture<Boolean> recreation = onEdt(subject::requestVaultRecreation);
+        try {
+            assertThat(listenerStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            onEdt(() -> {
+                subject.removeNotify();
+                return null;
+            });
+        } finally {
+            releaseListener.countDown();
+        }
+
+        assertThat(recreation.get(2, TimeUnit.SECONDS)).isTrue();
+        onEdt(() -> null);
+        assertThat(sourceRefreshes).hasValue(0);
+        assertThat(peerRefreshes).hasValue(1);
     }
 
     @Test
