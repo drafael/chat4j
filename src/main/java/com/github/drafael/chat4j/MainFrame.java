@@ -60,6 +60,7 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
@@ -87,7 +88,6 @@ import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
-import com.github.drafael.chat4j.settings.ApiTokenChange;
 import com.github.drafael.chat4j.settings.SettingsCredentialChangeListener;
 import com.github.drafael.chat4j.settings.CredentialChangeEffects;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
@@ -1048,6 +1048,7 @@ public class MainFrame extends JFrame {
 
     private void requestWindowClose() {
         runShutdownFlow(() -> {
+            CredentialMutationService.shared().closeSecrets();
             dispose();
             System.exit(0);
         });
@@ -1421,8 +1422,8 @@ public class MainFrame extends JFrame {
     private SettingsCredentialChangeListener settingsCredentialChangeListener() {
         return new SettingsCredentialChangeListener() {
             @Override
-            public void credentialChanged(ApiTokenChange change) {
-                onSettingsCredentialChanged(change);
+            public void credentialChanged(String canonicalTokenId) {
+                onSettingsCredentialChanged(canonicalTokenId);
             }
 
             @Override
@@ -1432,11 +1433,11 @@ public class MainFrame extends JFrame {
         };
     }
 
-    private void onSettingsCredentialChanged(ApiTokenChange change) {
+    private void onSettingsCredentialChanged(String canonicalTokenId) {
         applyCredentialChangeAsync(
-                () -> invalidateCredentialBackedCaches(change),
+                () -> invalidateCredentialBackedCaches(canonicalTokenId),
                 this::refreshCredentialBackedUi,
-                change.canonicalTokenId()
+                canonicalTokenId
         );
     }
 
@@ -1468,8 +1469,8 @@ public class MainFrame extends JFrame {
         invalidateAndRefresh.run();
     }
 
-    private void invalidateCredentialBackedCaches(ApiTokenChange change) {
-        CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(change.canonicalTokenId());
+    private void invalidateCredentialBackedCaches(String canonicalTokenId) {
+        CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
         List<Runnable> invalidations = new ArrayList<>();
         effect.chatProviders().forEach(provider -> invalidations.add(() -> modelCacheService.invalidate(provider)));
         effect.speechToTextProviderIds().forEach(

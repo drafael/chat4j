@@ -44,17 +44,37 @@ class CredentialInvalidationSupportTest {
         var reportedFailure = new AtomicReference<RuntimeException>();
         var refreshCount = new AtomicInteger();
 
-        CredentialInvalidationSupport.invalidateAndRefresh(
+        assertThatThrownBy(() -> CredentialInvalidationSupport.invalidateAndRefresh(
                 () -> {
                     throw failure;
                 },
                 refreshCount::incrementAndGet,
+                reportedFailure::set
+        )).isSameAs(failure);
+        invokeAndWait(() -> {
+        });
+
+        assertThat(reportedFailure).hasValue(failure);
+        assertThat(refreshCount).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Credential-backed UI refresh failures are reported from the EDT")
+    void invalidateAndRefresh_whenUiRefreshFails_reportsFailure() throws Exception {
+        var failure = new IllegalStateException("refresh failed");
+        var reportedFailure = new AtomicReference<RuntimeException>();
+
+        CredentialInvalidationSupport.invalidateAndRefresh(
+                () -> {
+                },
+                () -> {
+                    throw failure;
+                },
                 reportedFailure::set
         );
         invokeAndWait(() -> {
         });
 
         assertThat(reportedFailure).hasValue(failure);
-        assertThat(refreshCount).hasValue(1);
     }
 }
