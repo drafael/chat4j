@@ -2,14 +2,13 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Component;
 import java.awt.Container;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +21,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Arrays.fill;
+import static java.util.Arrays.stream;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,14 +33,13 @@ class ProvidersPanelTest {
 
     @BeforeEach
     void setUp() {
-        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
         CredentialResolver.init(emptyMap());
     }
 
     @AfterEach
     void tearDown() {
-        CredentialResolver.configureTokenVault(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
-        CredentialResolver.init(emptyMap());
+        CredentialTestSupport.reset();
     }
 
     @Test
@@ -77,9 +77,9 @@ class ProvidersPanelTest {
             JPanel missingTokenInfoPanel = callOnEdt(JPanel::new);
             char[] token = "saved-token".toCharArray();
             try {
-                CredentialResolver.saveTokenOverride("OPENAI_API_KEY", token);
+                CredentialTestSupport.saveToken("OPENAI_API_KEY", token);
             } finally {
-                Arrays.fill(token, '\0');
+                fill(token, '\0');
             }
 
             runOnEdt(() -> subject.refreshProviderCredentialUi(
@@ -154,7 +154,7 @@ class ProvidersPanelTest {
         if (!(component instanceof Container container)) {
             return false;
         }
-        return Arrays.stream(container.getComponents())
+        return stream(container.getComponents())
                 .anyMatch(child -> containsLabelText(child, expectedText));
     }
 

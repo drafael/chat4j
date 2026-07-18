@@ -19,8 +19,15 @@ final class CredentialInvalidationSupport {
             invalidation.run();
         } catch (RuntimeException e) {
             failureReporter.accept(e);
+            throw e;
         } finally {
-            SwingUtilities.invokeLater(refreshUi);
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    refreshUi.run();
+                } catch (RuntimeException e) {
+                    failureReporter.accept(e);
+                }
+            });
         }
     }
 
