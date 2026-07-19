@@ -1106,7 +1106,9 @@ class SpeechToTextPanelTest {
     @Test
     @DisplayName("Authoritative STT repair runs after an older pending model save")
     void refreshCatalogs_whenStaleModelSavePending_persistsAuthoritativeFallbackLast() throws Exception {
-        var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-pending-model-save.properties"));
+        var repo = new BlockingNthConditionalSettingsRepository(
+                tempDir.resolve("settings-elevenlabs-pending-model-save.properties")
+        );
         repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
         repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
         repo.put("chat4j.stt.elevenlabs.model.label", "Account A Model");
@@ -1148,25 +1150,32 @@ class SpeechToTextPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
+            repo.blockAfterSuccessfulConditionalUpdates(1);
             releaseStaleSave.countDown();
             waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
                     .equals(provider.defaultModel().id()));
-            SwingUtilities.invokeAndWait(() -> {
-            });
+            assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
-            assertThat(staleSuccessCallbacks).hasValue(1);
-            assertThat(repo.get("chat4j.stt.elevenlabs.model.label"))
-                    .contains(provider.defaultModel().label());
-            runOnEdt(() -> {
+            repo.releaseConditionalUpdate.countDown();
+            assertThat(subject.savePendingChanges()).isTrue();
+            waitUntil(() -> staleSuccessCallbacks.get() == 1);
+            waitUntil(() -> callOnEdt(() -> {
                 @SuppressWarnings("unchecked")
                 JComboBox<SpeechToTextCatalogItem> modelComboBox =
                         (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
-                assertThat(((SpeechToTextCatalogItem) modelComboBox.getSelectedItem()).id())
-                        .isEqualTo(provider.defaultModel().id());
-            });
+                return modelComboBox.getSelectedItem() instanceof SpeechToTextCatalogItem selected
+                        && provider.defaultModel().id().equals(selected.id());
+            }));
+
+            assertThat(repo.get("chat4j.stt.elevenlabs.model.label"))
+                    .contains(provider.defaultModel().label());
         } finally {
             releaseStaleSave.countDown();
+            repo.releaseConditionalUpdate.countDown();
+            subject.savePendingChanges();
             runOnEdt(subject::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {
+            });
         }
     }
 
