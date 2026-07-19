@@ -66,6 +66,26 @@ class ProviderModelsResolverTest {
     }
 
     @Test
+    @DisplayName("Resolve does not expose cached models from a different base URL")
+    void resolve_whenBaseUrlChanged_usesSeedModelsUntilScopeSynchronizes() {
+        var modelCacheService = modelCacheService();
+        String providerName = "ScopedProvider";
+        updateModels(
+                modelCacheService,
+                providerName,
+                "https://old.example.invalid",
+                List.of("old-endpoint-model")
+        );
+
+        var subject = new ProviderModelsResolver(modelCacheService);
+        var provider = provider(providerName, "https://new.example.invalid", List.of("seed-model"));
+
+        Map<String, List<String>> modelsByProvider = subject.resolve(List.of(provider));
+
+        assertThat(modelsByProvider.get(providerName)).containsExactly("seed-model");
+    }
+
+    @Test
     @DisplayName("Resolve uses Perplexity seed models even when stale cache entries exist")
     void resolve_whenPerplexityCacheContainsStaleModels_usesSeedModels() {
         var modelCacheService = modelCacheService();

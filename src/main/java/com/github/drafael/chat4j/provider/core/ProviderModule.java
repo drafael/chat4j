@@ -21,7 +21,7 @@ public interface ProviderModule {
             modelCatalogClient());
     }
 
-    default ModelFetcher createModelFetcher(ProviderRuntime runtime) {
-        return () -> modelCatalogClient().fetchModels(runtime);
+    default ModelFetcher createModelFetcher(ProviderRuntime runtime, long metadataGeneration) {
+        return () -> modelCatalogClient().fetchModels(runtime, metadataGeneration);
     }
 }

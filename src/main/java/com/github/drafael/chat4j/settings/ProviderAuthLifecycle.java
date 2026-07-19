@@ -19,14 +19,6 @@ final class ProviderAuthLifecycle {
         return active && generation == expectedGeneration;
     }
 
-    synchronized boolean runIfCurrent(long expectedGeneration, Runnable action) {
-        if (!active || generation != expectedGeneration) {
-            return false;
-        }
-        action.run();
-        return true;
-    }
-
     synchronized void activate() {
         generation++;
         active = true;

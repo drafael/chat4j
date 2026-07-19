@@ -4,11 +4,8 @@ import static java.util.Collections.emptyMap;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.persistence.SecureFileStore;
 import com.sun.net.httpserver.HttpServer;
-import java.awt.Desktop;
-import java.awt.GraphicsEnvironment;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -20,9 +17,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
@@ -30,17 +24,16 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
-import javax.swing.JOptionPane;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 
 @Slf4j
 public class CodexAuthResolver {
@@ -71,6 +64,7 @@ public class CodexAuthResolver {
     private static final String DEFAULT_REDIRECT_URI = "http://localhost:1455/auth/callback";
     private static final String DEFAULT_CALLBACK_HOST = "localhost";
     private static final int DEFAULT_LOGIN_TIMEOUT_SECONDS = 300;
+    private static final Duration MAX_OAUTH_REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
     private static final String BUILD_PROPERTIES_RESOURCE = "/build.properties";
     private static final String BUILD_PROPERTIES_CLIENT_ID_KEY = "codexOAuthClientId";
@@ -79,26 +73,25 @@ public class CodexAuthResolver {
     private final Path userHome;
     private final Map<String, String> environment;
     private final HttpClient httpClient;
-    private final UserPromptActions userPromptActions;
+    private final AtomicBoolean explicitAuthOperationInProgress = new AtomicBoolean();
+    private final ReentrantLock authFileMutationLock = new ReentrantLock();
 
     public CodexAuthResolver() {
         this(
                 Path.of(System.getProperty("user.home")),
                 System.getenv(),
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build(),
-                new DesktopUserPromptActions()
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
         );
     }
 
-    CodexAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient) {
-        this(userHome, environment, httpClient, new DesktopUserPromptActions());
-    }
-
-    CodexAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient, UserPromptActions userPromptActions) {
+    public CodexAuthResolver(
+            @NonNull Path userHome,
+            @NonNull Map<String, String> environment,
+            @NonNull HttpClient httpClient
+    ) {
         this.userHome = userHome;
-        this.environment = environment == null ? emptyMap() : Map.copyOf(environment);
+        this.environment = Map.copyOf(environment);
         this.httpClient = httpClient;
-        this.userPromptActions = userPromptActions == null ? new DesktopUserPromptActions() : userPromptActions;
     }
 
     public String resolveBearerToken() {
@@ -111,12 +104,18 @@ public class CodexAuthResolver {
     }
 
     public String resolveBearerTokenOrNull() {
-        Path tokenFile = chat4jAuthFile();
-        if (!Files.isRegularFile(tokenFile)) {
+        try {
+            authFileMutationLock.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return null;
         }
-
         try {
+            Path tokenFile = chat4jAuthFile();
+            if (!Files.isRegularFile(tokenFile)) {
+                return null;
+            }
+
             JsonNode root = JSON.readTree(tokenFile.toFile());
             String token = normalizeToken(root.path("accessToken").asText(""));
             if (StringUtils.isBlank(token)) {
@@ -126,18 +125,34 @@ public class CodexAuthResolver {
             String oauthScopes = root.path("oauthScopes").asText("");
             long expiresAtEpochMs = root.path("expiresAtEpochMs").asLong(0L);
             String refreshToken = StringUtils.trimToNull(root.path("refreshToken").asText(""));
-
-            if (isExpired(expiresAtEpochMs) && StringUtils.isNotBlank(refreshToken)) {
-                String refreshed = refreshAccessToken(refreshToken, oauthScopes);
-                if (StringUtils.isNotBlank(refreshed)) {
-                    token = refreshed;
+            if (looksLikeJwtToken(token)) {
+                JsonNode payload = decodeJwtPayload(token);
+                long jwtExpiresAtEpochMs = payload == null ? 0L : extractJwtExpiryEpochMs(payload);
+                if (jwtExpiresAtEpochMs > 0L) {
+                    expiresAtEpochMs = expiresAtEpochMs > 0L
+                            ? Math.min(expiresAtEpochMs, jwtExpiresAtEpochMs)
+                            : jwtExpiresAtEpochMs;
                 }
             }
 
-            String upgradedToken = upgradeJwtTokenIfPossible(token, oauthScopes);
+            if (isExpired(expiresAtEpochMs)) {
+                if (StringUtils.isBlank(refreshToken)) {
+                    return null;
+                }
+                return refreshAccessToken(refreshToken, oauthScopes);
+            }
+
+            String upgradedToken = upgradeJwtTokenIfPossible(
+                    token,
+                    oauthScopes,
+                    refreshToken,
+                    expiresAtEpochMs
+            );
             return StringUtils.defaultIfBlank(upgradedToken, token);
         } catch (Exception e) {
             return null;
+        } finally {
+            authFileMutationLock.unlock();
         }
     }
 
@@ -150,43 +165,35 @@ public class CodexAuthResolver {
         return CodexAuthStatus.authorized("Authorized via %s".formatted(CHAT4J_TOKEN_SOURCE), CHAT4J_TOKEN_SOURCE);
     }
 
-    public CodexAuthActionResult login() {
+    public CodexAuthActionResult login(
+            @NonNull BooleanSupplier cancellationRequested,
+            @NonNull AuthorizationInputProvider authorizationInputProvider
+    ) {
+        AuthOperation operation = tryBeginAuthOperation();
+        if (operation == null) {
+            return authOperationInProgressResult();
+        }
+
         log.debug("Starting OpenAI Codex OAuth login");
-        CodexCallbackWait callbackWait = null;
-        try {
+        try (operation) {
             CodexLoginChallenge challenge = beginLogin();
-            callbackWait = startCallbackWait(challenge);
-            triggerLoginPromptActions(challenge.authorizationUri());
-
-            String inputText = null;
-            try {
-                inputText = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return cancelledLoginResult();
-            } catch (TimeoutException ignored) {
-                // Fall through to manual prompt.
-            }
-
-            if (StringUtils.isBlank(inputText)) {
-                inputText = userPromptActions.promptForAuthorizationInput(
-                        manualAuthorizationInputMessage(challenge),
-                        manualAuthorizationInputExample(challenge)
-                );
-            }
-
-            return completeLoginWithAuthorizationInput(challenge, inputText);
+            String input = authorizationInputProvider.request(challenge);
+            return completeLoginWithAuthorizationInput(challenge, input, cancellationRequested);
+        } catch (TimeoutException e) {
+            return CodexAuthActionResult.failure("OpenAI Codex login timed out.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return cancelledLoginResult();
         } catch (Exception e) {
-            log.warn("OpenAI Codex OAuth login failed: {}", ExceptionUtils.getMessage(e));
-            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
-        } finally {
-            if (callbackWait != null) {
-                callbackWait.close();
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
             }
+            log.warn("OpenAI Codex OAuth login failed ({})", e.getClass().getSimpleName());
+            return CodexAuthActionResult.failure("OpenAI Codex login failed.");
         }
     }
 
-    public CodexLoginChallenge beginLogin() {
+    CodexLoginChallenge beginLogin() {
         try {
             String clientId = resolveOAuthClientId();
             String oauthScopes = resolveOAuthScopes();
@@ -195,6 +202,7 @@ public class CodexAuthResolver {
             String redirectUri = resolveRedirectUri();
 
             String authorizationUri = createAuthorizationUri(clientId, oauthScopes, pkce.challenge(), state, redirectUri);
+            int timeoutSeconds = resolveLoginTimeoutSeconds();
 
             return new CodexLoginChallenge(
                     pkce.verifier(),
@@ -202,47 +210,25 @@ public class CodexAuthResolver {
                     authorizationUri,
                     redirectUri,
                     resolveCallbackHost(),
-                    resolveLoginTimeoutSeconds(),
+                    timeoutSeconds,
+                    loginDeadlineNanos(timeoutSeconds),
                     oauthScopes
             );
         } catch (Exception e) {
-            throw new IllegalStateException(firstLine(e.getMessage()), e);
+            throw new IllegalStateException("Unable to start OpenAI Codex login.", e);
         }
     }
 
-    public CodexAuthActionResult completeLogin(@NonNull CodexLoginChallenge challenge) {
-        try {
-            AuthorizationCodeInput callbackInput = waitForAuthorizationCode(challenge);
-            if (Thread.currentThread().isInterrupted()) {
-                return cancelledLoginResult();
-            }
-            AuthorizationCodeInput input = callbackInput;
-            if (input == null || StringUtils.isBlank(input.code())) {
-                String manualInput = userPromptActions.promptForAuthorizationInput(
-                        manualAuthorizationInputMessage(challenge),
-                        manualAuthorizationInputExample(challenge)
-                );
-                input = parseAuthorizationInput(manualInput);
-            }
-
-            return completeLogin(challenge, input);
-        } catch (Exception e) {
-            log.warn("OpenAI Codex OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
-            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
-        }
-    }
-
-    public CodexAuthActionResult completeLoginWithAuthorizationInput(@NonNull CodexLoginChallenge challenge, String inputText) {
-        return completeLoginWithAuthorizationInput(challenge, inputText, () -> false);
-    }
-
-    public CodexAuthActionResult completeLoginWithAuthorizationInput(
+    CodexAuthActionResult completeLoginWithAuthorizationInput(
             @NonNull CodexLoginChallenge challenge,
             String inputText,
             BooleanSupplier cancellationRequested
     ) {
         if (isCancellationRequested(cancellationRequested)) {
             return cancelledLoginResult();
+        }
+        if (isChallengeExpired(challenge)) {
+            return timedOutLoginResult();
         }
         try {
             return completeLogin(challenge, parseAuthorizationInput(inputText), cancellationRequested);
@@ -253,8 +239,11 @@ public class CodexAuthResolver {
             if (isCancellationRequested(cancellationRequested)) {
                 return cancelledLoginResult();
             }
-            log.warn("OpenAI Codex OAuth manual completion failed: {}", ExceptionUtils.getMessage(e));
-            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            if (isChallengeExpired(challenge)) {
+                return timedOutLoginResult();
+            }
+            log.warn("OpenAI Codex OAuth manual completion failed ({})", e.getClass().getSimpleName());
+            return CodexAuthActionResult.failure("OpenAI Codex login failed.");
         }
     }
 
@@ -263,27 +252,37 @@ public class CodexAuthResolver {
     }
 
     public CodexAuthActionResult logout(BooleanSupplier cancellationRequested) {
-        try {
-            if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
-            }
-            Path tokenFile = chat4jAuthFile();
-            if (!Files.exists(tokenFile)) {
-                return CodexAuthActionResult.success("Chat4J OAuth session was already signed out.");
-            }
+        AuthOperation operation = tryBeginAuthOperation();
+        if (operation == null) {
+            return authOperationInProgressResult();
+        }
 
+        try (operation) {
             if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
+                return cancelledLogoutResult();
             }
-            Files.delete(tokenFile);
+            authFileMutationLock.lockInterruptibly();
+            try {
+                if (isCancellationRequested(cancellationRequested)) {
+                    return cancelledLogoutResult();
+                }
+                if (!Files.deleteIfExists(chat4jAuthFile())) {
+                    return CodexAuthActionResult.success("Chat4J OAuth session was already signed out.");
+                }
+            } finally {
+                authFileMutationLock.unlock();
+            }
             log.info("OpenAI Codex OAuth logout completed");
             return CodexAuthActionResult.success("Logged out from Chat4J OAuth session.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return cancelledLogoutResult();
         } catch (Exception e) {
             if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
+                return cancelledLogoutResult();
             }
-            log.warn("OpenAI Codex OAuth logout failed: {}", ExceptionUtils.getMessage(e));
-            return CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            log.warn("OpenAI Codex OAuth logout failed ({})", e.getClass().getSimpleName());
+            return CodexAuthActionResult.failure("Unable to delete the OpenAI Codex login session.");
         }
     }
 
@@ -298,12 +297,16 @@ public class CodexAuthResolver {
 
     public CodexCallbackWait startCallbackWait(@NonNull CodexLoginChallenge challenge) {
         CompletableFuture<String> callbackInputFuture = new CompletableFuture<>();
+        if (isChallengeExpired(challenge)) {
+            callbackInputFuture.complete("");
+            return CodexCallbackWait.manualOnly("OpenAI Codex login challenge expired.", callbackInputFuture);
+        }
         URI redirectUri;
         try {
             redirectUri = URI.create(challenge.redirectUri());
         } catch (Exception e) {
             String message = "Invalid callback URI. Use manual callback URL paste.";
-            log.warn("{} URI={}: {}", message, challenge.redirectUri(), ExceptionUtils.getMessage(e));
+            log.warn("{} ({})", message, e.getClass().getSimpleName());
             return CodexCallbackWait.manualOnly(message, callbackInputFuture);
         }
 
@@ -317,7 +320,7 @@ public class CodexAuthResolver {
         } catch (Exception e) {
             String message = "Local callback unavailable on %s:%d. Use manual callback URL paste."
                     .formatted(callbackHost, port);
-            log.warn("{} {}", message, ExceptionUtils.getMessage(e));
+            log.warn("{} ({})", message, e.getClass().getSimpleName());
             return CodexCallbackWait.manualOnly(message, callbackInputFuture);
         }
 
@@ -328,8 +331,8 @@ public class CodexAuthResolver {
                 String state = StringUtils.trimToNull(params.get("state"));
                 String code = StringUtils.trimToNull(params.get("code"));
 
-                if (StringUtils.isNotBlank(state) && !Strings.CS.equals(state, challenge.state())) {
-                    byte[] responseBody = oauthHtml("State mismatch.", false);
+                if (!Strings.CS.equals(state, challenge.state())) {
+                    byte[] responseBody = oauthHtml("Missing or invalid state.", false);
                     exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
                     exchange.sendResponseHeaders(400, responseBody.length);
                     exchange.getResponseBody().write(responseBody);
@@ -365,25 +368,6 @@ public class CodexAuthResolver {
         return new CodexCallbackWait(true, message, callbackInputFuture, () -> server.stop(0));
     }
 
-    private AuthorizationCodeInput waitForAuthorizationCode(CodexLoginChallenge challenge) {
-        CodexCallbackWait callbackWait = startCallbackWait(challenge);
-        try {
-            String callbackInput = callbackWait.callbackInputFuture().get(challenge.timeoutSeconds(), TimeUnit.SECONDS);
-            return parseAuthorizationInput(callbackInput);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return null;
-        } catch (Exception e) {
-            return null;
-        } finally {
-            callbackWait.close();
-        }
-    }
-
-    private CodexAuthActionResult completeLogin(CodexLoginChallenge challenge, AuthorizationCodeInput input) throws Exception {
-        return completeLogin(challenge, input, () -> false);
-    }
-
     private CodexAuthActionResult completeLogin(
             CodexLoginChallenge challenge,
             AuthorizationCodeInput input,
@@ -393,12 +377,12 @@ public class CodexAuthResolver {
             return cancelledLoginResult();
         }
         if (input == null || StringUtils.isBlank(input.code())) {
-            return CodexAuthActionResult.failure(
-                    "Login timed out. Paste callback URL like %s"
-                            .formatted(manualAuthorizationInputExample(challenge))
-            );
+            return CodexAuthActionResult.failure("OpenAI Codex login did not receive an authorization code.");
         }
 
+        if (input.callbackUrl() && StringUtils.isBlank(input.state())) {
+            return CodexAuthActionResult.failure("OpenAI login failed: callback state is missing");
+        }
         if (StringUtils.isNotBlank(input.state()) && !Strings.CS.equals(input.state(), challenge.state())) {
             return CodexAuthActionResult.failure("OpenAI login failed: state mismatch");
         }
@@ -407,30 +391,42 @@ public class CodexAuthResolver {
                 resolveOAuthClientId(),
                 input.code(),
                 challenge.codeVerifier(),
-                challenge.redirectUri()
+                challenge.redirectUri(),
+                remainingChallengeRequestTimeout(challenge)
         );
         if (isCancellationRequested(cancellationRequested)) {
             return cancelledLoginResult();
         }
+        if (isChallengeExpired(challenge)) {
+            return timedOutLoginResult();
+        }
 
-        String resolvedToken = selectPreferredToken(resolveOAuthClientId(), tokenResponse);
+        String resolvedToken = selectPreferredToken(resolveOAuthClientId(), tokenResponse, challenge);
         if (isCancellationRequested(cancellationRequested)) {
             return cancelledLoginResult();
+        }
+        if (isChallengeExpired(challenge)) {
+            return timedOutLoginResult();
         }
         if (StringUtils.isBlank(resolvedToken)) {
             return CodexAuthActionResult.failure("OAuth token exchange returned no usable token");
         }
 
         long expiresAtEpochMs = resolveExpiresAtEpochMs(tokenResponse.expiresInSeconds());
-        if (isCancellationRequested(cancellationRequested)) {
-            return cancelledLoginResult();
-        }
-        storeChat4jToken(
+        BooleanSupplier publicationAborted = () -> (cancellationRequested != null
+                && cancellationRequested.getAsBoolean())
+                || isChallengeExpired(challenge);
+        if (!storeChat4jToken(
                 resolvedToken,
                 challenge.oauthScopes(),
                 tokenResponse.refreshToken(),
-                expiresAtEpochMs
-        );
+                expiresAtEpochMs,
+                publicationAborted
+        )) {
+            return isCancellationRequested(cancellationRequested)
+                    ? cancelledLoginResult()
+                    : timedOutLoginResult();
+        }
 
         log.info("OpenAI Codex OAuth login completed");
         return CodexAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
@@ -440,20 +436,6 @@ public class CodexAuthResolver {
         String rawQuery = StringUtils.defaultString(requestUri.getRawQuery());
         String separator = challenge.redirectUri().contains("?") ? "&" : "?";
         return "%s%s%s".formatted(challenge.redirectUri(), separator, rawQuery);
-    }
-
-    private String manualAuthorizationInputMessage(CodexLoginChallenge challenge) {
-        return """
-                Paste the full callback URL from your browser address bar after OpenAI sign-in.
-                It should look like: %s
-                If you cannot copy the full URL, paste the code value from code=... .
-                """.formatted(manualAuthorizationInputExample(challenge));
-    }
-
-    private String manualAuthorizationInputExample(CodexLoginChallenge challenge) {
-        String redirectUri = challenge == null ? resolveRedirectUri() : challenge.redirectUri();
-        String separator = redirectUri.contains("?") ? "&" : "?";
-        return "%s%scode=...&state=...".formatted(redirectUri, separator);
     }
 
     private byte[] oauthHtml(String message, boolean success) {
@@ -476,7 +458,8 @@ public class CodexAuthResolver {
             String clientId,
             String authorizationCode,
             String codeVerifier,
-            String redirectUri
+            String redirectUri,
+            Duration requestTimeout
     ) throws Exception {
         String formBody = "grant_type=%s&code=%s&redirect_uri=%s&client_id=%s&code_verifier=%s"
                 .formatted(
@@ -489,7 +472,7 @@ public class CodexAuthResolver {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(oauthTokenEndpoint()))
-                .timeout(Duration.ofSeconds(10))
+                .timeout(requestTimeout)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
@@ -513,8 +496,12 @@ public class CodexAuthResolver {
         return new OauthTokenResponse(idToken, accessToken, refreshToken, expiresInSeconds);
     }
 
-    private String selectPreferredToken(String clientId, OauthTokenResponse tokenResponse) {
-        String apiKey = exchangeIdTokenForApiKey(clientId, tokenResponse.idToken());
+    private String selectPreferredToken(
+            String clientId,
+            OauthTokenResponse tokenResponse,
+            CodexLoginChallenge challenge
+    ) throws TimeoutException {
+        String apiKey = exchangeIdTokenForApiKey(clientId, tokenResponse.idToken(), challenge);
         if (StringUtils.isNotBlank(apiKey)) {
             return apiKey;
         }
@@ -524,7 +511,7 @@ public class CodexAuthResolver {
             return null;
         }
 
-        String exchangedAccessToken = exchangeSubjectTokenForApiKey(clientId, accessToken);
+        String exchangedAccessToken = exchangeSubjectTokenForApiKey(clientId, accessToken, challenge);
         return StringUtils.defaultIfBlank(exchangedAccessToken, accessToken);
     }
 
@@ -586,24 +573,65 @@ public class CodexAuthResolver {
         }
     }
 
-    private String exchangeIdTokenForApiKey(String clientId, String idToken) {
+    private String exchangeIdTokenForApiKey(
+            String clientId,
+            String idToken,
+            CodexLoginChallenge challenge
+    ) throws TimeoutException {
         return StringUtils.isBlank(idToken)
-            ? null
-            : exchangeSubjectTokenForApiKey(clientId, idToken, "urn:ietf:params:oauth:token-type:id_token");
+                ? null
+                : exchangeSubjectTokenForApiKey(
+                        clientId,
+                        idToken,
+                        "urn:ietf:params:oauth:token-type:id_token",
+                        remainingChallengeRequestTimeout(challenge)
+                );
     }
 
     private String exchangeSubjectTokenForApiKey(String clientId, String subjectToken) {
         String exchanged = exchangeSubjectTokenForApiKey(
                 clientId,
                 subjectToken,
-                "urn:ietf:params:oauth:token-type:access_token"
+                "urn:ietf:params:oauth:token-type:access_token",
+                MAX_OAUTH_REQUEST_TIMEOUT
         );
         return StringUtils.isNotBlank(exchanged)
-            ? exchanged
-            : exchangeSubjectTokenForApiKey(clientId, subjectToken, "urn:ietf:params:oauth:token-type:id_token");
+                ? exchanged
+                : exchangeSubjectTokenForApiKey(
+                        clientId,
+                        subjectToken,
+                        "urn:ietf:params:oauth:token-type:id_token",
+                        MAX_OAUTH_REQUEST_TIMEOUT
+                );
     }
 
-    private String exchangeSubjectTokenForApiKey(String clientId, String subjectToken, String subjectTokenType) {
+    private String exchangeSubjectTokenForApiKey(
+            String clientId,
+            String subjectToken,
+            CodexLoginChallenge challenge
+    ) throws TimeoutException {
+        String exchanged = exchangeSubjectTokenForApiKey(
+                clientId,
+                subjectToken,
+                "urn:ietf:params:oauth:token-type:access_token",
+                remainingChallengeRequestTimeout(challenge)
+        );
+        return StringUtils.isNotBlank(exchanged)
+                ? exchanged
+                : exchangeSubjectTokenForApiKey(
+                        clientId,
+                        subjectToken,
+                        "urn:ietf:params:oauth:token-type:id_token",
+                        remainingChallengeRequestTimeout(challenge)
+                );
+    }
+
+    private String exchangeSubjectTokenForApiKey(
+            String clientId,
+            String subjectToken,
+            String subjectTokenType,
+            Duration requestTimeout
+    ) {
         if (StringUtils.isAnyBlank(clientId, subjectToken, subjectTokenType)) {
             return null;
         }
@@ -620,7 +648,7 @@ public class CodexAuthResolver {
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(oauthTokenEndpoint()))
-                    .timeout(Duration.ofSeconds(10))
+                    .timeout(requestTimeout)
                     .header("Accept", "application/json")
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
@@ -647,9 +675,17 @@ public class CodexAuthResolver {
             String refreshToken,
             long expiresAtEpochMs
     ) throws Exception {
+        storeChat4jToken(token, oauthScopes, refreshToken, expiresAtEpochMs, null);
+    }
+
+    private boolean storeChat4jToken(
+            String token,
+            String oauthScopes,
+            String refreshToken,
+            long expiresAtEpochMs,
+            BooleanSupplier cancellationRequested
+    ) throws Exception {
         Path tokenFile = chat4jAuthFile();
-        Path tokenDir = tokenFile.getParent();
-        Files.createDirectories(tokenDir);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("accessToken", token);
@@ -661,49 +697,19 @@ public class CodexAuthResolver {
 
         String content = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
 
-        Path tempFile = Files.createTempFile(tokenDir, "codex-auth", ".tmp");
+        if (cancellationRequested == null) {
+            authFileMutationLock.lock();
+        } else {
+            authFileMutationLock.lockInterruptibly();
+        }
         try {
-            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-            setOwnerOnlyPermissions(tempFile);
-            moveTokenFile(tempFile, tokenFile);
-            setOwnerOnlyPermissions(tokenFile);
-        } finally {
-            try {
-                Files.deleteIfExists(tempFile);
-            } catch (Exception ignored) {
-                // Best-effort cleanup for temp file.
+            if (isCancellationRequested(cancellationRequested)) {
+                return false;
             }
-        }
-    }
-
-    private void moveTokenFile(Path sourceFile, Path targetFile) throws Exception {
-        try {
-            Files.move(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (Exception e) {
-            Files.move(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private void setOwnerOnlyPermissions(Path tokenFile) {
-        try {
-            Set<PosixFilePermission> ownerOnlyPermissions = PosixFilePermissions.fromString("rw-------");
-            Files.setPosixFilePermissions(tokenFile, ownerOnlyPermissions);
-        } catch (Exception ignored) {
-            // Non-POSIX filesystems (e.g., Windows) do not support this API.
-        }
-    }
-
-    private void triggerLoginPromptActions(String authorizationUri) {
-        try {
-            userPromptActions.copyCodeToClipboard(authorizationUri);
-        } catch (Exception ignored) {
-            // Keep login flow running even if clipboard interaction fails.
-        }
-
-        try {
-            userPromptActions.openBrowser(authorizationUri);
-        } catch (Exception ignored) {
-            // Keep login flow running even if browser interaction fails.
+            SecureFileStore.writeStringAtomically(tokenFile, content, "codex-auth");
+            return true;
+        } finally {
+            authFileMutationLock.unlock();
         }
     }
 
@@ -798,6 +804,27 @@ public class CodexAuthResolver {
         }
 
         return DEFAULT_CALLBACK_HOST;
+    }
+
+    private Duration remainingChallengeRequestTimeout(CodexLoginChallenge challenge) throws TimeoutException {
+        long remainingNanos = challenge.timeoutDeadlineNanos() == Long.MAX_VALUE
+                ? MAX_OAUTH_REQUEST_TIMEOUT.toNanos()
+                : challenge.timeoutDeadlineNanos() - System.nanoTime();
+        if (remainingNanos <= 0L) {
+            throw new TimeoutException("OpenAI Codex login timed out");
+        }
+        return Duration.ofNanos(Math.min(remainingNanos, MAX_OAUTH_REQUEST_TIMEOUT.toNanos()));
+    }
+
+    private long loginDeadlineNanos(int timeoutSeconds) {
+        try {
+            return Math.addExact(
+                    System.nanoTime(),
+                    TimeUnit.SECONDS.toNanos(Math.max(timeoutSeconds, 1))
+            );
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     private int resolveLoginTimeoutSeconds() {
@@ -925,7 +952,12 @@ public class CodexAuthResolver {
         return System.currentTimeMillis() + Duration.ofSeconds(expiresInSeconds).toMillis();
     }
 
-    private String upgradeJwtTokenIfPossible(String token, String oauthScopes) {
+    private String upgradeJwtTokenIfPossible(
+            String token,
+            String oauthScopes,
+            String refreshToken,
+            long expiresAtEpochMs
+    ) {
         if (!looksLikeJwtToken(token)) {
             return token;
         }
@@ -941,13 +973,6 @@ public class CodexAuthResolver {
         }
 
         try {
-            JsonNode payload = decodeJwtPayload(token);
-            String refreshToken = null;
-            long expiresAtEpochMs = 0L;
-            if (payload != null) {
-                expiresAtEpochMs = extractJwtExpiryEpochMs(payload);
-            }
-
             storeChat4jToken(
                     exchangedToken,
                     StringUtils.defaultIfBlank(oauthScopes, resolveOAuthScopes()),
@@ -991,7 +1016,7 @@ public class CodexAuthResolver {
             return 0L;
         }
 
-        return exp * 1000L;
+        return exp > Long.MAX_VALUE / 1000L ? Long.MAX_VALUE : exp * 1000L;
     }
 
     private AuthorizationCodeInput parseAuthorizationInput(String input) {
@@ -1000,8 +1025,14 @@ public class CodexAuthResolver {
             return null;
         }
 
+        boolean urlShapedInput = Strings.CI.startsWith(value, "http:")
+                || Strings.CI.startsWith(value, "https:")
+                || Strings.CS.contains(value, "://");
         try {
             URI uri = URI.create(value);
+            urlShapedInput = uri.isAbsolute()
+                    || StringUtils.isNotBlank(uri.getAuthority())
+                    || StringUtils.isNotBlank(uri.getRawQuery());
             String code = null;
             String state = null;
 
@@ -1018,17 +1049,22 @@ public class CodexAuthResolver {
             }
 
             if (StringUtils.isNotBlank(code)) {
-                return new AuthorizationCodeInput(code, state);
+                return new AuthorizationCodeInput(code, state, true);
             }
         } catch (Exception ignored) {
             // Not a full URI; continue with fallback parsing.
+        }
+
+        if (urlShapedInput) {
+            return new AuthorizationCodeInput(null, null, true);
         }
 
         if (value.contains("code=")) {
             Map<String, String> params = parseQueryParameters(value);
             return new AuthorizationCodeInput(
                     StringUtils.trimToNull(params.get("code")),
-                    StringUtils.trimToNull(params.get("state"))
+                    StringUtils.trimToNull(params.get("state")),
+                    true
             );
         }
 
@@ -1036,11 +1072,12 @@ public class CodexAuthResolver {
             String[] parts = value.split("#", 2);
             return new AuthorizationCodeInput(
                     StringUtils.trimToNull(parts[0]),
-                    parts.length > 1 ? StringUtils.trimToNull(parts[1]) : null
+                    parts.length > 1 ? StringUtils.trimToNull(parts[1]) : null,
+                    false
             );
         }
 
-        return new AuthorizationCodeInput(value, null);
+        return new AuthorizationCodeInput(value, null, false);
     }
 
     private Map<String, String> parseQueryParameters(String query) {
@@ -1100,71 +1137,56 @@ public class CodexAuthResolver {
         return defaultValue;
     }
 
+    private AuthOperation tryBeginAuthOperation() {
+        return explicitAuthOperationInProgress.compareAndSet(false, true)
+                ? new AuthOperation(explicitAuthOperationInProgress)
+                : null;
+    }
+
+    private static CodexAuthActionResult authOperationInProgressResult() {
+        return CodexAuthActionResult.failure("An OpenAI Codex login or logout is already in progress.");
+    }
+
     private static boolean isCancellationRequested(BooleanSupplier cancellationRequested) {
         return Thread.currentThread().isInterrupted()
                 || cancellationRequested != null && cancellationRequested.getAsBoolean();
+    }
+
+    private static boolean isChallengeExpired(CodexLoginChallenge challenge) {
+        long deadlineNanos = challenge.timeoutDeadlineNanos();
+        return deadlineNanos != Long.MAX_VALUE && deadlineNanos - System.nanoTime() <= 0L;
+    }
+
+    private static CodexAuthActionResult timedOutLoginResult() {
+        return CodexAuthActionResult.failure("OpenAI Codex login timed out.");
     }
 
     private static CodexAuthActionResult cancelledLoginResult() {
         return CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
     }
 
-    private String firstLine(String text) {
-        if (StringUtils.isBlank(text)) {
-            return "Unknown error";
-        }
-
-        int newline = text.indexOf('\n');
-        return newline < 0 ? text.trim() : text.substring(0, newline).trim();
+    private static CodexAuthActionResult cancelledLogoutResult() {
+        return CodexAuthActionResult.failure("OpenAI Codex logout cancelled.");
     }
 
-    interface UserPromptActions {
-        void openBrowser(String authorizationUri) throws Exception;
-
-        void copyCodeToClipboard(String text) throws Exception;
-
-        String promptForAuthorizationInput(String message, String defaultValue) throws Exception;
+    @FunctionalInterface
+    public interface AuthorizationInputProvider {
+        String request(CodexLoginChallenge challenge) throws Exception;
     }
 
-    private static final class DesktopUserPromptActions implements UserPromptActions {
+    private static final class AuthOperation implements AutoCloseable {
+        private final AtomicBoolean operationInProgress;
+        private final AtomicBoolean closed = new AtomicBoolean();
 
-        @Override
-        public void openBrowser(String authorizationUri) throws Exception {
-            if (!Desktop.isDesktopSupported()) {
-                return;
-            }
-
-            Desktop desktop = Desktop.getDesktop();
-            if (!desktop.isSupported(Desktop.Action.BROWSE)) {
-                return;
-            }
-
-            desktop.browse(URI.create(authorizationUri));
+        private AuthOperation(AtomicBoolean operationInProgress) {
+            this.operationInProgress = operationInProgress;
         }
 
         @Override
-        public void copyCodeToClipboard(String text) {
-            if (GraphicsEnvironment.isHeadless()) {
-                return;
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                operationInProgress.set(false);
             }
-
-            Toolkit.getDefaultToolkit()
-                    .getSystemClipboard()
-                    .setContents(new StringSelection(StringUtils.defaultString(text)), null);
-        }
-
-        @Override
-        public String promptForAuthorizationInput(String message, String defaultValue) {
-            if (GraphicsEnvironment.isHeadless()) {
-                return null;
-            }
-
-            Object response = JOptionPane.showInputDialog(
-                    null,
-                    message,
-                    defaultValue
-            );
-            return response == null ? null : response.toString();
         }
     }
 
@@ -1176,11 +1198,11 @@ public class CodexAuthResolver {
         }
     }
 
-    private record AuthorizationCodeInput(String code, String state) {
+    private record AuthorizationCodeInput(String code, String state, boolean callbackUrl) {
 
         @Override
         public String toString() {
-            return "AuthorizationCodeInput[code=<masked>, state=<masked>]";
+            return "AuthorizationCodeInput[code=<masked>, state=<masked>, callbackUrl=%s]".formatted(callbackUrl);
         }
     }
 
@@ -1200,13 +1222,14 @@ public class CodexAuthResolver {
             String redirectUri,
             String callbackHost,
             int timeoutSeconds,
+            long timeoutDeadlineNanos,
             String oauthScopes
     ) {
 
         @Override
         public String toString() {
-            return "CodexLoginChallenge[codeVerifier=<masked>, state=<masked>, authorizationUri=%s, redirectUri=%s, callbackHost=%s, timeoutSeconds=%d, oauthScopes=%s]"
-                    .formatted(authorizationUri, redirectUri, callbackHost, timeoutSeconds, oauthScopes);
+            return "CodexLoginChallenge[codeVerifier=<masked>, state=<masked>, authorizationUri=<masked>, redirectUri=<masked>, callbackHost=%s, timeoutSeconds=%d, oauthScopes=%s]"
+                    .formatted(callbackHost, timeoutSeconds, oauthScopes);
         }
     }
 
@@ -1216,6 +1239,16 @@ public class CodexAuthResolver {
             @NonNull CompletableFuture<String> callbackInputFuture,
             @NonNull Runnable closeAction
     ) {
+
+        public CodexCallbackWait {
+            Runnable delegate = closeAction;
+            var closed = new AtomicBoolean();
+            closeAction = () -> {
+                if (closed.compareAndSet(false, true)) {
+                    delegate.run();
+                }
+            };
+        }
 
         private static CodexCallbackWait manualOnly(String message, CompletableFuture<String> callbackInputFuture) {
             return new CodexCallbackWait(false, message, callbackInputFuture, () -> {

@@ -3,8 +3,9 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import java.awt.*;
@@ -41,77 +42,9 @@ public class SettingsDialog extends JDialog {
     private final Path sttModelsDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
-    private final boolean ownsVoskModelManagementService;
-    private final boolean ownsWhisperModelManagementService;
     private final SettingsCredentialChangeListener credentialChangeListener;
-
-    public SettingsDialog(@NonNull Frame owner, @NonNull SettingsRepository settingsRepo) {
-        this(owner, settingsRepo, WebViewRuntimeStatus.jEditorPaneDefault(), () -> System.exit(0));
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, () -> System.exit(0));
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, StoragePaths.defaultPaths().sttModelsDirectory(), StoragePaths.defaultPaths().sttTempDirectory());
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, StoragePaths.defaultPaths().sttTempDirectory());
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory,
-            @NonNull Path sttTempDirectory
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory,
-                new VoskModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory),
-                new WhisperModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory), true, true);
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory,
-            @NonNull VoskModelManagementService voskModelManagementService
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService,
-                new WhisperModelManagementService(settingsRepo, sttModelsDirectory, StoragePaths.defaultPaths().sttTempDirectory()), false, true);
-    }
-
-    public SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory,
-            @NonNull VoskModelManagementService voskModelManagementService,
-            @NonNull WhisperModelManagementService whisperModelManagementService
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, SettingsCredentialChangeListener.NO_OP);
-    }
+    private final CopilotAuthResolver copilotAuthResolver;
+    private final CodexAuthResolver codexAuthResolver;
 
     public SettingsDialog(
             @NonNull Frame owner,
@@ -121,46 +54,18 @@ public class SettingsDialog extends JDialog {
             @NonNull Path sttModelsDirectory,
             @NonNull VoskModelManagementService voskModelManagementService,
             @NonNull WhisperModelManagementService whisperModelManagementService,
-            @NonNull SettingsCredentialChangeListener credentialChangeListener
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, false, false, credentialChangeListener);
-    }
-
-    private SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory,
-            @NonNull VoskModelManagementService voskModelManagementService,
-            @NonNull WhisperModelManagementService whisperModelManagementService,
-            boolean ownsVoskModelManagementService,
-            boolean ownsWhisperModelManagementService
-    ) {
-        this(owner, settingsRepo, chatWebViewRuntimeStatus, exitAction, sttModelsDirectory, voskModelManagementService, whisperModelManagementService,
-                ownsVoskModelManagementService, ownsWhisperModelManagementService, SettingsCredentialChangeListener.NO_OP);
-    }
-
-    private SettingsDialog(
-            @NonNull Frame owner,
-            @NonNull SettingsRepository settingsRepo,
-            @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
-            @NonNull Path sttModelsDirectory,
-            @NonNull VoskModelManagementService voskModelManagementService,
-            @NonNull WhisperModelManagementService whisperModelManagementService,
-            boolean ownsVoskModelManagementService,
-            boolean ownsWhisperModelManagementService,
-            @NonNull SettingsCredentialChangeListener credentialChangeListener
+            @NonNull SettingsCredentialChangeListener credentialChangeListener,
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver
     ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
         this.sttModelsDirectory = sttModelsDirectory;
         this.voskModelManagementService = voskModelManagementService;
         this.whisperModelManagementService = whisperModelManagementService;
-        this.ownsVoskModelManagementService = ownsVoskModelManagementService;
-        this.ownsWhisperModelManagementService = ownsWhisperModelManagementService;
         this.credentialChangeListener = credentialChangeListener;
+        this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -265,7 +170,18 @@ public class SettingsDialog extends JDialog {
         return List.of(
                 new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo, exitAction)),
                 new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
-                new SettingsSection("providers", "Providers", "/icons/settings/cpu.svg", new ProvidersPanel(settingsRepo, tokenFieldRegistry, credentialChangeListener)),
+                new SettingsSection(
+                        "providers",
+                        "Providers",
+                        "/icons/settings/cpu.svg",
+                        new ProvidersPanel(
+                                settingsRepo,
+                                tokenFieldRegistry,
+                                credentialChangeListener,
+                                copilotAuthResolver,
+                                codexAuthResolver
+                        )
+                ),
                 new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo, tokenFieldRegistry, credentialChangeListener)),
                 new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, tokenFieldRegistry, credentialChangeListener)),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
@@ -302,28 +218,8 @@ public class SettingsDialog extends JDialog {
             @Override
             public void windowClosed(WindowEvent e) {
                 UIManager.removePropertyChangeListener(lafChangeListener);
-                closeOwnedModelManagementServices();
             }
         });
-    }
-
-    private void closeOwnedModelManagementServices() {
-        if (!ownsVoskModelManagementService && !ownsWhisperModelManagementService) {
-            return;
-        }
-        Runnable closeServices = () -> {
-            if (ownsVoskModelManagementService) {
-                voskModelManagementService.close();
-            }
-            if (ownsWhisperModelManagementService) {
-                whisperModelManagementService.close();
-            }
-        };
-        if (EventQueue.isDispatchThread()) {
-            Thread.ofVirtual().name("chat4j-settings-stt-model-services-close-").start(closeServices);
-            return;
-        }
-        closeServices.run();
     }
 
     @Override
@@ -332,6 +228,7 @@ public class SettingsDialog extends JDialog {
             return;
         }
         savingBeforeDispose = true;
+        setEnabled(false);
         setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
         savePendingPanelChangesResultAsync()
                 .exceptionally(error -> new SavePendingResult(false, saveErrorMessage(error), "Settings"))
@@ -342,6 +239,7 @@ public class SettingsDialog extends JDialog {
         setCursor(Cursor.getDefaultCursor());
         savingBeforeDispose = false;
         if (!saveResult.saved()) {
+            setEnabled(true);
             JOptionPane.showMessageDialog(
                     this,
                     "%s could not be saved:\n\n%s".formatted(saveResult.sectionName(), saveResult.message()),

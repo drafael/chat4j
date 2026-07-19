@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
 import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 class MainFrameProviderMenuWiringFactoryTest {
 
@@ -47,6 +49,7 @@ class MainFrameProviderMenuWiringFactoryTest {
 
         MainFrameProviderMenuWiringFactory.ProviderMenuWiring wiring = subject.create(
                 settingsRepo,
+                mock(ProviderRegistry.class),
                 modelCacheService,
                 modelFavoritesService,
                 providerSelectableResolver,
@@ -90,6 +93,7 @@ class MainFrameProviderMenuWiringFactoryTest {
 
         assertThatThrownBy(() -> subject.create(
                 null,
+                mock(ProviderRegistry.class),
                 modelCacheService,
                 modelFavoritesService,
                 providerSelectableResolver,
@@ -105,6 +109,7 @@ class MainFrameProviderMenuWiringFactoryTest {
 
         assertThatThrownBy(() -> subject.create(
                 settingsRepo,
+                mock(ProviderRegistry.class),
                 modelCacheService,
                 modelFavoritesService,
                 null,

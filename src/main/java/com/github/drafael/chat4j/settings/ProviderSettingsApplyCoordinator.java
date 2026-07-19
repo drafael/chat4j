@@ -13,10 +13,13 @@ public class ProviderSettingsApplyCoordinator {
     private final RuntimeSettingsResolver runtimeSettingsResolver;
     private final RuntimeConfigApplier runtimeConfigApplier;
 
-    public ProviderSettingsApplyCoordinator(@NonNull ProviderRuntimeSettingsResolver providerRuntimeSettingsResolver) {
+    public ProviderSettingsApplyCoordinator(
+            @NonNull ProviderRuntimeSettingsResolver providerRuntimeSettingsResolver,
+            @NonNull ProviderRegistry providerRegistry
+    ) {
         this(
                 providerRuntimeSettingsResolver::resolveAll,
-                ProviderRegistry::applyRuntimeConfig
+                providerRegistry::applyRuntimeConfig
         );
     }
 

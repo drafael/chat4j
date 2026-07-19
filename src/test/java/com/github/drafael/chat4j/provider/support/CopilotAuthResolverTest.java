@@ -1,13 +1,18 @@
 package com.github.drafael.chat4j.provider.support;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -16,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -100,6 +107,38 @@ class CopilotAuthResolverTest {
     }
 
     @Test
+    @DisplayName("Copilot session exchange rejects tokens whose provider expiry is already past")
+    void resolveBearerTokenOrNull_whenExchangeReturnsExpiredSessionToken_returnsNull() throws Exception {
+        Path userHome = tempDir.resolve("expired-exchange-home");
+        Path tokenFile = userHome.resolve(".config/chat4j/copilot-auth.json");
+        Files.createDirectories(tokenFile.getParent());
+        Files.writeString(tokenFile, """
+                {
+                  "accessToken": "tid=expired-copilot-session-token;exp=1",
+                  "refreshToken": "DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS",
+                  "expiresAtEpochMs": 1,
+                  "oauthScopes": "read:user"
+                }
+                """);
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+                {"token":"tid=already-expired-session-token;exp=1","expires_at":1}
+                """);
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenReturn(response);
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+
+        String resolved = subject.resolveBearerTokenOrNull();
+
+        assertThat(resolved).isNull();
+        assertThat(tokenFile).content().doesNotContain("tid=already-expired-session-token");
+    }
+
+    @Test
     @DisplayName("Login flow stores Chat4J OAuth token, requests minimum OAuth scopes, opens browser, and copies code")
     void login_whenDeviceFlowCompletes_storesTokenAndTriggersPromptActions() throws Exception {
         Path userHome = tempDir.resolve("home");
@@ -123,14 +162,18 @@ class CopilotAuthResolverTest {
             exchange.close();
         });
         server.createContext("/token", exchange -> {
-            byte[] body = "{\"access_token\":\"DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS\"}".getBytes();
+            byte[] body = """
+                    {"access_token":"DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS"}
+                    """.getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });
         server.createContext("/session", exchange -> {
-            byte[] body = "{\"token\":\"tid=dummy-copilot-session-token-for-tests;exp=4070908800\",\"expires_at\":4070908800}".getBytes();
+            byte[] body = """
+                    {"token":"tid=dummy-copilot-session-token-for-tests;exp=4070908800","expires_at":4070908800}
+                    """.getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -418,6 +461,7 @@ class CopilotAuthResolverTest {
 
         var cancelled = new AtomicBoolean();
         var result = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
+        Thread worker = null;
         try {
             System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
             System.setProperty(
@@ -431,10 +475,11 @@ class CopilotAuthResolverTest {
                     "https://github.com/login/device",
                     2,
                     60,
+                    Long.MAX_VALUE,
                     "read:user",
                     null
             );
-            Thread worker = Thread.startVirtualThread(() -> result.set(subject.completeLogin(challenge, cancelled::get)));
+            worker = Thread.startVirtualThread(() -> result.set(subject.completeLogin(challenge, cancelled::get)));
 
             assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
             cancelled.set(true);
@@ -446,9 +491,464 @@ class CopilotAuthResolverTest {
             assertThat(result.get().success()).isFalse();
             assertThat(userHome.resolve(".config/chat4j/copilot-auth.json")).doesNotExist();
         } finally {
+            cancelled.set(true);
             releaseRequest.countDown();
+            if (worker != null) {
+                worker.interrupt();
+                worker.join(TimeUnit.SECONDS.toMillis(2));
+            }
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Cancellation while final publication is waiting does not replace stored credentials")
+    void completeLogin_whenCancelledWhileWaitingForAuthFileLock_doesNotPublishLoginToken() throws Exception {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        Path userHome = tempDir.resolve("cancelled-publication-home");
+        Path tokenFile = userHome.resolve(".config/chat4j/copilot-auth.json");
+        Files.createDirectories(tokenFile.getParent());
+        Files.writeString(tokenFile, """
+                {
+                  "accessToken": "tid=expired-copilot-session-token;exp=1",
+                  "refreshToken": "gho_refresh_token_for_publication_test",
+                  "expiresAtEpochMs": 1,
+                  "oauthScopes": "read:user"
+                }
+                """);
+        var refreshStarted = new CountDownLatch(1);
+        var releaseRefresh = new CountDownLatch(1);
+        var loginExchangeCompleted = new AtomicBoolean();
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> refreshedResponse = mock(HttpResponse.class);
+        when(refreshedResponse.statusCode()).thenReturn(200);
+        when(refreshedResponse.body()).thenReturn(
+                "{\"token\":\"tid=refreshed-copilot-session-token;exp=4070908800\",\"expires_at\":4070908800}"
+        );
+        HttpResponse<String> accessTokenResponse = mock(HttpResponse.class);
+        when(accessTokenResponse.statusCode()).thenReturn(200);
+        when(accessTokenResponse.body()).thenReturn("{\"access_token\":\"DUMMY_GITHUB_ACCESS_TOKEN_FOR_TESTS\"}");
+        HttpResponse<String> loginSessionResponse = mock(HttpResponse.class);
+        when(loginSessionResponse.statusCode()).thenReturn(200);
+        when(loginSessionResponse.body()).thenReturn(
+                "{\"token\":\"tid=login-copilot-session-token;exp=4070908800\",\"expires_at\":4070908800}"
+        );
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenAnswer(invocation -> {
+            HttpRequest request = invocation.getArgument(0);
+            String authorization = request.headers().firstValue("Authorization").orElse("");
+            if (authorization.contains("gho_refresh_token_for_publication_test")) {
+                refreshStarted.countDown();
+                releaseRefresh.await(2, TimeUnit.SECONDS);
+                return refreshedResponse;
+            }
+            if ("POST".equals(request.method())) {
+                return accessTokenResponse;
+            }
+            loginExchangeCompleted.set(true);
+            return loginSessionResponse;
+        });
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+        var cancelled = new AtomicBoolean();
+        var finalCancellationCheck = new CountDownLatch(1);
+        var checksAfterExchange = new AtomicInteger();
+        var result = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
+        var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
+                "device-code",
+                "user-code",
+                "https://github.com/login/device",
+                2,
+                60,
+                Long.MAX_VALUE,
+                "read:user",
+                null
+        );
+        Thread refreshThread = Thread.startVirtualThread(subject::resolveBearerTokenOrNull);
+        Thread loginThread = null;
+
+        try {
+            assertThat(refreshStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            loginThread = Thread.startVirtualThread(() -> result.set(subject.completeLogin(challenge, () -> {
+                if (loginExchangeCompleted.get() && checksAfterExchange.incrementAndGet() == 1) {
+                    finalCancellationCheck.countDown();
+                }
+                return cancelled.get();
+            })));
+            assertThat(finalCancellationCheck.await(2, TimeUnit.SECONDS)).isTrue();
+            cancelled.set(true);
+        } finally {
+            cancelled.set(true);
+            releaseRefresh.countDown();
+            refreshThread.join(TimeUnit.SECONDS.toMillis(2));
+            if (loginThread != null) {
+                loginThread.interrupt();
+                loginThread.join(TimeUnit.SECONDS.toMillis(2));
+            }
+        }
+
+        assertThat(refreshThread.isAlive()).isFalse();
+        assertThat(loginThread).isNotNull();
+        assertThat(loginThread.isAlive()).isFalse();
+        assertThat(result.get().success()).isFalse();
+        assertThat(tokenFile)
+                .content()
+                .contains("tid=refreshed-copilot-session-token")
+                .doesNotContain("tid=login-copilot-session-token");
+    }
+
+    @Test
+    @DisplayName("Provider device-code expiry is preserved exactly")
+    void beginLogin_whenProviderReturnsShortExpiry_preservesExpiry() {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+                {
+                  "device_code": "device-code-123",
+                  "user_code": "ABCD-1234",
+                  "verification_uri": "https://github.com/login/device",
+                  "expires_in": 10,
+                  "interval": 2
+                }
+                """);
+        try {
+            when(httpClient.send(
+                    any(HttpRequest.class),
+                    org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+            )).thenReturn(response);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        var subject = new CopilotAuthResolver(tempDir.resolve("short-expiry-home"), emptyMap(), httpClient);
+
+        CopilotAuthResolver.CopilotLoginChallenge challenge = subject.beginLogin(() -> false, ignored -> true);
+
+        assertThat(challenge.expiresInSeconds()).isEqualTo(10);
+        assertThat(challenge.timeoutDeadlineNanos() - System.nanoTime())
+                .isPositive()
+                .isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(10));
+    }
+
+    @Test
+    @DisplayName("Device polling does not sleep past the provider expiry")
+    void completeLogin_whenPollingIntervalExceedsRemainingExpiry_stopsAtProviderDeadline() throws Exception {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> pendingResponse = mock(HttpResponse.class);
+        when(pendingResponse.statusCode()).thenReturn(200);
+        when(pendingResponse.body()).thenReturn("{\"error\":\"authorization_pending\"}");
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenReturn(pendingResponse);
+        var subject = new CopilotAuthResolver(tempDir.resolve("poll-expiry-home"), emptyMap(), httpClient);
+        var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
+                "device-code",
+                "user-code",
+                "https://github.com/login/device",
+                60,
+                1,
+                System.nanoTime() + TimeUnit.SECONDS.toNanos(1),
+                "read:user",
+                null
+        );
+        long startedAtNanos = System.nanoTime();
+
+        CopilotAuthResolver.CopilotAuthActionResult result = subject.completeLogin(challenge, () -> false);
+
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("timed out");
+        assertThat(elapsedMillis).isLessThan(3_000L);
+    }
+
+    @Test
+    @DisplayName("Device poll responses arriving after expiry are rejected")
+    void completeLogin_whenAccessTokenResponseArrivesAfterDeadline_returnsTimeout() throws Exception {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        var requestRef = new AtomicReference<HttpRequest>();
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"access_token\":\"DUMMY_GITHUB_ACCESS_TOKEN_AFTER_EXPIRY\"}");
+        long timeoutDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenAnswer(invocation -> {
+            requestRef.set(invocation.getArgument(0));
+            while (System.nanoTime() < timeoutDeadlineNanos) {
+                Thread.onSpinWait();
+            }
+            return response;
+        });
+        var subject = new CopilotAuthResolver(tempDir.resolve("late-poll-home"), emptyMap(), httpClient);
+        var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
+                "device-code",
+                "user-code",
+                "https://github.com/login/device",
+                2,
+                1,
+                timeoutDeadlineNanos,
+                "read:user",
+                null
+        );
+
+        CopilotAuthResolver.CopilotAuthActionResult result = subject.completeLogin(challenge, () -> false);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("timed out");
+        assertThat(requestRef.get().timeout()).hasValueSatisfying(timeout ->
+                assertThat(timeout).isLessThanOrEqualTo(Duration.ofSeconds(1))
+        );
+    }
+
+    @Test
+    @DisplayName("OAuth callback exceptions cannot expose challenge secrets in logs or results")
+    void login_whenChallengeConsumerIncludesSecretsInException_sanitizesDiagnostics() {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+                {
+                  "device_code": "sentinel-device-code",
+                  "user_code": "sentinel-user-code",
+                  "verification_uri": "https://github.example/login?code=sentinel-user-code",
+                  "expires_in": 600,
+                  "interval": 2
+                }
+                """);
+        try {
+            when(httpClient.send(
+                    any(HttpRequest.class),
+                    org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+            )).thenReturn(response);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        var subject = new CopilotAuthResolver(
+                tempDir.resolve("diagnostic-home"),
+                emptyMap(),
+                httpClient,
+                mock(CopilotAuthResolver.UserPromptActions.class)
+        );
+        Logger logger = (Logger) LoggerFactory.getLogger(CopilotAuthResolver.class);
+        var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+
+        CopilotAuthResolver.CopilotAuthActionResult result;
+        try {
+            result = subject.login(
+                    () -> false,
+                    ignored -> true,
+                    challenge -> {
+                        throw new IllegalStateException("sentinel %s %s %s".formatted(
+                                challenge.deviceCode(),
+                                challenge.userCode(),
+                                challenge.verificationUri()
+                        ));
+                    }
+            );
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        String logs = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList().toString();
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).isEqualTo("GitHub Copilot login failed.");
+        assertThat("%s %s".formatted(logs, result))
+                .doesNotContain("sentinel-device-code", "sentinel-user-code", "github.example");
+    }
+
+    @Test
+    @DisplayName("A second explicit auth operation is rejected until the active login releases its guard")
+    void login_whenChallengeConsumerIsPending_rejectsConcurrentLogoutAndReleasesGuard() throws Exception {
+        System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+                {
+                  "device_code": "device-code-123",
+                  "user_code": "ABCD-1234",
+                  "verification_uri": "https://github.com/login/device",
+                  "expires_in": 600,
+                  "interval": 2
+                }
+                """);
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenReturn(response);
+        var challengeReceived = new CountDownLatch(1);
+        var releaseChallenge = new CountDownLatch(1);
+        var cancelled = new AtomicBoolean();
+        var loginResult = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
+        var subject = new CopilotAuthResolver(tempDir.resolve("operation-guard-home"), emptyMap(), httpClient);
+        Thread loginThread = Thread.startVirtualThread(() -> loginResult.set(subject.login(
+                cancelled::get,
+                ignored -> true,
+                challenge -> {
+                    challengeReceived.countDown();
+                    try {
+                        releaseChallenge.await(2, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+        )));
+
+        try {
+            assertThat(challengeReceived.await(2, TimeUnit.SECONDS)).isTrue();
+
+            CopilotAuthResolver.CopilotAuthActionResult concurrentResult = subject.logout();
+
+            assertThat(concurrentResult.success()).isFalse();
+            assertThat(concurrentResult.message()).contains("already in progress");
+        } finally {
+            cancelled.set(true);
+            releaseChallenge.countDown();
+            loginThread.join(TimeUnit.SECONDS.toMillis(2));
+        }
+
+        assertThat(loginThread.isAlive()).isFalse();
+        assertThat(loginResult.get().success()).isFalse();
+        assertThat(subject.logout().success()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Login challenge diagnostics mask device codes and verification URLs")
+    void toString_whenLoginChallengeIsRendered_masksOAuthSecrets() {
+        var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
+                "secret-device-code",
+                "secret-user-code",
+                "https://github.example/login?user_code=secret-user-code",
+                5,
+                900,
+                Long.MAX_VALUE,
+                "read:user",
+                null
+        );
+
+        assertThat(challenge.toString())
+                .doesNotContain("secret-device-code", "secret-user-code", "github.example")
+                .contains("deviceCode=<masked>", "userCode=<masked>", "verificationUri=<masked>");
+    }
+
+    @Test
+    @DisplayName("Logout waits for an in-flight refresh and leaves the auth file deleted")
+    void logout_whenTokenRefreshIsInFlight_deletesRefreshedFileAfterRefreshCompletes() throws Exception {
+        Path userHome = tempDir.resolve("refresh-logout-home");
+        Path tokenFile = userHome.resolve(".config/chat4j/copilot-auth.json");
+        Files.createDirectories(tokenFile.getParent());
+        Files.writeString(tokenFile, """
+                {
+                  "accessToken": "tid=expired-copilot-session-token;exp=1",
+                  "refreshToken": "gho_refresh_token_for_locking_test",
+                  "expiresAtEpochMs": 1,
+                  "oauthScopes": "read:user"
+                }
+                """);
+        var refreshStarted = new CountDownLatch(1);
+        var releaseRefresh = new CountDownLatch(1);
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"token\":\"tid=refreshed-copilot-session-token;exp=4070908800\",\"expires_at\":4070908800}");
+        when(httpClient.send(
+                any(HttpRequest.class),
+                org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
+        )).thenAnswer(invocation -> {
+            refreshStarted.countDown();
+            releaseRefresh.await(2, TimeUnit.SECONDS);
+            return response;
+        });
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+        ReentrantLock mutationLock = authFileMutationLock(subject);
+        var logoutResult = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
+        var logoutFinished = new CountDownLatch(1);
+        Thread refreshThread = Thread.startVirtualThread(subject::resolveBearerTokenOrNull);
+        Thread logoutThread = null;
+
+        try {
+            assertThat(refreshStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            logoutThread = Thread.startVirtualThread(() -> {
+                try {
+                    logoutResult.set(subject.logout());
+                } finally {
+                    logoutFinished.countDown();
+                }
+            });
+            awaitQueuedOnLock(mutationLock, logoutThread);
+            assertThat(logoutFinished.getCount()).isEqualTo(1L);
+        } finally {
+            releaseRefresh.countDown();
+            refreshThread.join(TimeUnit.SECONDS.toMillis(2));
+            if (logoutThread != null) {
+                logoutThread.join(TimeUnit.SECONDS.toMillis(2));
+                if (logoutThread.isAlive()) {
+                    logoutThread.interrupt();
+                    logoutThread.join(TimeUnit.SECONDS.toMillis(2));
+                }
+            }
+        }
+
+        assertThat(refreshThread.isAlive()).isFalse();
+        assertThat(logoutThread).isNotNull();
+        assertThat(logoutThread.isAlive()).isFalse();
+        assertThat(logoutResult.get().success()).isTrue();
+        assertThat(tokenFile).doesNotExist();
+    }
+
+    private ReentrantLock authFileMutationLock(CopilotAuthResolver subject) throws Exception {
+        Field field = CopilotAuthResolver.class.getDeclaredField("authFileMutationLock");
+        field.setAccessible(true);
+        return (ReentrantLock) field.get(subject);
+    }
+
+    private void awaitQueuedOnLock(ReentrantLock lock, Thread thread) {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!lock.hasQueuedThread(thread) && thread.isAlive() && System.nanoTime() < deadlineNanos) {
+            Thread.onSpinWait();
+        }
+        assertThat(lock.hasQueuedThread(thread)).isTrue();
+    }
+
+    @Test
+    @DisplayName("Cancelled logout reports the correct operation")
+    void logout_whenCancellationIsRequested_reportsLogoutCancellation() {
+        var subject = new CopilotAuthResolver(
+                tempDir.resolve("cancelled-logout-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        );
+
+        CopilotAuthResolver.CopilotAuthActionResult result = subject.logout(() -> true);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).isEqualTo("GitHub Copilot logout cancelled.");
+    }
+
+    @Test
+    @DisplayName("Logout reports deletion failure without treating an unsafe target as absent")
+    void logout_whenAuthPathIsNonEmptyDirectory_returnsFailureAndPreservesTarget() throws Exception {
+        Path userHome = tempDir.resolve("logout-failure-home");
+        Path tokenPath = userHome.resolve(".config/chat4j/copilot-auth.json");
+        Files.createDirectories(tokenPath);
+        Files.writeString(tokenPath.resolve("preserve.txt"), "not an auth file");
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+
+        CopilotAuthResolver.CopilotAuthActionResult result = subject.logout();
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).isEqualTo("Unable to delete the GitHub Copilot login session.");
+        assertThat(tokenPath.resolve("preserve.txt")).exists();
     }
 
     @Test

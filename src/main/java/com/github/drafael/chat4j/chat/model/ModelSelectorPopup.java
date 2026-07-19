@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -37,6 +38,7 @@ import java.util.function.BiPredicate;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -88,6 +90,7 @@ public class ModelSelectorPopup extends JDialog {
 
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final ProviderRegistry providerRegistry;
     private final List<ProviderGroup> groups = new ArrayList<>();
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
@@ -149,13 +152,14 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public ModelSelectorPopup(
-            Window owner,
-            ProviderModelCacheService modelCacheService,
-            ModelFavoritesService modelFavoritesService,
-            BiConsumer<String, String> onSelect,
-            BiPredicate<List<ProviderDef>, Long> onProvidersLoaded,
-            Runnable onFavoritesChanged,
-            Runnable onModelsChanged
+            @NonNull Window owner,
+            @NonNull ProviderModelCacheService modelCacheService,
+            @NonNull ModelFavoritesService modelFavoritesService,
+            @NonNull ProviderRegistry providerRegistry,
+            @NonNull BiConsumer<String, String> onSelect,
+            @NonNull BiPredicate<List<ProviderDef>, Long> onProvidersLoaded,
+            @NonNull Runnable onFavoritesChanged,
+            @NonNull Runnable onModelsChanged
     ) {
         super(owner);
         this.onSelect = onSelect;
@@ -164,6 +168,7 @@ public class ModelSelectorPopup extends JDialog {
         this.onModelsChanged = onModelsChanged;
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
+        this.providerRegistry = providerRegistry;
 
         setUndecorated(true);
         setType(Type.POPUP);
@@ -718,7 +723,7 @@ public class ModelSelectorPopup extends JDialog {
                     return;
                 }
 
-                List<ProviderDef> providers = ProviderRegistry.availableProviders();
+                List<ProviderDef> providers = providerRegistry.availableProviders();
                 scopeVersion = synchronizeProviderScopes(loadId, providers);
                 if (scopeVersion < 0L) {
                     SwingUtilities.invokeLater(() -> applySupersededProviderLoad(loadId));
@@ -848,18 +853,10 @@ public class ModelSelectorPopup extends JDialog {
     private void buildList(List<ProviderDef> providers) {
         entries.clear();
 
-        providers.forEach(provider -> {
-            List<String> models = initialModels(
-                    provider.name(),
-                    modelCacheService.getModels(provider.name()),
-                    modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels()),
-                    modelCacheService.isInvalidated(provider.name())
-            );
-            entries.put(provider.name(), new ProviderEntry(
-                    provider,
-                    models,
-                    isProviderSelectable(provider)));
-        });
+        providers.forEach(provider -> entries.put(provider.name(), new ProviderEntry(
+                provider,
+                initialModels(provider, modelCacheService),
+                isProviderSelectable(provider))));
 
         preloaded = true;
         rebuildVisibleList();
@@ -947,17 +944,12 @@ public class ModelSelectorPopup extends JDialog {
                     if (!isCatalogRefreshCurrent(providerGeneration)) {
                         return;
                     }
-                    boolean updated = modelCacheService.update(refreshAttempt, fetchedModels);
-                    if (updated && isCatalogRefreshCurrent(providerGeneration)) {
-                        SwingUtilities.invokeLater(() -> {
-                            if (isCatalogRefreshCurrent(providerGeneration)) {
-                                refreshProviderFromCache(entry.name());
-                            }
-                        });
-                    }
+                    modelCacheService.update(refreshAttempt, fetchedModels);
+                    refreshProviderFromCacheIfCurrent(entry.name(), providerGeneration);
                 } catch (Exception e) {
                     if (isCatalogRefreshCurrent(providerGeneration)) {
                         modelCacheService.recordRefreshFailure(refreshAttempt);
+                        refreshProviderFromCacheIfCurrent(entry.name(), providerGeneration);
                         log.warn("Failed to refresh models for provider {}. Keeping cached/seed models: {}",
                                 entry.name(), ExceptionUtils.getMessage(e));
                     }
@@ -974,6 +966,17 @@ public class ModelSelectorPopup extends JDialog {
         return !disposed && isCurrentProviderLoad(providerGeneration);
     }
 
+    private void refreshProviderFromCacheIfCurrent(String providerName, long providerGeneration) {
+        if (!isCatalogRefreshCurrent(providerGeneration)) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (isCatalogRefreshCurrent(providerGeneration)) {
+                refreshProviderFromCache(providerName);
+            }
+        });
+    }
+
     static Duration refreshTtl(String providerName) {
         return LOCAL_HEALTH_GATED_PROVIDERS.contains(providerName)
                 ? LOCAL_PROVIDER_REFRESH_TTL
@@ -986,9 +989,8 @@ public class ModelSelectorPopup extends JDialog {
             return;
         }
 
-        List<String> models = modelCacheService.isInvalidated(providerName)
-                ? emptyList()
-                : modelCacheService.getModels(providerName);
+        List<String> models = modelCacheService.findUsableModels(providerName, entry.baseUrl())
+                .orElse(emptyList());
         if (models.isEmpty()) {
             models = modelCacheService.modelsWithLocalOverlay(providerName, entry.def.seedModels());
         }
@@ -1278,6 +1280,19 @@ public class ModelSelectorPopup extends JDialog {
 
     private static Color colorOrDefault(Color candidate, Color fallback) {
         return candidate != null ? candidate : fallback;
+    }
+
+    static List<String> initialModels(ProviderDef provider, ProviderModelCacheService modelCacheService) {
+        Optional<List<String>> usableModels = modelCacheService.findUsableModels(
+                provider.name(),
+                provider.baseUrl()
+        );
+        return initialModels(
+                provider.name(),
+                usableModels.orElse(emptyList()),
+                modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels()),
+                usableModels.isEmpty()
+        );
     }
 
     static List<String> initialModels(String providerName, List<String> cachedModels, List<String> seedModels, boolean invalidated) {

@@ -28,14 +28,12 @@ public class ProviderModelsResolver {
                                 return provider.seedModels();
                             }
 
-                            if (modelCacheService.isInvalidated(provider.name())) {
-                                return modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels());
-                            }
-
-                            List<String> models = modelCacheService.getModels(provider.name());
-                            return models.isEmpty()
-                                    ? modelCacheService.modelsWithLocalOverlay(provider.name(), provider.seedModels())
-                                    : models;
+                            return modelCacheService.findUsableModels(provider.name(), provider.baseUrl())
+                                    .filter(models -> !models.isEmpty())
+                                    .orElseGet(() -> modelCacheService.modelsWithLocalOverlay(
+                                            provider.name(),
+                                            provider.seedModels()
+                                    ));
                         },
                         (existing, replacement) -> existing,
                         LinkedHashMap::new

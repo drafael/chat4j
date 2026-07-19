@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.provider.capability.auth.CredentialStrategy;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
@@ -21,42 +22,11 @@ public class ProviderFacade {
     private final CodexAuthResolver codexAuthResolver;
     private final CopilotModelMetadataStore copilotModelMetadataStore;
 
-    public ProviderFacade(CredentialStrategy credentialStrategy) {
-        this(
-                credentialStrategy,
-                new CopilotAuthResolver(),
-                new CodexAuthResolver(),
-                CopilotModelMetadataStore.sharedDefault()
-        );
-    }
-
-    public ProviderFacade(CredentialStrategy credentialStrategy, CopilotModelMetadataStore copilotModelMetadataStore) {
-        this(
-                credentialStrategy,
-                new CopilotAuthResolver(),
-                new CodexAuthResolver(),
-                copilotModelMetadataStore
-        );
-    }
-
-    ProviderFacade(
-            CredentialStrategy credentialStrategy,
-            CopilotAuthResolver copilotAuthResolver,
-            CopilotModelMetadataStore copilotModelMetadataStore
-    ) {
-        this(
-                credentialStrategy,
-                copilotAuthResolver,
-                new CodexAuthResolver(),
-                copilotModelMetadataStore
-        );
-    }
-
-    ProviderFacade(
-            CredentialStrategy credentialStrategy,
-            CopilotAuthResolver copilotAuthResolver,
-            CodexAuthResolver codexAuthResolver,
-            CopilotModelMetadataStore copilotModelMetadataStore
+    public ProviderFacade(
+            @NonNull CredentialStrategy credentialStrategy,
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
     ) {
         this.credentialStrategy = credentialStrategy;
         this.copilotAuthResolver = copilotAuthResolver;

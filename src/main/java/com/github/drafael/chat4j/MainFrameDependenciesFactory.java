@@ -6,6 +6,7 @@ import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounte
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
 import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
@@ -56,6 +57,7 @@ public class MainFrameDependenciesFactory {
     public MainFrameDependencies create(@NonNull DependenciesContext context) {
         var providerMenuWiring = providerMenuWiringFactory.create(
                 context.settingsRepo(),
+                context.providerRegistry(),
                 context.modelCacheService(),
                 context.modelFavoritesService(),
                 context.providerSelectableResolver(),
@@ -98,6 +100,7 @@ public class MainFrameDependenciesFactory {
     public record DependenciesContext(
             @NonNull ConversationRepository conversationRepo,
             @NonNull SettingsRepository settingsRepo,
+            @NonNull ProviderRegistry providerRegistry,
             @NonNull ProviderModelCacheService modelCacheService,
             @NonNull ModelFavoritesService modelFavoritesService,
             @NonNull ProviderSelectableResolver providerSelectableResolver,

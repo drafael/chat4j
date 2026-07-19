@@ -23,6 +23,7 @@ public class MainFrameModelMenuCoordinator {
     private final ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator;
     private final ProviderMenuAvailabilityRefreshDispatchCoordinator providerMenuAvailabilityRefreshDispatchCoordinator;
     private final ProviderMenuIconResolver providerMenuIconResolver;
+    private final ProviderRegistry providerRegistry;
 
     public MainFrameModelMenuCoordinator(
             @NonNull ProviderMenuReadyDispatchCoordinator providerMenuReadyDispatchCoordinator,
@@ -33,7 +34,8 @@ public class MainFrameModelMenuCoordinator {
             @NonNull ModelMenuSelectionChangeCoordinator modelMenuSelectionChangeCoordinator,
             @NonNull ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator,
             @NonNull ProviderMenuAvailabilityRefreshDispatchCoordinator providerMenuAvailabilityRefreshDispatchCoordinator,
-            @NonNull ProviderMenuIconResolver providerMenuIconResolver
+            @NonNull ProviderMenuIconResolver providerMenuIconResolver,
+            @NonNull ProviderRegistry providerRegistry
     ) {
         this.providerMenuReadyDispatchCoordinator = providerMenuReadyDispatchCoordinator;
         this.modelMenuStructureRebuildCoordinator = modelMenuStructureRebuildCoordinator;
@@ -44,6 +46,7 @@ public class MainFrameModelMenuCoordinator {
         this.modelMenuDirtyRefreshTriggerCoordinator = modelMenuDirtyRefreshTriggerCoordinator;
         this.providerMenuAvailabilityRefreshDispatchCoordinator = providerMenuAvailabilityRefreshDispatchCoordinator;
         this.providerMenuIconResolver = providerMenuIconResolver;
+        this.providerRegistry = providerRegistry;
     }
 
     public void ensureReady(@NonNull ModelMenuContext context) {
@@ -88,7 +91,7 @@ public class MainFrameModelMenuCoordinator {
                 context.boundMenusState().modelsMenu(),
                 context.menuItemsState().modelMenuItemsByKey(),
                 context.menuItemsState().providerHeaderItemsByName(),
-                ProviderRegistry.availableProviders(),
+                providerRegistry.availableProviders(),
                 context.setSelectedModel(),
                 context.modelMenuState().modelsMenuDirty(),
                 context.modelMenuState().lastMenuSelectedModelKey()

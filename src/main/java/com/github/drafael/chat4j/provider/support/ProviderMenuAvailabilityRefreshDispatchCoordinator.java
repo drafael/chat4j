@@ -14,9 +14,10 @@ public class ProviderMenuAvailabilityRefreshDispatchCoordinator {
     private final ProvidersSupplier providersSupplier;
 
     public ProviderMenuAvailabilityRefreshDispatchCoordinator(
-            ProviderMenuAvailabilityRefreshCoordinator providerMenuAvailabilityRefreshCoordinator
+            @NonNull ProviderMenuAvailabilityRefreshCoordinator providerMenuAvailabilityRefreshCoordinator,
+            @NonNull ProviderRegistry providerRegistry
     ) {
-        this(providerMenuAvailabilityRefreshCoordinator::refresh, ProviderRegistry::allProviders);
+        this(providerMenuAvailabilityRefreshCoordinator::refresh, providerRegistry::allProviders);
     }
 
     ProviderMenuAvailabilityRefreshDispatchCoordinator(

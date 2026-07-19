@@ -60,6 +60,9 @@ import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
@@ -232,6 +235,10 @@ public class MainFrame extends JFrame {
     private PromptCommandCenter promptCommandCenter;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final ProviderRegistry providerRegistry;
+    private final CopilotAuthResolver copilotAuthResolver;
+    private final CodexAuthResolver codexAuthResolver;
+    private final CopilotModelMetadataStore copilotModelMetadataStore;
     private final Path sttModelsDirectory;
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
@@ -397,38 +404,16 @@ public class MainFrame extends JFrame {
     };
 
     public MainFrame(
-        @NonNull ConversationRepository conversationRepo,
-        @NonNull SettingsRepository settingsRepo,
-        @NonNull ProviderModelCacheService modelCacheService,
-        @NonNull ModelFavoritesService modelFavoritesService
-    ) {
-        this(conversationRepo, settingsRepo, modelCacheService, modelFavoritesService, StoragePaths.defaultPaths());
-    }
-
-    public MainFrame(
-        @NonNull ConversationRepository conversationRepo,
-        @NonNull SettingsRepository settingsRepo,
-        @NonNull ProviderModelCacheService modelCacheService,
-        @NonNull ModelFavoritesService modelFavoritesService,
-        @NonNull StoragePaths storagePaths
-    ) {
-        this(
-                conversationRepo,
-                settingsRepo,
-                modelCacheService,
-                modelFavoritesService,
-                storagePaths,
-                CatalogSnapshotStore.forSettings(settingsRepo)
-        );
-    }
-
-    public MainFrame(
-        @NonNull ConversationRepository conversationRepo,
-        @NonNull SettingsRepository settingsRepo,
-        @NonNull ProviderModelCacheService modelCacheService,
-        @NonNull ModelFavoritesService modelFavoritesService,
-        @NonNull StoragePaths storagePaths,
-        @NonNull CatalogSnapshotStore catalogSnapshots
+            @NonNull ConversationRepository conversationRepo,
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull ProviderModelCacheService modelCacheService,
+            @NonNull ModelFavoritesService modelFavoritesService,
+            @NonNull StoragePaths storagePaths,
+            @NonNull CatalogSnapshotStore catalogSnapshots,
+            @NonNull ProviderRegistry providerRegistry,
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
     ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
@@ -458,9 +443,14 @@ public class MainFrame extends JFrame {
         );
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
+        this.providerRegistry = providerRegistry;
+        this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
+        this.copilotModelMetadataStore = copilotModelMetadataStore;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
                 conversationRepo,
                 settingsRepo,
+                providerRegistry,
                 modelCacheService,
                 modelFavoritesService,
                 providerSelectableResolver,
@@ -546,7 +536,8 @@ public class MainFrame extends JFrame {
                 modelMenuSelectionChangeCoordinator,
                 modelMenuDirtyRefreshTriggerCoordinator,
                 providerMenuAvailabilityRefreshDispatchCoordinator,
-                providerMenuIconResolver
+                providerMenuIconResolver,
+                providerRegistry
         );
         this.lookAndFeelMenuRefreshCoordinator = lifecycleWiring.lookAndFeelMenuRefreshCoordinator();
         this.windowPlacementCoordinator = lifecycleWiring.windowPlacementCoordinator();
@@ -563,6 +554,7 @@ public class MainFrame extends JFrame {
         restoreWindowState();
 
         chatPanel = createConfiguredChatPanel();
+        providerRegistry.setAuthStatusRefreshListener(this::onProviderAuthStatusRefreshed);
         voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
             if (!chatPanel.isSpeechToTextActive()) {
                 chatPanel.reloadSpeechToTextSettings();
@@ -647,7 +639,16 @@ public class MainFrame extends JFrame {
                 new ChatMessageViewFactory(),
                 chatWebViewRuntimeStatus.activeEngine(),
                 TextToSpeechService.createDefault(settingsRepo),
-                SpeechToTextService.createDefault(settingsRepo, sttModelsDirectory, sttTempDirectory, voskModelManagementService, whisperModelManagementService)
+                SpeechToTextService.createDefault(
+                        settingsRepo,
+                        sttModelsDirectory,
+                        sttTempDirectory,
+                        voskModelManagementService,
+                        whisperModelManagementService
+                ),
+                providerRegistry,
+                copilotAuthResolver,
+                codexAuthResolver
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -1407,7 +1408,9 @@ public class MainFrame extends JFrame {
                         sttModelsDirectory,
                         voskModelManagementService,
                         whisperModelManagementService,
-                        settingsCredentialChangeListener()
+                        settingsCredentialChangeListener(),
+                        copilotAuthResolver,
+                        codexAuthResolver
                 )),
                 () -> {
                     applyProviderSettings();
@@ -1441,15 +1444,33 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void onProviderAuthStatusRefreshed() {
+        SwingUtilities.invokeLater(() -> {
+            if (!isDisplayable()) {
+                return;
+            }
+            chatPanel.refreshProviders();
+        });
+    }
+
     private void onProviderAuthChanged(String providerName) {
         applyCredentialChangeAsync(
-                () -> CredentialInvalidationSupport.runAll(List.of(
-                        () -> ProviderRegistry.invalidateAuthStatus(providerName),
-                        () -> modelCacheService.invalidate(providerName)
-                )),
+                () -> {
+                    clearCopilotMetadata(providerName);
+                    CredentialInvalidationSupport.runAll(List.of(
+                            () -> providerRegistry.invalidateAuthStatus(providerName),
+                            () -> modelCacheService.invalidate(providerName)
+                    ));
+                },
                 this::applyProviderSettings,
                 providerName
         );
+    }
+
+    private void clearCopilotMetadata(String providerName) {
+        if ("GitHub Copilot".equals(providerName) && !copilotModelMetadataStore.clear()) {
+            log.warn("Failed to delete GitHub Copilot model metadata after authentication changed");
+        }
     }
 
     private void applyCredentialChangeAsync(Runnable invalidate, Runnable refreshUi, String credentialName) {
@@ -1489,7 +1510,7 @@ public class MainFrame extends JFrame {
     }
 
     private void applyProviderSettings() {
-        List<ProviderRegistry.ProviderDef> allProviders = ProviderRegistry.allProviders();
+        List<ProviderRegistry.ProviderDef> allProviders = providerRegistry.allProviders();
 
         try {
             providerSettingsApplyCoordinator.apply(
@@ -1506,12 +1527,12 @@ public class MainFrame extends JFrame {
 
     private void logProviderAndModelSummary() {
         try {
-            List<ProviderRegistry.ProviderStatus> statuses = ProviderRegistry.providerStatuses().stream()
+            List<ProviderRegistry.ProviderStatus> statuses = providerRegistry.providerStatuses().stream()
                     .sorted((left, right) -> left.name().compareToIgnoreCase(right.name()))
                     .toList();
-            List<ProviderRegistry.ProviderDef> availableProviders = ProviderRegistry.availableProviders();
+            List<ProviderRegistry.ProviderDef> availableProviders = providerRegistry.availableProviders();
             Map<String, Boolean> localAvailabilityByProvider =
-                    providerAvailabilityResolver.resolveMenuAvailability(ProviderRegistry.allProviders());
+                    providerAvailabilityResolver.resolveMenuAvailability(providerRegistry.allProviders());
             List<ProviderRegistry.ProviderStatus> effectiveStatuses = statuses.stream()
                     .map(status -> new ProviderRegistry.ProviderStatus(
                             status.name(),

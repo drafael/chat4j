@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounte
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderFavoritesSectionAppender;
 import com.github.drafael.chat4j.provider.support.ProviderHeaderMenuItemFactory;
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 class MainFrameDependenciesFactoryTest {
 
@@ -66,6 +68,7 @@ class MainFrameDependenciesFactoryTest {
         assertThatThrownBy(() -> new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepository(null),
                 null,
+                mock(ProviderRegistry.class),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
                 new ProviderSelectableResolver(),
@@ -107,6 +110,7 @@ class MainFrameDependenciesFactoryTest {
         return new MainFrameDependenciesFactory.DependenciesContext(
                 new ConversationRepository(null),
                 new SettingsRepository(tempDir.resolve("settings.properties")),
+                mock(ProviderRegistry.class),
                 new ProviderModelCacheService(null),
                 ModelFavoritesService.createInMemory(),
                 new ProviderSelectableResolver(),

@@ -2,10 +2,11 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.persistence.SecureFileStore;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import java.awt.Desktop;
 import java.awt.GraphicsEnvironment;
@@ -20,15 +21,15 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import static java.util.Collections.emptyMap;
 
@@ -71,6 +72,8 @@ public class CopilotAuthResolver {
     private final Map<String, String> environment;
     private final HttpClient httpClient;
     private final UserPromptActions userPromptActions;
+    private final AtomicBoolean explicitAuthOperationInProgress = new AtomicBoolean();
+    private final ReentrantLock authFileMutationLock = new ReentrantLock();
 
     public CopilotAuthResolver() {
         this(Path.of(System.getProperty("user.home")), System.getenv(), HttpClient.newBuilder()
@@ -78,7 +81,11 @@ public class CopilotAuthResolver {
                 .build(), new DesktopUserPromptActions());
     }
 
-    CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient) {
+    public CopilotAuthResolver(
+            @NonNull Path userHome,
+            @NonNull Map<String, String> environment,
+            @NonNull HttpClient httpClient
+    ) {
         this(userHome, environment, httpClient, new DesktopUserPromptActions());
     }
 
@@ -98,12 +105,18 @@ public class CopilotAuthResolver {
     }
 
     public String resolveBearerTokenOrNull() {
-        Path tokenFile = chat4jAuthFile();
-        if (!Files.isRegularFile(tokenFile)) {
+        try {
+            authFileMutationLock.lockInterruptibly();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return null;
         }
-
         try {
+            Path tokenFile = chat4jAuthFile();
+            if (!Files.isRegularFile(tokenFile)) {
+                return null;
+            }
+
             JsonNode root = JSON.readTree(tokenFile.toFile());
             String token = normalizeToken(root.path("accessToken").asText(""));
             if (StringUtils.isBlank(token)) {
@@ -161,6 +174,8 @@ public class CopilotAuthResolver {
             return isCopilotSessionToken(token) ? token : null;
         } catch (Exception e) {
             return null;
+        } finally {
+            authFileMutationLock.unlock();
         }
     }
 
@@ -172,28 +187,49 @@ public class CopilotAuthResolver {
     }
 
     public CopilotAuthActionResult login() {
+        return login(
+                () -> false,
+                action -> {
+                    action.run();
+                    return true;
+                },
+                ignored -> {
+                }
+        );
+    }
+
+    public CopilotAuthActionResult login(
+            @NonNull BooleanSupplier cancellationRequested,
+            @NonNull Predicate<Runnable> promptActionGate,
+            @NonNull Consumer<CopilotLoginChallenge> challengeConsumer
+    ) {
+        AuthOperation operation = tryBeginAuthOperation();
+        if (operation == null) {
+            return authOperationInProgressResult();
+        }
+
         log.debug("Starting GitHub Copilot OAuth login");
-        try {
-            CopilotLoginChallenge challenge = beginLogin();
-            return completeLogin(challenge);
+        try (operation) {
+            CopilotLoginChallenge challenge = beginLogin(cancellationRequested, promptActionGate);
+            challengeConsumer.accept(challenge);
+            return completeLogin(challenge, cancellationRequested);
         } catch (Exception e) {
-            log.warn("GitHub Copilot OAuth login failed: {}", ExceptionUtils.getMessage(e));
-            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            if (isCancellationRequested(cancellationRequested)) {
+                return cancelledLoginResult();
+            }
+            log.warn("GitHub Copilot OAuth login failed ({})", e.getClass().getSimpleName());
+            return CopilotAuthActionResult.failure("GitHub Copilot login failed.");
         }
     }
 
-    public CopilotLoginChallenge beginLogin() {
-        return beginLogin(() -> false);
-    }
-
-    public CopilotLoginChallenge beginLogin(BooleanSupplier cancellationRequested) {
+    CopilotLoginChallenge beginLogin(BooleanSupplier cancellationRequested) {
         return beginLogin(cancellationRequested, action -> {
             action.run();
             return true;
         });
     }
 
-    public CopilotLoginChallenge beginLogin(
+    CopilotLoginChallenge beginLogin(
             BooleanSupplier cancellationRequested,
             Predicate<Runnable> promptActionGate
     ) {
@@ -214,6 +250,7 @@ public class CopilotAuthResolver {
                     deviceCode.verificationUri(),
                     deviceCode.intervalSeconds(),
                     deviceCode.expiresInSeconds(),
+                    deviceCode.timeoutDeadlineNanos(),
                     deviceCode.oauthScopes(),
                     enterpriseDomain
             );
@@ -221,15 +258,14 @@ public class CopilotAuthResolver {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("GitHub Copilot login cancelled.", e);
         } catch (Exception e) {
-            throw new IllegalStateException(firstLine(e.getMessage()), e);
+            if (isCancellationRequested(cancellationRequested)) {
+                throw new IllegalStateException("GitHub Copilot login cancelled.", e);
+            }
+            throw new IllegalStateException("Unable to start GitHub Copilot login.", e);
         }
     }
 
-    public CopilotAuthActionResult completeLogin(CopilotLoginChallenge challenge) {
-        return completeLogin(challenge, () -> false);
-    }
-
-    public CopilotAuthActionResult completeLogin(CopilotLoginChallenge challenge, BooleanSupplier cancellationRequested) {
+    CopilotAuthActionResult completeLogin(CopilotLoginChallenge challenge, BooleanSupplier cancellationRequested) {
         if (challenge == null) {
             return CopilotAuthActionResult.failure("Login challenge is missing");
         }
@@ -244,6 +280,7 @@ public class CopilotAuthResolver {
                     challenge.verificationUri(),
                     challenge.intervalSeconds(),
                     challenge.expiresInSeconds(),
+                    challenge.timeoutDeadlineNanos(),
                     challenge.oauthScopes()
             );
 
@@ -257,8 +294,7 @@ public class CopilotAuthResolver {
             }
             if (StringUtils.isBlank(githubAccessToken)) {
                 return CopilotAuthActionResult.failure(
-                        "Login timed out. Complete sign in at %s using code %s."
-                                .formatted(challenge.verificationUri(), challenge.userCode())
+                        "GitHub Copilot login timed out before authorization completed."
                 );
             }
 
@@ -270,16 +306,16 @@ public class CopilotAuthResolver {
                 return CopilotAuthActionResult.failure("GitHub Copilot token exchange failed");
             }
 
-            if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
-            }
-            storeChat4jToken(
+            if (!storeChat4jToken(
                     sessionToken.sessionToken(),
                     deviceCode.oauthScopes(),
                     githubAccessToken,
                     sessionToken.expiresAtEpochMs(),
-                    challenge.enterpriseDomain()
-            );
+                    challenge.enterpriseDomain(),
+                    cancellationRequested
+            )) {
+                return cancelledLoginResult();
+            }
 
             log.info("GitHub Copilot OAuth login completed");
             return CopilotAuthActionResult.success("Login completed. Authorized using %s.".formatted(CHAT4J_TOKEN_SOURCE));
@@ -290,8 +326,8 @@ public class CopilotAuthResolver {
             if (isCancellationRequested(cancellationRequested)) {
                 return cancelledLoginResult();
             }
-            log.warn("GitHub Copilot OAuth login completion failed: {}", ExceptionUtils.getMessage(e));
-            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            log.warn("GitHub Copilot OAuth login completion failed ({})", e.getClass().getSimpleName());
+            return CopilotAuthActionResult.failure("GitHub Copilot login failed.");
         }
     }
 
@@ -300,27 +336,37 @@ public class CopilotAuthResolver {
     }
 
     public CopilotAuthActionResult logout(BooleanSupplier cancellationRequested) {
-        try {
-            if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
-            }
-            Path tokenFile = chat4jAuthFile();
-            if (!Files.exists(tokenFile)) {
-                return CopilotAuthActionResult.success("Chat4J OAuth session was already signed out.");
-            }
+        AuthOperation operation = tryBeginAuthOperation();
+        if (operation == null) {
+            return authOperationInProgressResult();
+        }
 
+        try (operation) {
             if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
+                return cancelledLogoutResult();
             }
-            Files.delete(tokenFile);
+            authFileMutationLock.lockInterruptibly();
+            try {
+                if (isCancellationRequested(cancellationRequested)) {
+                    return cancelledLogoutResult();
+                }
+                if (!Files.deleteIfExists(chat4jAuthFile())) {
+                    return CopilotAuthActionResult.success("Chat4J OAuth session was already signed out.");
+                }
+            } finally {
+                authFileMutationLock.unlock();
+            }
             log.info("GitHub Copilot OAuth logout completed");
             return CopilotAuthActionResult.success("Logged out from Chat4J OAuth session.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return cancelledLogoutResult();
         } catch (Exception e) {
             if (isCancellationRequested(cancellationRequested)) {
-                return cancelledLoginResult();
+                return cancelledLogoutResult();
             }
-            log.warn("GitHub Copilot OAuth logout failed: {}", ExceptionUtils.getMessage(e));
-            return CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            log.warn("GitHub Copilot OAuth logout failed ({})", e.getClass().getSimpleName());
+            return CopilotAuthActionResult.failure("Unable to delete the GitHub Copilot login session.");
         }
     }
 
@@ -351,6 +397,7 @@ public class CopilotAuthResolver {
                 .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        long responseReceivedAtNanos = System.nanoTime();
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IllegalStateException("Device login request failed with HTTP %d".formatted(response.statusCode()));
         }
@@ -365,13 +412,17 @@ public class CopilotAuthResolver {
         if (StringUtils.isAnyBlank(deviceCode, userCode, verificationUri)) {
             throw new IllegalStateException("Device login response was incomplete");
         }
+        if (expiresInSeconds <= 0) {
+            throw new IllegalStateException("Device login response had an invalid expiry");
+        }
 
         return new DeviceCodeResponse(
                 deviceCode,
                 userCode,
                 verificationUri,
                 Math.max(intervalSeconds, 2),
-                Math.max(expiresInSeconds, 60),
+                expiresInSeconds,
+                timeoutDeadlineNanos(responseReceivedAtNanos, expiresInSeconds),
                 oauthScopes
         );
     }
@@ -382,10 +433,15 @@ public class CopilotAuthResolver {
             BooleanSupplier cancellationRequested
     ) throws Exception {
         String clientId = resolveOAuthClientId();
-        long deadlineEpochMs = System.currentTimeMillis() + Duration.ofSeconds(deviceCode.expiresInSeconds()).toMillis();
+        long timeoutDeadlineNanos = deviceCode.timeoutDeadlineNanos();
         int intervalSeconds = deviceCode.intervalSeconds();
 
-        while (System.currentTimeMillis() < deadlineEpochMs && !isCancellationRequested(cancellationRequested)) {
+        while (System.nanoTime() < timeoutDeadlineNanos && !isCancellationRequested(cancellationRequested)) {
+            long remainingNanos = remainingNanos(timeoutDeadlineNanos);
+            if (remainingNanos == 0L) {
+                break;
+            }
+
             String formBody = "client_id=%s&device_code=%s&grant_type=%s".formatted(
                     urlEncode(clientId),
                     urlEncode(deviceCode.deviceCode()),
@@ -394,7 +450,7 @@ public class CopilotAuthResolver {
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(accessTokenEndpoint(enterpriseDomain)))
-                    .timeout(Duration.ofSeconds(10))
+                    .timeout(Duration.ofNanos(Math.min(remainingNanos, Duration.ofSeconds(10).toNanos())))
                     .header("Accept", "application/json")
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("User-Agent", "GitHubCopilotChat/0.35.0")
@@ -402,7 +458,7 @@ public class CopilotAuthResolver {
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (isCancellationRequested(cancellationRequested)) {
+            if (isCancellationRequested(cancellationRequested) || remainingNanos(timeoutDeadlineNanos) == 0L) {
                 return null;
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -417,29 +473,52 @@ public class CopilotAuthResolver {
 
             String error = StringUtils.trimToNull(root.path("error").asText(""));
             if (Strings.CS.equals(error, "authorization_pending")) {
-                Thread.sleep(Duration.ofSeconds(intervalSeconds));
+                sleepUntilNextPoll(intervalSeconds, timeoutDeadlineNanos);
                 continue;
             }
             if (Strings.CS.equals(error, "slow_down")) {
-                intervalSeconds = intervalSeconds + 2;
-                Thread.sleep(Duration.ofSeconds(intervalSeconds));
+                intervalSeconds = intervalSeconds > Integer.MAX_VALUE - 2
+                        ? Integer.MAX_VALUE
+                        : intervalSeconds + 2;
+                sleepUntilNextPoll(intervalSeconds, timeoutDeadlineNanos);
                 continue;
             }
             if (Strings.CS.equals(error, "access_denied")) {
-                throw new IllegalStateException(
-                        "GitHub login was canceled. Retry at %s with code %s."
-                                .formatted(deviceCode.verificationUri(), deviceCode.userCode())
-                );
+                throw new IllegalStateException("GitHub login was canceled.");
             }
             if (Strings.CS.equals(error, "expired_token")) {
                 break;
             }
 
-            String errorDescription = StringUtils.trimToNull(root.path("error_description").asText(""));
-            throw new IllegalStateException(StringUtils.defaultIfBlank(errorDescription, "GitHub login failed"));
+            throw new IllegalStateException("GitHub login failed");
         }
 
         return null;
+    }
+
+    private long timeoutDeadlineNanos(long startedAtNanos, int timeoutSeconds) {
+        try {
+            return Math.addExact(startedAtNanos, TimeUnit.SECONDS.toNanos(timeoutSeconds));
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private long remainingNanos(long timeoutDeadlineNanos) {
+        if (timeoutDeadlineNanos == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        return Math.max(timeoutDeadlineNanos - System.nanoTime(), 0L);
+    }
+
+    private void sleepUntilNextPoll(int intervalSeconds, long timeoutDeadlineNanos) throws InterruptedException {
+        long remainingNanos = remainingNanos(timeoutDeadlineNanos);
+        if (remainingNanos == 0L) {
+            return;
+        }
+
+        long intervalNanos = TimeUnit.SECONDS.toNanos(intervalSeconds);
+        TimeUnit.NANOSECONDS.sleep(Math.min(intervalNanos, remainingNanos));
     }
 
     private CopilotSessionToken exchangeCopilotSessionToken(
@@ -479,17 +558,26 @@ public class CopilotAuthResolver {
                 return null;
             }
 
-            long expiresAtEpochMs = Math.max(
-                    System.currentTimeMillis() + Duration.ofMinutes(1).toMillis(),
-                    expiresAtSeconds * 1000L - TOKEN_REFRESH_SKEW.toMillis()
+            long currentTimeEpochMs = System.currentTimeMillis();
+            long providerExpiresAtEpochMs = epochSecondsToMillis(expiresAtSeconds);
+            if (providerExpiresAtEpochMs <= currentTimeEpochMs) {
+                if (failOnError) {
+                    throw new IllegalStateException("Copilot token exchange returned an expired token");
+                }
+                return null;
+            }
+
+            long refreshAtEpochMs = Math.max(
+                    currentTimeEpochMs + Duration.ofMinutes(1).toMillis(),
+                    providerExpiresAtEpochMs - TOKEN_REFRESH_SKEW.toMillis()
             );
-            return new CopilotSessionToken(sessionToken, expiresAtEpochMs);
+            return new CopilotSessionToken(sessionToken, Math.min(refreshAtEpochMs, providerExpiresAtEpochMs));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
         } catch (Exception e) {
             if (failOnError) {
-                throw new IllegalStateException(firstLine(ExceptionUtils.getMessage(e)), e);
+                throw new IllegalStateException("Copilot token exchange failed", e);
             }
             return null;
         }
@@ -502,9 +590,18 @@ public class CopilotAuthResolver {
             long expiresAtEpochMs,
             String enterpriseDomain
     ) throws Exception {
+        storeChat4jToken(token, oauthScopes, refreshToken, expiresAtEpochMs, enterpriseDomain, null);
+    }
+
+    private boolean storeChat4jToken(
+            String token,
+            String oauthScopes,
+            String refreshToken,
+            long expiresAtEpochMs,
+            String enterpriseDomain,
+            BooleanSupplier cancellationRequested
+    ) throws Exception {
         Path tokenFile = chat4jAuthFile();
-        Path tokenDir = tokenFile.getParent();
-        Files.createDirectories(tokenDir);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("accessToken", token);
@@ -517,35 +614,19 @@ public class CopilotAuthResolver {
 
         String content = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
 
-        Path tempFile = Files.createTempFile(tokenDir, "copilot-auth", ".tmp");
+        if (cancellationRequested == null) {
+            authFileMutationLock.lock();
+        } else {
+            authFileMutationLock.lockInterruptibly();
+        }
         try {
-            Files.writeString(tempFile, content, StandardCharsets.UTF_8);
-            setOwnerOnlyPermissions(tempFile);
-            moveTokenFile(tempFile, tokenFile);
-            setOwnerOnlyPermissions(tokenFile);
-        } finally {
-            try {
-                Files.deleteIfExists(tempFile);
-            } catch (Exception ignored) {
-                // Best-effort cleanup for temp file.
+            if (isCancellationRequested(cancellationRequested)) {
+                return false;
             }
-        }
-    }
-
-    private void moveTokenFile(Path sourceFile, Path targetFile) throws Exception {
-        try {
-            Files.move(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (Exception e) {
-            Files.move(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private void setOwnerOnlyPermissions(Path tokenFile) {
-        try {
-            Set<PosixFilePermission> ownerOnlyPermissions = PosixFilePermissions.fromString("rw-------");
-            Files.setPosixFilePermissions(tokenFile, ownerOnlyPermissions);
-        } catch (Exception ignored) {
-            // Non-POSIX filesystems (e.g., Windows) do not support this API.
+            SecureFileStore.writeStringAtomically(tokenFile, content, "copilot-auth");
+            return true;
+        } finally {
+            authFileMutationLock.unlock();
         }
     }
 
@@ -727,6 +808,16 @@ public class CopilotAuthResolver {
         return defaultEndpoint;
     }
 
+    private AuthOperation tryBeginAuthOperation() {
+        return explicitAuthOperationInProgress.compareAndSet(false, true)
+                ? new AuthOperation(explicitAuthOperationInProgress)
+                : null;
+    }
+
+    private static CopilotAuthActionResult authOperationInProgressResult() {
+        return CopilotAuthActionResult.failure("A GitHub Copilot login or logout is already in progress.");
+    }
+
     private static boolean isCancellationRequested(BooleanSupplier cancellationRequested) {
         return Thread.currentThread().isInterrupted()
                 || cancellationRequested != null && cancellationRequested.getAsBoolean();
@@ -734,6 +825,10 @@ public class CopilotAuthResolver {
 
     private static CopilotAuthActionResult cancelledLoginResult() {
         return CopilotAuthActionResult.failure("GitHub Copilot login cancelled.");
+    }
+
+    private static CopilotAuthActionResult cancelledLogoutResult() {
+        return CopilotAuthActionResult.failure("GitHub Copilot logout cancelled.");
     }
 
     private Path chat4jAuthFile() {
@@ -784,13 +879,8 @@ public class CopilotAuthResolver {
         return expiresAtEpochMs > 0 && System.currentTimeMillis() >= expiresAtEpochMs;
     }
 
-    private String firstLine(String text) {
-        if (StringUtils.isBlank(text)) {
-            return "Unknown error";
-        }
-
-        int newline = text.indexOf('\n');
-        return newline < 0 ? text.trim() : text.substring(0, newline).trim();
+    private long epochSecondsToMillis(long epochSeconds) {
+        return epochSeconds > Long.MAX_VALUE / 1000L ? Long.MAX_VALUE : epochSeconds * 1000L;
     }
 
     interface UserPromptActions {
@@ -827,19 +917,36 @@ public class CopilotAuthResolver {
         }
     }
 
+    private static final class AuthOperation implements AutoCloseable {
+        private final AtomicBoolean operationInProgress;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private AuthOperation(AtomicBoolean operationInProgress) {
+            this.operationInProgress = operationInProgress;
+        }
+
+        @Override
+        public void close() {
+            if (closed.compareAndSet(false, true)) {
+                operationInProgress.set(false);
+            }
+        }
+    }
+
     private record DeviceCodeResponse(
             String deviceCode,
             String userCode,
             String verificationUri,
             int intervalSeconds,
             int expiresInSeconds,
+            long timeoutDeadlineNanos,
             String oauthScopes
     ) {
 
         @Override
         public String toString() {
-            return "DeviceCodeResponse[deviceCode=<masked>, userCode=<masked>, verificationUri=%s, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s]"
-                    .formatted(verificationUri, intervalSeconds, expiresInSeconds, oauthScopes);
+            return "DeviceCodeResponse[deviceCode=<masked>, userCode=<masked>, verificationUri=<masked>, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s]"
+                    .formatted(intervalSeconds, expiresInSeconds, oauthScopes);
         }
     }
 
@@ -857,14 +964,15 @@ public class CopilotAuthResolver {
             String verificationUri,
             int intervalSeconds,
             int expiresInSeconds,
+            long timeoutDeadlineNanos,
             String oauthScopes,
             String enterpriseDomain
     ) {
 
         @Override
         public String toString() {
-            return "CopilotLoginChallenge[deviceCode=<masked>, userCode=<masked>, verificationUri=%s, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s, enterpriseDomain=%s]"
-                    .formatted(verificationUri, intervalSeconds, expiresInSeconds, oauthScopes, enterpriseDomain);
+            return "CopilotLoginChallenge[deviceCode=<masked>, userCode=<masked>, verificationUri=<masked>, intervalSeconds=%d, expiresInSeconds=%d, oauthScopes=%s, enterpriseDomain=%s]"
+                    .formatted(intervalSeconds, expiresInSeconds, oauthScopes, enterpriseDomain);
         }
     }
 

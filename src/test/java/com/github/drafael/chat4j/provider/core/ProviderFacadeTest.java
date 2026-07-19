@@ -9,15 +9,21 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Files;
+import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.function.UnaryOperator;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProviderFacadeTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     @DisplayName("Copilot auth resolves API key from Chat4J Copilot auth resolver")
@@ -34,7 +40,11 @@ class ProviderFacadeTest {
             }
         };
 
-        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver() {
+        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
+                tempDir.resolve("copilot-resolver-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        ) {
             @Override
             public String resolveBearerToken() {
                 return "copilot-token-required";
@@ -49,7 +59,8 @@ class ProviderFacadeTest {
         var subject = new ProviderFacade(
                 credentialStrategy,
                 copilotAuthResolver,
-                new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
+                codexResolver("copilot-test-codex-home"),
+                new CopilotModelMetadataStore(tempDir.resolve("copilot-runtime-metadata"))
         );
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
@@ -85,7 +96,11 @@ class ProviderFacadeTest {
             }
         };
 
-        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver() {
+        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
+                tempDir.resolve("source-token-copilot-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        ) {
             @Override
             public String resolveBearerToken() {
                 return "gho_source_token";
@@ -97,13 +112,19 @@ class ProviderFacadeTest {
             }
         };
 
-        var metadataStore = new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"));
-        metadataStore.update(
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("copilot-metadata-store"));
+        assertThat(metadataStore.updateIfGenerationCurrent(
+                metadataStore.currentGeneration(),
                 "https://api.githubcopilot.com",
                 List.of(new CopilotModelMetadataStore.ModelMetadata("claude-sonnet-4.6", List.of("/chat/completions")))
-        );
+        )).isTrue();
 
-        var subject = new ProviderFacade(credentialStrategy, copilotAuthResolver, metadataStore);
+        var subject = new ProviderFacade(
+                credentialStrategy,
+                copilotAuthResolver,
+                codexResolver("source-token-codex-home"),
+                metadataStore
+        );
         var descriptor = new ProviderDescriptor(
                 "GitHub Copilot",
                 AuthType.COPILOT_OAUTH,
@@ -136,7 +157,11 @@ class ProviderFacadeTest {
             }
         };
 
-        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver() {
+        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
+                tempDir.resolve("codex-test-copilot-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        ) {
             @Override
             public String resolveBearerToken() {
                 return "copilot-token";
@@ -148,7 +173,11 @@ class ProviderFacadeTest {
             }
         };
 
-        CodexAuthResolver codexAuthResolver = new CodexAuthResolver() {
+        CodexAuthResolver codexAuthResolver = new CodexAuthResolver(
+                tempDir.resolve("codex-resolver-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        ) {
             @Override
             public String resolveBearerToken() {
                 return "codex-token-required";
@@ -164,7 +193,7 @@ class ProviderFacadeTest {
                 credentialStrategy,
                 copilotAuthResolver,
                 codexAuthResolver,
-                new CopilotModelMetadataStore(Files.createTempDirectory("copilot-metadata-store"))
+                new CopilotModelMetadataStore(tempDir.resolve("codex-runtime-metadata"))
         );
         var descriptor = new ProviderDescriptor(
                 "OpenAI Codex",
@@ -182,5 +211,9 @@ class ProviderFacadeTest {
 
         assertThat(runtimeWithoutModel.apiKey()).isEqualTo("codex-token-optional");
         assertThat(runtimeWithModel.apiKey()).isEqualTo("codex-token-required");
+    }
+
+    private CodexAuthResolver codexResolver(String homeDirectory) {
+        return new CodexAuthResolver(tempDir.resolve(homeDirectory), emptyMap(), HttpClient.newHttpClient());
     }
 }

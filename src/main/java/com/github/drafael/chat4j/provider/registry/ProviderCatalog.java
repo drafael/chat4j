@@ -10,25 +10,33 @@ import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.modules.AnthropicModule;
 import com.github.drafael.chat4j.provider.modules.OpenAiCompatibleModule;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
-
-import java.util.ArrayList;
 import java.util.List;
+import lombok.NonNull;
 
 final class ProviderCatalog {
 
     private static final String GOOGLE_AI_ENV_VARS = "GEMINI_API_KEY|GOOGLEAI_API_KEY";
 
-    private static final CopilotModelMetadataStore COPILOT_MODEL_METADATA_STORE = CopilotModelMetadataStore.sharedDefault();
-    private static final ProviderFacade PROVIDER_FACADE = new ProviderFacade(
-            new EnvVarCredentialStrategy(),
-            COPILOT_MODEL_METADATA_STORE
-    );
+    private final ProviderFacade providerFacade;
+    private final CopilotModelMetadataStore copilotModelMetadataStore;
+    private final List<ProviderDefinition> providers;
 
-    private static final List<ProviderDefinition> PROVIDERS = new ArrayList<>();
-
-    static {
+    ProviderCatalog(
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
+    ) {
+        this.copilotModelMetadataStore = copilotModelMetadataStore;
+        providerFacade = new ProviderFacade(
+                new EnvVarCredentialStrategy(),
+                copilotAuthResolver,
+                codexAuthResolver,
+                copilotModelMetadataStore
+        );
         List<ProviderModule> modules = List.of(
                 new AnthropicModule("Anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com"),
                 new OpenAiCompatibleModule(
@@ -37,7 +45,7 @@ final class ProviderCatalog {
                         GOOGLE_AI_ENV_VARS,
                         null,
                         "https://generativelanguage.googleapis.com/v1beta/openai",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI Codex",
@@ -45,7 +53,7 @@ final class ProviderCatalog {
                         null,
                         null,
                         "https://api.openai.com/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "GitHub Copilot",
@@ -53,7 +61,7 @@ final class ProviderCatalog {
                         null,
                         null,
                         "https://api.githubcopilot.com",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI",
@@ -61,7 +69,7 @@ final class ProviderCatalog {
                         "OPENAI_API_KEY",
                         null,
                         "https://api.openai.com/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "Perplexity",
@@ -69,7 +77,7 @@ final class ProviderCatalog {
                         "PERPLEXITY_API_KEY",
                         null,
                         "https://api.perplexity.ai",
-                        COPILOT_MODEL_METADATA_STORE,
+                        copilotModelMetadataStore,
                         PerplexityModelIds.SONAR_MODELS,
                         ProviderCapabilities.chatModelsAndNativeWebSearch()
                 ),
@@ -79,7 +87,7 @@ final class ProviderCatalog {
                         "OPENROUTER_API_KEY",
                         null,
                         "https://openrouter.ai/api/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "Groq",
@@ -87,7 +95,7 @@ final class ProviderCatalog {
                         "GROQ_API_KEY",
                         null,
                         "https://api.groq.com/openai/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "DeepSeek",
@@ -95,7 +103,7 @@ final class ProviderCatalog {
                         "DEEPSEEK_API_KEY",
                         null,
                         "https://api.deepseek.com",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "Mistral",
@@ -103,7 +111,7 @@ final class ProviderCatalog {
                         "MISTRAL_API_KEY",
                         null,
                         "https://api.mistral.ai/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "xAI",
@@ -111,7 +119,7 @@ final class ProviderCatalog {
                         "XAI_API_KEY",
                         null,
                         "https://api.x.ai/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "LM Studio",
@@ -119,7 +127,7 @@ final class ProviderCatalog {
                         null,
                         "lmstudio",
                         "http://localhost:1234/v1",
-                        COPILOT_MODEL_METADATA_STORE
+                        copilotModelMetadataStore
                 ),
                 new OpenAiCompatibleModule(
                         "Ollama",
@@ -127,16 +135,16 @@ final class ProviderCatalog {
                         null,
                         "ollama",
                         "http://localhost:11434/v1",
-                        COPILOT_MODEL_METADATA_STORE
-                ));
-
-        modules.stream()
+                        copilotModelMetadataStore
+                )
+        );
+        providers = modules.stream()
                 .map(module -> new ProviderDefinition(module.descriptor(), module))
-                .forEach(PROVIDERS::add);
+                .toList();
     }
 
     List<ProviderDefinition> allProviders() {
-        return List.copyOf(PROVIDERS);
+        return providers;
     }
 
     ProviderFactory createFactory(String providerName, String envVar, String baseUrl) {
@@ -145,22 +153,24 @@ final class ProviderCatalog {
                 resolveRuntime(providerDefinition, envVar, baseUrl, model));
     }
 
-    ModelFetcher createFetcher(String providerName,
-                               String envVar,
-                               String baseUrl
-    ) {
+    ModelFetcher createFetcher(String providerName, String envVar, String baseUrl) {
         ProviderDefinition providerDefinition = findRequiredProvider(providerName);
-        return () -> providerDefinition.module().createModelFetcher(
-                resolveRuntime(providerDefinition, envVar, baseUrl, null)
-        ).fetchModels();
+        return () -> {
+            long metadataGeneration = copilotModelMetadataStore.currentGeneration();
+            ProviderRuntime runtime = resolveRuntime(providerDefinition, envVar, baseUrl, null);
+            return providerDefinition.module()
+                    .createModelFetcher(runtime, metadataGeneration)
+                    .fetchModels();
+        };
     }
 
-    private ProviderRuntime resolveRuntime(ProviderDefinition providerDefinition,
-                                           String envVar,
-                                           String baseUrl,
-                                           String model
+    private ProviderRuntime resolveRuntime(
+            ProviderDefinition providerDefinition,
+            String envVar,
+            String baseUrl,
+            String model
     ) {
-        return PROVIDER_FACADE.resolveRuntime(
+        return providerFacade.resolveRuntime(
                 providerDefinition.descriptor(),
                 envVar,
                 baseUrl,
@@ -169,7 +179,7 @@ final class ProviderCatalog {
     }
 
     private ProviderDefinition findRequiredProvider(String providerName) {
-        return PROVIDERS.stream()
+        return providers.stream()
                 .filter(providerDefinition -> providerDefinition.name().equals(providerName))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown provider: %s".formatted(providerName)));

@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -34,9 +35,14 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -46,8 +52,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 @Slf4j
 public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
-    private static final CopilotAuthResolver COPILOT_AUTH_RESOLVER = new CopilotAuthResolver();
-    private static final CodexAuthResolver CODEX_AUTH_RESOLVER = new CodexAuthResolver();
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
@@ -103,15 +107,17 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     private static final int PROVIDER_ICON_PADDING = 2;
     private static final int PROVIDER_ICON_SIZE = PROVIDER_ICON_GLYPH_SIZE + PROVIDER_ICON_PADDING * 2;
     private static final int STATUS_DOT_SIZE = 5;
-    private static final Duration AUTH_AVAILABILITY_TTL = Duration.ofSeconds(15);
     private static final Map<String, Icon> PROVIDER_BASE_ICON_CACHE = new ConcurrentHashMap<>();
     private static final Map<ProviderStatusIconKey, Icon> PROVIDER_STATUS_ICON_CACHE = new ConcurrentHashMap<>();
 
-    private final Map<String, AuthAvailabilitySnapshot> authAvailabilityByProvider = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> authAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, String> configuredBaseUrlByProvider = new LinkedHashMap<>();
+    private final List<Runnable> authStatusRefreshers = new ArrayList<>();
     private final JList<String> providerList;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
     private final SettingsCredentialChangeListener credentialChangeListener;
+    private final CopilotAuthResolver copilotAuthResolver;
+    private final CodexAuthResolver codexAuthResolver;
     private final ProviderAuthLifecycle authLifecycle = new ProviderAuthLifecycle();
     private final List<ApiTokenFieldPanel> tokenFields = new CopyOnWriteArrayList<>();
     private volatile String lastSaveError = "";
@@ -133,20 +139,20 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         PROVIDERS.put("Ollama", ProviderInfo.local("http://localhost:11434/v1"));
     }
 
-    public ProvidersPanel(SettingsRepository settingsRepo) {
-        this(settingsRepo, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
-    }
-
     public ProvidersPanel(
-            SettingsRepository settingsRepo,
-            ApiTokenFieldRegistry tokenFieldRegistry,
-            SettingsCredentialChangeListener credentialChangeListener
+            @NonNull SettingsRepository settingsRepo,
+            @NonNull ApiTokenFieldRegistry tokenFieldRegistry,
+            SettingsCredentialChangeListener credentialChangeListener,
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver
     ) {
         super(settingsRepo);
         this.tokenFieldRegistry = tokenFieldRegistry;
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
+        this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
 
         PROVIDER_BASE_ICON_CACHE.clear();
         PROVIDER_STATUS_ICON_CACHE.clear();
@@ -218,6 +224,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         super.addNotify();
         authLifecycle.activate();
         removed = false;
+        authStatusRefreshers.forEach(Runnable::run);
     }
 
     @Override
@@ -429,17 +436,9 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         JLabel status = new JLabel();
         Fonts.apply(status, Font.PLAIN, Fonts.SIZE_BODY);
 
-        if (info.authType() == AuthType.COPILOT_OAUTH) {
-            CopilotAuthResolver.CopilotAuthStatus copilotAuthStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
-            cacheAuthAvailability(providerName, copilotAuthStatus.authorized());
-            applyCopilotAuthStatus(status, copilotAuthStatus);
-            return status;
-        }
-
-        if (info.authType() == AuthType.CODEX_OAUTH) {
-            CodexAuthResolver.CodexAuthStatus codexAuthStatus = CODEX_AUTH_RESOLVER.resolveStatus();
-            cacheAuthAvailability(providerName, codexAuthStatus.authorized());
-            applyCodexAuthStatus(status, codexAuthStatus);
+        if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
+            status.setText("Checking authorization...");
+            status.setForeground(warningForeground());
             return status;
         }
 
@@ -651,22 +650,65 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private void openInBrowser(String url) {
+        openInBrowser(url, authLifecycle.currentGeneration());
+    }
+
+    private void openInBrowser(String url, long lifecycleGeneration) {
         if (SwingUtilities.isEventDispatchThread()) {
-            Thread.startVirtualThread(() -> openInBrowser(url));
+            Thread.startVirtualThread(() -> openInBrowser(url, lifecycleGeneration));
             return;
         }
 
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-            SwingUtilities.invokeLater(() -> setStatusError("Unable to open browser automatically. URL: %s".formatted(url)));
+            applyBrowserStatusIfCurrent(
+                    lifecycleGeneration,
+                    () -> setStatusError("Unable to open browser automatically.")
+            );
             return;
         }
 
         try {
             Desktop.getDesktop().browse(URI.create(url));
-            SwingUtilities.invokeLater(() -> setStatusInfo("Opened: %s".formatted(url)));
+            applyBrowserStatusIfCurrent(lifecycleGeneration, () -> setStatusInfo("Opened browser."));
         } catch (Exception e) {
-            log.warn("Failed to open URL {}: {}", url, ExceptionUtils.getMessage(e));
-            SwingUtilities.invokeLater(() -> setStatusError("Failed to open URL: %s".formatted(firstLine(ExceptionUtils.getMessage(e)))));
+            String failureDescription = sanitizedBrowserFailureDescription(e);
+            log.warn("Failed to open URL {}: {}", sanitizedUrlForDiagnostics(url), failureDescription);
+            applyBrowserStatusIfCurrent(
+                    lifecycleGeneration,
+                    () -> setStatusError("Failed to open URL: %s".formatted(failureDescription))
+            );
+        }
+    }
+
+    private void applyBrowserStatusIfCurrent(long lifecycleGeneration, Runnable update) {
+        SwingUtilities.invokeLater(() -> {
+            if (authLifecycle.isCurrent(lifecycleGeneration)) {
+                update.run();
+            }
+        });
+    }
+
+    static String sanitizedBrowserFailureDescription(Throwable failure) {
+        return failure == null ? "Unknown error" : failure.getClass().getSimpleName();
+    }
+
+    static String sanitizedUrlForDiagnostics(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (StringUtils.isBlank(uri.getScheme()) || StringUtils.isBlank(uri.getHost())) {
+                return "<invalid-url>";
+            }
+            return new URI(
+                    uri.getScheme(),
+                    null,
+                    uri.getHost(),
+                    uri.getPort(),
+                    uri.getPath(),
+                    null,
+                    null
+            ).toString();
+        } catch (Exception e) {
+            return "<invalid-url>";
         }
     }
 
@@ -688,9 +730,40 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
                 || !authLifecycle.isCurrent(lifecycleGeneration);
     }
 
+    private void refreshCopilotAuthControls(String providerName, JLabel statusLabel, JButton authButton) {
+        long lifecycleGeneration = authLifecycle.currentGeneration();
+        startAuthWorker(lifecycleGeneration, () -> {
+            CopilotAuthResolver.CopilotAuthStatus status = copilotAuthResolver.resolveStatus();
+            if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (authLifecycle.isCurrent(lifecycleGeneration)) {
+                    applyCopilotAuthControls(providerName, statusLabel, authButton, status, null);
+                }
+            });
+        });
+    }
+
+    private void refreshCodexAuthControls(String providerName, JLabel statusLabel, JButton authButton) {
+        long lifecycleGeneration = authLifecycle.currentGeneration();
+        startAuthWorker(lifecycleGeneration, () -> {
+            CodexAuthResolver.CodexAuthStatus status = codexAuthResolver.resolveStatus();
+            if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (authLifecycle.isCurrent(lifecycleGeneration)) {
+                    applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
+                }
+            });
+        });
+    }
+
     private void configureCopilotAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        CopilotAuthResolver.CopilotAuthStatus status = COPILOT_AUTH_RESOLVER.resolveStatus();
-        applyCopilotAuthControls(providerName, statusLabel, authButton, status, null);
+        authButton.setText("Checking...");
+        authButton.setEnabled(false);
+        authStatusRefreshers.add(() -> refreshCopilotAuthControls(providerName, statusLabel, authButton));
 
         authButton.addActionListener(event -> {
             long lifecycleGeneration = authLifecycle.currentGeneration();
@@ -702,18 +775,38 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
-                CopilotAuthResolver.CopilotAuthStatus initialStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
+                CopilotAuthResolver.CopilotAuthStatus initialStatus = copilotAuthResolver.resolveStatus();
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
                 CopilotAuthResolver.CopilotAuthActionResult actionResult = initialStatus.authorized()
                         && Strings.CS.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)
-                        ? COPILOT_AUTH_RESOLVER.logout(cancellationRequested)
+                        ? copilotAuthResolver.logout(cancellationRequested)
                         : runCopilotLoginFlow(lifecycleGeneration, statusLabel, cancellationRequested);
-                if (cancellationRequested.getAsBoolean()) {
+                if (actionResult.success()) {
+                    notifyProviderAuthChangedSafely(providerName);
+                }
+                if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                    if (actionResult.success()) {
+                        refreshCopilotAuthControls(providerName, statusLabel, authButton);
+                    }
                     return;
                 }
-                CopilotAuthResolver.CopilotAuthStatus updatedStatus = COPILOT_AUTH_RESOLVER.resolveStatus();
+                if (Thread.currentThread().isInterrupted()) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (authLifecycle.isCurrent(lifecycleGeneration)) {
+                            applyCopilotAuthControls(
+                                    providerName,
+                                    statusLabel,
+                                    authButton,
+                                    initialStatus,
+                                    actionResult.success() ? null : actionResult.message()
+                            );
+                        }
+                    });
+                    return;
+                }
+                CopilotAuthResolver.CopilotAuthStatus updatedStatus = copilotAuthResolver.resolveStatus();
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
@@ -730,14 +823,16 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
                             finalActionResult.success() ? null : finalActionResult.message()
                     );
                 });
-                if (finalActionResult.success()) {
-                    authLifecycle.runIfCurrent(
-                            lifecycleGeneration,
-                            () -> credentialChangeListener.providerAuthChanged(providerName)
-                    );
-                }
             });
         });
+    }
+
+    private void notifyProviderAuthChangedSafely(String providerName) {
+        try {
+            credentialChangeListener.providerAuthChanged(providerName);
+        } catch (RuntimeException e) {
+            log.warn("Failed to publish {} authentication change ({})", providerName, e.getClass().getSimpleName());
+        }
     }
 
     private CopilotAuthResolver.CopilotAuthActionResult runCopilotLoginFlow(
@@ -750,36 +845,39 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             return CopilotAuthResolver.CopilotAuthActionResult.failure("GitHub Copilot login cancelled.");
         }
 
+        AtomicBoolean dialogCancellationRequested = new AtomicBoolean();
+        Thread authWorker = Thread.currentThread();
+        Runnable cancelLogin = authFlowCancellation(authWorker, dialogCancellationRequested);
+        BooleanSupplier flowCancellationRequested = () -> cancellationRequested.getAsBoolean()
+                || dialogCancellationRequested.get();
         try {
-            CopilotAuthResolver.CopilotLoginChallenge challenge = COPILOT_AUTH_RESOLVER.beginLogin(
-                    cancellationRequested,
-                    action -> authLifecycle.runIfCurrent(lifecycleGeneration, action)
+            return copilotAuthResolver.login(
+                    flowCancellationRequested,
+                    ignored -> false,
+                    challenge -> SwingUtilities.invokeLater(() -> {
+                        if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                            loginDialogFuture.complete(null);
+                            return;
+                        }
+                        try {
+                            loginDialogFuture.complete(showCopilotAuthLoginProgress(
+                                    lifecycleGeneration,
+                                    statusLabel,
+                                    challenge,
+                                    cancelLogin
+                            ));
+                        } catch (Exception e) {
+                            cancelLogin.run();
+                            loginDialogFuture.completeExceptionally(e);
+                        }
+                    })
             );
-            if (!authLifecycle.isCurrent(lifecycleGeneration)) {
-                return CopilotAuthResolver.CopilotAuthActionResult.failure("GitHub Copilot login cancelled.");
-            }
-            SwingUtilities.invokeLater(() -> {
-                if (!authLifecycle.isCurrent(lifecycleGeneration)) {
-                    loginDialogFuture.complete(null);
-                    return;
-                }
-                try {
-                    loginDialogFuture.complete(showCopilotAuthLoginProgress(
-                            lifecycleGeneration,
-                            statusLabel,
-                            challenge
-                    ));
-                } catch (Exception e) {
-                    loginDialogFuture.completeExceptionally(e);
-                }
-            });
-            return COPILOT_AUTH_RESOLVER.completeLogin(challenge, cancellationRequested);
         } catch (Exception e) {
-            if (cancellationRequested.getAsBoolean()) {
+            if (flowCancellationRequested.getAsBoolean()) {
                 return CopilotAuthResolver.CopilotAuthActionResult.failure("GitHub Copilot login cancelled.");
             }
-            log.warn("Copilot OAuth action failed: {}", ExceptionUtils.getMessage(e));
-            return CopilotAuthResolver.CopilotAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            log.warn("Copilot OAuth action failed ({})", e.getClass().getSimpleName());
+            return CopilotAuthResolver.CopilotAuthActionResult.failure("GitHub Copilot login failed.");
         } finally {
             loginDialogFuture.whenComplete((dialog, error) -> {
                 authLifecycle.unregister(loginDialogFuture);
@@ -792,8 +890,9 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private void configureCodexAuthAction(String providerName, JLabel statusLabel, JButton authButton) {
-        CodexAuthResolver.CodexAuthStatus status = CODEX_AUTH_RESOLVER.resolveStatus();
-        applyCodexAuthControls(providerName, statusLabel, authButton, status, null);
+        authButton.setText("Checking...");
+        authButton.setEnabled(false);
+        authStatusRefreshers.add(() -> refreshCodexAuthControls(providerName, statusLabel, authButton));
 
         authButton.addActionListener(event -> {
             long lifecycleGeneration = authLifecycle.currentGeneration();
@@ -807,18 +906,38 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
-                CodexAuthResolver.CodexAuthStatus initialStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+                CodexAuthResolver.CodexAuthStatus initialStatus = codexAuthResolver.resolveStatus();
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
                 CodexAuthResolver.CodexAuthActionResult actionResult = initialStatus.authorized()
                         && Strings.CS.equals(initialStatus.source(), CHAT4J_OAUTH_SOURCE)
-                        ? CODEX_AUTH_RESOLVER.logout(cancellationRequested)
+                        ? codexAuthResolver.logout(cancellationRequested)
                         : runCodexLoginDialogFlow(lifecycleGeneration, cancellationRequested);
-                if (cancellationRequested.getAsBoolean()) {
+                if (actionResult.success()) {
+                    notifyProviderAuthChangedSafely(providerName);
+                }
+                if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                    if (actionResult.success()) {
+                        refreshCodexAuthControls(providerName, statusLabel, authButton);
+                    }
                     return;
                 }
-                CodexAuthResolver.CodexAuthStatus updatedStatus = CODEX_AUTH_RESOLVER.resolveStatus();
+                if (Thread.currentThread().isInterrupted()) {
+                    SwingUtilities.invokeLater(() -> {
+                        if (authLifecycle.isCurrent(lifecycleGeneration)) {
+                            applyCodexAuthControls(
+                                    providerName,
+                                    statusLabel,
+                                    authButton,
+                                    initialStatus,
+                                    actionResult.success() ? null : actionResult.message()
+                            );
+                        }
+                    });
+                    return;
+                }
+                CodexAuthResolver.CodexAuthStatus updatedStatus = codexAuthResolver.resolveStatus();
                 if (cancellationRequested.getAsBoolean()) {
                     return;
                 }
@@ -834,12 +953,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
                             actionResult.success() ? null : actionResult.message()
                     );
                 });
-                if (actionResult.success()) {
-                    authLifecycle.runIfCurrent(
-                            lifecycleGeneration,
-                            () -> credentialChangeListener.providerAuthChanged(providerName)
-                    );
-                }
             });
         });
     }
@@ -848,58 +961,59 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             long lifecycleGeneration,
             BooleanSupplier cancellationRequested
     ) {
-        CodexAuthResolver.CodexCallbackWait callbackWait = null;
+        AtomicBoolean dialogCancellationRequested = new AtomicBoolean();
+        Runnable cancelLogin = authFlowCancellation(Thread.currentThread(), dialogCancellationRequested);
+        BooleanSupplier flowCancellationRequested = () -> cancellationRequested.getAsBoolean()
+                || dialogCancellationRequested.get();
+        return codexAuthResolver.login(
+                flowCancellationRequested,
+                challenge -> collectCodexAuthorizationInput(lifecycleGeneration, challenge, cancelLogin)
+        );
+    }
+
+    private String collectCodexAuthorizationInput(
+            long lifecycleGeneration,
+            CodexAuthResolver.CodexLoginChallenge challenge,
+            Runnable cancelLogin
+    ) throws Exception {
+        if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+            return "";
+        }
+
+        CodexAuthResolver.CodexCallbackWait callbackWait = codexAuthResolver.startCallbackWait(challenge);
         try {
-            if (!authLifecycle.isCurrent(lifecycleGeneration)) {
-                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
-            }
-            CodexAuthResolver.CodexLoginChallenge challenge = CODEX_AUTH_RESOLVER.beginLogin();
-            if (!authLifecycle.isCurrent(lifecycleGeneration)) {
-                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
-            }
-            callbackWait = CODEX_AUTH_RESOLVER.startCallbackWait(challenge);
-            CodexAuthResolver.CodexCallbackWait activeCallbackWait = callbackWait;
             boolean registered = authLifecycle.register(lifecycleGeneration, callbackWait, () -> {
-                activeCallbackWait.callbackInputFuture().complete("");
-                activeCallbackWait.close();
+                callbackWait.callbackInputFuture().complete("");
+                callbackWait.close();
             });
             if (!registered) {
-                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
+                return "";
             }
-            String input = showCodexLoginDialogOnEdt(lifecycleGeneration, challenge, callbackWait);
-            if (StringUtils.isBlank(input) || !authLifecycle.isCurrent(lifecycleGeneration)) {
-                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
-            }
-
-            return CODEX_AUTH_RESOLVER.completeLoginWithAuthorizationInput(
-                    challenge,
-                    input,
-                    cancellationRequested
-            );
-        } catch (Exception e) {
-            if (cancellationRequested.getAsBoolean()) {
-                return CodexAuthResolver.CodexAuthActionResult.failure("OpenAI Codex login cancelled.");
-            }
-            log.warn("Codex OAuth action failed: {}", ExceptionUtils.getMessage(e));
-            return CodexAuthResolver.CodexAuthActionResult.failure(firstLine(ExceptionUtils.getMessage(e)));
+            return showCodexLoginDialogOnEdt(lifecycleGeneration, challenge, callbackWait, cancelLogin);
         } finally {
-            if (callbackWait != null) {
-                authLifecycle.unregister(callbackWait);
-                callbackWait.close();
-            }
+            authLifecycle.unregister(callbackWait);
+            callbackWait.close();
         }
     }
 
     private String showCodexLoginDialogOnEdt(
             long lifecycleGeneration,
             CodexAuthResolver.CodexLoginChallenge challenge,
-            CodexAuthResolver.CodexCallbackWait callbackWait
+            CodexAuthResolver.CodexCallbackWait callbackWait,
+            Runnable cancelLogin
     ) throws Exception {
         if (!authLifecycle.isCurrent(lifecycleGeneration)) {
             return "";
         }
+        long timeoutDeadlineNanos = challenge.timeoutDeadlineNanos();
         if (SwingUtilities.isEventDispatchThread()) {
-            return showCodexLoginDialog(lifecycleGeneration, challenge, callbackWait);
+            return showCodexLoginDialog(
+                    lifecycleGeneration,
+                    challenge,
+                    callbackWait,
+                    timeoutDeadlineNanos,
+                    cancelLogin
+            );
         }
 
         CompletableFuture<String> result = new CompletableFuture<>();
@@ -912,13 +1026,23 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             return "";
         }
         try {
+            result.orTimeout(
+                    Math.max(remainingTimeoutNanos(timeoutDeadlineNanos), 1L),
+                    TimeUnit.NANOSECONDS
+            );
             SwingUtilities.invokeLater(() -> {
-                if (!authLifecycle.isCurrent(lifecycleGeneration)) {
+                if (!authLifecycle.isCurrent(lifecycleGeneration) || result.isDone()) {
                     result.complete("");
                     return;
                 }
                 try {
-                    result.complete(showCodexLoginDialog(lifecycleGeneration, challenge, callbackWait));
+                    result.complete(showCodexLoginDialog(
+                            lifecycleGeneration,
+                            challenge,
+                            callbackWait,
+                            timeoutDeadlineNanos,
+                            cancelLogin
+                    ));
                 } catch (Exception e) {
                     result.completeExceptionally(e);
                 }
@@ -929,11 +1053,44 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         }
     }
 
+    private static long remainingTimeoutNanos(long timeoutDeadlineNanos) {
+        return timeoutDeadlineNanos == Long.MAX_VALUE
+                ? Long.MAX_VALUE
+                : Math.max(timeoutDeadlineNanos - System.nanoTime(), 0L);
+    }
+
     static Runnable authDialogCancellation(Thread waitingWorker, CompletableFuture<String> result) {
         return () -> {
             waitingWorker.interrupt();
             result.complete("");
         };
+    }
+
+    static Runnable authFlowCancellation(Thread authWorker, AtomicBoolean cancellationRequested) {
+        return () -> {
+            cancellationRequested.set(true);
+            authWorker.interrupt();
+        };
+    }
+
+    static Timer createAuthDialogTimeout(
+            long timeoutDeadlineNanos,
+            AtomicBoolean timedOut,
+            CodexAuthResolver.CodexCallbackWait callbackWait,
+            Runnable dismissDialog
+    ) {
+        long remainingTimeoutNanos = remainingTimeoutNanos(timeoutDeadlineNanos);
+        int timeoutMillis = (int) Math.max(
+                1L,
+                Math.min(TimeUnit.NANOSECONDS.toMillis(remainingTimeoutNanos), Integer.MAX_VALUE)
+        );
+        Timer timeoutTimer = new Timer(timeoutMillis, event -> {
+            timedOut.set(true);
+            callbackWait.close();
+            dismissDialog.run();
+        });
+        timeoutTimer.setRepeats(false);
+        return timeoutTimer;
     }
 
     static String awaitAuthDialogResult(CompletableFuture<String> result) throws Exception {
@@ -942,14 +1099,21 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw e;
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof Exception cause) {
+                throw cause;
+            }
+            throw e;
         }
     }
 
     private String showCodexLoginDialog(
             long lifecycleGeneration,
             CodexAuthResolver.CodexLoginChallenge challenge,
-            CodexAuthResolver.CodexCallbackWait callbackWait
-    ) {
+            CodexAuthResolver.CodexCallbackWait callbackWait,
+            long timeoutDeadlineNanos,
+            Runnable cancelLogin
+    ) throws TimeoutException {
         if (!authLifecycle.isCurrent(lifecycleGeneration)) {
             return "";
         }
@@ -1011,6 +1175,14 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         JButton cancelButton = new JButton("Cancel");
 
         final String[] resultHolder = new String[1];
+        var timedOut = new AtomicBoolean();
+        Timer timeoutTimer = createAuthDialogTimeout(
+                timeoutDeadlineNanos,
+                timedOut,
+                callbackWait,
+                dialog::dispose
+        );
+
         callbackWait.callbackInputFuture().whenComplete((callbackInput, throwable) -> {
             if (throwable != null || StringUtils.isBlank(callbackInput)) {
                 return;
@@ -1032,7 +1204,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             resultHolder[0] = callbackUrlField.getText();
             dialog.dispose();
         });
-        cancelButton.addActionListener(e -> dialog.dispose());
+        cancelButton.addActionListener(e -> {
+            cancelLogin.run();
+            dialog.dispose();
+        });
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         buttons.add(openBrowserButton);
@@ -1053,14 +1228,24 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             public void windowOpened(WindowEvent e) {
                 openInBrowser(challenge.authorizationUri());
             }
+
+            @Override
+            public void windowClosing(WindowEvent e) {
+                cancelLogin.run();
+            }
         });
         if (!registerAuthDialog(lifecycleGeneration, dialog)) {
             return "";
         }
         try {
+            timeoutTimer.start();
             dialog.setVisible(true);
+            if (timedOut.get()) {
+                throw new TimeoutException("OpenAI Codex login timed out");
+            }
             return resultHolder[0];
         } finally {
+            timeoutTimer.stop();
             authLifecycle.unregister(dialog);
         }
     }
@@ -1085,13 +1270,14 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     private JDialog showCopilotAuthLoginProgress(
             long lifecycleGeneration,
             JLabel statusLabel,
-            CopilotAuthResolver.CopilotLoginChallenge challenge
+            CopilotAuthResolver.CopilotLoginChallenge challenge,
+            Runnable cancelLogin
     ) {
-        String message = "Browser opened and login code copied to clipboard. If needed, use code %s at %s."
+        String message = "Complete GitHub Copilot sign-in using code %s at %s."
                 .formatted(challenge.userCode(), challenge.verificationUri());
         statusLabel.setText(message);
         statusLabel.setForeground(warningForeground());
-        setStatusInfo(message);
+        setStatusInfo("GitHub Copilot login is waiting for browser authorization.");
 
         JDialog dialog = new JDialog(
                 SwingUtilities.getWindowAncestor(this),
@@ -1105,7 +1291,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
         JTextArea instructions = new JTextArea("""
                 Complete GitHub Copilot sign-in in your browser.
-                The login code was copied to your clipboard. If needed, copy it again below.
+                Chat4J opens the login page and copies the code when this dialog appears.
                 """);
         instructions.setEditable(false);
         instructions.setLineWrap(true);
@@ -1153,7 +1339,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             copyToClipboard(challenge.userCode(), "Copied GitHub Copilot login code.");
             openInBrowser(challenge.verificationUri());
         });
-        closeButton.addActionListener(e -> dialog.dispose());
+        closeButton.addActionListener(e -> {
+            cancelLogin.run();
+            dialog.dispose();
+        });
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         buttons.add(openBrowserButton);
@@ -1164,6 +1353,18 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         dialog.setContentPane(content);
         dialog.setSize(new Dimension(560, 240));
         dialog.setLocationRelativeTo(this);
+        dialog.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                copyToClipboard(challenge.userCode(), "Copied GitHub Copilot login code.");
+                openInBrowser(challenge.verificationUri());
+            }
+
+            @Override
+            public void windowClosing(WindowEvent e) {
+                cancelLogin.run();
+            }
+        });
         if (!registerAuthDialog(lifecycleGeneration, dialog)) {
             return null;
         }
@@ -1207,7 +1408,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         applyCopilotAuthStatus(statusLabel, status);
 
         boolean chat4jSession = status.authorized() && Strings.CS.equals(status.source(), CHAT4J_OAUTH_SOURCE);
-        boolean oauthClientConfigured = COPILOT_AUTH_RESOLVER.isOAuthClientConfigured();
+        boolean oauthClientConfigured = copilotAuthResolver.isOAuthClientConfigured();
 
         authButton.setOpaque(true);
         if (chat4jSession) {
@@ -1222,10 +1423,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             authButton.setEnabled(false);
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
-            authButton.setToolTipText(COPILOT_AUTH_RESOLVER.oauthClientConfigurationHint());
+            authButton.setToolTipText(copilotAuthResolver.oauthClientConfigurationHint());
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
-                statusLabel.setText(COPILOT_AUTH_RESOLVER.oauthClientConfigurationHint());
+                statusLabel.setText(copilotAuthResolver.oauthClientConfigurationHint());
                 statusLabel.setForeground(warningForeground());
             }
         } else {
@@ -1255,7 +1456,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         applyCodexAuthStatus(statusLabel, status);
 
         boolean chat4jSession = status.authorized() && Strings.CS.equals(status.source(), CHAT4J_OAUTH_SOURCE);
-        boolean oauthClientConfigured = CODEX_AUTH_RESOLVER.isOAuthClientConfigured();
+        boolean oauthClientConfigured = codexAuthResolver.isOAuthClientConfigured();
 
         authButton.setOpaque(true);
         if (chat4jSession) {
@@ -1270,10 +1471,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             authButton.setEnabled(false);
             authButton.setForeground(UIManager.getColor("Button.foreground"));
             authButton.setBackground(UIManager.getColor("Button.background"));
-            authButton.setToolTipText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
+            authButton.setToolTipText(codexAuthResolver.oauthClientConfigurationHint());
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
-                statusLabel.setText(CODEX_AUTH_RESOLVER.oauthClientConfigurationHint());
+                statusLabel.setText(codexAuthResolver.oauthClientConfigurationHint());
                 statusLabel.setForeground(warningForeground());
             }
         } else {
@@ -1583,12 +1784,8 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             return false;
         }
 
-        if (info.authType() == AuthType.COPILOT_OAUTH) {
-            return isCopilotAuthAvailable(providerName);
-        }
-
-        if (info.authType() == AuthType.CODEX_OAUTH) {
-            return isCodexAuthAvailable(providerName);
+        if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
+            return authAvailabilityByProvider.getOrDefault(providerName, false);
         }
 
         if (info.envVar() == null) {
@@ -1602,28 +1799,8 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         return CredentialResolver.hasRequiredCredentials(info.envVar());
     }
 
-    private boolean isCopilotAuthAvailable(String providerName) {
-        return isAuthAvailable(providerName, () -> COPILOT_AUTH_RESOLVER.resolveStatus().authorized());
-    }
-
-    private boolean isCodexAuthAvailable(String providerName) {
-        return isAuthAvailable(providerName, () -> CODEX_AUTH_RESOLVER.resolveStatus().authorized());
-    }
-
-    private boolean isAuthAvailable(String providerName, BooleanSupplier resolveAuthorized) {
-        Instant now = Instant.now();
-        AuthAvailabilitySnapshot cached = authAvailabilityByProvider.get(providerName);
-        if (cached != null && now.isBefore(cached.checkedAt().plus(AUTH_AVAILABILITY_TTL))) {
-            return cached.authorized();
-        }
-
-        boolean authorized = resolveAuthorized.getAsBoolean();
-        cacheAuthAvailability(providerName, authorized);
-        return authorized;
-    }
-
     private void cacheAuthAvailability(String providerName, boolean authorized) {
-        authAvailabilityByProvider.put(providerName, new AuthAvailabilitySnapshot(authorized, Instant.now()));
+        authAvailabilityByProvider.put(providerName, authorized);
     }
 
     private static Icon iconForProvider(String providerName, boolean available) {
@@ -1756,9 +1933,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private record ProviderStatusIconKey(String providerName, boolean available) {
-    }
-
-    private record AuthAvailabilitySnapshot(boolean authorized, Instant checkedAt) {
     }
 
     record ProviderInfo(String envVar, String defaultBaseUrl, AuthType authType) {

@@ -27,15 +27,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
 
     public OpenAiCompatibleModule(
         String providerName,
-        String credentialEnvVar,
-        String fallbackApiKey,
-        String defaultBaseUrl
-    ) {
-        this(providerName, AuthType.ENV_VAR, credentialEnvVar, fallbackApiKey, defaultBaseUrl, CopilotModelMetadataStore.sharedDefault());
-    }
-
-    public OpenAiCompatibleModule(
-        String providerName,
         AuthType authType,
         String credentialEnvVar,
         String fallbackApiKey,
@@ -74,7 +65,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
             capabilities,
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
         this.chatCompletionClient = selectChatClient(providerName);
-        this.modelCatalogClient = selectModelCatalogClient(providerName, seedModels, copilotModelMetadataStore);
+        this.modelCatalogClient = selectModelCatalogClient(providerName, copilotModelMetadataStore);
     }
 
     @Override
@@ -103,7 +94,6 @@ public class OpenAiCompatibleModule implements ProviderModule {
 
     private ModelCatalogClient selectModelCatalogClient(
             String providerName,
-            List<String> seedModels,
             CopilotModelMetadataStore copilotModelMetadataStore
     ) {
         return "Perplexity".equals(providerName)

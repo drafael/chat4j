@@ -168,6 +168,22 @@ public class ProviderModelCacheService {
         }
     }
 
+    public synchronized Optional<List<String>> findUsableModels(String providerName, String scope) {
+        if (StringUtils.isBlank(providerName)) {
+            return Optional.empty();
+        }
+
+        CacheEntry entry = getOrLoadEntry(providerName);
+        if (entry.invalidated() || !Objects.equals(entry.scope(), normalizeScope(scope))) {
+            return Optional.empty();
+        }
+
+        List<String> models = CODEX_PROVIDER_NAME.equals(providerName)
+                ? CodexLocalModelCache.merge(entry.models(), codexLocalModels)
+                : entry.models();
+        return Optional.of(models);
+    }
+
     public boolean isInvalidated(String providerName) {
         return StringUtils.isNotBlank(providerName) && getOrLoadEntry(providerName).invalidated();
     }
@@ -274,12 +290,12 @@ public class ProviderModelCacheService {
             return false;
         }
         if (Thread.currentThread().isInterrupted()) {
-            deferRefresh(attempt.providerName(), entry);
+            deferRefresh(attempt.providerName(), entry, false);
             return false;
         }
         List<String> sanitizedModels = sanitizeModels(attempt.providerName(), models);
         if (sanitizedModels.isEmpty() && !entry.models().isEmpty()) {
-            deferRefresh(attempt.providerName(), entry);
+            deferRefresh(attempt.providerName(), entry, true);
             return false;
         }
 
@@ -294,12 +310,15 @@ public class ProviderModelCacheService {
 
         CacheEntry entry = getOrLoadEntry(attempt.providerName());
         if (entry.refreshAttemptId() == attempt.attemptId()) {
-            deferRefresh(attempt.providerName(), entry);
+            deferRefresh(attempt.providerName(), entry, true);
         }
     }
 
-    private void deferRefresh(String providerName, CacheEntry entry) {
-        cacheByProvider.put(providerName, entry.withRefreshAttempt(0L));
+    private void deferRefresh(String providerName, CacheEntry entry, boolean exposeFallback) {
+        CacheEntry deferred = exposeFallback && !entry.models().isEmpty()
+                ? entry.asUsableFallback()
+                : entry.withRefreshAttempt(0L);
+        cacheByProvider.put(providerName, deferred);
         refreshRetryAfterByProvider.put(providerName, Instant.now(clock).plus(FAILED_REFRESH_RETRY_DELAY));
     }
 
@@ -425,6 +444,10 @@ public class ProviderModelCacheService {
 
         private CacheEntry withRefreshAttempt(long attemptId) {
             return new CacheEntry(models, fetchedAt, attemptId, invalidated, scope);
+        }
+
+        private CacheEntry asUsableFallback() {
+            return new CacheEntry(models, Instant.EPOCH, 0L, false, scope);
         }
     }
 

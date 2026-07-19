@@ -18,6 +18,8 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettings;
@@ -100,7 +102,15 @@ public final class ApplicationBootstrap {
         StoragePaths storagePaths = StoragePaths.defaultPaths();
         SettingsRepository settingsRepo = new SettingsRepository(storagePaths);
         CacheStorageInitializer.CacheStorage cacheStorage = new CacheStorageInitializer(storagePaths, settingsRepo).initialize();
-        CopilotModelMetadataStore.sharedDefault().prime();
+        CopilotModelMetadataStore copilotModelMetadataStore = new CopilotModelMetadataStore(cacheStorage.root());
+        copilotModelMetadataStore.prime();
+        CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
+        CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
+        ProviderRegistry providerRegistry = new ProviderRegistry(
+                copilotAuthResolver,
+                codexAuthResolver,
+                copilotModelMetadataStore
+        );
         ProviderModelCacheService providerModelCacheService =
                 new ProviderModelCacheService(new ProviderModelCache(cacheStorage.root()));
         ModelFavoritesService modelFavoritesService = new ModelFavoritesService(settingsRepo);
@@ -126,7 +136,7 @@ public final class ApplicationBootstrap {
         );
 
         providerModelCacheService.primeFromDisk(
-                ProviderRegistry.allProviders().stream()
+                providerRegistry.allProviders().stream()
                         .map(ProviderRegistry.ProviderDef::name)
                         .toList());
         modelFavoritesService.primeFromSettings();
@@ -138,7 +148,11 @@ public final class ApplicationBootstrap {
                 providerModelCacheService,
                 modelFavoritesService,
                 storagePaths,
-                cacheStorage.snapshots()
+                cacheStorage.snapshots(),
+                providerRegistry,
+                copilotAuthResolver,
+                codexAuthResolver,
+                copilotModelMetadataStore
         );
     }
 
@@ -166,7 +180,11 @@ public final class ApplicationBootstrap {
                 services.providerModelCacheService(),
                 services.modelFavoritesService(),
                 services.storagePaths(),
-                services.catalogSnapshots());
+                services.catalogSnapshots(),
+                services.providerRegistry(),
+                services.copilotAuthResolver(),
+                services.codexAuthResolver(),
+                services.copilotModelMetadataStore());
             frame.setVisible(true);
         });
     }

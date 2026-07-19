@@ -173,6 +173,7 @@ public class ChatPanel extends JPanel {
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
+    private final ProviderRegistry providerRegistry;
     private final AttachmentStager attachmentStager = new AttachmentStager();
     private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
     private final WebSearchCoordinator webSearchCoordinator = new WebSearchCoordinator(List.of(new PerplexityWebSearchProvider()));
@@ -182,8 +183,8 @@ public class ChatPanel extends JPanel {
     private final JcefBrowserView jcefBrowserView;
     private final TextToSpeechService textToSpeechService;
     private final SpeechToTextService speechToTextService;
-    private final CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
-    private final CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
+    private final CodexAuthResolver codexAuthResolver;
+    private final CopilotAuthResolver copilotAuthResolver;
     private volatile AgentOrchestrator agentOrchestrator;
     private volatile String agentSystemPromptAppend = "";
     private final List<ChatMessageView> assistantBubbles = new ArrayList<>();
@@ -259,52 +260,22 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    public ChatPanel(ProviderModelCacheService modelCacheService) {
-        this(modelCacheService, ModelFavoritesService.createInMemory());
-        populateModels();
-    }
-
-    public ChatPanel(ProviderModelCacheService modelCacheService, ModelFavoritesService modelFavoritesService) {
-        this(modelCacheService, modelFavoritesService, new ChatMessageViewFactory(), WebViewEngine.JEDITOR_PANE);
-    }
-
-    public ChatPanel(
-            @NonNull ProviderModelCacheService modelCacheService,
-            @NonNull ModelFavoritesService modelFavoritesService,
-            @NonNull ChatMessageViewFactory messageViewFactory
-    ) {
-        this(modelCacheService, modelFavoritesService, messageViewFactory, WebViewEngine.JEDITOR_PANE);
-    }
-
-    public ChatPanel(
-            @NonNull ProviderModelCacheService modelCacheService,
-            @NonNull ModelFavoritesService modelFavoritesService,
-            @NonNull ChatMessageViewFactory messageViewFactory,
-            @NonNull WebViewEngine webViewEngine
-    ) {
-        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, TextToSpeechService.disabled(), SpeechToTextService.disabled());
-    }
-
-    public ChatPanel(
-            @NonNull ProviderModelCacheService modelCacheService,
-            @NonNull ModelFavoritesService modelFavoritesService,
-            @NonNull ChatMessageViewFactory messageViewFactory,
-            @NonNull WebViewEngine webViewEngine,
-            @NonNull TextToSpeechService textToSpeechService
-    ) {
-        this(modelCacheService, modelFavoritesService, messageViewFactory, webViewEngine, textToSpeechService, SpeechToTextService.disabled());
-    }
-
     public ChatPanel(
             @NonNull ProviderModelCacheService modelCacheService,
             @NonNull ModelFavoritesService modelFavoritesService,
             @NonNull ChatMessageViewFactory messageViewFactory,
             @NonNull WebViewEngine webViewEngine,
             @NonNull TextToSpeechService textToSpeechService,
-            @NonNull SpeechToTextService speechToTextService
+            @NonNull SpeechToTextService speechToTextService,
+            @NonNull ProviderRegistry providerRegistry,
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver
     ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
+        this.providerRegistry = providerRegistry;
+        this.copilotAuthResolver = copilotAuthResolver;
+        this.codexAuthResolver = codexAuthResolver;
         this.messageViewFactory = messageViewFactory;
         this.webViewEngine = webViewEngine;
         this.textToSpeechService = textToSpeechService;
@@ -631,14 +602,6 @@ public class ChatPanel extends JPanel {
         return url == null ? null : new ThemeAwareSvgIcon(url, RENDER_MODE_ICON_SIZE);
     }
 
-    private void populateModels() {
-        long scopeVersion = modelCacheService.nextScopeVersion();
-        providerScopeVersion = scopeVersion;
-        List<ProviderRegistry.ProviderDef> providers = ProviderRegistry.availableProviders();
-        prepareProviderModels(providers, scopeVersion);
-        applyProviderModels(providers, scopeVersion);
-    }
-
     private void prepareProviderModels(List<ProviderRegistry.ProviderDef> providers, long scopeVersion) {
         providers.forEach(provider -> modelCacheService.synchronizeScope(
                 provider.name(),
@@ -648,21 +611,22 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean applyProviderModels(List<ProviderRegistry.ProviderDef> providers, long scopeVersion) {
+        Map<String, ProviderRegistry.ProviderDef> previousProviderMap = providerMap;
         if (!updateProviderMap(providers, scopeVersion)) {
             return false;
         }
+        if (providerModelsChanged(previousProviderMap, providers)) {
+            notifyModelCatalogChanged();
+        }
 
-        if (selectedProviderName != null
-                && selectedModelId != null
-                && providerMap.containsKey(selectedProviderName)
-                && !modelCacheService.isInvalidated(selectedProviderName)
-        ) {
+        ProviderRegistry.ProviderDef selectedProvider = providerMap.get(selectedProviderName);
+        boolean selectedProviderScopeUsable = selectedProvider != null && hasUsableModelScope(selectedProvider);
+        if (selectedProviderScopeUsable && selectedModelId != null) {
             selectModel(selectedProviderName, selectedModelId);
             return true;
         }
 
-        if (selectedProviderName != null
-                && (!providerMap.containsKey(selectedProviderName) || modelCacheService.isInvalidated(selectedProviderName))) {
+        if (selectedProviderName != null && !selectedProviderScopeUsable) {
             clearSelectedModel();
         }
 
@@ -707,23 +671,29 @@ public class ChatPanel extends JPanel {
         if (!updateProviderMap(providers, scopeVersion)) {
             return false;
         }
-        boolean providersChanged = previousProviderMap.size() != providers.size()
-                || providers.stream().anyMatch(provider -> {
-                    ProviderRegistry.ProviderDef existing = previousProviderMap.get(provider.name());
-                    return existing == null || !Objects.equals(existing.baseUrl(), provider.baseUrl());
-                });
-        boolean cacheInvalidated = providers.stream()
-                .map(ProviderRegistry.ProviderDef::name)
-                .anyMatch(modelCacheService::isInvalidated);
-        if (providersChanged || cacheInvalidated) {
+        if (providerModelsChanged(previousProviderMap, providers)) {
             notifyModelCatalogChanged();
         }
+        ProviderRegistry.ProviderDef selectedProvider = providerMap.get(selectedProviderName);
         if (selectedProviderName != null
-                && (!providerMap.containsKey(selectedProviderName)
-                || modelCacheService.isInvalidated(selectedProviderName))) {
+                && (selectedProvider == null || !hasUsableModelScope(selectedProvider))) {
             clearSelectedModel();
         }
         return true;
+    }
+
+    private boolean providerModelsChanged(
+            Map<String, ProviderRegistry.ProviderDef> previousProviderMap,
+            List<ProviderRegistry.ProviderDef> providers
+    ) {
+        return previousProviderMap.size() != providers.size()
+                || providers.stream().anyMatch(provider -> {
+                    ProviderRegistry.ProviderDef existing = previousProviderMap.get(provider.name());
+                    return existing == null || !Objects.equals(existing.baseUrl(), provider.baseUrl());
+                })
+                || providers.stream()
+                        .map(ProviderRegistry.ProviderDef::name)
+                        .anyMatch(modelCacheService::isInvalidated);
     }
 
     private boolean updateProviderMap(List<ProviderRegistry.ProviderDef> providers, long scopeVersion) {
@@ -758,11 +728,14 @@ public class ChatPanel extends JPanel {
         }
     }
 
+    private boolean hasUsableModelScope(ProviderRegistry.ProviderDef providerDef) {
+        return modelCacheService.findUsableModels(providerDef.name(), providerDef.baseUrl()).isPresent();
+    }
+
     private List<String> initialProviderModels(ProviderRegistry.ProviderDef providerDef) {
-        if (modelCacheService.isInvalidated(providerDef.name())) {
-            return sanitizeModelIds(providerDef.name(), providerDef.seedModels());
-        }
-        return sanitizeModelIds(providerDef.name(), modelCacheService.getModels(providerDef.name()));
+        List<String> models = modelCacheService.findUsableModels(providerDef.name(), providerDef.baseUrl())
+                .orElse(providerDef.seedModels());
+        return sanitizeModelIds(providerDef.name(), models);
     }
 
     private void toggleModelPopup() {
@@ -790,6 +763,7 @@ public class ChatPanel extends JPanel {
                 owner,
                 modelCacheService,
                 modelFavoritesService,
+                providerRegistry,
                 this::selectModel,
                 this::updateProviderModelsFromPopup,
                 this::notifyModelFavoritesChanged,
@@ -3787,7 +3761,7 @@ public class ChatPanel extends JPanel {
     private String safeModelId(String providerName, String modelId) {
         ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
         if (providerDef == null) {
-            boolean knownProvider = ProviderRegistry.allProviders().stream()
+            boolean knownProvider = providerRegistry.allProviders().stream()
                     .map(ProviderRegistry.ProviderDef::name)
                     .anyMatch(providerName::equals);
             return knownProvider ? modelId : null;
@@ -4855,7 +4829,7 @@ public class ChatPanel extends JPanel {
                     return;
                 }
 
-                List<ProviderRegistry.ProviderDef> providers = ProviderRegistry.availableProviders();
+                List<ProviderRegistry.ProviderDef> providers = providerRegistry.availableProviders();
                 if (providerRefreshCounter.get() != refreshId) {
                     return;
                 }

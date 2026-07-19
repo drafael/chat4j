@@ -36,6 +36,10 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.audio.AudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
@@ -61,6 +65,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -70,10 +75,12 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -81,6 +88,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
@@ -92,12 +100,35 @@ class ChatPanelTest {
     private Path tempDir;
 
     private ChatPanel subject;
+    private ProviderRegistry providerRegistry;
+    private CopilotAuthResolver copilotAuthResolver;
+    private CodexAuthResolver codexAuthResolver;
 
     @BeforeEach
     void setUp() throws Exception {
+        copilotAuthResolver = new CopilotAuthResolver(
+                tempDir.resolve("copilot-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        );
+        codexAuthResolver = new CodexAuthResolver(
+                tempDir.resolve("codex-home"),
+                emptyMap(),
+                HttpClient.newHttpClient()
+        );
+        providerRegistry = new ProviderRegistry(
+                copilotAuthResolver,
+                codexAuthResolver,
+                new CopilotModelMetadataStore(tempDir.resolve("provider-metadata"))
+        );
+        providerRegistry.applyRuntimeConfig(Map.of(
+                "GitHub Copilot", new ProviderRegistry.ProviderRuntimeConfig(false, null),
+                "OpenAI Codex", new ProviderRegistry.ProviderRuntimeConfig(false, null)
+        ));
         ProviderModelCacheService cacheService = modelCacheService(tempDir.resolve("subject-cache"));
         runOnEdt(() -> {
-            subject = new ChatPanel(cacheService);
+            subject = newChatPanel(cacheService, ModelFavoritesService.createInMemory());
+            initializeProviderModels(subject);
             subject.getInputBar().setWebSearchLockedEnabled(false);
             subject.getInputBar().setWebSearchOptions(emptyList(), null);
             subject.getInputBar().setWebSearchEnabled(false);
@@ -674,7 +705,7 @@ class ChatPanelTest {
         ProviderModelCacheService cacheService = modelCacheService(cacheHome);
         var provider = providerDef(null);
         var panelRef = new AtomicReference<ChatPanel>();
-        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
         ChatPanel panel = panelRef.get();
         try {
             invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
@@ -692,12 +723,60 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("A scope change during provider selection rejects models from the previous endpoint")
+    void applyProviderModels_whenScopeChangesDuringSelectionCheck_rejectsStaleModels() throws Exception {
+        var cacheService = new BlockingModelCacheService(tempDir.resolve("model-cache-scope-race"));
+        var provider = providerDef("https://old.example.com/v1");
+        cacheService.synchronizeScope(provider.name(), provider.baseUrl(), cacheService.nextScopeVersion());
+        updateModels(cacheService, provider.name(), provider.baseUrl(), List.of("old-endpoint-model"));
+
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        var completion = new CountDownLatch(1);
+        var callbackError = new AtomicReference<Throwable>();
+        try {
+            runOnEdt(() -> {
+                setField(panel, "selectedProviderName", provider.name());
+                setField(panel, "selectedModelId", "old-endpoint-model");
+            });
+            cacheService.blockNextLookup();
+            long scopeVersion = cacheService.nextScopeVersion();
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    invokeApplyProviderModels(panel, List.of(provider), scopeVersion);
+                } catch (Throwable t) {
+                    callbackError.set(t);
+                } finally {
+                    completion.countDown();
+                }
+            });
+
+            assertThat(cacheService.awaitLookupStarted()).isTrue();
+            cacheService.synchronizeScope(
+                    provider.name(),
+                    "https://new.example.com/v1",
+                    cacheService.nextScopeVersion()
+            );
+            cacheService.releaseLookup();
+            assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(callbackError.get()).isNull();
+            assertThat(callOnEdt(panel::getSelectedModel)).isEqualTo("OpenAI > seed-model");
+        } finally {
+            cacheService.releaseLookup();
+            completion.await(2, TimeUnit.SECONDS);
+            runOnEdt(panel::removeNotify);
+            runOnEdt(() -> {});
+        }
+    }
+
+    @Test
     @DisplayName("Re-enabling a provider after its base URL changed invalidates models from the previous endpoint")
     void applyProviderModels_whenProviderReenabledWithChangedBaseUrl_invalidatesProviderCache() throws Exception {
         Path cacheHome = tempDir.resolve("model-cache-base-url");
         ProviderModelCacheService cacheService = modelCacheService(cacheHome);
         var panelRef = new AtomicReference<ChatPanel>();
-        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
         ChatPanel panel = panelRef.get();
         try {
             var previousProvider = providerDef("https://old.example.com/v1");
@@ -718,13 +797,62 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Re-enabling a provider with the same base URL preserves its model catalog")
+    void applyProviderModels_whenProviderReenabledWithSameBaseUrl_preservesProviderCache() throws Exception {
+        Path cacheHome = tempDir.resolve("model-cache-enable-toggle");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var provider = providerDef("https://same.example.com/v1");
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(provider)));
+            updateModels(cacheService, "OpenAI", provider.baseUrl(), List.of("same-endpoint-model"));
+
+            runOnEdt(() -> invokeApplyProviderModels(panel, emptyList()));
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(provider)));
+
+            assertThat(cacheService.isInvalidated("OpenAI")).isFalse();
+            assertThat(cacheService.getModels("OpenAI")).contains("same-endpoint-model");
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("Provider refresh notifies model menus after a base URL change")
+    void applyProviderModels_whenBaseUrlChanges_notifiesModelCatalogListener() throws Exception {
+        ProviderModelCacheService cacheService = modelCacheService(tempDir.resolve("model-cache-menu-refresh"));
+        var previousProvider = providerDef("https://old.example.com/v1");
+        var updatedProvider = providerDef("https://new.example.com/v1");
+        var catalogChanges = new AtomicInteger();
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(previousProvider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(previousProvider)));
+            runOnEdt(() -> panel.setOnModelCatalogChanged(catalogChanges::incrementAndGet));
+
+            invokePrepareProviderModels(panel, List.of(updatedProvider), cacheService.nextScopeVersion());
+            runOnEdt(() -> invokeApplyProviderModels(panel, List.of(updatedProvider)));
+
+            assertThat(catalogChanges).hasValue(1);
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
+    }
+
+    @Test
     @DisplayName("Loading an invalidated non-seed model selection falls back to seed model")
     void setSelectedModel_whenProviderCacheInvalidated_usesSeedModel() throws Exception {
         Path cacheHome = tempDir.resolve("model-cache-load");
         ProviderModelCacheService cacheService = modelCacheService(cacheHome);
         var provider = providerDef(null);
         var panelRef = new AtomicReference<ChatPanel>();
-        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
         ChatPanel panel = panelRef.get();
         try {
             invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
@@ -755,7 +883,7 @@ class ChatPanelTest {
                 () -> emptyList()
         );
         var panelRef = new AtomicReference<ChatPanel>();
-        runOnEdt(() -> panelRef.set(new ChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
         ChatPanel panel = panelRef.get();
         try {
             invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
@@ -3467,7 +3595,14 @@ class ChatPanelTest {
 
     private static void invokeApplyProviderModels(ChatPanel chatPanel, List<ProviderRegistry.ProviderDef> providers) throws Exception {
         ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(chatPanel, "modelCacheService");
-        long scopeVersion = cacheService.nextScopeVersion();
+        invokeApplyProviderModels(chatPanel, providers, cacheService.nextScopeVersion());
+    }
+
+    private static void invokeApplyProviderModels(
+            ChatPanel chatPanel,
+            List<ProviderRegistry.ProviderDef> providers,
+            long scopeVersion
+    ) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod("applyProviderModels", List.class, long.class);
         method.setAccessible(true);
         method.invoke(chatPanel, providers, scopeVersion);
@@ -3479,6 +3614,18 @@ class ChatPanelTest {
             long scopeVersion
     ) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod("prepareProviderModels", List.class, long.class);
+        method.setAccessible(true);
+        method.invoke(chatPanel, providers, scopeVersion);
+    }
+
+    private static void initializeProviderModels(ChatPanel chatPanel) throws Exception {
+        ProviderRegistry registry = (ProviderRegistry) readField(chatPanel, "providerRegistry");
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(chatPanel, "modelCacheService");
+        long scopeVersion = cacheService.nextScopeVersion();
+        setField(chatPanel, "providerScopeVersion", scopeVersion);
+        List<ProviderRegistry.ProviderDef> providers = registry.availableProviders();
+        invokePrepareProviderModels(chatPanel, providers, scopeVersion);
+        Method method = ChatPanel.class.getDeclaredMethod("applyProviderModels", List.class, long.class);
         method.setAccessible(true);
         method.invoke(chatPanel, providers, scopeVersion);
     }
@@ -3513,9 +3660,26 @@ class ChatPanelTest {
         );
     }
 
-    private static ProviderModelCacheService modelCacheService(Path configHome) {
+    private ChatPanel newChatPanel(
+            ProviderModelCacheService cacheService,
+            ModelFavoritesService modelFavoritesService
+    ) {
+        return new ChatPanel(
+                cacheService,
+                modelFavoritesService,
+                new ChatMessageViewFactory(),
+                WebViewEngine.JEDITOR_PANE,
+                TextToSpeechService.disabled(),
+                SpeechToTextService.disabled(),
+                providerRegistry,
+                copilotAuthResolver,
+                codexAuthResolver
+        );
+    }
+
+    private ProviderModelCacheService modelCacheService(Path configHome) {
         var cacheService = new ProviderModelCacheService(new ProviderModelCache(StoragePaths.ofConfigHome(configHome)));
-        cacheService.primeFromDisk(ProviderRegistry.availableProviders().stream()
+        cacheService.primeFromDisk(providerRegistry.availableProviders().stream()
                 .map(ProviderRegistry.ProviderDef::name)
                 .toList());
         return cacheService;
@@ -3768,7 +3932,11 @@ class ChatPanelTest {
                 ModelFavoritesService.createInMemory(),
                 new ChatMessageViewFactory(),
                 WebViewEngine.JEDITOR_PANE,
-                textToSpeechService
+                textToSpeechService,
+                SpeechToTextService.disabled(),
+                providerRegistry,
+                copilotAuthResolver,
+                codexAuthResolver
         )));
         return panelRef.get();
     }
@@ -3795,6 +3963,44 @@ class ChatPanelTest {
             if (component instanceof Container child) {
                 collectComponents(child, componentType, matches);
             }
+        }
+    }
+
+    private static final class BlockingModelCacheService extends ProviderModelCacheService {
+        private final AtomicBoolean blockNextLookup = new AtomicBoolean();
+        private final CountDownLatch lookupStarted = new CountDownLatch(1);
+        private final CountDownLatch lookupReleased = new CountDownLatch(1);
+
+        private BlockingModelCacheService(Path configHome) {
+            super(new ProviderModelCache(StoragePaths.ofConfigHome(configHome)));
+        }
+
+        @Override
+        public Optional<List<String>> findUsableModels(String providerName, String scope) {
+            if (blockNextLookup.compareAndSet(true, false)) {
+                lookupStarted.countDown();
+                try {
+                    if (!lookupReleased.await(2, TimeUnit.SECONDS)) {
+                        throw new AssertionError("Timed out waiting to release model lookup");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError("Model lookup was interrupted", e);
+                }
+            }
+            return super.findUsableModels(providerName, scope);
+        }
+
+        private void blockNextLookup() {
+            blockNextLookup.set(true);
+        }
+
+        private boolean awaitLookupStarted() throws InterruptedException {
+            return lookupStarted.await(2, TimeUnit.SECONDS);
+        }
+
+        private void releaseLookup() {
+            lookupReleased.countDown();
         }
     }
 

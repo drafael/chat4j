@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
@@ -47,7 +48,8 @@ class MainFrameModelMenuCoordinatorTest {
                 selectionChangeCoordinator,
                 dirtyRefreshTriggerCoordinator,
                 availabilityRefreshDispatchCoordinator,
-                providerMenuIconResolver
+                providerMenuIconResolver,
+                mock(ProviderRegistry.class)
         );
         MainFrameBoundMenusState boundMenusState = new MainFrameBoundMenusState();
         boundMenusState.setModelsMenu(new JMenu("Models"));
@@ -107,7 +109,8 @@ class MainFrameModelMenuCoordinatorTest {
                 mock(ModelMenuSelectionChangeCoordinator.class),
                 dirtyRefreshTriggerCoordinatorRunningActions(),
                 mock(ProviderMenuAvailabilityRefreshDispatchCoordinator.class),
-                mock(ProviderMenuIconResolver.class)
+                mock(ProviderMenuIconResolver.class),
+                mock(ProviderRegistry.class)
         );
         MainFrameBoundMenusState boundMenusState = new MainFrameBoundMenusState();
         boundMenusState.setModelsMenu(new JMenu("Models"));

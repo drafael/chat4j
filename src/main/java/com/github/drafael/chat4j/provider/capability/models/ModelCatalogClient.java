@@ -8,4 +8,8 @@ import java.util.List;
 public interface ModelCatalogClient {
 
     List<String> fetchModels(ProviderRuntime runtime) throws Exception;
+
+    default List<String> fetchModels(ProviderRuntime runtime, long metadataGeneration) throws Exception {
+        return fetchModels(runtime);
+    }
 }

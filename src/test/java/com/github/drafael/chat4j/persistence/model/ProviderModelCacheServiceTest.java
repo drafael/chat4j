@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -259,6 +260,26 @@ class ProviderModelCacheServiceTest {
         assertThat(versionThread.isAlive()).isFalse();
         assertThat(applied).hasValue(true);
         assertThat(newerScopeVersion).hasValue(scopeVersion + 1);
+    }
+
+    @Test
+    @DisplayName("Usable model lookup atomically enforces scope and invalidation state")
+    void findUsableModels_whenScopeOrValidityDiffers_hidesCachedModels() {
+        var subject = new ProviderModelCacheService(
+                new InMemoryModelCache(),
+                fixedClock("2026-04-10T11:00:00Z"),
+                Duration.ofHours(12)
+        );
+        synchronizeScope(subject, "OpenAI", "https://current.example.com/v1");
+        updateModels(subject, "OpenAI", "https://current.example.com/v1", List.of("current-model"));
+
+        assertThat(subject.findUsableModels("OpenAI", "https://current.example.com/v1"))
+                .hasValueSatisfying(models -> assertThat(models).containsExactly("current-model"));
+        assertThat(subject.findUsableModels("OpenAI", "https://other.example.com/v1")).isEmpty();
+
+        subject.invalidate("OpenAI");
+
+        assertThat(subject.findUsableModels("OpenAI", "https://current.example.com/v1")).isEmpty();
     }
 
     @Test
@@ -622,13 +643,14 @@ class ProviderModelCacheServiceTest {
     }
 
     @Test
-    @DisplayName("Refresh failures preserve cached models and apply retry backoff")
-    void recordRefreshFailure_whenCatalogRequestFails_keepsCachedModelsAndDefersRetry() {
+    @DisplayName("Refresh failures preserve cached models and retry after backoff")
+    void recordRefreshFailure_whenCatalogRequestFails_keepsCachedModelsAndRetriesAfterBackoff() {
         var cache = new InMemoryModelCache();
         cache.put("OpenAI", Instant.parse("2026-04-10T10:00:00Z"), List.of("cached-model"));
+        var clock = new MutableClock(Instant.parse("2026-04-10T11:00:00Z"), ZoneOffset.UTC);
         var subject = new ProviderModelCacheService(
                 cache,
-                fixedClock("2026-04-10T11:00:00Z"),
+                clock,
                 Duration.ofHours(12)
         );
         ProviderModelCacheService.RefreshAttempt attempt = subject.tryBeginRefresh("OpenAI", "").orElseThrow();
@@ -638,7 +660,36 @@ class ProviderModelCacheServiceTest {
         assertThat(subject.getModels("OpenAI")).containsExactly("cached-model");
         assertThat(subject.shouldRefresh("OpenAI")).isFalse();
         assertThat(subject.tryBeginRefreshIfNeeded("OpenAI", "", Duration.ofHours(12))).isEmpty();
-        assertThat(subject.tryBeginRefresh("OpenAI", "")).isPresent();
+
+        clock.advance(Duration.ofMinutes(5));
+
+        assertThat(subject.shouldRefresh("OpenAI")).isTrue();
+        assertThat(subject.tryBeginRefreshIfNeeded("OpenAI", "", Duration.ofHours(12))).isPresent();
+    }
+
+    @Test
+    @DisplayName("Failed refresh after invalidation exposes fallback and retries after backoff")
+    void recordRefreshFailure_whenInvalidatedCatalogHasFallback_makesFallbackUsableAndRetryable() {
+        var cache = new InMemoryModelCache();
+        cache.put("OpenAI", Instant.parse("2026-04-10T10:00:00Z"), List.of("cached-model"));
+        var clock = new MutableClock(Instant.parse("2026-04-10T11:00:00Z"), ZoneOffset.UTC);
+        var subject = new ProviderModelCacheService(
+                cache,
+                clock,
+                Duration.ofHours(12)
+        );
+        subject.invalidate("OpenAI");
+        ProviderModelCacheService.RefreshAttempt attempt = subject.tryBeginRefresh("OpenAI", "").orElseThrow();
+
+        subject.recordRefreshFailure(attempt);
+
+        assertThat(subject.isInvalidated("OpenAI")).isFalse();
+        assertThat(subject.getModels("OpenAI")).containsExactly("cached-model");
+        assertThat(subject.shouldRefresh("OpenAI")).isFalse();
+
+        clock.advance(Duration.ofMinutes(5));
+
+        assertThat(subject.shouldRefresh("OpenAI")).isTrue();
     }
 
     @Test
@@ -938,6 +989,35 @@ class ProviderModelCacheServiceTest {
 
     private static Clock fixedClock(String instant) {
         return Clock.fixed(Instant.parse(instant), ZoneOffset.UTC);
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant instant;
+        private final ZoneId zone;
+
+        private MutableClock(Instant instant, ZoneId zone) {
+            this.instant = instant;
+            this.zone = zone;
+        }
+
+        private void advance(Duration duration) {
+            instant = instant.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return new MutableClock(instant, zone);
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
     }
 
     private static final class FailingWriteModelCache extends InMemoryModelCache {

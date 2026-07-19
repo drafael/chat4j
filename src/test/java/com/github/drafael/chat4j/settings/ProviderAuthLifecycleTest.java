@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ProviderAuthLifecycleTest {
 
@@ -46,56 +48,6 @@ class ProviderAuthLifecycleTest {
         assertThat(newGeneration).isGreaterThan(oldGeneration);
         assertThat(subject.isCurrent(oldGeneration)).isFalse();
         assertThat(subject.isCurrent(newGeneration)).isTrue();
-    }
-
-    @Test
-    @DisplayName("A removed provider panel cannot publish a stale authentication success")
-    void runIfCurrent_whenLifecycleWasRemoved_rejectsNotification() {
-        var subject = new ProviderAuthLifecycle();
-        long generation = subject.currentGeneration();
-        var notifications = new AtomicInteger();
-
-        subject.deactivate();
-
-        assertThat(subject.runIfCurrent(generation, notifications::incrementAndGet)).isFalse();
-        assertThat(notifications).hasValue(0);
-    }
-
-    @Test
-    @DisplayName("Deactivation after a cancellation check still rejects a gated prompt action")
-    void runIfCurrent_whenDeactivatedBeforePromptAction_rejectsAction() throws Exception {
-        var subject = new ProviderAuthLifecycle();
-        long generation = subject.currentGeneration();
-        var cancellationCheckPassed = new CountDownLatch(1);
-        var releasePromptAction = new CountDownLatch(1);
-        var promptActions = new AtomicInteger();
-        var applied = new AtomicBoolean(true);
-        assertThat(subject.isCurrent(generation)).isTrue();
-        Thread worker = Thread.startVirtualThread(() -> {
-            cancellationCheckPassed.countDown();
-            try {
-                releasePromptAction.await(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            applied.set(subject.runIfCurrent(generation, promptActions::incrementAndGet));
-        });
-
-        try {
-            assertThat(cancellationCheckPassed.await(2, TimeUnit.SECONDS)).isTrue();
-            subject.deactivate();
-            releasePromptAction.countDown();
-            worker.join(TimeUnit.SECONDS.toMillis(2));
-
-            assertThat(worker.isAlive()).isFalse();
-            assertThat(applied).isFalse();
-            assertThat(promptActions).hasValue(0);
-        } finally {
-            releasePromptAction.countDown();
-            worker.interrupt();
-            worker.join(TimeUnit.SECONDS.toMillis(2));
-        }
     }
 
     @Test
@@ -159,6 +111,17 @@ class ProviderAuthLifecycleTest {
             worker.interrupt();
             worker.join(TimeUnit.SECONDS.toMillis(2));
         }
+    }
+
+    @Test
+    @DisplayName("Dialog timeout completion is rethrown as the original timeout")
+    void awaitAuthDialogResult_whenFutureTimesOut_throwsTimeoutException() {
+        var result = new CompletableFuture<String>();
+        result.completeExceptionally(new TimeoutException("timed out"));
+
+        assertThatThrownBy(() -> ProvidersPanel.awaitAuthDialogResult(result))
+                .isInstanceOf(TimeoutException.class)
+                .hasMessage("timed out");
     }
 
     @Test

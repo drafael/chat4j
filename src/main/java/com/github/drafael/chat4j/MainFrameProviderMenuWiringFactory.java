@@ -3,6 +3,7 @@ package com.github.drafael.chat4j;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityLabelFormatter;
 import com.github.drafael.chat4j.provider.support.ProviderAvailabilityResolver;
@@ -27,6 +28,7 @@ public class MainFrameProviderMenuWiringFactory {
 
     public ProviderMenuWiring create(
             @NonNull SettingsRepository settingsRepo,
+            @NonNull ProviderRegistry providerRegistry,
             @NonNull ProviderModelCacheService modelCacheService,
             @NonNull ModelFavoritesService modelFavoritesService,
             @NonNull ProviderSelectableResolver providerSelectableResolver,
@@ -38,8 +40,10 @@ public class MainFrameProviderMenuWiringFactory {
             @NonNull ProviderFavoritesSectionAppender providerFavoritesSectionAppender
     ) {
 
-        var providerSettingsApplyCoordinator =
-                new ProviderSettingsApplyCoordinator(new ProviderRuntimeSettingsResolver(settingsRepo));
+        var providerSettingsApplyCoordinator = new ProviderSettingsApplyCoordinator(
+                new ProviderRuntimeSettingsResolver(settingsRepo),
+                providerRegistry
+        );
         var providerModelsResolver = new ProviderModelsResolver(modelCacheService);
         var providerFavoritesResolver = new ProviderFavoritesResolver(modelFavoritesService);
         var providerAvailabilityResolver = new ProviderAvailabilityResolver(settingsRepo);
@@ -54,7 +58,10 @@ public class MainFrameProviderMenuWiringFactory {
                 providerMenuAvailabilityApplier
         );
         var providerMenuAvailabilityRefreshDispatchCoordinator =
-                new ProviderMenuAvailabilityRefreshDispatchCoordinator(providerMenuAvailabilityRefreshCoordinator);
+                new ProviderMenuAvailabilityRefreshDispatchCoordinator(
+                        providerMenuAvailabilityRefreshCoordinator,
+                        providerRegistry
+                );
         var providerCatalogSectionAppender = new ProviderCatalogSectionAppender(
                 providerAvailabilityLabelFormatter,
                 providerHeaderMenuItemFactory,

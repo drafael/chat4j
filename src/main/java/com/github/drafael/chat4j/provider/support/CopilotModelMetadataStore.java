@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.persistence.CacheRootHandle;
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -37,18 +36,11 @@ public class CopilotModelMetadataStore {
     private static final String DEFAULT_COPILOT_BASE_URL = "https://api.githubcopilot.com";
     private static final String STORE_FILE_NAME = "github-copilot-model-metadata.json";
     private static final int MAX_STORE_BYTES = 8 * 1024 * 1024;
-    private static final CopilotModelMetadataStore DEFAULT_STORE = new CopilotModelMetadataStore(
-            CacheRootHandle.from(StoragePaths.defaultPaths())
-    );
-
     private final CacheRootHandle cacheRoot;
     private final Object ioLock = new Object();
     private volatile boolean loaded;
+    private long generation;
     private final ConcurrentHashMap<String, Map<String, List<String>>> supportedEndpointsByBaseUrl = new ConcurrentHashMap<>();
-
-    public static CopilotModelMetadataStore sharedDefault() {
-        return DEFAULT_STORE;
-    }
 
     public CopilotModelMetadataStore(@NonNull CacheRootHandle cacheRoot) {
         this.cacheRoot = cacheRoot;
@@ -76,39 +68,75 @@ public class CopilotModelMetadataStore {
         return supportedEndpointsByModel.getOrDefault(modelId.trim(), emptyList());
     }
 
-    public void update(String baseUrl, List<ModelMetadata> models) {
-        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+    public boolean clear() {
+        synchronized (ioLock) {
+            generation++;
+            supportedEndpointsByBaseUrl.clear();
+            loaded = true;
 
+            Optional<Path> cacheFile = cacheFile();
+            if (cacheFile.isEmpty()) {
+                return true;
+            }
+            try {
+                Path file = cacheFile.get();
+                if (Files.exists(file, LinkOption.NOFOLLOW_LINKS) && !cacheRoot.isSafeRegularFile(file)) {
+                    return false;
+                }
+                Files.deleteIfExists(file);
+                return true;
+            } catch (IOException | SecurityException e) {
+                return false;
+            }
+        }
+    }
+
+    public long currentGeneration() {
+        synchronized (ioLock) {
+            return generation;
+        }
+    }
+
+    public boolean updateIfGenerationCurrent(long expectedGeneration, String baseUrl, List<ModelMetadata> models) {
+        String normalizedBaseUrl = normalizeBaseUrl(baseUrl);
         loadIfNecessary();
 
         synchronized (ioLock) {
-            Map<String, List<String>> mergedSupportedEndpoints = new LinkedHashMap<>(
-                    supportedEndpointsByBaseUrl.getOrDefault(normalizedBaseUrl, emptyMap())
-            );
-
-            if (models != null) {
-                models.stream()
-                        .filter(model -> StringUtils.isNotBlank(model.modelId()))
-                        .collect(toMap(
-                                model -> model.modelId().trim(),
-                                model -> sanitizeEndpoints(model.supportedEndpoints()),
-                                (left, right) -> right,
-                                LinkedHashMap::new
-                        ))
-                        .forEach((modelId, supportedEndpoints) -> {
-                            if (!supportedEndpoints.isEmpty()) {
-                                mergedSupportedEndpoints.put(modelId, supportedEndpoints);
-                            }
-                        });
+            if (generation != expectedGeneration) {
+                return false;
             }
-
-            if (mergedSupportedEndpoints.isEmpty()) {
-                return;
-            }
-
-            supportedEndpointsByBaseUrl.put(normalizedBaseUrl, Map.copyOf(mergedSupportedEndpoints));
-            persistUnderLock();
+            updateUnderLock(normalizedBaseUrl, models);
+            return true;
         }
+    }
+
+    private void updateUnderLock(String normalizedBaseUrl, List<ModelMetadata> models) {
+        Map<String, List<String>> mergedSupportedEndpoints = new LinkedHashMap<>(
+                supportedEndpointsByBaseUrl.getOrDefault(normalizedBaseUrl, emptyMap())
+        );
+
+        if (models != null) {
+            models.stream()
+                    .filter(model -> StringUtils.isNotBlank(model.modelId()))
+                    .collect(toMap(
+                            model -> model.modelId().trim(),
+                            model -> sanitizeEndpoints(model.supportedEndpoints()),
+                            (left, right) -> right,
+                            LinkedHashMap::new
+                    ))
+                    .forEach((modelId, supportedEndpoints) -> {
+                        if (!supportedEndpoints.isEmpty()) {
+                            mergedSupportedEndpoints.put(modelId, supportedEndpoints);
+                        }
+                    });
+        }
+
+        if (mergedSupportedEndpoints.isEmpty()) {
+            return;
+        }
+
+        supportedEndpointsByBaseUrl.put(normalizedBaseUrl, Map.copyOf(mergedSupportedEndpoints));
+        persistUnderLock();
     }
 
     private void loadIfNecessary() {

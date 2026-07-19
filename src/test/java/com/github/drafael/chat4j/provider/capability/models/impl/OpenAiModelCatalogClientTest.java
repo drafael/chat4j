@@ -349,7 +349,9 @@ class OpenAiModelCatalogClientTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
             authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            String body = "{\"data\":[{\"id\":\"gpt-4o\",\"supported_endpoints\":[\"/chat/completions\"]}]}";
+            String body = """
+                    {"data":[{"id":"gpt-4o","supported_endpoints":["/chat/completions"]}]}
+                    """;
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);
@@ -361,10 +363,11 @@ class OpenAiModelCatalogClientTest {
         try {
             int port = server.getAddress().getPort();
             String baseUrl = "http://127.0.0.1:%d".formatted(port);
-            metadataStore.update(
+            assertThat(metadataStore.updateIfGenerationCurrent(
+                    metadataStore.currentGeneration(),
                     baseUrl,
                     List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
-            );
+            )).isTrue();
 
             System.setProperty(COPILOT_TOKEN_ENDPOINT_PROPERTY, "http://127.0.0.1:%d/copilot_internal/v2/token".formatted(port));
             System.setProperty(COPILOT_ALLOW_CUSTOM_TOKEN_ENDPOINT_PROPERTY, "true");
@@ -402,6 +405,73 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("Copilot metadata fetched before an auth clear cannot repopulate the store")
+    void fetchModels_whenAuthClearsDuringRequest_rejectsStaleEndpointMetadata() throws Exception {
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("auth-clear-metadata"));
+        var subject = new OpenAiModelCatalogClient(metadataStore);
+        var requestStarted = new CountDownLatch(1);
+        var releaseResponse = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            requestStarted.countDown();
+            try {
+                releaseResponse.await(2, TimeUnit.SECONDS);
+                byte[] payload = """
+                        {"data":[{"id":"stale-model","supported_endpoints":["/responses"]}]}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, payload.length);
+                exchange.getResponseBody().write(payload);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        Thread fetchThread = null;
+
+        try {
+            String baseUrl = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    null,
+                    baseUrl,
+                    "tid=test-tenant;exp=4102444800",
+                    null
+            );
+            var models = new AtomicReference<List<String>>();
+            fetchThread = Thread.startVirtualThread(() -> models.set(subject.fetchModels(runtime)));
+
+            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(metadataStore.clear()).isTrue();
+            releaseResponse.countDown();
+            fetchThread.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertThat(fetchThread.isAlive()).isFalse();
+            assertThat(models.get()).contains("stale-model");
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "stale-model")).isEmpty();
+        } finally {
+            releaseResponse.countDown();
+            if (fetchThread != null) {
+                fetchThread.interrupt();
+                fetchThread.join(TimeUnit.SECONDS.toMillis(2));
+            }
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Copilot model listing filters websocket-only endpoint models from selection")
     void fetchModels_whenCopilotModelIsWebsocketOnly_excludesItFromSelection() throws Exception {
         var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("websocket-filter-metadata"));
@@ -409,7 +479,12 @@ class OpenAiModelCatalogClientTest {
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
-            String body = "{\"data\":[{\"id\":\"ws-only-model\",\"supported_endpoints\":[\"ws:/responses\"]},{\"id\":\"gpt-5.4-mini\",\"supported_endpoints\":[\"/responses\"]}]}";
+            String body = """
+                    {"data":[
+                      {"id":"ws-only-model","supported_endpoints":["ws:/responses"]},
+                      {"id":"gpt-5.4-mini","supported_endpoints":["/responses"]}
+                    ]}
+                    """;
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, payload.length);

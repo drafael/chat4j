@@ -1,8 +1,7 @@
 package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
-import com.github.drafael.chat4j.settings.ProviderRuntimeSettingsResolver;
+import com.github.drafael.chat4j.provider.support.ProviderRuntimeSettings;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.model.SpeechToTextModelDirectory;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
@@ -254,11 +253,8 @@ public class SpeechToTextSettings {
 
     private SttEndpoint resolveEndpoint(SpeechToTextProvider provider) throws SpeechToTextException {
         if (GroqSpeechToTextProvider.ID.equals(provider.id())) {
-            String configured = ProviderRegistry.allProviders().stream()
-                    .filter(def -> "Groq".equals(def.name()))
-                    .findFirst()
-                    .map(def -> new ProviderRuntimeSettingsResolver(settingsRepo).resolve(def).baseUrl())
-                    .orElse(GroqSttEndpointResolver.DEFAULT_BASE_URL);
+            String configured = ProviderRuntimeSettings.forProvider(settingsRepo, "Groq")
+                    .baseUrl(GroqSttEndpointResolver.DEFAULT_BASE_URL);
             GroqSttEndpointResolver.Endpoint endpoint = GroqSttEndpointResolver.resolve(configured);
             return new SttEndpoint(endpoint.baseUri(), endpoint.transcriptionUri());
         }

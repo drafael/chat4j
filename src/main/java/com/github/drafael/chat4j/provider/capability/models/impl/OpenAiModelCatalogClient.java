@@ -48,14 +48,9 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
     private static final Set<String> TRUSTED_COPILOT_TOKEN_ENDPOINT_HOSTS = Set.of("api.github.com");
     private static final Duration COPILOT_EXCHANGE_SUCCESS_TTL = Duration.ofMinutes(10);
     private static final Duration COPILOT_EXCHANGE_FAILURE_TTL = Duration.ofMinutes(2);
-    private static final Map<String, CopilotExchangedTokenSnapshot> COPILOT_TOKEN_CACHE = new ConcurrentHashMap<>();
-
+    private final Map<String, CopilotExchangedTokenSnapshot> copilotTokenCache = new ConcurrentHashMap<>();
     private final CopilotModelMetadataStore copilotModelMetadataStore;
     private final HttpClient httpClient;
-
-    public OpenAiModelCatalogClient() {
-        this(CopilotModelMetadataStore.sharedDefault(), DEFAULT_HTTP_CLIENT);
-    }
 
     public OpenAiModelCatalogClient(CopilotModelMetadataStore copilotModelMetadataStore) {
         this(copilotModelMetadataStore, DEFAULT_HTTP_CLIENT);
@@ -68,12 +63,17 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     @Override
     public List<String> fetchModels(ProviderRuntime runtime) {
+        return fetchModels(runtime, copilotModelMetadataStore.currentGeneration());
+    }
+
+    @Override
+    public List<String> fetchModels(ProviderRuntime runtime, long metadataGeneration) {
         if (Thread.currentThread().isInterrupted()) {
             return emptyList();
         }
 
         if (isCopilotProvider(runtime)) {
-            CatalogFetchResult copilotCatalog = fetchCopilotModels(runtime);
+            CatalogFetchResult copilotCatalog = fetchCopilotModels(runtime, metadataGeneration);
             return Thread.currentThread().isInterrupted()
                     ? emptyList()
                     : copilotCatalog.modelIds();
@@ -125,7 +125,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return emptyList();
     }
 
-    private CatalogFetchResult fetchCopilotModels(ProviderRuntime runtime) {
+    private CatalogFetchResult fetchCopilotModels(ProviderRuntime runtime, long metadataGeneration) {
         String apiKey = runtime.apiKey();
         if (StringUtils.isBlank(apiKey)) {
             return CatalogFetchResult.empty();
@@ -138,12 +138,12 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             }
 
             CatalogFetchResult exchangedCatalog = fetchModelsFromHttp(runtime, exchangedToken, true);
-            persistCopilotMetadata(runtime, exchangedCatalog);
+            persistCopilotMetadata(runtime, exchangedCatalog, metadataGeneration);
             return exchangedCatalog;
         }
 
         CatalogFetchResult directCatalog = fetchModelsFromHttp(runtime, apiKey, true);
-        persistCopilotMetadata(runtime, directCatalog);
+        persistCopilotMetadata(runtime, directCatalog, metadataGeneration);
         return directCatalog;
     }
 
@@ -204,10 +204,10 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private String exchangeCopilotTokenCached(String githubToken) {
         long now = System.currentTimeMillis();
-        COPILOT_TOKEN_CACHE.entrySet()
+        copilotTokenCache.entrySet()
                 .removeIf(entry -> now >= entry.getValue().expiresAtEpochMs());
         String cacheKey = tokenCacheKey(githubToken);
-        CopilotExchangedTokenSnapshot cached = COPILOT_TOKEN_CACHE.get(cacheKey);
+        CopilotExchangedTokenSnapshot cached = copilotTokenCache.get(cacheKey);
         if (cached != null) {
             return cached.exchangedToken();
         }
@@ -218,7 +218,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         }
 
         Duration ttl = StringUtils.isBlank(exchangedToken) ? COPILOT_EXCHANGE_FAILURE_TTL : COPILOT_EXCHANGE_SUCCESS_TTL;
-        COPILOT_TOKEN_CACHE.put(
+        copilotTokenCache.put(
                 cacheKey,
                 new CopilotExchangedTokenSnapshot(exchangedToken, now + ttl.toMillis())
         );
@@ -325,14 +325,22 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return "/chat/completions".equals(endpoint) || "/responses".equals(endpoint);
     }
 
-    private void persistCopilotMetadata(ProviderRuntime runtime, CatalogFetchResult catalog) {
+    private void persistCopilotMetadata(
+            ProviderRuntime runtime,
+            CatalogFetchResult catalog,
+            long metadataGeneration
+    ) {
         if (Thread.currentThread().isInterrupted()
                 || !isCopilotProvider(runtime)
                 || catalog.metadata().isEmpty()) {
             return;
         }
 
-        copilotModelMetadataStore.update(runtime.baseUrl(), catalog.metadata());
+        copilotModelMetadataStore.updateIfGenerationCurrent(
+                metadataGeneration,
+                runtime.baseUrl(),
+                catalog.metadata()
+        );
     }
 
     private List<CopilotModelMetadataStore.ModelMetadata> toCopilotModelMetadata(List<JsonNode> modelEntries) {
