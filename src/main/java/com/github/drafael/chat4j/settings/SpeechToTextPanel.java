@@ -36,6 +36,8 @@ import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,6 +66,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private static final int LOCAL_MODELS_COLUMN_GAP = 12;
     private static final String VOSK_OPERATION_IN_PROGRESS_ERROR = "A Vosk model operation is still in progress.";
     private static final String WHISPER_OPERATION_IN_PROGRESS_ERROR = "A Whisper.cpp model operation is still in progress.";
+    private static final String SYNC_SAVE_EDT_ERROR = "Pending Speech to Text changes must be saved asynchronously on the event dispatch thread.";
+    private static final String SAVE_PROVIDER = "provider";
+    private static final String SAVE_MAX_DURATION = "max-duration";
+    private static final String SAVE_MODEL_DIRECTORY = "model-directory";
     private static final Pattern PERCENT_PATTERN = Pattern.compile("(\\d{1,3})%");
 
     private final SpeechToTextProviderRegistry providerRegistry;
@@ -77,8 +83,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private final boolean ownsVoskModelManagementService;
     private final boolean ownsWhisperModelManagementService;
     private final AtomicLong refreshCounter = new AtomicLong();
-    private final AtomicLong saveCounter = new AtomicLong();
-    private final AtomicInteger pendingCloudModelSaves = new AtomicInteger();
+    private final AtomicLong cloudModelSaveGeneration = new AtomicLong();
+    private final ConcurrentMap<String, AtomicLong> saveCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> saveErrors = new ConcurrentHashMap<>();
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("chat4j-stt-settings-save-", 0).factory()
     );
@@ -249,6 +256,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     @Override
     public CompletableFuture<Boolean> savePendingChangesAsync() {
+        if (SYNC_SAVE_EDT_ERROR.equals(lastSaveError)) {
+            lastSaveError = "";
+        }
         return CompletableFuture.supplyAsync(this::saveNonTokenPendingChanges)
                 .thenCompose(saved -> {
                     if (!saved) {
@@ -277,6 +287,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     @Override
     public boolean savePendingChanges() {
+        if (SwingUtilities.isEventDispatchThread()) {
+            lastSaveError = SYNC_SAVE_EDT_ERROR;
+            return false;
+        }
         return saveNonTokenPendingChanges()
                 && onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
                 .thenCompose(future -> future)
@@ -300,7 +314,12 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             for (CompletableFuture<Boolean> pendingSave : List.copyOf(pendingSaves)) {
                 saved = pendingSave.get() && saved;
             }
-            return saved && StringUtils.isBlank(lastSaveError);
+            String saveError = currentSaveError();
+            if (!saved || StringUtils.isNotBlank(saveError)) {
+                lastSaveError = StringUtils.defaultIfBlank(saveError, "Could not save Speech to Text settings.");
+                return false;
+            }
+            return StringUtils.isBlank(lastSaveError);
         } catch (Exception e) {
             lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
             return false;
@@ -727,7 +746,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         if (!(selected instanceof ProviderOption option)) {
             return;
         }
-        scheduleSave(() -> {
+        scheduleSave(SAVE_PROVIDER, () -> {
             settings.saveProvider(option.providerId());
             refreshLocalProvider(option.providerId());
         }, () -> {
@@ -768,25 +787,29 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 selectWhisperModel(item.id(), item.label());
                 return;
             }
-            long refreshId = refreshCounter.get();
+            long saveGeneration = cloudModelSaveGeneration.get();
             var modelSaved = new AtomicBoolean();
-            pendingCloudModelSaves.incrementAndGet();
             scheduleSave(
+                    modelSelectionSaveTarget(snapshot.providerId()),
+                    () -> modelSaved.set(settings.saveModelIf(
+                            snapshot.providerId(),
+                            item,
+                            () -> cloudModelSaveCurrent(saveGeneration)
+                    )),
                     () -> {
-                        try {
-                            modelSaved.set(settings.saveModelIf(
-                                    snapshot.providerId(),
-                                    item,
-                                    () -> catalogRefreshCurrent(refreshId)
-                            ));
-                        } finally {
-                            pendingCloudModelSaves.decrementAndGet();
+                        if (!modelSaved.get()) {
+                            return;
                         }
-                    },
-                    () -> {
-                        if (modelSaved.get()) {
-                            setStatusInfo(STATUS_SAVED);
+                        SpeechToTextSettingsSnapshot current = settings.resolve();
+                        if (Strings.CS.equals(current.providerId(), snapshot.providerId())) {
+                            updating = true;
+                            try {
+                                selectCatalogItem(item);
+                            } finally {
+                                updating = false;
+                            }
                         }
+                        setStatusInfo(STATUS_SAVED);
                     });
         }
     }
@@ -802,7 +825,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             setStatusError(e.getMessage());
             return;
         }
-        scheduleSave(() -> settings.saveMaxDurationSeconds(value), () -> setStatusInfo(STATUS_SAVED));
+        scheduleSave(SAVE_MAX_DURATION, () -> settings.saveMaxDurationSeconds(value), () -> setStatusInfo(STATUS_SAVED));
     }
 
     private void browseModelDirectory() {
@@ -837,7 +860,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         }
         String rawPath = modelDirectoryField.getText();
         AtomicReference<Path> savedPath = new AtomicReference<>();
-        scheduleSave(() -> savedPath.set(settings.saveModelDirectory(rawPath)), () -> {
+        scheduleSave(SAVE_MODEL_DIRECTORY, () -> savedPath.set(settings.saveModelDirectory(rawPath)), () -> {
             Path path = savedPath.get();
             if (path != null) {
                 modelDirectoryField.setText(path.toString());
@@ -913,10 +936,12 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                         Duration.ofSeconds(45)
                 );
                 List<SpeechToTextCatalogItem> models = List.copyOf(snapshot.provider().fetchModels(context));
-                if (!saveCatalogModelsIfCurrent(refreshId, snapshot.providerId(), models)) {
-                    return;
-                }
-                runWhenActiveOnEventDispatchThread(() -> applyCatalogRefreshSafely(refreshId, snapshot, models, explicit));
+                runWhenActiveOnEventDispatchThread(() -> prepareCatalogRefreshSafely(
+                        refreshId,
+                        snapshot,
+                        models,
+                        explicit
+                ));
             } catch (Exception e) {
                 runWhenActiveOnEventDispatchThread(() -> {
                     if (catalogRefreshCurrent(refreshId) && explicit) {
@@ -933,124 +958,115 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     private void cancelCatalogRefreshes() {
         refreshCounter.incrementAndGet();
+        cloudModelSaveGeneration.incrementAndGet();
     }
 
     private boolean catalogRefreshCurrent(long refreshId) {
         return !removed && refreshId == refreshCounter.get();
     }
 
-    private boolean saveCatalogModelsIfCurrent(long refreshId, String providerId, List<SpeechToTextCatalogItem> models) throws Exception {
-        return catalogStore.saveModelsIf(providerId, models, () -> catalogRefreshCurrent(refreshId));
+    private boolean cloudModelSaveCurrent(long saveGeneration) {
+        return !removed && saveGeneration == cloudModelSaveGeneration.get();
     }
 
-    private void applyCatalogRefreshSafely(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
-        try {
-            applyCatalogRefresh(refreshId, previous, models, explicit);
-        } catch (Exception e) {
-            if (catalogRefreshCurrent(refreshId) && explicit) {
-                setStatusError("Could not refresh %s Speech to Text models.".formatted(previous.provider().displayName()));
-            }
-        }
-    }
-
-    private void applyCatalogRefresh(long refreshId, SpeechToTextSettingsSnapshot previous, List<SpeechToTextCatalogItem> models, boolean explicit) {
-        if (!catalogRefreshCurrent(refreshId)) {
-            return;
-        }
-        boolean cloudModelSavePending = pendingCloudModelSaves.get() > 0;
-        SpeechToTextSettingsSnapshot current = settings.resolve();
-        if (!Strings.CS.equals(current.providerId(), previous.providerId())) {
-            return;
-        }
-        List<SpeechToTextCatalogItem> currentModels = catalogStore.authoritativeModels(current.provider(), models);
-        boolean selectionAvailable = containsCatalogItem(currentModels, current.model());
-        updating = true;
-        try {
-            updateModelCombo(currentModels);
-            if (selectionAvailable) {
-                selectCatalogItem(current.model());
-            } else {
-                modelComboBox.setSelectedIndex(-1);
-            }
-        } finally {
-            updating = false;
-        }
-        updateLocalModels(current, currentModels);
-        updateAvailability(current);
-        if (!selectionAvailable || cloudModelSavePending) {
-            scheduleModelSelectionRepair(refreshId, current, currentModels, explicit);
-        } else if (explicit) {
-            setStatusInfo("Speech to Text catalogs refreshed");
-        }
-    }
-
-    private static SpeechToTextCatalogItem preferredModel(
-            SpeechToTextSettingsSnapshot selection,
-            List<SpeechToTextCatalogItem> models
-    ) {
-        SpeechToTextCatalogItem selected = catalogItem(models, selection.model());
-        if (selected != null) {
-            return selected;
-        }
-        SpeechToTextCatalogItem providerDefault = catalogItem(models, selection.provider().defaultModel());
-        if (providerDefault != null) {
-            return providerDefault;
-        }
-        return models.isEmpty() ? null : models.getFirst();
-    }
-
-    private void scheduleModelSelectionRepair(
+    private void prepareCatalogRefreshSafely(
             long refreshId,
             SpeechToTextSettingsSnapshot selection,
-            List<SpeechToTextCatalogItem> models,
+            List<SpeechToTextCatalogItem> fetchedModels,
             boolean explicit
     ) {
-        var repairedModel = new AtomicReference<SpeechToTextCatalogItem>();
-        var changedProviderId = new AtomicReference<String>();
-        var repairApplied = new AtomicBoolean();
+        try {
+            if (!catalogRefreshCurrent(refreshId)) {
+                return;
+            }
+            SpeechToTextSettingsSnapshot current = settings.resolve();
+            if (!Strings.CS.equals(current.providerId(), selection.providerId())) {
+                reloadProviderOptions();
+                refreshControlsFromSettings(!localProvider(current.providerId()));
+                setStatusInfo(STATUS_SAVED);
+                return;
+            }
+            List<SpeechToTextCatalogItem> authoritativeModels = catalogStore.authoritativeModels(
+                    selection.provider(),
+                    fetchedModels
+            );
+            applyCatalogModels(current, authoritativeModels);
+            scheduleCatalogRefreshPersistence(refreshId, selection, authoritativeModels, explicit);
+        } catch (Exception e) {
+            if (catalogRefreshCurrent(refreshId) && explicit) {
+                setStatusError("Could not refresh %s Speech to Text models.".formatted(selection.provider().displayName()));
+            }
+        }
+    }
+
+    private void scheduleCatalogRefreshPersistence(
+            long refreshId,
+            SpeechToTextSettingsSnapshot selection,
+            List<SpeechToTextCatalogItem> authoritativeModels,
+            boolean explicit
+    ) {
+        var persisted = new AtomicBoolean();
+        var catalogSaveFailed = new AtomicBoolean();
         scheduleSave(
+                catalogSaveTarget(selection.providerId()),
                 () -> {
                     if (!catalogRefreshCurrent(refreshId)) {
                         return;
                     }
-                    SpeechToTextSettingsSnapshot latest = settings.resolve();
-                    if (!Strings.CS.equals(latest.providerId(), selection.providerId())) {
-                        changedProviderId.set(latest.providerId());
-                        return;
-                    }
-                    SpeechToTextCatalogItem latestModel = preferredModel(latest, models);
-                    if (!containsCatalogItem(models, latest.model())) {
-                        boolean saved = latestModel == null
-                                ? settings.clearModelIf(latest.providerId(), () -> catalogRefreshCurrent(refreshId))
+                    SpeechToTextCatalogItem selectedModel = selection.provider().normalizeModelSelection(
+                            settings.provider(selection.providerId()).selectedModel(selection.provider().defaultModel())
+                    );
+                    SpeechToTextCatalogItem repairedModel = preferredModel(
+                            selectedModel,
+                            selection.provider().defaultModel(),
+                            authoritativeModels
+                    );
+                    if (!containsCatalogItem(authoritativeModels, selectedModel)) {
+                        boolean repaired = repairedModel == null
+                                ? settings.clearModelIf(selection.providerId(), () -> catalogRefreshCurrent(refreshId))
                                 : settings.saveModelIf(
-                                        latest.providerId(),
-                                        latestModel,
+                                        selection.providerId(),
+                                        repairedModel,
                                         () -> catalogRefreshCurrent(refreshId)
                                 );
-                        if (!saved) {
+                        if (!repaired) {
+                            failCurrentSelectionRepair(refreshId, selection);
                             return;
                         }
                     }
-                    repairedModel.set(latestModel);
-                    repairApplied.set(true);
+                    try {
+                        boolean catalogSaved = catalogStore.saveModelsIf(
+                                selection.providerId(),
+                                authoritativeModels,
+                                () -> catalogRefreshCurrent(refreshId)
+                        );
+                        if (!catalogSaved) {
+                            catalogSaveFailed.set(catalogRefreshCurrent(refreshId));
+                            return;
+                        }
+                        persisted.set(true);
+                    } catch (Exception e) {
+                        catalogSaveFailed.set(catalogRefreshCurrent(refreshId));
+                    }
                 },
                 () -> {
-                    if (changedProviderId.get() != null) {
+                    boolean cacheFailed = catalogSaveFailed.get();
+                    if ((!persisted.get() && !cacheFailed) || !catalogRefreshCurrent(refreshId)) {
+                        return;
+                    }
+                    SpeechToTextSettingsSnapshot current = settings.resolve();
+                    if (!Strings.CS.equals(current.providerId(), selection.providerId())) {
                         reloadProviderOptions();
-                        refreshControlsFromSettings(!localProvider(changedProviderId.get()));
+                        refreshControlsFromSettings(!localProvider(current.providerId()));
                         setStatusInfo(STATUS_SAVED);
                         return;
                     }
-                    if (!repairApplied.get() || !catalogRefreshCurrent(refreshId)) {
-                        return;
-                    }
-                    updating = true;
-                    try {
-                        selectCatalogItem(repairedModel.get());
-                    } finally {
-                        updating = false;
-                    }
-                    if (explicit) {
+                    applyCatalogModels(current, authoritativeModels);
+                    if (cacheFailed) {
+                        setStatusError("Could not cache %s Speech to Text models.".formatted(
+                                selection.provider().displayName()
+                        ));
+                    } else if (explicit) {
                         setStatusInfo("Speech to Text catalogs refreshed");
                     }
                 },
@@ -1059,7 +1075,49 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                         setStatusError(lastSaveError);
                         modelComboBox.setSelectedIndex(-1);
                     }
-                });
+                }
+        );
+    }
+
+    private void failCurrentSelectionRepair(long refreshId, SpeechToTextSettingsSnapshot selection) {
+        if (catalogRefreshCurrent(refreshId)) {
+            throw new IllegalStateException(
+                    "Could not refresh %s Speech to Text models.".formatted(selection.provider().displayName())
+            );
+        }
+    }
+
+    private void applyCatalogModels(
+            SpeechToTextSettingsSnapshot current,
+            List<SpeechToTextCatalogItem> models
+    ) {
+        boolean selectionAvailable = containsCatalogItem(models, current.model());
+        updating = true;
+        try {
+            updateModelCombo(models);
+            if (selectionAvailable) {
+                selectCatalogItem(current.model());
+            } else {
+                modelComboBox.setSelectedIndex(-1);
+            }
+        } finally {
+            updating = false;
+        }
+        updateLocalModels(current, models);
+        updateAvailability(current);
+    }
+
+    private static SpeechToTextCatalogItem preferredModel(
+            SpeechToTextCatalogItem selectedModel,
+            SpeechToTextCatalogItem providerDefault,
+            List<SpeechToTextCatalogItem> models
+    ) {
+        SpeechToTextCatalogItem selected = catalogItem(models, selectedModel);
+        if (selected != null) {
+            return selected;
+        }
+        SpeechToTextCatalogItem defaultModel = catalogItem(models, providerDefault);
+        return defaultModel != null ? defaultModel : models.stream().findFirst().orElse(null);
     }
 
     private static boolean containsCatalogItem(
@@ -1479,7 +1537,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             return;
         }
         SpeechToTextCatalogItem item = localModelItems.get(row);
-        scheduleSave(() -> settings.saveModel(snapshot.providerId(), item), () -> {
+        scheduleSave(modelSelectionSaveTarget(snapshot.providerId()), () -> settings.saveModel(snapshot.providerId(), item), () -> {
             selectCatalogItem(item);
             refreshLocalModelSelection(settings.resolve());
             setStatusInfo(STATUS_SAVED);
@@ -1849,33 +1907,52 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         return ProviderOption.off();
     }
 
-    private void scheduleSave(ThrowingRunnable action, Runnable onSuccess) {
-        scheduleSave(action, onSuccess, () -> {
+    private static String modelSelectionSaveTarget(String providerId) {
+        return "model-selection:%s".formatted(providerId);
+    }
+
+    private static String catalogSaveTarget(String providerId) {
+        return "catalog:%s".formatted(providerId);
+    }
+
+    private String currentSaveError() {
+        return saveErrors.values().stream()
+                .filter(StringUtils::isNotBlank)
+                .findFirst()
+                .orElse("");
+    }
+
+    private void scheduleSave(String target, ThrowingRunnable action, Runnable onSuccess) {
+        scheduleSave(target, action, onSuccess, () -> {
             setStatusError(lastSaveError);
             refreshControlsFromSettings(false);
         });
     }
 
-    private void scheduleSave(ThrowingRunnable action, Runnable onSuccess, Runnable onFailure) {
+    private void scheduleSave(String target, ThrowingRunnable action, Runnable onSuccess, Runnable onFailure) {
         if (removed) {
             return;
         }
-        long saveId = saveCounter.incrementAndGet();
+        AtomicLong targetCounter = saveCounters.computeIfAbsent(target, ignored -> new AtomicLong());
+        long saveId = targetCounter.incrementAndGet();
         CompletableFuture<Boolean> pendingSave;
         try {
             pendingSave = CompletableFuture.supplyAsync(() -> {
                 try {
                     action.run();
-                    if (saveId == saveCounter.get()) {
-                        lastSaveError = "";
+                    if (saveId == targetCounter.get()) {
+                        saveErrors.remove(target);
+                        lastSaveError = currentSaveError();
                     }
                     return true;
                 } catch (Exception e) {
-                    if (saveId == saveCounter.get()) {
-                        lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
-                        return false;
+                    if (saveId != targetCounter.get()) {
+                        return true;
                     }
-                    return true;
+                    String error = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
+                    saveErrors.put(target, error);
+                    lastSaveError = error;
+                    return false;
                 }
             }, saveExecutor);
         } catch (RejectedExecutionException e) {
@@ -1887,11 +1964,16 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         pendingSaves.add(pendingSave);
         pendingSave.whenComplete((saved, error) -> pendingSaves.remove(pendingSave));
         pendingSave.thenAccept(saved -> runWhenActiveOnEventDispatchThread(() -> {
-            if (saveId != saveCounter.get()) {
+            if (saveId != targetCounter.get()) {
                 return;
             }
             if (saved) {
                 onSuccess.run();
+                String remainingError = currentSaveError();
+                if (StringUtils.isNotBlank(remainingError)) {
+                    lastSaveError = remainingError;
+                    setStatusError(remainingError);
+                }
             } else {
                 onFailure.run();
             }

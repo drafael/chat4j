@@ -69,8 +69,8 @@ class SpeechToTextPanelTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Stale failed Speech to Text saves do not block queued successful saves")
-    void savePendingChanges_whenStaleSaveFailsBeforeQueuedSuccess_ignoresStaleFailure() throws Exception {
+    @DisplayName("A newer save for the same Speech to Text setting supersedes an older failure")
+    void savePendingChanges_whenSameSettingSaveSupersedesFailure_reportsSuccess() throws Exception {
         var subject = callOnEdt(() -> new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings.properties")), tempDir.resolve("default-models")));
         var firstSaveStarted = new CountDownLatch(1);
         var releaseFirstSave = new CountDownLatch(1);
@@ -94,6 +94,38 @@ class SpeechToTextPanelTest {
             assertThat(subject.lastSaveError()).isBlank();
         } finally {
             releaseFirstSave.countDown();
+            runOnEdt(subject::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("A successful save does not hide an unrelated Speech to Text persistence failure")
+    void savePendingChanges_whenUnrelatedSaveSucceedsAfterFailure_reportsFailure() throws Exception {
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                new SettingsRepository(tempDir.resolve("settings-unrelated-save-failure.properties")),
+                tempDir.resolve("default-models")
+        ));
+        var failedSaveStarted = new CountDownLatch(1);
+        var releaseFailedSave = new CountDownLatch(1);
+        try {
+            scheduleSave(subject, "model-directory", () -> {
+                failedSaveStarted.countDown();
+                assertThat(releaseFailedSave.await(2, TimeUnit.SECONDS)).isTrue();
+                throw new IllegalStateException("directory save failed");
+            }, () -> {
+            });
+            assertThat(failedSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            scheduleSave(subject, "max-duration", () -> {
+            }, () -> {
+            });
+            releaseFailedSave.countDown();
+
+            assertThat(subject.savePendingChanges()).isFalse();
+            assertThat(subject.lastSaveError()).isEqualTo("directory save failed");
+            waitUntil(() -> statusLabelText(subject).contains("directory save failed"));
+        } finally {
+            releaseFailedSave.countDown();
             runOnEdt(subject::removeNotify);
         }
     }
@@ -263,23 +295,28 @@ class SpeechToTextPanelTest {
 
     @Test
     @DisplayName("Completed Speech to Text saves skip UI callbacks after panel removal")
-    void savePendingChanges_whenPanelRemovedBeforeSuccessCallback_skipsSuccessCallback() throws Exception {
+    void scheduleSave_whenPanelRemovedBeforeSuccessCallback_skipsSuccessCallback() throws Exception {
         var subject = callOnEdt(() -> new SpeechToTextPanel(new SettingsRepository(tempDir.resolve("settings-removed.properties")), tempDir.resolve("default-models")));
         var saveStarted = new CountDownLatch(1);
         var releaseSave = new CountDownLatch(1);
+        var saveCompleted = new CountDownLatch(1);
         var successCallback = new CountDownLatch(1);
         boolean[] removed = {false};
 
         try {
             scheduleSave(subject, () -> {
                 saveStarted.countDown();
-                assertThat(releaseSave.await(2, TimeUnit.SECONDS)).isTrue();
+                try {
+                    assertThat(releaseSave.await(2, TimeUnit.SECONDS)).isTrue();
+                } finally {
+                    saveCompleted.countDown();
+                }
             }, successCallback::countDown);
             assertThat(saveStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
-            SwingUtilities.invokeAndWait(() -> {
+            runWhileEventDispatchThreadBlocked(() -> {
                 releaseSave.countDown();
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(saveCompleted.await(2, TimeUnit.SECONDS)).isTrue();
                 subject.removeNotify();
                 removed[0] = true;
             });
@@ -320,6 +357,29 @@ class SpeechToTextPanelTest {
 
             assertThat(pendingSave.get(2, TimeUnit.SECONDS)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("original Speech to Text token save failed");
+        } finally {
+            runOnEdt(subject::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("Synchronous Speech to Text save rejects event dispatch thread use")
+    void savePendingChanges_whenCalledOnEdt_returnsFailureWithoutBlocking() throws Exception {
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                new SettingsRepository(tempDir.resolve("settings-dirty-token-edt.properties")),
+                tempDir.resolve("default-models")
+        ));
+        ApiTokenFieldPanel field = mock(ApiTokenFieldPanel.class);
+        when(field.dirty()).thenReturn(true);
+        when(field.savePendingChangesAsync()).thenReturn(CompletableFuture.completedFuture(true));
+        try {
+            runOnEdt(() -> setField(subject, "tokenField", field));
+
+            assertThat(callOnEdt(subject::savePendingChanges)).isFalse();
+            assertThat(subject.lastSaveError())
+                    .isEqualTo("Pending Speech to Text changes must be saved asynchronously on the event dispatch thread.");
+            assertThat(subject.savePendingChangesAsync().get(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(subject.lastSaveError()).isBlank();
         } finally {
             runOnEdt(subject::removeNotify);
         }
@@ -619,12 +679,18 @@ class SpeechToTextPanelTest {
             assertThat(refreshThread).isNotNull();
             refreshThread.join(2_000);
             assertThat(refreshThread.isAlive()).isFalse();
+            assertThat(subject.savePendingChanges()).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
             waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
                     .equals(provider.defaultModel().id()));
-            SwingUtilities.invokeAndWait(() -> {
-            });
+            waitUntil(() -> callOnEdt(() -> {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox =
+                        (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                return modelComboBox.getSelectedItem() instanceof SpeechToTextCatalogItem selected
+                        && provider.defaultModel().id().equals(selected.id());
+            }));
 
             runOnEdt(() -> {
                 @SuppressWarnings("unchecked")
@@ -647,7 +713,7 @@ class SpeechToTextPanelTest {
 
     @Test
     @DisplayName("Credential cancellation rejects an STT repair already waiting to persist")
-    void applyCatalogRefresh_whenCredentialChangeCancelsBlockedRepair_doesNotRestoreSelection() throws Exception {
+    void prepareCatalogRefresh_whenCredentialChangeCancelsBlockedRepair_doesNotRestoreSelection() throws Exception {
         var repo = new BlockingConditionalSettingsRepository(
                 tempDir.resolve("settings-cancel-blocked-repair.properties")
         );
@@ -729,8 +795,120 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Ordinary catalog refresh preserves a blocked current model selection")
+    void onModelSelected_whenCatalogRefreshStarts_preservesAvailableSelection() throws Exception {
+        var repo = new BlockingConditionalSettingsRepository(
+                tempDir.resolve("settings-model-save-during-refresh.properties")
+        );
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
+        repo.put("chat4j.stt.elevenlabs.model.label", "Account A Model");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(
+                        SpeechToTextCatalogItem.of("account-a-model", "Account A Model"),
+                        SpeechToTextCatalogItem.of("account-b-model", "Account B Model")
+                )
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(provider))
+        ));
+        try {
+            repo.blockNextConditionalUpdate = true;
+            runOnEdt(() -> selectModel(subject, "account-b-model"));
+            assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(() -> invokePanelMethod(subject, "refreshCatalogs", true));
+            assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
+            Thread refreshThread = provider.refreshThread.get();
+            assertThat(refreshThread).isNotNull();
+            refreshThread.join(2_000);
+            assertThat(refreshThread.isAlive()).isFalse();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            repo.releaseConditionalUpdate.countDown();
+            assertThat(subject.savePendingChanges()).isTrue();
+            waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
+                    .equals("account-b-model"));
+            assertThat(repo.get("chat4j.stt.elevenlabs.model.label")).contains("Account B Model");
+        } finally {
+            repo.releaseConditionalUpdate.countDown();
+            runOnEdt(subject::removeNotify);
+            interruptAndJoin(provider.refreshThread.get());
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("A queued user model save restores its selection after catalog repair completes")
+    void onModelSelected_whenCatalogRepairCompletesFirst_restoresUserSelection() throws Exception {
+        var repo = new BlockingNthConditionalSettingsRepository(
+                tempDir.resolve("settings-catalog-repair-before-model-save.properties")
+        );
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
+        repo.put("chat4j.stt.elevenlabs.model.label", "Account A Model");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(
+                        SpeechToTextCatalogItem.of("account-a-model", "Account A Model"),
+                        SpeechToTextCatalogItem.of("account-b-model", "Account B Model")
+                )
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(provider))
+        ));
+        try {
+            SpeechToTextSettingsSnapshot selection = callOnEdt(() ->
+                    ((SpeechToTextSettings) fieldValue(subject, "settings")).resolve());
+            repo.blockAfterSuccessfulConditionalUpdates(2);
+            runOnEdt(() -> {
+                invokeCatalogRefresh(
+                        subject,
+                        selection,
+                        List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
+                );
+                selectModel(subject, "account-b-model");
+            });
+            assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            waitUntil(() -> callOnEdt(() -> {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox =
+                        (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                return modelComboBox.getSelectedItem() instanceof SpeechToTextCatalogItem selected
+                        && provider.defaultModel().id().equals(selected.id());
+            }));
+
+            repo.releaseConditionalUpdate.countDown();
+            assertThat(subject.savePendingChanges()).isTrue();
+            waitUntil(() -> callOnEdt(() -> {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox =
+                        (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                return modelComboBox.getSelectedItem() instanceof SpeechToTextCatalogItem selected
+                        && "account-b-model".equals(selected.id());
+            }));
+            assertThat(repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID)))
+                    .contains("account-b-model");
+        } finally {
+            repo.releaseConditionalUpdate.countDown();
+            runOnEdt(subject::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
+    }
+
+    @Test
     @DisplayName("A pending unavailable STT model save is repaired even when the persisted model was initially valid")
-    void applyCatalogRefresh_whenUnavailableModelSavePending_persistsAuthoritativeFallbackLast() throws Exception {
+    void prepareCatalogRefresh_whenUnavailableModelSavePending_persistsAuthoritativeFallbackLast() throws Exception {
         var repo = new BlockingConditionalSettingsRepository(
                 tempDir.resolve("settings-valid-model-pending-save.properties")
         );
@@ -781,6 +959,151 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Catalog persistence does not hide an earlier user model save failure")
+    void prepareCatalogRefresh_whenEarlierModelSaveFails_preservesUserSaveFailure() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-model-failure-before-catalog.properties"));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(SpeechToTextCatalogItem.of("account-a-model", "Account A Model"))
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(provider))
+        ));
+        var modelSaveStarted = new CountDownLatch(1);
+        var releaseModelSave = new CountDownLatch(1);
+        try {
+            scheduleSave(
+                    subject,
+                    "model-selection:%s".formatted(ElevenLabsSpeechToTextProvider.ID),
+                    () -> {
+                        modelSaveStarted.countDown();
+                        assertThat(releaseModelSave.await(2, TimeUnit.SECONDS)).isTrue();
+                        throw new IllegalStateException("model selection save failed");
+                    },
+                    () -> {
+                    }
+            );
+            assertThat(modelSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            SpeechToTextSettingsSnapshot selection = callOnEdt(() ->
+                    ((SpeechToTextSettings) fieldValue(subject, "settings")).resolve());
+            runOnEdt(() -> invokeCatalogRefresh(
+                    subject,
+                    selection,
+                    List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
+            ));
+
+            releaseModelSave.countDown();
+            assertThat(subject.savePendingChanges()).isFalse();
+            assertThat(subject.lastSaveError()).isEqualTo("model selection save failed");
+            assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
+                    .extracting(SpeechToTextCatalogItem::id)
+                    .contains("account-b-model");
+        } finally {
+            releaseModelSave.countDown();
+            runOnEdt(subject::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Thrown catalog persistence failure is reported without blocking a later user model save")
+    void prepareCatalogRefresh_whenCatalogWriteThrows_reportsNonBlockingFailure() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("settings-catalog-failure-before-model.properties"));
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "scribe_v2");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(SpeechToTextCatalogItem.of("scribe_v2", "Scribe v2"))
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(provider))
+        ));
+        try {
+            SpeechToTextSettingsSnapshot selection = callOnEdt(() ->
+                    ((SpeechToTextSettings) fieldValue(subject, "settings")).resolve());
+            runOnEdt(() -> invokeCatalogRefresh(
+                    subject,
+                    selection,
+                    List.of(SpeechToTextCatalogItem.of("oversized-model", "x".repeat(70_000)))
+            ));
+            scheduleSave(
+                    subject,
+                    "model-selection:%s".formatted(ElevenLabsSpeechToTextProvider.ID),
+                    () -> repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "scribe_v2"),
+                    () -> {
+                    }
+            );
+
+            assertThat(subject.savePendingChanges()).isTrue();
+            waitUntil(() -> statusLabelText(subject).contains("Could not cache ElevenLabs Speech to Text models"));
+            assertThat(subject.lastSaveError()).isBlank();
+            assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
+                    .extracting(SpeechToTextCatalogItem::id)
+                    .doesNotContain("oversized-model");
+        } finally {
+            runOnEdt(subject::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Catalog cache failure still applies a successfully repaired model")
+    void prepareCatalogRefresh_whenRepairSucceedsAndCacheFails_appliesRepairedSelection() throws Exception {
+        var repo = new FailingConditionalSettingsRepository(
+                tempDir.resolve("settings-repair-before-cache-failure.properties")
+        );
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
+        repo.put("chat4j.stt.elevenlabs.model.label", "Account A Model");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(SpeechToTextCatalogItem.of("account-a-model", "Account A Model"))
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var subject = callOnEdt(() -> new SpeechToTextPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(provider))
+        ));
+        try {
+            SpeechToTextSettingsSnapshot selection = callOnEdt(() ->
+                    ((SpeechToTextSettings) fieldValue(subject, "settings")).resolve());
+            repo.failAfterSuccessfulConditionalUpdates(1);
+            runOnEdt(() -> invokeCatalogRefresh(
+                    subject,
+                    selection,
+                    List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
+            ));
+
+            assertThat(subject.savePendingChanges()).isTrue();
+            waitUntil(() -> statusLabelText(subject).contains("Could not cache ElevenLabs Speech to Text models"));
+            assertThat(repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID)))
+                    .contains(provider.defaultModel().id());
+            runOnEdt(() -> {
+                @SuppressWarnings("unchecked")
+                JComboBox<SpeechToTextCatalogItem> modelComboBox =
+                        (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
+                assertThat(((SpeechToTextCatalogItem) modelComboBox.getSelectedItem()).id())
+                        .isEqualTo(provider.defaultModel().id());
+            });
+        } finally {
+            runOnEdt(subject::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
+    }
+
+    @Test
     @DisplayName("Authoritative STT repair runs after an older pending model save")
     void refreshCatalogs_whenStaleModelSavePending_persistsAuthoritativeFallbackLast() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-pending-model-save.properties"));
@@ -803,6 +1126,7 @@ class SpeechToTextPanelTest {
         try {
             runOnEdt(() -> scheduleSave(
                     subject,
+                    "model-selection:%s".formatted(ElevenLabsSpeechToTextProvider.ID),
                     () -> {
                         staleSaveStarted.countDown();
                         assertThat(releaseStaleSave.await(2, TimeUnit.SECONDS)).isTrue();
@@ -824,20 +1148,13 @@ class SpeechToTextPanelTest {
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            runOnEdt(() -> {
-                @SuppressWarnings("unchecked")
-                JComboBox<SpeechToTextCatalogItem> modelComboBox =
-                        (JComboBox<SpeechToTextCatalogItem>) fieldValue(subject, "modelComboBox");
-                assertThat(comboModelIds(modelComboBox)).doesNotContain("account-a-model");
-            });
-
             releaseStaleSave.countDown();
             waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
                     .equals(provider.defaultModel().id()));
             SwingUtilities.invokeAndWait(() -> {
             });
 
-            assertThat(staleSuccessCallbacks).hasValue(0);
+            assertThat(staleSuccessCallbacks).hasValue(1);
             assertThat(repo.get("chat4j.stt.elevenlabs.model.label"))
                     .contains(provider.defaultModel().label());
             runOnEdt(() -> {
@@ -864,10 +1181,11 @@ class SpeechToTextPanelTest {
                 List.of(SpeechToTextCatalogItem.of("account-a-model", "Account A Model"))
         );
         var provider = new AuthoritativeElevenLabsProvider();
+        var changedProvider = new CapturingDeepgramProvider();
         var subject = callOnEdt(() -> new SpeechToTextPanel(
                 repo,
                 tempDir.resolve("default-models"),
-                new SpeechToTextProviderRegistry(List.of(provider, new DeepgramTestProvider()))
+                new SpeechToTextProviderRegistry(List.of(provider, changedProvider))
         ));
         var blockingSaveStarted = new CountDownLatch(1);
         var releaseBlockingSave = new CountDownLatch(1);
@@ -875,6 +1193,7 @@ class SpeechToTextPanelTest {
         try {
             runOnEdt(() -> scheduleSave(
                     subject,
+                    "test-blocking",
                     () -> {
                         blockingSaveStarted.countDown();
                         assertThat(releaseBlockingSave.await(2, TimeUnit.SECONDS)).isTrue();
@@ -884,6 +1203,7 @@ class SpeechToTextPanelTest {
             assertThat(blockingSaveStarted.await(2, TimeUnit.SECONDS)).isTrue();
             runOnEdt(() -> scheduleSave(
                     subject,
+                    "provider",
                     () -> repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID),
                     providerSaveCallbacks::incrementAndGet
             ));
@@ -908,10 +1228,24 @@ class SpeechToTextPanelTest {
                 assertThat(providerIdOf(providerComboBox.getSelectedItem()))
                         .isEqualTo(DeepgramSpeechToTextProvider.ID);
             });
-            assertThat(providerSaveCallbacks).hasValue(0);
+            assertThat(changedProvider.refreshed.await(2, TimeUnit.SECONDS)).isTrue();
+            Thread changedProviderRefreshThread = changedProvider.refreshThread.get();
+            assertThat(changedProviderRefreshThread).isNotNull();
+            changedProviderRefreshThread.join(2_000);
+            assertThat(changedProviderRefreshThread.isAlive()).isFalse();
+            assertThat(subject.savePendingChanges()).isTrue();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+            assertThat(providerSaveCallbacks).hasValue(1);
         } finally {
             releaseBlockingSave.countDown();
             runOnEdt(subject::removeNotify);
+            provider.completed.await(2, TimeUnit.SECONDS);
+            interruptAndJoin(provider.refreshThread.get());
+            changedProvider.refreshed.await(2, TimeUnit.SECONDS);
+            interruptAndJoin(changedProvider.refreshThread.get());
+            SwingUtilities.invokeAndWait(() -> {
+            });
         }
     }
 
@@ -935,6 +1269,72 @@ class SpeechToTextPanelTest {
 
         assertThat(repo.get(sttCatalogModelsKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
         assertThat(repo.get(sttCatalogUpdatedAtKey(ElevenLabsSpeechToTextProvider.ID), "")).isBlank();
+    }
+
+    @Test
+    @DisplayName("Closing after catalog commit keeps the repaired authoritative model on reopen")
+    void prepareCatalogRefresh_whenPanelRemovedBeforePersistenceCallback_reopensWithRepairedSelection() throws Exception {
+        var repo = new BlockingConditionalSettingsRepository(
+                tempDir.resolve("settings-close-after-catalog-commit.properties")
+        );
+        repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
+        repo.put(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "account-a-model");
+        repo.put("chat4j.stt.elevenlabs.model.label", "Account A Model");
+        new SpeechToTextCatalogStore(repo).saveModels(
+                ElevenLabsSpeechToTextProvider.ID,
+                List.of(SpeechToTextCatalogItem.of("account-a-model", "Account A Model"))
+        );
+        var provider = new AuthoritativeElevenLabsProvider();
+        var registry = new SpeechToTextProviderRegistry(List.of(provider));
+        var subject = callOnEdt(() -> new SpeechToTextPanel(repo, tempDir.resolve("default-models"), registry));
+        boolean[] removed = {false};
+        try {
+            SpeechToTextSettingsSnapshot selection = callOnEdt(() ->
+                    ((SpeechToTextSettings) fieldValue(subject, "settings")).resolve());
+            repo.blockNextConditionalUpdate = true;
+            runOnEdt(() -> invokeCatalogRefresh(
+                    subject,
+                    selection,
+                    List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
+            ));
+            assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runWhileEventDispatchThreadBlocked(() -> {
+                repo.releaseConditionalUpdate.countDown();
+                waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
+                        .equals(provider.defaultModel().id()));
+                waitUntil(() -> new SpeechToTextCatalogStore(repo)
+                        .cachedModels(ElevenLabsSpeechToTextProvider.ID).stream()
+                        .anyMatch(model -> "account-b-model".equals(model.id())));
+                subject.removeNotify();
+                removed[0] = true;
+            });
+
+            var reopened = callOnEdt(() -> new SpeechToTextPanel(
+                    repo,
+                    tempDir.resolve("default-models"),
+                    registry
+            ));
+            try {
+                runOnEdt(() -> {
+                    @SuppressWarnings("unchecked")
+                    JComboBox<SpeechToTextCatalogItem> modelComboBox =
+                            (JComboBox<SpeechToTextCatalogItem>) fieldValue(reopened, "modelComboBox");
+                    assertThat(comboModelIds(modelComboBox)).doesNotContain("account-a-model");
+                    assertThat(((SpeechToTextCatalogItem) modelComboBox.getSelectedItem()).id())
+                            .isEqualTo(provider.defaultModel().id());
+                });
+            } finally {
+                runOnEdt(reopened::removeNotify);
+            }
+        } finally {
+            repo.releaseConditionalUpdate.countDown();
+            if (!removed[0]) {
+                runOnEdt(subject::removeNotify);
+            }
+            SwingUtilities.invokeAndWait(() -> {
+            });
+        }
     }
 
     @Test
@@ -1325,7 +1725,7 @@ class SpeechToTextPanelTest {
     ) {
         try {
             Method method = SpeechToTextPanel.class.getDeclaredMethod(
-                    "applyCatalogRefresh",
+                    "prepareCatalogRefreshSafely",
                     long.class,
                     SpeechToTextSettingsSnapshot.class,
                     List.class,
@@ -1378,6 +1778,15 @@ class SpeechToTextPanelTest {
     }
 
     private void scheduleSave(SpeechToTextPanel subject, ThrowingAction action, Runnable onSuccess) throws Exception {
+        scheduleSave(subject, "test-setting", action, onSuccess);
+    }
+
+    private void scheduleSave(
+            SpeechToTextPanel subject,
+            String target,
+            ThrowingAction action,
+            Runnable onSuccess
+    ) throws Exception {
         Class<?> throwingRunnableClass = Class.forName("com.github.drafael.chat4j.settings.SpeechToTextPanel$ThrowingRunnable");
         Object throwingRunnable = Proxy.newProxyInstance(
                 throwingRunnableClass.getClassLoader(),
@@ -1387,9 +1796,14 @@ class SpeechToTextPanelTest {
                     return null;
                 }
         );
-        Method method = SpeechToTextPanel.class.getDeclaredMethod("scheduleSave", throwingRunnableClass, Runnable.class);
+        Method method = SpeechToTextPanel.class.getDeclaredMethod(
+                "scheduleSave",
+                String.class,
+                throwingRunnableClass,
+                Runnable.class
+        );
         method.setAccessible(true);
-        method.invoke(subject, throwingRunnable, onSuccess);
+        method.invoke(subject, target, throwingRunnable, onSuccess);
     }
 
     private void runOnEdt(ThrowingAction action) throws Exception {
@@ -1461,6 +1875,15 @@ class SpeechToTextPanelTest {
         assertThat(condition.met()).isTrue();
     }
 
+    private static void interruptAndJoin(Thread worker) throws InterruptedException {
+        if (worker == null) {
+            return;
+        }
+        worker.interrupt();
+        worker.join(2_000);
+        assertThat(worker.isAlive()).isFalse();
+    }
+
     private Object fieldValue(Object target, String name) throws Exception {
         var field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
@@ -1523,6 +1946,56 @@ class SpeechToTextPanelTest {
                 }
             }
             super.put(key, value);
+        }
+    }
+
+    private static final class FailingConditionalSettingsRepository extends SettingsRepository {
+        private final AtomicInteger conditionalUpdatesUntilFailure = new AtomicInteger();
+
+        private FailingConditionalSettingsRepository(Path settingsFile) {
+            super(settingsFile);
+        }
+
+        private void failAfterSuccessfulConditionalUpdates(int successfulUpdates) {
+            conditionalUpdatesUntilFailure.set(successfulUpdates + 1);
+        }
+
+        @Override
+        public boolean updateBatchIf(BooleanSupplier condition, Consumer<BatchUpdate> updates) {
+            int remaining = conditionalUpdatesUntilFailure.get();
+            if (remaining > 0 && conditionalUpdatesUntilFailure.decrementAndGet() == 0) {
+                throw new IllegalStateException("conditional update failed");
+            }
+            return super.updateBatchIf(condition, updates);
+        }
+    }
+
+    private static final class BlockingNthConditionalSettingsRepository extends SettingsRepository {
+        private final CountDownLatch conditionalUpdateStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseConditionalUpdate = new CountDownLatch(1);
+        private final AtomicInteger conditionalUpdatesUntilBlock = new AtomicInteger();
+
+        private BlockingNthConditionalSettingsRepository(Path settingsFile) {
+            super(settingsFile);
+        }
+
+        private void blockAfterSuccessfulConditionalUpdates(int successfulUpdates) {
+            conditionalUpdatesUntilBlock.set(successfulUpdates + 1);
+        }
+
+        @Override
+        public boolean updateBatchIf(BooleanSupplier condition, Consumer<BatchUpdate> updates) {
+            int remaining = conditionalUpdatesUntilBlock.get();
+            if (remaining > 0 && conditionalUpdatesUntilBlock.decrementAndGet() == 0) {
+                conditionalUpdateStarted.countDown();
+                try {
+                    assertThat(releaseConditionalUpdate.await(2, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            return super.updateBatchIf(condition, updates);
         }
     }
 
@@ -2097,10 +2570,12 @@ class SpeechToTextPanelTest {
     private static final class CapturingDeepgramProvider extends DeepgramTestProvider {
         private final CountDownLatch refreshed = new CountDownLatch(1);
         private final AtomicReference<SpeechToTextProviderContext> context = new AtomicReference<>();
+        private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
         @Override
         public List<SpeechToTextCatalogItem> fetchModels(SpeechToTextProviderContext context) {
             this.context.set(context);
+            refreshThread.set(Thread.currentThread());
             refreshed.countDown();
             return List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3"));
         }
