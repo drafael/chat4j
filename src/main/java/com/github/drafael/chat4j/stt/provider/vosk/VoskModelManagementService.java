@@ -19,10 +19,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.vosk.LibVosk;
 import org.vosk.LogLevel;
 
+@Slf4j
 public class VoskModelManagementService implements AutoCloseable {
 
     public static final String SCAN_OPERATION_STATUS = "Scanning Vosk models...";
@@ -77,33 +79,36 @@ public class VoskModelManagementService implements AutoCloseable {
         return snapshot;
     }
 
-    public Runnable addListener(Consumer<VoskModelManagementSnapshot> listener) {
-        listeners.add(listener);
-        listener.accept(snapshot);
+    public Runnable addListener(@NonNull Consumer<VoskModelManagementSnapshot> listener) {
+        synchronized (this) {
+            ensureOpen();
+            listeners.add(listener);
+        }
+        try {
+            listener.accept(snapshot);
+        } catch (RuntimeException e) {
+            listeners.remove(listener);
+            throw e;
+        }
         return () -> listeners.remove(listener);
     }
 
     public void refreshAsync() {
-        try {
-            submit(SCAN_OPERATION_STATUS, () -> {
-                probeRuntime();
-                refreshSnapshot(false);
-            });
-        } catch (IllegalStateException ignored) {
-        }
+        trySubmit(SCAN_OPERATION_STATUS, () -> {
+            probeRuntime();
+            refreshSnapshot(false);
+        });
     }
 
     public void refreshCatalogAsync() {
-        try {
-            submit(CATALOG_REFRESH_OPERATION_STATUS, () -> {
-                probeRuntime();
-                refreshSnapshot(true);
-            });
-        } catch (IllegalStateException ignored) {
-        }
+        trySubmit(CATALOG_REFRESH_OPERATION_STATUS, () -> {
+            probeRuntime();
+            refreshSnapshot(true);
+        });
     }
 
     public void downloadAsync(String modelId) {
+        ensureOpen();
         VoskModelCatalogEntry entry = snapshot.catalog().stream()
                 .filter(candidate -> Objects.equals(candidate.name(), modelId))
                 .findFirst()
@@ -115,6 +120,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void importAsync(Path source) {
+        ensureOpen();
         String requestedName = source == null || source.getFileName() == null ? "model" : source.getFileName().toString();
         submit("Importing %s...".formatted(requestedName), () -> {
             installer.importFolder(source, voskRoot(), requestedName, disposed::get, this::publishOperationStatus);
@@ -123,6 +129,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void deleteAsync(String modelId) {
+        ensureOpen();
         VoskInstalledModel model = installedModel(modelId).orElseThrow(() -> new IllegalArgumentException("Unknown installed model: %s".formatted(modelId)));
         submit("Deleting %s...".formatted(model.label()), () -> {
             installer.deleteInstalled(model, voskRoot());
@@ -134,6 +141,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void selectModel(String modelId) throws Exception {
+        ensureOpen();
         VoskInstalledModel model = eligibleInstalledModel(modelId);
         persistSelectedModel(model);
         if (model.validationStatus() == VoskValidationStatus.PLAUSIBLE_UNVERIFIED) {
@@ -143,6 +151,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void selectModelAsync(String modelId) {
+        ensureOpen();
         VoskInstalledModel model = eligibleInstalledModel(modelId);
         submit("Selecting %s...".formatted(model.label()), () -> {
             persistSelectedModel(model);
@@ -151,6 +160,7 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void clearSelection() throws Exception {
+        ensureOpen();
         settings.clearSelectedModel();
         refreshSnapshot(false);
     }
@@ -172,10 +182,12 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     public void validateAsync(String modelId) {
+        ensureOpen();
         submit("Validating %s...".formatted(modelId), () -> refreshSnapshot(false));
     }
 
     public void validateSelectedNow() {
+        ensureOpen();
         try {
             probeRuntime();
             refreshSnapshot(false);
@@ -197,17 +209,21 @@ public class VoskModelManagementService implements AutoCloseable {
 
     @Override
     public void close() {
-        if (disposed.compareAndSet(false, true)) {
-            installer.abortActiveDownload();
-            Future<?> operation = activeOperation;
-            if (operation != null) {
-                operation.cancel(true);
+        boolean awaitTermination;
+        synchronized (this) {
+            if (disposed.compareAndSet(false, true)) {
+                installer.abortActiveDownload();
+                Future<?> operation = activeOperation;
+                if (operation != null) {
+                    operation.cancel(true);
+                }
+                executor.shutdownNow();
+                listeners.clear();
             }
-            executor.shutdownNow();
-            if (Thread.currentThread() != activeOperationThread) {
-                awaitExecutorTermination();
-            }
-            listeners.clear();
+            awaitTermination = Thread.currentThread() != activeOperationThread && !executor.isTerminated();
+        }
+        if (awaitTermination) {
+            awaitExecutorTermination();
         }
     }
 
@@ -230,17 +246,20 @@ public class VoskModelManagementService implements AutoCloseable {
     }
 
     private void submit(String status, ThrowingRunnable action) {
-        if (disposed.get()) {
-            return;
+        if (!trySubmit(status, action)) {
+            throw new IllegalStateException("Another Vosk model operation is already in progress.");
         }
+    }
+
+    private boolean trySubmit(String status, ThrowingRunnable action) {
+        ensureOpen();
         synchronized (this) {
+            ensureOpen();
             if (activeOperation != null && !activeOperation.isDone()) {
-                throw new IllegalStateException("Another Vosk model operation is already in progress.");
+                return false;
             }
             publish(snapshotWithOperation(snapshot, true, status));
-            if (disposed.get()) {
-                return;
-            }
+            ensureOpen();
             activeOperation = executor.submit(() -> {
                 activeOperationThread = Thread.currentThread();
                 try {
@@ -256,6 +275,7 @@ public class VoskModelManagementService implements AutoCloseable {
                     activeOperationThread = null;
                 }
             });
+            return true;
         }
     }
 
@@ -410,12 +430,28 @@ public class VoskModelManagementService implements AutoCloseable {
         );
     }
 
+    private void ensureOpen() {
+        if (disposed.get()) {
+            throw new IllegalStateException("Vosk model management is closed.");
+        }
+    }
+
     private void publish(VoskModelManagementSnapshot next) {
         if (disposed.get()) {
             return;
         }
         snapshot = next;
-        listeners.forEach(listener -> listener.accept(next));
+        for (Consumer<VoskModelManagementSnapshot> listener : listeners) {
+            if (disposed.get()) {
+                return;
+            }
+            try {
+                listener.accept(next);
+            } catch (RuntimeException e) {
+                listeners.remove(listener);
+                log.warn("Vosk model-management listener failed", e);
+            }
+        }
     }
 
     @FunctionalInterface

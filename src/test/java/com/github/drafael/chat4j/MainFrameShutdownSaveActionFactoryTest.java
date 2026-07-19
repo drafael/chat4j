@@ -8,6 +8,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -94,6 +97,41 @@ class MainFrameShutdownSaveActionFactoryTest {
 
         assertThat(capturedFailure).hasValue(failure);
         verify(saveCoordinator, never()).save(any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("Shutdown save starts before waiting for speech cleanup")
+    void saveThenAwaitCleanup_whenCleanupIsPending_savesBeforeWaiting() throws Exception {
+        var cleanup = new CompletableFuture<Void>();
+        var saveStarted = new CountDownLatch(1);
+        var actionReturned = new CountDownLatch(1);
+        var failure = new AtomicReference<Throwable>();
+        ShutdownSaveDispatchCoordinator.SaveAction action = MainFrame.saveThenAwaitCleanup(
+                saveStarted::countDown,
+                cleanup
+        );
+        Thread worker = Thread.startVirtualThread(() -> {
+            try {
+                action.save();
+            } catch (Throwable t) {
+                failure.set(t);
+            } finally {
+                actionReturned.countDown();
+            }
+        });
+        try {
+            assertThat(saveStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(actionReturned.getCount()).isEqualTo(1);
+
+            cleanup.complete(null);
+
+            assertThat(actionReturned.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(failure.get()).isNull();
+        } finally {
+            cleanup.complete(null);
+            worker.interrupt();
+            worker.join(2_000);
+        }
     }
 
     @Test

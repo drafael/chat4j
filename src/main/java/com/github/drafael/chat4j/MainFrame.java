@@ -556,12 +556,12 @@ public class MainFrame extends JFrame {
         chatPanel = createConfiguredChatPanel();
         providerRegistry.setAuthStatusRefreshListener(this::onProviderAuthStatusRefreshed);
         voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
-            if (!chatPanel.isSpeechToTextActive()) {
+            if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
                 chatPanel.reloadSpeechToTextSettings();
             }
         }));
         whisperModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
-            if (!chatPanel.isSpeechToTextActive()) {
+            if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
                 chatPanel.reloadSpeechToTextSettings();
             }
         }));
@@ -1063,17 +1063,22 @@ public class MainFrame extends JFrame {
                     () -> shutdownState.setShutdownInProgress(true),
                     SHUTDOWN_SAVE_TIMEOUT_MILLIS,
                     () -> {
-                        try {
-                            UIManager.removePropertyChangeListener(lookAndFeelListener);
-                            chatPanel.cancelSpeechToText();
-                            modelServicesClose.set(closeSttModelManagementServicesAsync());
-                            chatPanel.cancelStreaming();
-                            saveWindowState();
-                        } catch (Exception e) {
-                            warnWithoutStack("Failed during pre-shutdown actions", e);
-                        }
+                        runPreShutdownAction(
+                                "Failed to remove the look-and-feel listener during shutdown",
+                                () -> UIManager.removePropertyChangeListener(lookAndFeelListener)
+                        );
+                        runPreShutdownAction(
+                                "Failed to cancel Speech to Text during shutdown",
+                                chatPanel::cancelSpeechToText
+                        );
+                        runPreShutdownAction(
+                                "Failed to start speech model cleanup during shutdown",
+                                () -> modelServicesClose.set(closeSttModelManagementServicesAsync())
+                        );
+                        runPreShutdownAction("Failed to cancel streaming during shutdown", chatPanel::cancelStreaming);
+                        runPreShutdownAction("Failed to save window state during shutdown", this::saveWindowState);
                     },
-                    () -> createShutdownSaveActionAfterModelServicesClose(modelServicesClose.get()),
+                    () -> saveThenAwaitCleanup(createShutdownSaveAction(), modelServicesClose.get()),
                     finishAction,
                     () -> log.warn("Timed out persisting current conversation during shutdown"),
                     error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
@@ -1085,19 +1090,45 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private CompletableFuture<Void> closeSttModelManagementServicesAsync() {
-        return CompletableFuture.runAsync(() -> {
-            voskModelManagementService.close();
-            whisperModelManagementService.close();
-        }, command -> Thread.ofVirtual().name("chat4j-main-stt-model-services-close-").start(command));
+    private void runPreShutdownAction(String failureMessage, Runnable action) {
+        try {
+            action.run();
+        } catch (Exception e) {
+            warnWithoutStack(failureMessage, e);
+        }
     }
 
-    private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveActionAfterModelServicesClose(CompletableFuture<Void> modelServicesClose) {
-        ShutdownSaveDispatchCoordinator.SaveAction saveAction = createShutdownSaveAction();
+    private CompletableFuture<Void> closeSttModelManagementServicesAsync() {
+        CompletableFuture<Void> voskClose = CompletableFuture.runAsync(
+                () -> closeSttModelManagementService("Vosk", voskModelManagementService::close),
+                command -> Thread.ofVirtual().name("chat4j-main-vosk-model-service-close").start(command)
+        );
+        CompletableFuture<Void> whisperClose = CompletableFuture.runAsync(
+                () -> closeSttModelManagementService("Whisper.cpp", whisperModelManagementService::close),
+                command -> Thread.ofVirtual().name("chat4j-main-whisper-model-service-close").start(command)
+        );
+        return CompletableFuture.allOf(voskClose, whisperClose);
+    }
+
+    static ShutdownSaveDispatchCoordinator.SaveAction saveThenAwaitCleanup(
+            ShutdownSaveDispatchCoordinator.SaveAction saveAction,
+            CompletableFuture<Void> cleanup
+    ) {
         return () -> {
-            modelServicesClose.join();
-            saveAction.save();
+            try {
+                saveAction.save();
+            } finally {
+                cleanup.join();
+            }
         };
+    }
+
+    private void closeSttModelManagementService(String serviceName, Runnable closeAction) {
+        try {
+            closeAction.run();
+        } catch (Exception e) {
+            warnWithoutStack("Failed to close %s model management".formatted(serviceName), e);
+        }
     }
 
     private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveAction() {

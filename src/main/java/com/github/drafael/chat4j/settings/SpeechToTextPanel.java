@@ -80,8 +80,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private final WhisperModelManagementService whisperModelManagementService;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
     private final SettingsCredentialChangeListener credentialChangeListener;
-    private final boolean ownsVoskModelManagementService;
-    private final boolean ownsWhisperModelManagementService;
     private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong cloudModelSaveGeneration = new AtomicLong();
     private final ConcurrentMap<String, AtomicLong> saveCounters = new ConcurrentHashMap<>();
@@ -131,87 +129,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private volatile boolean removed;
     private volatile String lastSaveError = "";
 
-    public SpeechToTextPanel(SettingsRepository settingsRepo, Path defaultModelDirectory) {
-        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(),
-                new UnavailableSpeechToTextModelDownloader(),
-                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
-                new WhisperModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
-                true,
-                true);
-    }
-
-    public SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            VoskModelManagementService voskModelManagementService
-    ) {
-        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(),
-                new UnavailableSpeechToTextModelDownloader(), voskModelManagementService,
-                new WhisperModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), false, true);
-    }
-
-    public SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            VoskModelManagementService voskModelManagementService,
-            WhisperModelManagementService whisperModelManagementService
-    ) {
-        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(),
-                new UnavailableSpeechToTextModelDownloader(), voskModelManagementService, whisperModelManagementService, false, false);
-    }
-
-    SpeechToTextPanel(SettingsRepository settingsRepo, Path defaultModelDirectory, SpeechToTextProviderRegistry providerRegistry) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, new UnavailableSpeechToTextModelDownloader(),
-                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
-                new WhisperModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), true, true);
-    }
-
-    SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            SpeechToTextProviderRegistry providerRegistry,
-            VoskModelManagementService voskModelManagementService,
-            WhisperModelManagementService whisperModelManagementService
-    ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, new UnavailableSpeechToTextModelDownloader(), voskModelManagementService, whisperModelManagementService, false, false);
-    }
-
-    SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            SpeechToTextProviderRegistry providerRegistry,
-            SpeechToTextModelDownloader modelDownloader
-    ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader,
-                new VoskModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")),
-                new WhisperModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), true, true);
-    }
-
-    SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            SpeechToTextProviderRegistry providerRegistry,
-            SpeechToTextModelDownloader modelDownloader,
-            VoskModelManagementService voskModelManagementService
-    ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader, voskModelManagementService,
-                new WhisperModelManagementService(settingsRepo, defaultModelDirectory, defaultModelDirectory.resolveSibling("temp")), false, true);
-    }
-
-    private SpeechToTextPanel(
-            SettingsRepository settingsRepo,
-            Path defaultModelDirectory,
-            SpeechToTextProviderRegistry providerRegistry,
-            SpeechToTextModelDownloader modelDownloader,
-            VoskModelManagementService voskModelManagementService,
-            WhisperModelManagementService whisperModelManagementService,
-            boolean ownsVoskModelManagementService,
-            boolean ownsWhisperModelManagementService
-    ) {
-        this(settingsRepo, defaultModelDirectory, providerRegistry, modelDownloader, voskModelManagementService, whisperModelManagementService,
-                ownsVoskModelManagementService, ownsWhisperModelManagementService, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
-    }
-
     SpeechToTextPanel(
             SettingsRepository settingsRepo,
             Path defaultModelDirectory,
@@ -220,19 +137,25 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
-        this(settingsRepo, defaultModelDirectory, SpeechToTextProviderRegistry.createDefault(), new UnavailableSpeechToTextModelDownloader(),
-                voskModelManagementService, whisperModelManagementService, false, false, tokenFieldRegistry, credentialChangeListener);
+        this(
+                settingsRepo,
+                defaultModelDirectory,
+                SpeechToTextProviderRegistry.createDefault(),
+                new UnavailableSpeechToTextModelDownloader(),
+                voskModelManagementService,
+                whisperModelManagementService,
+                tokenFieldRegistry,
+                credentialChangeListener
+        );
     }
 
-    private SpeechToTextPanel(
+    SpeechToTextPanel(
             SettingsRepository settingsRepo,
             Path defaultModelDirectory,
             SpeechToTextProviderRegistry providerRegistry,
             SpeechToTextModelDownloader modelDownloader,
             VoskModelManagementService voskModelManagementService,
             WhisperModelManagementService whisperModelManagementService,
-            boolean ownsVoskModelManagementService,
-            boolean ownsWhisperModelManagementService,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
@@ -244,14 +167,17 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
-        this.ownsVoskModelManagementService = ownsVoskModelManagementService;
-        this.ownsWhisperModelManagementService = ownsWhisperModelManagementService;
         this.settings = new SpeechToTextSettings(settingsRepo, providerRegistry, CredentialSource.SYSTEM, defaultModelDirectory, voskModelManagementService, whisperModelManagementService);
         this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
         this.modelDownloader = modelDownloader;
         buildUi();
         voskUnsubscribe = voskModelManagementService.addListener(this::enqueueVoskModelSnapshot);
-        whisperUnsubscribe = whisperModelManagementService.addListener(this::enqueueWhisperModelSnapshot);
+        try {
+            whisperUnsubscribe = whisperModelManagementService.addListener(this::enqueueWhisperModelSnapshot);
+        } catch (RuntimeException e) {
+            voskUnsubscribe.run();
+            throw e;
+        }
     }
 
     @Override
@@ -259,19 +185,23 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         if (SYNC_SAVE_EDT_ERROR.equals(lastSaveError)) {
             lastSaveError = "";
         }
-        return CompletableFuture.supplyAsync(this::saveNonTokenPendingChanges)
+        return CompletableFuture.supplyAsync(() -> saveNonTokenPendingChanges(false))
                 .thenCompose(saved -> {
                     if (!saved) {
                         return CompletableFuture.completedFuture(false);
                     }
                     return onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
                             .thenCompose(future -> future);
-                });
+                })
+                .thenCompose(saved -> saved
+                        ? CompletableFuture.supplyAsync(() -> saveNonTokenPendingChanges(true))
+                        : CompletableFuture.completedFuture(false));
     }
 
     private CompletableFuture<Boolean> savePendingTokenChangesOnEventDispatchThread() {
         ApiTokenFieldPanel field = tokenField;
         if (field == null || !field.dirty()) {
+            lastSaveError = currentSaveError();
             return CompletableFuture.completedFuture(true);
         }
         String conflict = tokenFieldRegistry.conflictMessage(field);
@@ -280,7 +210,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             return CompletableFuture.completedFuture(false);
         }
         return field.savePendingChangesAsync().thenApply(tokenSaved -> {
-            lastSaveError = tokenSaved ? "" : field.lastSaveError();
+            lastSaveError = tokenSaved ? currentSaveError() : field.lastSaveError();
             return tokenSaved;
         });
     }
@@ -291,13 +221,14 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             lastSaveError = SYNC_SAVE_EDT_ERROR;
             return false;
         }
-        return saveNonTokenPendingChanges()
+        return saveNonTokenPendingChanges(false)
                 && onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
                 .thenCompose(future -> future)
-                .join();
+                .join()
+                && saveNonTokenPendingChanges(true);
     }
 
-    private boolean saveNonTokenPendingChanges() {
+    private boolean saveNonTokenPendingChanges(boolean finalDrain) {
         VoskModelManagementSnapshot voskSnapshot = voskModelManagementService.snapshot();
         if (voskModelOperationBlocksClose(voskSnapshot)) {
             lastSaveError = VOSK_OPERATION_IN_PROGRESS_ERROR;
@@ -310,19 +241,38 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         }
         clearResolvedOperationError();
         try {
-            boolean saved = true;
-            for (CompletableFuture<Boolean> pendingSave : List.copyOf(pendingSaves)) {
-                saved = pendingSave.get() && saved;
-            }
+            boolean saved = drainPendingSaves(finalDrain);
             String saveError = currentSaveError();
             if (!saved || StringUtils.isNotBlank(saveError)) {
                 lastSaveError = StringUtils.defaultIfBlank(saveError, "Could not save Speech to Text settings.");
                 return false;
             }
-            return StringUtils.isBlank(lastSaveError);
+            return true;
         } catch (Exception e) {
             lastSaveError = StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName());
             return false;
+        }
+    }
+
+    private boolean drainPendingSaves(boolean finalDrain) throws Exception {
+        boolean saved = true;
+        while (true) {
+            for (CompletableFuture<Boolean> pendingSave : List.copyOf(pendingSaves)) {
+                saved = pendingSave.get() && saved;
+            }
+            boolean successful = saved && StringUtils.isBlank(currentSaveError());
+            boolean drained = onEventDispatchThread(() -> {
+                if (!pendingSaves.isEmpty()) {
+                    return false;
+                }
+                if (finalDrain && successful) {
+                    refreshCounter.incrementAndGet();
+                }
+                return true;
+            }).join();
+            if (drained) {
+                return saved;
+            }
         }
     }
 
@@ -358,27 +308,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         voskUnsubscribe.run();
         whisperUnsubscribe.run();
         saveExecutor.shutdown();
-        closeOwnedModelManagementServices();
         super.removeNotify();
-    }
-
-    private void closeOwnedModelManagementServices() {
-        if (!ownsVoskModelManagementService && !ownsWhisperModelManagementService) {
-            return;
-        }
-        Runnable closeServices = () -> {
-            if (ownsVoskModelManagementService) {
-                voskModelManagementService.close();
-            }
-            if (ownsWhisperModelManagementService) {
-                whisperModelManagementService.close();
-            }
-        };
-        if (EventQueue.isDispatchThread()) {
-            Thread.ofVirtual().name("chat4j-stt-model-services-close-").start(closeServices);
-            return;
-        }
-        closeServices.run();
     }
 
     private void buildUi() {
@@ -860,12 +790,13 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         }
         String rawPath = modelDirectoryField.getText();
         AtomicReference<Path> savedPath = new AtomicReference<>();
-        scheduleSave(SAVE_MODEL_DIRECTORY, () -> savedPath.set(settings.saveModelDirectory(rawPath)), () -> {
+        scheduleSave(SAVE_MODEL_DIRECTORY, () -> {
+            savedPath.set(settings.saveModelDirectory(rawPath));
+            refreshLocalProvider(settings.resolve().providerId());
+        }, () -> {
             Path path = savedPath.get();
             if (path != null) {
                 modelDirectoryField.setText(path.toString());
-                voskModelManagementService.refreshAsync();
-                whisperModelManagementService.refreshAsync(isWhisper(settings.resolve()));
             }
             setStatusInfo(STATUS_SAVED);
         });
@@ -1030,7 +961,13 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                                         () -> catalogRefreshCurrent(refreshId)
                                 );
                         if (!repaired) {
-                            failCurrentSelectionRepair(refreshId, selection);
+                            if (catalogRefreshCurrent(refreshId)) {
+                                throw new IllegalStateException(
+                                        "Could not refresh %s Speech to Text models.".formatted(
+                                                selection.provider().displayName()
+                                        )
+                                );
+                            }
                             return;
                         }
                     }
@@ -1077,14 +1014,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                     }
                 }
         );
-    }
-
-    private void failCurrentSelectionRepair(long refreshId, SpeechToTextSettingsSnapshot selection) {
-        if (catalogRefreshCurrent(refreshId)) {
-            throw new IllegalStateException(
-                    "Could not refresh %s Speech to Text models.".formatted(selection.provider().displayName())
-            );
-        }
     }
 
     private void applyCatalogModels(
@@ -1935,9 +1864,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         }
         AtomicLong targetCounter = saveCounters.computeIfAbsent(target, ignored -> new AtomicLong());
         long saveId = targetCounter.incrementAndGet();
-        CompletableFuture<Boolean> pendingSave;
+        CompletableFuture<Boolean> saveAction;
         try {
-            pendingSave = CompletableFuture.supplyAsync(() -> {
+            saveAction = CompletableFuture.supplyAsync(() -> {
                 try {
                     action.run();
                     if (saveId == targetCounter.get()) {
@@ -1961,11 +1890,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             }
             return;
         }
-        pendingSaves.add(pendingSave);
-        pendingSave.whenComplete((saved, error) -> pendingSaves.remove(pendingSave));
-        pendingSave.thenAccept(saved -> runWhenActiveOnEventDispatchThread(() -> {
-            if (saveId != targetCounter.get()) {
-                return;
+        CompletableFuture<Boolean> pendingSave = saveAction.thenCompose(saved -> onEventDispatchThread(() -> {
+            if (removed || saveId != targetCounter.get()) {
+                return saved;
             }
             if (saved) {
                 onSuccess.run();
@@ -1977,7 +1904,10 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             } else {
                 onFailure.run();
             }
+            return saved;
         }));
+        pendingSaves.add(pendingSave);
+        pendingSave.whenComplete((saved, error) -> pendingSaves.remove(pendingSave));
     }
 
     private <T> CompletableFuture<T> onEventDispatchThread(Supplier<T> action) {

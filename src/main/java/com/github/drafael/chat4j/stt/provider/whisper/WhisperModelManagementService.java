@@ -18,8 +18,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
+@Slf4j
 public class WhisperModelManagementService implements AutoCloseable {
 
     private static final long CLOSE_WAIT_POLL_SECONDS = 1;
@@ -72,29 +74,36 @@ public class WhisperModelManagementService implements AutoCloseable {
         return usageTracker;
     }
 
-    public Runnable addListener(Consumer<WhisperModelManagementSnapshot> listener) {
-        listeners.add(listener);
-        listener.accept(snapshot);
+    public Runnable addListener(@NonNull Consumer<WhisperModelManagementSnapshot> listener) {
+        synchronized (this) {
+            ensureOpen();
+            listeners.add(listener);
+        }
+        try {
+            listener.accept(snapshot);
+        } catch (RuntimeException e) {
+            listeners.remove(listener);
+            throw e;
+        }
         return () -> listeners.remove(listener);
     }
 
     public void refreshAsync() {
+        ensureOpen();
         refreshAsync(selectedProviderIsWhisper());
     }
 
     public void refreshAsync(boolean probeRuntime) {
-        try {
-            submit("Scanning Whisper.cpp models...", "refresh", "", "", 0, false, () -> {
-                if (probeRuntime) {
-                    probeRuntime();
-                }
-                refreshSnapshot(false);
-            });
-        } catch (IllegalStateException ignored) {
-        }
+        trySubmit("Scanning Whisper.cpp models...", "refresh", "", "", 0, false, () -> {
+            if (probeRuntime) {
+                probeRuntime();
+            }
+            refreshSnapshot(false);
+        });
     }
 
     public void downloadAsync(String modelId) {
+        ensureOpen();
         WhisperModelCatalogEntry entry = WhisperModelCatalog.find(modelId)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown Whisper.cpp model: %s".formatted(modelId)));
         submit("Downloading %s...".formatted(entry.label()), "download", entry.id(), entry.label(), entry.sizeBytes(), true, () -> {
@@ -106,6 +115,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     public void deleteAsync(String modelId) {
+        ensureOpen();
         WhisperInstalledModel model = installedModel(modelId).orElseThrow(() -> new IllegalArgumentException("Unknown installed Whisper.cpp model: %s".formatted(modelId)));
         if (usageTracker.inUse(model.id())) {
             throw new IllegalStateException("Finish or cancel transcription before deleting this Whisper.cpp model.");
@@ -123,6 +133,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     public void selectModelAsync(String modelId) {
+        ensureOpen();
         WhisperInstalledModel model = eligibleInstalledModel(modelId);
         submit("Selecting %s...".formatted(model.label()), "select", model.id(), model.label(), 0, false, () -> {
             persistSelectedModel(model);
@@ -131,17 +142,20 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     public void selectModel(String modelId) throws Exception {
+        ensureOpen();
         WhisperInstalledModel model = eligibleInstalledModel(modelId);
         persistSelectedModel(model);
         refreshSnapshot(false);
     }
 
     public void clearSelection() throws Exception {
+        ensureOpen();
         clearSelectionOnly();
         refreshSnapshot(false);
     }
 
     public void cancelActiveOperation() {
+        ensureOpen();
         OperationCancellation cancellation = activeCancellation;
         if (cancellation != null) {
             cancellation.cancel();
@@ -151,6 +165,7 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     public void validateSelectedNow() {
+        ensureOpen();
         try {
             probeRuntime();
             publish(snapshotWithRuntimeStatus(snapshot));
@@ -189,21 +204,25 @@ public class WhisperModelManagementService implements AutoCloseable {
 
     @Override
     public void close() {
-        if (disposed.compareAndSet(false, true)) {
-            OperationCancellation cancellation = activeCancellation;
-            if (cancellation != null) {
-                cancellation.cancel();
-                installer.abortActiveDownload();
+        boolean awaitTermination;
+        synchronized (this) {
+            if (disposed.compareAndSet(false, true)) {
+                OperationCancellation cancellation = activeCancellation;
+                if (cancellation != null) {
+                    cancellation.cancel();
+                    installer.abortActiveDownload();
+                }
+                Future<?> operation = activeOperation;
+                if (operation != null) {
+                    operation.cancel(true);
+                }
+                executor.shutdownNow();
+                listeners.clear();
             }
-            Future<?> operation = activeOperation;
-            if (operation != null) {
-                operation.cancel(true);
-            }
-            executor.shutdownNow();
-            if (Thread.currentThread() != activeOperationThread) {
-                awaitExecutorTermination();
-            }
-            listeners.clear();
+            awaitTermination = Thread.currentThread() != activeOperationThread && !executor.isTerminated();
+        }
+        if (awaitTermination) {
+            awaitExecutorTermination();
         }
     }
 
@@ -226,19 +245,34 @@ public class WhisperModelManagementService implements AutoCloseable {
     }
 
     private void submit(String status, String operationType, String modelId, String modelLabel, long totalBytes, boolean cancelable, ThrowingRunnable action) {
-        if (disposed.get()) {
-            return;
+        if (!trySubmit(status, operationType, modelId, modelLabel, totalBytes, cancelable, action)) {
+            throw new IllegalStateException("Another Whisper.cpp model operation is already in progress.");
         }
+    }
+
+    private boolean trySubmit(
+            String status,
+            String operationType,
+            String modelId,
+            String modelLabel,
+            long totalBytes,
+            boolean cancelable,
+            ThrowingRunnable action
+    ) {
+        ensureOpen();
         synchronized (this) {
+            ensureOpen();
             if (activeOperation != null && !activeOperation.isDone()) {
-                throw new IllegalStateException("Another Whisper.cpp model operation is already in progress.");
+                return false;
             }
             OperationCancellation cancellation = new OperationCancellation();
             activeCancellation = cancellation;
             publish(snapshotWithOperation(snapshot, true, false, status, 0, totalBytes, cancelable, operationType, modelId, modelLabel));
-            if (disposed.get()) {
+            try {
+                ensureOpen();
+            } catch (IllegalStateException e) {
                 activeCancellation = null;
-                return;
+                throw e;
             }
             activeOperation = executor.submit(() -> {
                 activeOperationThread = Thread.currentThread();
@@ -259,6 +293,7 @@ public class WhisperModelManagementService implements AutoCloseable {
                     activeOperationThread = null;
                 }
             });
+            return true;
         }
     }
 
@@ -422,12 +457,28 @@ public class WhisperModelManagementService implements AutoCloseable {
                 .build();
     }
 
+    private void ensureOpen() {
+        if (disposed.get()) {
+            throw new IllegalStateException("Whisper.cpp model management is closed.");
+        }
+    }
+
     private void publish(WhisperModelManagementSnapshot next) {
         if (disposed.get()) {
             return;
         }
         snapshot = next;
-        listeners.forEach(listener -> listener.accept(next));
+        for (Consumer<WhisperModelManagementSnapshot> listener : listeners) {
+            if (disposed.get()) {
+                return;
+            }
+            try {
+                listener.accept(next);
+            } catch (RuntimeException e) {
+                listeners.remove(listener);
+                log.warn("Whisper.cpp model-management listener failed", e);
+            }
+        }
     }
 
     private static final class OperationCancellation {
