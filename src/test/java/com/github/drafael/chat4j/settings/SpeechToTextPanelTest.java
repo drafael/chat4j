@@ -388,22 +388,37 @@ class SpeechToTextPanelTest {
     @Test
     @DisplayName("Failed Speech to Text directory saves do not poison later successful saves")
     void savePendingChanges_whenDirectorySaveFailsThenSucceeds_allowsCloseAfterCorrection() throws Exception {
-        Path settingsFile = tempDir.resolve("settings.properties");
+        var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         Path existingFile = Files.writeString(tempDir.resolve("not-a-directory"), "content");
         Path validDirectory = tempDir.resolve("models");
-        var subject = callOnEdt(() -> new SpeechToTextPanel(new SettingsRepository(settingsFile), tempDir.resolve("default-models")));
-        try {
-            SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, existingFile));
-            waitUntil(() -> !subject.lastSaveError().isBlank());
-            assertThat(subject.savePendingChanges()).isFalse();
+        Path defaultModels = tempDir.resolve("default-models");
+        try (
+                var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("vosk-temp"));
+                var whisperModels = new WhisperModelManagementService(
+                        repo,
+                        defaultModels,
+                        tempDir.resolve("whisper-temp"),
+                        fakeWhisperRuntime(),
+                        new WhisperModelUsageTracker()
+                )
+        ) {
+            var subject = callOnEdt(() -> new SpeechToTextPanel(repo, defaultModels, voskModels, whisperModels));
+            try {
+                SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, existingFile));
+                waitUntil(() -> !subject.lastSaveError().isBlank());
+                assertThat(subject.savePendingChanges()).isFalse();
 
-            SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, validDirectory));
+                SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, validDirectory));
 
-            assertThat(subject.savePendingChanges()).isTrue();
-            assertThat(Files.isDirectory(validDirectory)).isTrue();
-        } finally {
-            runOnEdt(subject::removeNotify);
+                assertThat(subject.savePendingChanges()).isTrue();
+                waitUntil(() -> statusLabelText(subject).contains("Saved"));
+                assertThat(Files.isDirectory(validDirectory)).isTrue();
+            } finally {
+                runOnEdt(subject::removeNotify);
+            }
         }
+        SwingUtilities.invokeAndWait(() -> {
+        });
     }
 
     @Test
