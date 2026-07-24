@@ -1,27 +1,26 @@
 package com.github.drafael.chat4j.stt.provider.whisper;
 
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentMap;
 import org.apache.commons.lang3.StringUtils;
 
 public class WhisperModelUsageTracker {
 
-    private final Map<String, AtomicInteger> leasesByModelId = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Integer> leasesByModelId = new ConcurrentHashMap<>();
 
     public Lease acquire(String modelId) {
         String normalized = StringUtils.trimToEmpty(modelId);
-        if (normalized.isBlank()) {
+        if (normalized.isEmpty()) {
             throw new IllegalArgumentException("modelId must not be blank");
         }
-        leasesByModelId.computeIfAbsent(normalized, ignored -> new AtomicInteger()).incrementAndGet();
+        leasesByModelId.merge(normalized, 1, Integer::sum);
         return new Lease(normalized);
     }
 
     public boolean inUse(String modelId) {
-        AtomicInteger counter = leasesByModelId.get(StringUtils.trimToEmpty(modelId));
-        return counter != null && counter.get() > 0;
+        Integer leaseCount = leasesByModelId.get(StringUtils.trimToEmpty(modelId));
+        return leaseCount != null && leaseCount > 0;
     }
 
     public final class Lease implements AutoCloseable {
@@ -38,10 +37,10 @@ public class WhisperModelUsageTracker {
                 return;
             }
             closed = true;
-            AtomicInteger counter = leasesByModelId.get(modelId);
-            if (counter != null && counter.decrementAndGet() <= 0) {
-                leasesByModelId.remove(modelId, counter);
-            }
+            leasesByModelId.computeIfPresent(
+                    modelId,
+                    (ignored, leaseCount) -> leaseCount <= 1 ? null : leaseCount - 1
+            );
         }
 
         @Override

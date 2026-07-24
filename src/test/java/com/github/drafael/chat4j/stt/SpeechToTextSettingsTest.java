@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.stt;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.CredentialTokenIds;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
@@ -25,7 +25,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenProviderMissing_defaultsOff() {
         var subject = new SpeechToTextSettings(
                 new SettingsRepository(tempDir.resolve("settings.properties")),
-                SpeechToTextProviderRegistry.createDefault(),
+                SpeechToTextTestProviders.createDefault(),
                 availableCredentials(),
                 tempDir.resolve("stt").resolve("models")
         );
@@ -39,7 +39,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenGroqMissingCredentials_remainsSelectedUnavailable() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, GroqSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -55,7 +55,7 @@ class SpeechToTextSettingsTest {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, GroqSpeechToTextProvider.ID);
         repo.put("chat4j.stt.groq.model.id", " ");
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
 
         assertThat(subject.resolve().model().id()).isEqualTo("whisper-large-v3-turbo");
     }
@@ -65,7 +65,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenElevenLabsSelected_usesElevenLabsEndpointsAndDefaultModel() {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -81,7 +81,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenElevenLabsMissingCredentials_remainsSelectedUnavailable() {
         var repo = new SettingsRepository(tempDir.resolve("settings-elevenlabs-missing.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, ElevenLabsSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -96,7 +96,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenDeepgramSelected_usesDeepgramEndpointsAndDefaultModel() {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -112,7 +112,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenDeepgramMissingCredentials_remainsSelectedUnavailable() {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-missing.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -127,7 +127,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenAssemblyAiSelected_usesAssemblyAiEndpointsAndDefaultModel() {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -143,7 +143,7 @@ class SpeechToTextSettingsTest {
     void resolve_whenAssemblyAiMissingCredentials_remainsSelectedUnavailable() {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-missing.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
 
         var snapshot = subject.resolve();
 
@@ -159,7 +159,7 @@ class SpeechToTextSettingsTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-model.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
         repo.put("chat4j.stt.assemblyai.model.id", "stale-model");
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), availableCredentials(), tempDir.resolve("stt").resolve("models"));
 
         assertThat(subject.resolve().model().id()).isEqualTo("assemblyai-auto");
     }
@@ -167,7 +167,7 @@ class SpeechToTextSettingsTest {
     @Test
     @DisplayName("Credential resolver includes STT API keys")
     void supportedProviderEnvVars_whenQueried_includesSttProviders() {
-        assertThat(CredentialResolver.supportedProviderEnvVars()).contains("DEEPGRAM_API_KEY", "ASSEMBLYAI_API_KEY");
+        assertThat(CredentialTokenIds.supportedProviderEnvVars()).contains("DEEPGRAM_API_KEY", "ASSEMBLYAI_API_KEY");
     }
 
     @Test
@@ -175,7 +175,7 @@ class SpeechToTextSettingsTest {
     void resolveMaxDurationSeconds_whenPersistedInvalid_returnsDefault() {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SpeechToTextSettings.RECORDING_MAX_DURATION_SECONDS_KEY, "900");
-        var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
+        var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), missingCredentials(), tempDir.resolve("stt").resolve("models"));
 
         assertThat(subject.resolveMaxDurationSeconds()).isEqualTo(600);
     }

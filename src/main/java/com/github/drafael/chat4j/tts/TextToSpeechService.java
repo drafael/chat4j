@@ -1,20 +1,26 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.AudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.JavaSoundAudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -24,8 +30,6 @@ import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-
-import static java.util.Collections.emptyList;
 
 @Slf4j
 public class TextToSpeechService {
@@ -49,7 +53,13 @@ public class TextToSpeechService {
     private final ExecutorService executor;
     private final AtomicLong requestCounter = new AtomicLong();
     private final AtomicReference<String> activeMessageKey = new AtomicReference<>("");
-    private volatile Future<?> activeTask;
+    private final AtomicReference<SynthesisOperation> activeSynthesisOperation = new AtomicReference<>();
+    private final AtomicReference<CompletableFuture<Void>> playbackCleanup =
+            new AtomicReference<>(CompletableFuture.completedFuture(null));
+    private final AtomicBoolean disposed = new AtomicBoolean();
+    private final Object disposalLock = new Object();
+    private volatile CompletableFuture<Void> disposalFuture = CompletableFuture.completedFuture(null);
+    private final AtomicReference<Future<?>> activeTask = new AtomicReference<>();
 
     public TextToSpeechService(TextToSpeechSettings settings, AudioPlaybackService playbackService) {
         this(settings, playbackService, Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-tts-", 0).factory()));
@@ -61,8 +71,15 @@ public class TextToSpeechService {
         this.executor = executor;
     }
 
-    public static TextToSpeechService createDefault(SettingsRepository settingsRepo) {
-        TextToSpeechProviderRegistry registry = TextToSpeechProviderRegistry.createDefault();
+    public static TextToSpeechService createDefault(
+            SettingsRepository settingsRepo,
+            CredentialResolver credentialResolver,
+            Map<String, String> subprocessEnvironment
+    ) {
+        TextToSpeechProviderRegistry registry = TextToSpeechProviderRegistry.createDefault(
+                credentialResolver,
+                subprocessEnvironment
+        );
         return new TextToSpeechService(
                 new TextToSpeechSettings(settingsRepo, registry),
                 new JavaSoundAudioPlaybackService()
@@ -74,10 +91,13 @@ public class TextToSpeechService {
     }
 
     public boolean isReadAloudAvailable() {
+        if (disposed.get()) {
+            return false;
+        }
         try {
             TextToSpeechSettings.Selection selection = settings.resolve();
             return selection.enabled() && selection.available();
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             log.warn("Failed to read Text to Speech availability: {}", e.toString());
             return false;
         }
@@ -102,6 +122,10 @@ public class TextToSpeechService {
             Consumer<String> statusHandler,
             Runnable stateChangeHandler
     ) {
+        if (disposed.get()) {
+            report(errorHandler, "Read aloud is not available in this window. Please reopen the conversation window and try again.");
+            return;
+        }
         String normalizedText = speechText(text);
         String normalizedMessageKey = StringUtils.defaultString(messageKey);
         if (isReadAloudActive(normalizedMessageKey)) {
@@ -118,7 +142,7 @@ public class TextToSpeechService {
         TextToSpeechSettings.Selection selection;
         try {
             selection = settings.resolve();
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             report(errorHandler, "Unable to read Text to Speech settings.");
             return;
         }
@@ -136,9 +160,41 @@ public class TextToSpeechService {
         long requestId = requestCounter.incrementAndGet();
         activeMessageKey.set(normalizedMessageKey);
         run(stateChangeHandler);
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            synthesizeAndPlay(
+                    requestId,
+                    normalizedMessageKey,
+                    normalizedText,
+                    selection,
+                    errorHandler,
+                    statusHandler,
+                    stateChangeHandler
+            );
+            return null;
+        }) {
+            @Override
+            protected void done() {
+                activeTask.compareAndSet(this, null);
+                if (isCancelled()) {
+                    return;
+                }
+                try {
+                    get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof Error error) {
+                        throw error;
+                    }
+                }
+            }
+        };
+        activeTask.set(task);
         try {
-            activeTask = executor.submit(() -> synthesizeAndPlay(requestId, normalizedMessageKey, normalizedText, selection, errorHandler, statusHandler, stateChangeHandler));
+            executor.execute(task);
         } catch (RejectedExecutionException e) {
+            activeTask.compareAndSet(task, null);
+            task.cancel(false);
             activeMessageKey.set("");
             run(stateChangeHandler);
             report(errorHandler, "Read aloud is not available in this window. Please reopen the conversation window and try again.");
@@ -148,17 +204,49 @@ public class TextToSpeechService {
     public void stop() {
         requestCounter.incrementAndGet();
         activeMessageKey.set("");
-        Future<?> task = activeTask;
-        activeTask = null;
-        if (task != null) {
-            task.cancel(true);
+        SynthesisOperation synthesisOperation = activeSynthesisOperation.getAndSet(null);
+        if (synthesisOperation != null) {
+            synthesisOperation.cancel();
         }
-        playbackService.stop();
+        cancel(activeTask.getAndSet(null));
+        CompletableFuture<Void> stoppedPlayback;
+        try {
+            stoppedPlayback = playbackService.stopAsync().exceptionally(error -> {
+                log.warn("Could not stop audio playback: {}", error.getClass().getSimpleName());
+                return null;
+            });
+        } catch (RuntimeException | LinkageError e) {
+            log.warn("Could not stop audio playback: {}", e.getClass().getSimpleName());
+            stoppedPlayback = CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> cleanup = stoppedPlayback;
+        CompletableFuture<Void> trackedCleanup = playbackCleanup.updateAndGet(
+                current -> CompletableFuture.allOf(current, cleanup)
+        );
+        trackedCleanup.whenComplete((ignored, error) -> playbackCleanup.compareAndSet(
+                trackedCleanup,
+                CompletableFuture.completedFuture(null)
+        ));
     }
 
     public void dispose() {
-        stop();
-        executor.shutdownNow();
+        disposeAsync();
+    }
+
+    public CompletableFuture<Void> disposeAsync() {
+        synchronized (disposalLock) {
+            if (!disposed.compareAndSet(false, true)) {
+                return disposalFuture;
+            }
+            stop();
+            executor.shutdownNow();
+            CompletableFuture<Void> executorCleanup = awaitTerminationAsync(
+                    executor,
+                    "chat4j-tts-dispose-await"
+            );
+            disposalFuture = CompletableFuture.allOf(playbackCleanup.get(), executorCleanup);
+            return disposalFuture;
+        }
     }
 
     private void synthesizeAndPlay(
@@ -170,39 +258,65 @@ public class TextToSpeechService {
             Consumer<String> statusHandler,
             Runnable stateChangeHandler
     ) {
+        String apiKey = null;
         try {
             TextToSpeechProvider provider = selection.provider();
+            if (StringUtils.isNotBlank(provider.requiredEnvVar())) {
+                apiKey = provider.apiKey();
+            }
             String responseFormat = provider.defaultResponseFormat();
             List<String> chunks = speechChunks(text, provider.maxInputCharacters());
-            try (ExecutorService synthesisExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("chat4j-tts-synthesis-", 0).factory())) {
-                CompletableFuture<TextToSpeechAudio> audioFuture = null;
+            SynthesisOperation audioOperation = null;
+            try {
                 for (int index = 0; index < chunks.size(); index++) {
                     if (isStale(requestId, messageKey)) {
                         return;
                     }
-                    if (audioFuture == null) {
-                        audioFuture = synthesizeAsync(synthesisExecutor, provider, selection, chunks.get(index), responseFormat);
+                    if (audioOperation == null) {
+                        audioOperation = newSynthesisOperation(provider, selection, chunks.get(index), responseFormat, apiKey);
+                        activeSynthesisOperation.set(audioOperation);
+                        if (isStale(requestId, messageKey)) {
+                            cancel(audioOperation);
+                            return;
+                        }
+                        audioOperation.start();
                     }
-                    TextToSpeechAudio audio = audioFuture.get();
-                    CompletableFuture<TextToSpeechAudio> nextAudioFuture = index + 1 < chunks.size()
-                            ? synthesizeAsync(synthesisExecutor, provider, selection, chunks.get(index + 1), responseFormat)
-                            : null;
+                    TextToSpeechAudio audio = audioOperation.result().get();
                     if (isStale(requestId, messageKey)) {
-                        cancel(nextAudioFuture);
                         return;
                     }
+                    SynthesisOperation nextAudioOperation = index + 1 < chunks.size()
+                            ? newSynthesisOperation(provider, selection, chunks.get(index + 1), responseFormat, apiKey)
+                            : null;
+                    activeSynthesisOperation.set(nextAudioOperation);
+                    if (isStale(requestId, messageKey)) {
+                        cancel(nextAudioOperation);
+                        awaitSettlement(nextAudioOperation);
+                        return;
+                    }
+                    if (nextAudioOperation != null) {
+                        nextAudioOperation.start();
+                    }
+                    audioOperation = nextAudioOperation;
                     report(statusHandler, "Playing read aloud...");
-                    playbackService.play(audio);
-                    audioFuture = nextAudioFuture;
+                    playbackService.play(audio, () -> isStale(requestId, messageKey));
                 }
+            } finally {
+                cancel(audioOperation);
+                activeSynthesisOperation.set(null);
+                awaitSettlement(audioOperation);
             }
-            report(statusHandler, "Read aloud complete.");
+            if (!isStale(requestId, messageKey)) {
+                report(statusHandler, "Read aloud complete.");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
+            rethrowUnexpectedError(e);
             if (!isStale(requestId, messageKey)) {
-                log.warn("Read aloud failed: {}", e.toString());
-                report(errorHandler, "Read aloud failed: %s".formatted(StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName())));
+                String safeMessage = ProviderExceptionMapper.sanitizeMessage(e, apiKey);
+                log.warn("Read aloud failed: {}", safeMessage);
+                report(errorHandler, "Read aloud failed: %s".formatted(StringUtils.defaultIfBlank(safeMessage, e.getClass().getSimpleName())));
             }
         } finally {
             if (!isStale(requestId, messageKey) && activeMessageKey.compareAndSet(messageKey, "")) {
@@ -211,31 +325,98 @@ public class TextToSpeechService {
         }
     }
 
-    private CompletableFuture<TextToSpeechAudio> synthesizeAsync(
-            ExecutorService synthesisExecutor,
+    private SynthesisOperation newSynthesisOperation(
             TextToSpeechProvider provider,
             TextToSpeechSettings.Selection selection,
             String chunk,
-            String responseFormat
+            String responseFormat,
+            String apiKey
     ) {
-        return CompletableFuture.supplyAsync(() -> {
+        var result = new CompletableFuture<TextToSpeechAudio>();
+        var cancelled = new AtomicBoolean();
+        Thread thread = Thread.ofVirtual().name("chat4j-tts-synthesis").unstarted(() -> {
+            if (cancelled.get() || Thread.currentThread().isInterrupted()) {
+                result.cancel(false);
+                return;
+            }
             try {
-                return provider.synthesize(new TextToSpeechRequest(
+                var request = new TextToSpeechRequest(
                         provider.id(),
                         selection.model().id(),
                         selection.voice().id(),
                         chunk,
                         responseFormat
-                ));
-            } catch (Exception e) {
-                throw new IllegalStateException(e);
+                );
+                result.complete(provider.synthesize(request, apiKey));
+            } catch (Throwable t) {
+                result.completeExceptionally(t);
             }
-        }, synthesisExecutor);
+        });
+        return new SynthesisOperation(thread, result, cancelled);
     }
 
-    private static void cancel(CompletableFuture<?> future) {
+    private static void rethrowUnexpectedError(Throwable failure) {
+        Throwable cause = failure instanceof ExecutionException && failure.getCause() != null
+                ? failure.getCause()
+                : failure;
+        if (cause instanceof Error error && !(error instanceof LinkageError)) {
+            throw error;
+        }
+    }
+
+    private static CompletableFuture<Void> awaitTerminationAsync(ExecutorService executor, String threadName) {
+        return CompletableFuture.runAsync(
+                () -> awaitTermination(executor),
+                command -> Thread.ofVirtual().name(threadName).start(command)
+        );
+    }
+
+    private static void awaitTermination(ExecutorService executor) {
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+            while (!executor.isTerminated()) {
+                try {
+                    executor.awaitTermination(1, TimeUnit.DAYS);
+                } catch (InterruptedException e) {
+                    restoreInterrupt = true;
+                }
+            }
+        } finally {
+            if (restoreInterrupt) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static void cancel(Future<?> future) {
         if (future != null) {
             future.cancel(true);
+        }
+    }
+
+    private static void cancel(SynthesisOperation operation) {
+        if (operation != null) {
+            operation.cancel();
+        }
+    }
+
+    private static void awaitSettlement(SynthesisOperation operation) {
+        if (operation == null) {
+            return;
+        }
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+            while (operation.thread().isAlive()) {
+                try {
+                    operation.thread().join();
+                } catch (InterruptedException e) {
+                    restoreInterrupt = true;
+                }
+            }
+        } finally {
+            if (restoreInterrupt) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -320,24 +501,29 @@ public class TextToSpeechService {
         }
     }
 
+    private record SynthesisOperation(
+            Thread thread,
+            CompletableFuture<TextToSpeechAudio> result,
+            AtomicBoolean cancelled
+    ) {
+        private void start() {
+            if (cancelled.get()) {
+                result.cancel(false);
+                return;
+            }
+            thread.start();
+        }
+
+        private void cancel() {
+            cancelled.set(true);
+            result.cancel(false);
+            thread.interrupt();
+        }
+    }
+
     private static final class DisabledTextToSpeechService extends TextToSpeechService {
         private DisabledTextToSpeechService() {
-            super(
-                    new TextToSpeechSettings(
-                            new SettingsRepository(Path.of(System.getProperty("java.io.tmpdir"), "chat4j-disabled-tts.properties")),
-                            new TextToSpeechProviderRegistry(emptyList())
-                    ),
-                    new AudioPlaybackService() {
-                        @Override
-                        public void play(TextToSpeechAudio audio) {
-                        }
-
-                        @Override
-                        public void stop() {
-                        }
-                    },
-                    Executors.newSingleThreadExecutor(Thread.ofVirtual().name("chat4j-disabled-tts-", 0).factory())
-            );
+            super(null, null, null);
         }
 
         @Override
@@ -366,6 +552,11 @@ public class TextToSpeechService {
 
         @Override
         public void stop() {
+        }
+
+        @Override
+        public CompletableFuture<Void> disposeAsync() {
+            return CompletableFuture.completedFuture(null);
         }
 
         @Override

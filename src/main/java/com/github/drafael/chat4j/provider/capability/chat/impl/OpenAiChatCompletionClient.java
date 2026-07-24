@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
@@ -219,7 +220,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         StringUtils.defaultIfBlank(modelId, "unknown"),
                         RESPONSES_ENDPOINT,
                         CHAT_COMPLETIONS_ENDPOINT,
-                        ExceptionUtils.getMessage(e));
+                        ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
                 COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
                 streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
                 updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
@@ -238,7 +239,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     StringUtils.defaultIfBlank(modelId, "unknown"),
                     CHAT_COMPLETIONS_ENDPOINT,
                     RESPONSES_ENDPOINT,
-                    ExceptionUtils.getMessage(e));
+                    ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
             COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
             streamWithResponses(runtime, history, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
             updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
@@ -300,7 +301,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         runtime.selectedModel(),
                         attempts.get(attemptIndex),
                         attempts.get(attemptIndex + 1),
-                        ExceptionUtils.getMessage(e));
+                        ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
             } finally {
                 clearActiveStream.run();
             }
@@ -384,7 +385,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         runtime.selectedModel(),
                         attempts.get(attemptIndex),
                         attempts.get(attemptIndex + 1),
-                        ExceptionUtils.getMessage(e));
+                        ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
             } finally {
                 clearActiveStream.run();
             }

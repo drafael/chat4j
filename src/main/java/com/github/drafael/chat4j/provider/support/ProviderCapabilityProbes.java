@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.StringUtils;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -14,12 +16,15 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.StreamSupport;
 
 import static com.github.drafael.chat4j.provider.support.ProviderCapabilityHints.*;
 
 final class ProviderCapabilityProbes {
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    private static final Duration BODY_READ_TIMEOUT = Duration.ofSeconds(2);
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofMillis(800))
             .build();
@@ -138,16 +143,11 @@ final class ProviderCapabilityProbes {
 
             applyAuthHeaders(requestBuilder, provider, apiKey);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return Optional.empty();
-            }
-
-            JsonNode root = JSON.readTree(response.body());
-            return ProviderCapabilityJsonParser.resolveToolSupportFromNode(root);
+            return sendJson(requestBuilder.build())
+                    .flatMap(ProviderCapabilityJsonParser::resolveToolSupportFromNode);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -348,24 +348,19 @@ final class ProviderCapabilityProbes {
 
             applyAuthHeaders(requestBuilder, provider, apiKey);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return Optional.empty();
-            }
-
-            JsonNode root = JSON.readTree(response.body());
-            Optional<Boolean> fromCapabilities = ProviderCapabilityJsonParser.resolveImageSupportFromCapabilitiesField(root.path("capabilities"));
-            if (fromCapabilities.isPresent()) {
-                return fromCapabilities;
-            }
-
-            if (ProviderCapabilityJsonParser.containsOllamaVisionSignals(root)) {
-                return Optional.of(true);
-            }
-
+            return sendJson(requestBuilder.build()).flatMap(root -> {
+                Optional<Boolean> fromCapabilities = ProviderCapabilityJsonParser.resolveImageSupportFromCapabilitiesField(
+                        root.path("capabilities")
+                );
+                if (fromCapabilities.isPresent()) {
+                    return fromCapabilities;
+                }
+                return ProviderCapabilityJsonParser.containsOllamaVisionSignals(root)
+                        ? Optional.of(true)
+                        : Optional.empty();
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return Optional.empty();
         } catch (Exception e) {
             return Optional.empty();
@@ -388,16 +383,11 @@ final class ProviderCapabilityProbes {
 
             applyAuthHeaders(requestBuilder, provider, apiKey);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return Optional.empty();
-            }
-
-            JsonNode root = JSON.readTree(response.body());
-            return ProviderCapabilityJsonParser.resolveReasoningSupportFromNode(root);
+            return sendJson(requestBuilder.build())
+                    .flatMap(ProviderCapabilityJsonParser::resolveReasoningSupportFromNode);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -411,20 +401,81 @@ final class ProviderCapabilityProbes {
                     .GET();
             applyAuthHeaders(requestBuilder, provider, apiKey);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
-                    requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-            );
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return Optional.empty();
-            }
-
-            return Optional.of(JSON.readTree(response.body()));
+            return sendJson(requestBuilder.build());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (Exception e) {
             return Optional.empty();
         }
     }
 
+
+    private static Optional<JsonNode> sendJson(HttpRequest request) throws IOException, InterruptedException {
+        HttpResponse<InputStream> response = HTTP_CLIENT.send(
+                request,
+                HttpResponse.BodyHandlers.ofInputStream()
+        );
+        try (InputStream body = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return Optional.empty();
+            }
+            long declaredLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+            if (declaredLength > MAX_RESPONSE_BYTES) {
+                return Optional.empty();
+            }
+            AtomicBoolean finished = new AtomicBoolean();
+            Thread readerThread = Thread.currentThread();
+            Thread watcher = Thread.startVirtualThread(() -> watchBodyRead(body, readerThread, finished));
+            try {
+                byte[] bytes = body.readNBytes(MAX_RESPONSE_BYTES + 1);
+                if (bytes.length > MAX_RESPONSE_BYTES) {
+                    return Optional.empty();
+                }
+                return Optional.ofNullable(JSON.readTree(bytes));
+            } finally {
+                finished.set(true);
+                watcher.interrupt();
+                join(watcher);
+            }
+        }
+    }
+
+    private static void watchBodyRead(InputStream body, Thread readerThread, AtomicBoolean finished) {
+        long deadlineNanos = System.nanoTime() + BODY_READ_TIMEOUT.toNanos();
+        while (!finished.get()) {
+            if (readerThread.isInterrupted() || System.nanoTime() >= deadlineNanos) {
+                try {
+                    body.close();
+                } catch (IOException ignored) {
+                }
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    private static void join(Thread thread) {
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+            while (thread.isAlive()) {
+                try {
+                    thread.join();
+                } catch (InterruptedException e) {
+                    restoreInterrupt = true;
+                }
+            }
+        } finally {
+            if (restoreInterrupt) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
 
     private static void applyAuthHeaders(HttpRequest.Builder requestBuilder, String provider, String apiKey) {
         if (StringUtils.isBlank(apiKey)) {

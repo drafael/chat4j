@@ -49,20 +49,6 @@ class ProviderServiceAgentAdapterTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("model");
-            }
-
-            @Override
-            public String name() {
-                return "Test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         };
 
         ProviderServiceAgentAdapter subject = new ProviderServiceAgentAdapter(providerService, "Use concise summaries");

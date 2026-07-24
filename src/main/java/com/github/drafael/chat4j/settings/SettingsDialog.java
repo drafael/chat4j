@@ -6,8 +6,11 @@ import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
@@ -16,6 +19,7 @@ import java.beans.PropertyChangeListener;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,6 +49,10 @@ public class SettingsDialog extends JDialog {
     private final SettingsCredentialChangeListener credentialChangeListener;
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
+    private final Map<String, String> subprocessEnvironment;
+    private final WhisperNativeRuntime whisperNativeRuntime;
 
     public SettingsDialog(
             @NonNull Frame owner,
@@ -56,7 +64,11 @@ public class SettingsDialog extends JDialog {
             @NonNull WhisperModelManagementService whisperModelManagementService,
             @NonNull SettingsCredentialChangeListener credentialChangeListener,
             @NonNull CopilotAuthResolver copilotAuthResolver,
-            @NonNull CodexAuthResolver codexAuthResolver
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull CredentialMutationService credentialMutationService,
+            @NonNull Map<String, String> subprocessEnvironment,
+            @NonNull WhisperNativeRuntime whisperNativeRuntime
     ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
@@ -66,6 +78,10 @@ public class SettingsDialog extends JDialog {
         this.credentialChangeListener = credentialChangeListener;
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
+        this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+        this.whisperNativeRuntime = whisperNativeRuntime;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -177,13 +193,32 @@ public class SettingsDialog extends JDialog {
                         new ProvidersPanel(
                                 settingsRepo,
                                 tokenFieldRegistry,
+                                credentialResolver,
+                                credentialMutationService,
                                 credentialChangeListener,
                                 copilotAuthResolver,
                                 codexAuthResolver
                         )
                 ),
-                new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(settingsRepo, tokenFieldRegistry, credentialChangeListener)),
-                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(settingsRepo, sttModelsDirectory, voskModelManagementService, whisperModelManagementService, tokenFieldRegistry, credentialChangeListener)),
+                new SettingsSection("tts", "Text to Speech", "/icons/chat/volume-2.svg", new TextToSpeechPanel(
+                        settingsRepo,
+                        credentialResolver,
+                        credentialMutationService,
+                        subprocessEnvironment,
+                        tokenFieldRegistry,
+                        credentialChangeListener
+                )),
+                new SettingsSection("stt", "Speech to Text", "/icons/chat/mic.svg", new SpeechToTextPanel(
+                        settingsRepo,
+                        sttModelsDirectory,
+                        voskModelManagementService,
+                        whisperModelManagementService,
+                        credentialResolver,
+                        credentialMutationService,
+                        whisperNativeRuntime,
+                        tokenFieldRegistry,
+                        credentialChangeListener
+                )),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
         );
     }
@@ -248,6 +283,11 @@ public class SettingsDialog extends JDialog {
             );
             return;
         }
+        sections.stream()
+                .map(SettingsSection::content)
+                .filter(SpeechToTextPanel.class::isInstance)
+                .map(SpeechToTextPanel.class::cast)
+                .forEach(SpeechToTextPanel::disposePanel);
         SettingsDialog.super.dispose();
     }
 

@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.ProviderRuntimeSettings;
@@ -115,6 +116,8 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     private final List<Runnable> authStatusRefreshers = new ArrayList<>();
     private final JList<String> providerList;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
     private final SettingsCredentialChangeListener credentialChangeListener;
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
@@ -142,12 +145,16 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     public ProvidersPanel(
             @NonNull SettingsRepository settingsRepo,
             @NonNull ApiTokenFieldRegistry tokenFieldRegistry,
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull CredentialMutationService credentialMutationService,
             SettingsCredentialChangeListener credentialChangeListener,
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver
     ) {
         super(settingsRepo);
         this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
@@ -330,6 +337,8 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             ApiTokenFieldPanel tokenField = withPreferredWidth(new ApiTokenFieldPanel(
                     info.envVar(),
                     tokenFieldRegistry,
+                    credentialResolver,
+                    credentialMutationService,
                     credentialChangeListener,
                     () -> refreshProviderCredentialUi(statusLabel, name, info, missingApiKeyInfoPanel)
             ), 420);
@@ -468,7 +477,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private void applyApiCredentialStatus(JLabel status, ProviderInfo info) {
-        ApiCredentialStatus credentialStatus = CredentialResolver.resolveCredentialStatus(info.envVar(), null);
+        ApiCredentialStatus credentialStatus = credentialResolver.resolveCredentialStatus(info.envVar(), null);
         switch (credentialStatus.source()) {
             case SAVED_TOKEN -> {
                 status.setText("\u2713 Saved token configured");
@@ -511,7 +520,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         if (!shouldShowApiTokenField(info)) {
             return false;
         }
-        return !CredentialResolver.hasRequiredCredentials(info.envVar());
+        return !credentialResolver.hasRequiredCredentials(info.envVar());
     }
 
     private JComponent createMissingApiKeyInfoPanel(String providerName, ProviderInfo info) {
@@ -1612,7 +1621,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
     private OpenRouterUsageSnapshot fetchOpenRouterUsage(ProviderInfo info) {
         try {
-            String apiKey = CredentialResolver.resolveApiKey(info.envVar(), null);
+            String apiKey = credentialResolver.resolveApiKey(info.envVar(), null);
             if (StringUtils.isBlank(apiKey)) {
                 return OpenRouterUsageSnapshot.error("OPENROUTER_API_KEY not set");
             }
@@ -1796,7 +1805,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             return LocalServiceHealth.isReachableNonBlocking(configuredBaseUrl);
         }
 
-        return CredentialResolver.hasRequiredCredentials(info.envVar());
+        return credentialResolver.hasRequiredCredentials(info.envVar());
     }
 
     private void cacheAuthAvailability(String providerName, boolean authorized) {

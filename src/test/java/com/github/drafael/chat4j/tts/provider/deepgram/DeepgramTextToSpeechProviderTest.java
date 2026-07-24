@@ -1,6 +1,8 @@
 package com.github.drafael.chat4j.tts.provider.deepgram;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
@@ -8,11 +10,13 @@ import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,15 +26,20 @@ class DeepgramTextToSpeechProviderTest {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @AfterEach
-    void tearDown() {
-        CredentialResolver.init(emptyMap());
+    @TempDir
+    Path tempDir;
+
+    private CredentialResolver credentialResolver;
+
+    @BeforeEach
+    void setUpCredentials() {
+        credentialResolver = resolver(emptyMap());
     }
 
     @Test
     @DisplayName("Deepgram exposes a model family and a default voice as separate selections")
     void metadata_whenCreated_separatesModelAndVoiceSelections() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThat(subject.defaultModel().id()).isEqualTo("aura-2");
         assertThat(subject.defaultVoice().id()).isEqualTo("aura-2-thalia-en");
@@ -41,12 +50,12 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram uses documented Aura voice model as the model query parameter")
     void synthesize_whenCalled_sendsVoiceModelToSpeakEndpoint() throws Exception {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
         TtsHttpRequest[] captured = new TtsHttpRequest[1];
         var subject = new DeepgramTextToSpeechProvider(request -> {
             captured[0] = request;
             return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2, 3, 4});
-        });
+        }, credentialResolver);
 
         var audio = subject.synthesize(new TextToSpeechRequest(
                 DeepgramTextToSpeechProvider.ID,
@@ -73,9 +82,31 @@ class DeepgramTextToSpeechProviderTest {
     }
 
     @Test
+    @DisplayName("Deepgram synthesis uses the request-owned API key")
+    void synthesize_whenRequestApiKeyIsProvided_usesProvidedCredential() throws Exception {
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "live-key"));
+        TtsHttpRequest[] captured = new TtsHttpRequest[1];
+        var subject = new DeepgramTextToSpeechProvider(request -> {
+            captured[0] = request;
+            return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
+        }, credentialResolver);
+        var request = new TextToSpeechRequest(
+                DeepgramTextToSpeechProvider.ID,
+                "aura-2",
+                "aura-2-thalia-en",
+                "hello",
+                "wav"
+        );
+
+        subject.synthesize(request, "request-key");
+
+        assertThat(captured[0].headers()).containsEntry("Authorization", "Token request-key");
+    }
+
+    @Test
     @DisplayName("Deepgram read aloud uses short chunks for fast first audio")
     void maxInputCharacters_whenAsked_usesResponsiveReadAloudChunkSize() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThat(subject.maxInputCharacters()).isEqualTo(140);
     }
@@ -83,7 +114,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram catalog discovery exposes model families separately from voices")
     void fetchModels_whenModelsEndpointReturnsTtsItems_returnsModelFamilies() throws Exception {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new DeepgramTextToSpeechProvider(request -> json("""
                 {
                   "stt": [{"canonical_name":"nova-3-general"}],
@@ -93,7 +124,7 @@ class DeepgramTextToSpeechProviderTest {
                     {"name":"not-a-voice","canonical_name":"nova-3-general"}
                   ]
                 }
-                """));
+                """), credentialResolver);
 
         List<TextToSpeechCatalogItem> models = subject.fetchModels();
 
@@ -104,7 +135,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram catalog discovery reads canonical TTS voice model ids as voices")
     void fetchVoices_whenModelsEndpointReturnsTtsItems_usesCanonicalVoiceModelIds() throws Exception {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new DeepgramTextToSpeechProvider(request -> json("""
                 {
                   "stt": [{"canonical_name":"nova-3-general"}],
@@ -113,7 +144,7 @@ class DeepgramTextToSpeechProviderTest {
                     {"name":"not-a-voice","canonical_name":"nova-3-general"}
                   ]
                 }
-                """));
+                """), credentialResolver);
 
         List<TextToSpeechCatalogItem> voices = subject.fetchVoices();
 
@@ -125,8 +156,8 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram model discovery rejects a missing TTS array")
     void fetchModels_whenTtsArrayMissing_throws() {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -136,8 +167,8 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram voice discovery rejects a missing TTS array")
     void fetchVoices_whenTtsArrayMissing_throws() {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -147,8 +178,8 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram voice discovery rejects entries without canonical ids")
     void fetchVoices_whenCanonicalIdsMissing_throws() {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{\"tts\":[{}]}"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{\"tts\":[{}]}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -158,7 +189,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram voice list follows the selected model family")
     void voicesForModel_whenMultipleAuraFamiliesExist_filtersByFamily() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
         List<TextToSpeechCatalogItem> voices = List.of(
                 TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"),
                 TextToSpeechCatalogItem.of("aura-3-luna-en", "luna")
@@ -172,7 +203,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram normalizes legacy saved voice-model model selections to the model family")
     void normalizeModelSelection_whenSavedModelContainsVoiceModel_returnsModelFamily() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         TextToSpeechCatalogItem model = subject.normalizeModelSelection(TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"));
 
@@ -183,7 +214,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram does not copy the default voice description onto other saved voices")
     void normalizeVoiceSelection_whenSavedVoiceUsesFallbackDescription_clearsMisleadingDescription() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"));
+        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
         var savedVoice = new TextToSpeechCatalogItem(
                 "aura-2-zeus-en",
                 "zeus",
@@ -199,16 +230,25 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram falls back to its documented default voice model for invalid selections")
     void synthesize_whenSelectionIsInvalid_usesDefaultVoiceModel() throws Exception {
-        CredentialResolver.init(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
         TtsHttpRequest[] captured = new TtsHttpRequest[1];
         var subject = new DeepgramTextToSpeechProvider(request -> {
             captured[0] = request;
             return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
-        });
+        }, credentialResolver);
 
         subject.synthesize(new TextToSpeechRequest(DeepgramTextToSpeechProvider.ID, "aura-2", "aura-2--en", "hello", "mp3"));
 
         assertThat(queryParameter(captured[0], "model")).isEqualTo("aura-2-thalia-en");
+    }
+
+
+    private CredentialResolver resolver(Map<String, String> shellEnvironment) {
+        return new CredentialResolver(
+                new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials"))),
+                emptyMap(),
+                shellEnvironment
+        );
     }
 
     private static TtsHttpResponse json(String body) {

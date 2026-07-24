@@ -24,10 +24,6 @@ public class SpeechToTextProviderRegistry {
         SpeechCatalogKeySchema.validateUniqueProviderSlugs(this.providers.stream().map(SpeechToTextProvider::id).toList());
     }
 
-    public static SpeechToTextProviderRegistry createDefault() {
-        return createDefault(new WhisperSpeechToTextProvider());
-    }
-
     public static SpeechToTextProviderRegistry createDefault(WhisperEngine whisperEngine) {
         return createDefault(new WhisperSpeechToTextProvider(whisperEngine));
     }

@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.stt.provider;
 
 import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
 import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.util.List;
 import org.apache.commons.lang3.StringUtils;
 
@@ -40,10 +39,14 @@ public interface SpeechToTextProvider {
     }
 
     default String availableMessage() {
+        return "Using %s.".formatted(displayName());
+    }
+
+    default String availableMessage(CredentialSource credentialSource) {
         if (StringUtils.isBlank(requiredEnvVar())) {
-            return "Using %s.".formatted(displayName());
+            return availableMessage();
         }
-        ApiCredentialStatus status = CredentialResolver.resolveCredentialStatus(requiredEnvVar(), null);
+        ApiCredentialStatus status = credentialSource.credentialStatus(requiredEnvVar());
         if (status.source() == ApiCredentialSource.SAVED_TOKEN) {
             return "Using %s with entered/stored API token.".formatted(displayName());
         }

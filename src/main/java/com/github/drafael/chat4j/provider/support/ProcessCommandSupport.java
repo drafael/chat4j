@@ -17,11 +17,12 @@ public final class ProcessCommandSupport {
     private ProcessCommandSupport() {
     }
 
-    public static void applyShellEnvironment(ProcessBuilder processBuilder) {
-        Map<String, String> mergedEnvironment = CredentialResolver.mergedEnvironment();
-        processBuilder.environment().putAll(mergedEnvironment);
+    public static void applyEnvironment(ProcessBuilder processBuilder, Map<String, String> environment) {
+        Map<String, String> immutableEnvironment = Map.copyOf(environment);
+        processBuilder.environment().clear();
+        processBuilder.environment().putAll(immutableEnvironment);
 
-        List<String> resolvedCommand = resolveCommand(processBuilder.command(), mergedEnvironment);
+        List<String> resolvedCommand = resolveCommand(processBuilder.command(), immutableEnvironment);
         processBuilder.command(resolvedCommand);
     }
 
@@ -50,7 +51,7 @@ public final class ProcessCommandSupport {
     }
 
     private static String resolveExecutable(String executable, Map<String, String> environment) {
-        String pathValue = environment.get("PATH");
+        String pathValue = environmentValue(environment, "PATH");
         if (StringUtils.isBlank(pathValue)) {
             return null;
         }
@@ -83,7 +84,10 @@ public final class ProcessCommandSupport {
             return null;
         }
 
-        String pathExt = environment.getOrDefault("PATHEXT", ".EXE;.CMD;.BAT;.COM");
+        String pathExt = StringUtils.defaultIfBlank(
+                environmentValue(environment, "PATHEXT"),
+                ".EXE;.CMD;.BAT;.COM"
+        );
         for (String ext : pathExt.split(";")) {
             String normalizedExt = ext == null ? "" : ext.trim();
             if (normalizedExt.isEmpty()) {
@@ -97,5 +101,17 @@ public final class ProcessCommandSupport {
         }
 
         return null;
+    }
+
+    private static String environmentValue(Map<String, String> environment, String name) {
+        String exact = environment.get(name);
+        if (exact != null) {
+            return exact;
+        }
+        return environment.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(name))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
     }
 }

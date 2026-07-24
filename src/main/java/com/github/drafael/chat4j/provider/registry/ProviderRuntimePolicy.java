@@ -32,6 +32,7 @@ final class ProviderRuntimePolicy {
 
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
+    private final CredentialResolver credentialResolver;
     private final Clock clock;
     private final ConcurrentHashMap<String, AuthStatusSnapshot> authStatusByProvider = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicBoolean> authRefreshInFlightByProvider = new ConcurrentHashMap<>();
@@ -41,17 +42,23 @@ final class ProviderRuntimePolicy {
     private volatile Runnable authStatusRefreshListener = () -> {
     };
 
-    ProviderRuntimePolicy(@NonNull CopilotAuthResolver copilotAuthResolver, @NonNull CodexAuthResolver codexAuthResolver) {
-        this(copilotAuthResolver, codexAuthResolver, Clock.systemUTC());
+    ProviderRuntimePolicy(
+            @NonNull CopilotAuthResolver copilotAuthResolver,
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CredentialResolver credentialResolver
+    ) {
+        this(copilotAuthResolver, codexAuthResolver, credentialResolver, Clock.systemUTC());
     }
 
     ProviderRuntimePolicy(
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CredentialResolver credentialResolver,
             @NonNull Clock clock
     ) {
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
+        this.credentialResolver = credentialResolver;
         this.clock = clock;
     }
 
@@ -72,7 +79,7 @@ final class ProviderRuntimePolicy {
         return switch (providerDefinition.descriptor().authType()) {
             case COPILOT_OAUTH -> hasCopilotAuthCredentials(providerDefinition);
             case CODEX_OAUTH -> hasCodexAuthCredentials(providerDefinition);
-            case ENV_VAR -> CredentialResolver.hasRequiredCredentials(providerDefinition.envVar());
+            case ENV_VAR -> credentialResolver.hasRequiredCredentials(providerDefinition.envVar());
         };
     }
 

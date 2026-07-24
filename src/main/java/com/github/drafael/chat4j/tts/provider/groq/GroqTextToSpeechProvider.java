@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.tts.provider.groq;
 
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
@@ -46,8 +47,8 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     );
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = Stream.concat(ENGLISH_VOICES.stream(), ARABIC_VOICES.stream()).toList();
 
-    public GroqTextToSpeechProvider(TtsHttpTransport transport) {
-        super(transport);
+    public GroqTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
+        super(transport, credentialResolver);
     }
 
     @Override
@@ -143,13 +144,18 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request) throws Exception {
+        return synthesize(request, apiKey());
+    }
+
+    @Override
+    public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         ObjectNode body = OBJECT_MAPPER.createObjectNode();
         String modelId = normalizeModelId(request.modelId());
         body.put("model", modelId);
         body.put("voice", normalizeVoiceId(modelId, request.voiceId()));
         body.put("input", request.text());
         body.put("response_format", StringUtils.defaultIfBlank(request.responseFormat(), "wav"));
-        TtsHttpResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(), body);
+        TtsHttpResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(apiKey), body);
         return audioBody(response, "wav");
     }
 
@@ -192,9 +198,9 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
         return Map.of("Authorization", "Bearer %s".formatted(apiKey()));
     }
 
-    private Map<String, String> jsonHeaders() {
+    private Map<String, String> jsonHeaders(String apiKey) {
         return Map.of(
-                "Authorization", "Bearer %s".formatted(apiKey()),
+                "Authorization", "Bearer %s".formatted(apiKey),
                 "Content-Type", "application/json",
                 "Accept", "audio/wav, audio/mpeg"
         );

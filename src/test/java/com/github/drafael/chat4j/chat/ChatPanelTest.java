@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
 import com.github.drafael.chat4j.chat.model.ModelSelectorPopup;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
@@ -36,9 +37,13 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.audio.AudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
@@ -92,6 +97,7 @@ import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 class ChatPanelTest {
@@ -103,6 +109,8 @@ class ChatPanelTest {
     private ProviderRegistry providerRegistry;
     private CopilotAuthResolver copilotAuthResolver;
     private CodexAuthResolver codexAuthResolver;
+    private CredentialResolver credentialResolver;
+    private CredentialMutationService credentialMutationService;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -116,10 +124,17 @@ class ChatPanelTest {
                 emptyMap(),
                 HttpClient.newHttpClient()
         );
+        ApiTokenVault tokenVault = new ApiTokenVault(
+                StoragePaths.ofConfigHome(tempDir.resolve("credentials"))
+        );
+        credentialResolver = new CredentialResolver(tokenVault, emptyMap(), emptyMap());
+        credentialMutationService = new CredentialMutationService(tokenVault, credentialResolver);
         providerRegistry = new ProviderRegistry(
                 copilotAuthResolver,
                 codexAuthResolver,
-                new CopilotModelMetadataStore(tempDir.resolve("provider-metadata"))
+                new CopilotModelMetadataStore(tempDir.resolve("provider-metadata")),
+                credentialResolver,
+                emptyMap()
         );
         providerRegistry.applyRuntimeConfig(Map.of(
                 "GitHub Copilot", new ProviderRegistry.ProviderRuntimeConfig(false, null),
@@ -141,6 +156,7 @@ class ChatPanelTest {
             runOnEdt(subject::removeNotify);
             runOnEdt(() -> {});
         }
+        credentialMutationService.closeSecrets();
     }
 
     @Test
@@ -218,20 +234,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("gpt-5-mini");
-            }
-
-            @Override
-            public String name() {
-                return "OpenAI";
-            }
-
-            @Override
-            public String envVarName() {
-                return "OPENAI_API_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -261,10 +263,9 @@ class ChatPanelTest {
                 UUID.randomUUID(),
                 "xAI",
                 "grok-4",
+                testProviderDefinition("xAI", ProviderCapabilities.chatAndModels()),
                 "https://api.x.ai/v1",
-                "test-key",
                 ProviderCapabilities.chatAndModels(),
-                immediateProvider("pong"),
                 history,
                 ReasoningLevel.OFF,
                 true,
@@ -289,10 +290,9 @@ class ChatPanelTest {
                 UUID.randomUUID(),
                 "xAI",
                 "gpt-5",
+                testProviderDefinition("xAI", ProviderCapabilities.chatAndModels()),
                 "https://api.x.ai/v1",
-                "test-key",
                 ProviderCapabilities.chatAndModels(),
-                immediateProvider("pong"),
                 history,
                 ReasoningLevel.OFF,
                 true,
@@ -318,10 +318,9 @@ class ChatPanelTest {
                 UUID.randomUUID(),
                 "Custom Provider",
                 "custom-web-model",
+                testProviderDefinition("Custom Provider", capabilities),
                 "https://provider.example/v1",
-                "test-key",
                 capabilities,
-                immediateProvider("pong"),
                 history,
                 ReasoningLevel.OFF,
                 true,
@@ -902,16 +901,140 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Selecting a non-seed model still creates a runtime provider for the selected provider")
-    void setSelectedModel_whenModelIsNotPartOfSeedModels_createsProviderForSelectedProvider() throws Exception {
-        runOnEdt(() -> subject.setSelectedModel("Ollama > llama3.2:latest"));
+    @DisplayName("Selecting a non-seed model retains configuration without creating a provider")
+    void setSelectedModel_whenModelIsNotPartOfSeedModels_retainsSelectionWithoutCreatingProvider() throws Exception {
+        var factoryCalls = new AtomicInteger();
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "Ollama",
+                null,
+                "http://localhost:11434/v1",
+                List.of("llama3.2:latest"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    factoryCalls.incrementAndGet();
+                    return immediateProvider("ok");
+                },
+                List::of
+        );
 
-        awaitProviderResolved(subject);
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("Ollama > llama3.2:latest");
+        });
 
-        Object currentProvider = readCurrentProvider(subject);
         assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Ollama > llama3.2:latest");
-        assertThat(currentProvider).isNotNull();
-        assertThat(currentProvider).isInstanceOf(ProviderService.class);
+        assertThat(factoryCalls).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("The next send resolves a GUI token saved after model selection")
+    void onSend_whenGuiTokenChangesAfterSelection_usesLatestToken() throws Exception {
+        var admittedToken = new AtomicReference<String>();
+        var factoryCalls = new AtomicInteger();
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "OpenAI",
+                "OPENAI_API_KEY",
+                "https://api.openai.com/v1",
+                List.of("gpt-test"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    factoryCalls.incrementAndGet();
+                    String token = credentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", null);
+                    admittedToken.set(token);
+                    return providerWithApiKey(token);
+                },
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("OpenAI > gpt-test");
+            subject.getInputBar().setText("hello");
+        });
+        assertThat(factoryCalls).hasValue(0);
+        credentialMutationService.saveTokenOverride(
+                "OPENAI_API_KEY",
+                "latest-gui-token".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> admittedToken.get() != null);
+        flushEdt();
+
+        assertThat(admittedToken).hasValue("latest-gui-token");
+        assertThat(factoryCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Request settlement clears provider and credential references")
+    void finishSendJob_whenStreamSettles_clearsRequestCredentialReferences() throws Exception {
+        var streamStarted = new CountDownLatch(1);
+        var releaseStream = new CountDownLatch(1);
+        ProviderService requestProvider = new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseStream.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                onComplete.run();
+            }
+
+
+            @Override
+            public String apiKey() {
+                return "request-secret";
+            }
+        };
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "OpenAI",
+                "OPENAI_API_KEY",
+                "https://api.openai.com/v1",
+                List.of("gpt-test"),
+                ProviderCapabilities.chatAndModels(),
+                model -> requestProvider,
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            subject.setSelectedModel("OpenAI > gpt-test");
+            subject.getInputBar().setText("hello");
+        });
+
+        SendJob sendJob;
+        StreamingSession session;
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            sendJob = callOnEdt(() -> ((Map<Long, SendJob>) readField(subject, "activeSendJobs"))
+                    .values().iterator().next());
+            session = callOnEdt(() -> ((Map<Long, StreamingSession>) readField(subject, "activeSessions"))
+                    .values().iterator().next());
+            assertThat(sendJob.apiKey).isEqualTo("request-secret");
+            assertThat(sendJob.provider).isSameAs(requestProvider);
+            assertThat(session.provider).isSameAs(requestProvider);
+        } finally {
+            releaseStream.countDown();
+        }
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+                        && ((Map<?, ?>) readField(subject, "activeSessions")).isEmpty()));
+        flushEdt();
+
+        assertThat(sendJob.apiKey).isNull();
+        assertThat(sendJob.provider).isNull();
+        assertThat(session.provider).isNull();
     }
 
     @Test
@@ -935,13 +1058,10 @@ class ChatPanelTest {
             subject.getInputBar().setText("ready to send");
             subject.setSelectedModel("Ollama > llama3.2:latest");
         });
-        awaitProviderResolved(subject);
-        assertThat(readCurrentProvider(subject)).isNotNull();
         assertThat(callOnEdt(() -> subject.getInputBar().isSendable())).isTrue();
 
         runOnEdt(() -> subject.setSelectedModel("UnavailableProvider > some-model"));
 
-        assertThat(readCurrentProvider(subject)).isNull();
         assertThat(callOnEdt(subject::getSelectedModel)).isNull();
         assertThat(callOnEdt(() -> subject.getInputBar().isSendable())).isFalse();
     }
@@ -963,12 +1083,7 @@ class ChatPanelTest {
             invokeUpdateProviderModelsFromPopup(subject, List.of(provider));
             subject.setSelectedModel("LateProvider > late-model");
         });
-        awaitProviderResolved(subject);
-
-        runOnEdt(() -> {
-            assertThat(subject.getSelectedModel()).isEqualTo("LateProvider > late-model");
-            assertThat(readCurrentProvider(subject)).isNotNull();
-        });
+        runOnEdt(() -> assertThat(subject.getSelectedModel()).isEqualTo("LateProvider > late-model"));
     }
 
     @Test
@@ -1005,12 +1120,7 @@ class ChatPanelTest {
             assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(staleProvider), staleScopeVersion)).isFalse();
             subject.setSelectedModel("NewerProvider > newer-model");
         });
-        awaitProviderResolved(subject);
-
-        runOnEdt(() -> {
-            assertThat(subject.getSelectedModel()).isEqualTo("NewerProvider > newer-model");
-            assertThat(readCurrentProvider(subject)).isNotNull();
-        });
+        runOnEdt(() -> assertThat(subject.getSelectedModel()).isEqualTo("NewerProvider > newer-model"));
     }
 
     @Test
@@ -1033,7 +1143,6 @@ class ChatPanelTest {
             invokeUpdateProviderModelsFromPopup(subject, List.of(provider));
             subject.setSelectedModel("ChangedProvider > changed-model");
         });
-        awaitProviderResolved(subject);
         selectionChanges.set(0);
         catalogChanges.set(0);
         ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
@@ -1043,15 +1152,14 @@ class ChatPanelTest {
 
         runOnEdt(() -> {
             assertThat(subject.getSelectedModel()).isNull();
-            assertThat(readCurrentProvider(subject)).isNull();
             assertThat(selectionChanges).hasValue(1);
             assertThat(catalogChanges).hasValue(1);
         });
     }
 
     @Test
-    @DisplayName("Selecting a model does not block the UI while provider creation is still running")
-    void setSelectedModel_whenProviderFactoryBlocks_returnsBeforeProviderIsReady() throws Exception {
+    @DisplayName("Selecting a model does not create a request provider")
+    void setSelectedModel_whenProviderFactoryWouldBlock_doesNotInvokeFactory() throws Exception {
         var factoryStarted = new CountDownLatch(1);
         var releaseFactory = new CountDownLatch(1);
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
@@ -1076,14 +1184,9 @@ class ChatPanelTest {
             subject.setSelectedModel("SlowProvider > slow-model");
         });
 
-        assertThat(factoryStarted.await(1, TimeUnit.SECONDS)).isTrue();
-        runOnEdt(() -> {
-            assertThat(readCurrentProvider(subject)).isNull();
-            assertThat((boolean) readField(subject, "currentProviderResolving")).isTrue();
-        });
-
+        assertThat(factoryStarted.await(100, TimeUnit.MILLISECONDS)).isFalse();
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("SlowProvider > slow-model");
         releaseFactory.countDown();
-        awaitProviderResolved(subject);
     }
 
     @Test
@@ -1323,20 +1426,6 @@ class ChatPanelTest {
                 throw new IllegalStateException("Non-agent provider path should not be called");
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -1349,6 +1438,124 @@ class ChatPanelTest {
         });
 
         assertThat(subject.getHistory().get(1).content()).isEqualTo("agent-response");
+    }
+
+    @Test
+    @DisplayName("Agent startup failure completes the active request instead of leaving the composer blocked")
+    void onSend_whenAgentOrchestratorThrows_finishesRequestWithError() throws Exception {
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-startup-failure"));
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+                @Override
+                public AgentProviderAdapter create(
+                        String providerName,
+                        String modelId,
+                        String baseUrl,
+                        String apiKey,
+                        ProviderService providerService,
+                        String agentSystemPromptAppend
+                ) {
+                    return (request, callbacks) -> {
+                        throw new IllegalStateException("agent startup failed");
+                    };
+                }
+            }, new LocalToolRuntime()));
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, immediateProvider("unused"));
+            readInputTextArea(subject.getInputBar()).setText("ping");
+        });
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(
+                () -> !subject.isStreaming() && subject.getHistory().size() == 2
+        ));
+
+        List<Message> history = callOnEdt(subject::getHistory);
+        assertThat(history.getLast().content()).contains("agent startup failed");
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSessions"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Provider errors cannot persist the request API key in conversation history")
+    void onSend_whenProviderErrorContainsApiKey_redactsCredentialBeforePersistence() throws Exception {
+        String apiKey = "secret-provider-key";
+        ProviderService failingProvider = new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onError.accept(new IllegalStateException("401 rejected %s".formatted(apiKey)));
+            }
+
+
+            @Override
+            public String apiKey() {
+                return apiKey;
+            }
+        };
+        runOnEdt(() -> {
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, failingProvider);
+            readInputTextArea(subject.getInputBar()).setText("ping");
+        });
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(
+                () -> !subject.isStreaming() && subject.getHistory().size() == 2
+        ));
+
+        List<Message> history = callOnEdt(subject::getHistory);
+        assertThat(history.getLast().content())
+                .contains("401 rejected [REDACTED]")
+                .doesNotContain(apiKey);
+    }
+
+    @Test
+    @DisplayName("A synchronous provider linkage failure completes the active request")
+    void onSend_whenProviderThrowsError_finishesRequestAndReleasesOwnership() throws Exception {
+        ProviderService failingProvider = new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                throw new NoClassDefFoundError("provider linkage failed");
+            }
+
+        };
+        runOnEdt(() -> {
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, failingProvider);
+            readInputTextArea(subject.getInputBar()).setText("ping");
+        });
+        invokeOnSend(subject);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(
+                () -> !subject.isStreaming() && subject.getHistory().size() == 2
+        ));
+
+        List<Message> history = callOnEdt(subject::getHistory);
+        assertThat(history.getLast().content()).contains("NoClassDefFoundError");
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSessions"))).isEmpty();
     }
 
     @Test
@@ -1531,20 +1738,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> {
@@ -1566,13 +1759,14 @@ class ChatPanelTest {
     @Test
     @DisplayName("Cancelling an active stream invalidates the session and clears streaming state")
     void cancelStreaming_whenStreamIsActive_invalidatesSessionAndClearsStreamingState() throws Exception {
-        setField(subject, "streaming", true);
-        setField(subject, "activeStreamSessionId", 42L);
+        runOnEdt(() -> {
+            setField(subject, "streaming", true);
+            setField(subject, "activeStreamSessionId", 42L);
+            subject.cancelStreaming();
+        });
 
-        subject.cancelStreaming();
-
-        assertThat((boolean) readField(subject, "streaming")).isFalse();
-        assertThat((long) readField(subject, "activeStreamSessionId")).isEqualTo(-1L);
+        assertThat(callOnEdt(() -> (boolean) readField(subject, "streaming"))).isFalse();
+        assertThat(callOnEdt(() -> (long) readField(subject, "activeStreamSessionId"))).isEqualTo(-1L);
     }
 
     @Test
@@ -1607,30 +1801,21 @@ class ChatPanelTest {
                 releaseStream.countDown();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
         JTextArea textArea = readInputTextArea(subject.getInputBar());
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
         invokeOnSend(subject);
 
         assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
-        subject.cancelStreaming();
+        StreamingSession session = callOnEdt(() -> ((Map<Long, StreamingSession>) readField(subject, "activeSessions"))
+                .values().iterator().next());
+        assertThat(session.provider).isNotNull();
+
+        runOnEdt(subject::cancelStreaming);
         flushEdt();
 
         assertThat(providerCancels).hasValue(1);
+        assertThat(session.provider).isNull();
     }
 
     @Test
@@ -2015,6 +2200,48 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Panel removal preserves application speech services until explicit disposal")
+    void removeNotify_whenPanelIsRemoved_defersSpeechDisposalToOwner() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+
+        runOnEdt(subject::removeNotify);
+        assertThat(textToSpeechService.disposed()).isFalse();
+
+        textToSpeechService.dispose();
+        assertThat(textToSpeechService.disposed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Panel removal preserves browser resources until permanent disposal")
+    void removeNotify_whenSystemWebViewExists_defersBrowserDisposalToOwner() throws Exception {
+        SystemWebView systemWebView = mock(SystemWebView.class);
+        runOnEdt(() -> setField(subject, "systemWebView", systemWebView));
+
+        runOnEdt(subject::removeNotify);
+        verify(systemWebView, never()).dispose();
+
+        runOnEdt(subject::disposeViewResources);
+        verify(systemWebView).dispose();
+    }
+
+    @Test
+    @DisplayName("Speech callback from an earlier attachment cannot update a reattached panel")
+    void speechToTextCallbacks_whenPanelIsReattached_ignoresOldAttachmentGeneration() throws Exception {
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        runOnEdt(() -> textArea.setText("current draft"));
+        @SuppressWarnings("unchecked")
+        AtomicLong generation = (AtomicLong) readField(subject, "speechToTextUiGeneration");
+        SpeechToTextService.Callbacks staleCallbacks = invokeSpeechToTextCallbacks(subject, generation.get());
+
+        runOnEdt(subject::removeNotify);
+        runOnEdt(() -> setField(subject, "removed", false));
+        runOnEdt(() -> staleCallbacks.transcript("stale transcript"));
+
+        assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("current draft");
+    }
+
+    @Test
     @DisplayName("WebView pointer presses dismiss the model selector popup")
     void handleWebTranscriptAction_whenWebViewPointerPressed_hidesModelPopup() throws Exception {
         ModelSelectorPopup popup = mock(ModelSelectorPopup.class);
@@ -2159,25 +2386,41 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Contentless successful sends do not retain an empty assistant response")
+    void onSend_whenProviderCompletesWithoutContent_removesAssistantPlaceholder() throws Exception {
+        setCurrentProvider(subject, immediateProvider(""));
+        SwingUtilities.invokeAndWait(() -> subject.getInputBar().setText("question"));
+
+        Method sendMethod = ChatPanel.class.getDeclaredMethod("onSend");
+        sendMethod.setAccessible(true);
+        runOnEdt(() -> sendMethod.invoke(subject));
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("question");
+        assertThat(callOnEdt(() -> (List<?>) readField(subject, "assistantBubbles"))).isEmpty();
+    }
+
+    @Test
     @DisplayName("Regenerating recent assistant response uses stored message indexes")
     void regenerateRecentResponse_whenRecentBubbleIsAssistant_usesStoredMessageIndex() throws Exception {
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("question"),
                 Message.assistant("old answer")
-        ));
+        )));
         setCurrentProvider(subject, immediateProvider("new answer"));
         flushEdt();
 
-        assertThat(subject.canRegenerateRecentResponse()).isTrue();
+        assertThat(callOnEdt(subject::canRegenerateRecentResponse)).isTrue();
 
-        subject.regenerateRecentResponse();
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
             List<Message> history = subject.getHistory();
             return history.size() == 2 && "new answer".equals(history.getLast().content());
-        });
+        }));
 
-        assertThat(subject.getHistory())
+        assertThat(callOnEdt(subject::getHistory))
                 .extracting(Message::content)
                 .containsExactly("question", "new answer");
     }
@@ -2191,26 +2434,231 @@ class ChatPanelTest {
                 Instant.now(),
                 new MessageMeta(emptyList(), emptyList(), false, "", "", "**Searched**\n- earlier search")
         );
-        subject.loadHistory(List.of(
+        runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("first question"),
                 activityOnlyAssistant,
                 Message.user("second question")
-        ));
+        )));
         setCurrentProvider(subject, immediateProvider("second answer"));
         flushEdt();
 
-        assertThat(subject.canRegenerateRecentResponse()).isTrue();
+        assertThat(callOnEdt(subject::canRegenerateRecentResponse)).isTrue();
 
-        subject.regenerateRecentResponse();
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
             List<Message> history = subject.getHistory();
             return history.size() == 4 && "second answer".equals(history.getLast().content());
-        });
+        }));
 
-        assertThat(subject.getHistory())
+        assertThat(callOnEdt(subject::getHistory))
                 .extracting(Message::content)
                 .containsExactly("first question", "", "second question", "second answer");
+    }
+
+    @Test
+    @DisplayName("Contentless successful regeneration does not retain an empty assistant response")
+    void regenerateRecentResponse_whenProviderCompletesWithoutContent_removesAssistantPlaceholder() throws Exception {
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), Message.assistant("old answer"))));
+        setCurrentProvider(subject, immediateProvider(""));
+        flushEdt();
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("question");
+        assertThat(callOnEdt(() -> (List<?>) readField(subject, "assistantBubbles"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Contentless successful edited regeneration does not retain an empty assistant response")
+    void saveEditedUserMessageAndRegenerate_whenProviderCompletesWithoutContent_removesAssistantPlaceholder() throws Exception {
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer"))));
+        setCurrentProvider(subject, immediateProvider(""));
+        flushEdt();
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("updated question"));
+        JButton regenerateButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save & regenerate".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+
+        runOnEdt(regenerateButton::doClick);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("updated question");
+        assertThat(callOnEdt(() -> (List<?>) readField(subject, "assistantBubbles"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Regeneration admission failure preserves the existing response")
+    void regenerateRecentResponse_whenProviderAdmissionFails_keepsHistoryAndSkipsTruncation() throws Exception {
+        var truncations = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.loadHistory(List.of(Message.user("question"), Message.assistant("old answer")));
+            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
+        });
+        installFailingProvider(subject);
+        flushEdt();
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "old answer");
+        assertThat(truncations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Edited regeneration admission failure preserves the message and edit state")
+    void saveEditedUserMessageAndRegenerate_whenProviderAdmissionFails_keepsHistoryAndDraft() throws Exception {
+        var truncations = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer")));
+            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
+        });
+        installFailingProvider(subject);
+        flushEdt();
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("updated question"));
+        JButton regenerateButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save & regenerate".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+
+        runOnEdt(regenerateButton::doClick);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("old question", "old answer");
+        assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("updated question");
+        assertThat(truncations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Removing the panel cancels provider admission for every active request")
+    void removeNotify_whenProviderAdmissionIsBlocked_cancelsActiveRequest() throws Exception {
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), Message.assistant("answer"))));
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+
+        try {
+            runOnEdt(subject::regenerateRecentResponse);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(subject::removeNotify);
+
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                    ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+                            && ((Map<?, ?>) readField(subject, "activeSessions")).isEmpty()));
+        } finally {
+            releaseAdmission.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Delayed regeneration admission cannot truncate a reloaded original conversation")
+    void regenerateRecentResponse_whenConversationIsReloadedDuringAdmission_keepsReloadedHistory() throws Exception {
+        UUID originalConversationId = UUID.randomUUID();
+        UUID replacementConversationId = UUID.randomUUID();
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        var truncations = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+            subject.loadHistory(List.of(Message.user("original question"), Message.assistant("original answer")));
+            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
+        });
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+        flushEdt();
+
+        try {
+            runOnEdt(subject::regenerateRecentResponse);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+                subject.setActiveConversationId(replacementConversationId);
+                subject.loadHistory(List.of(Message.user("replacement question")));
+                subject.setActiveConversationId(originalConversationId);
+                subject.loadHistory(List.of(Message.user("reloaded original question")));
+            });
+        } finally {
+            releaseAdmission.countDown();
+        }
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("reloaded original question");
+        assertThat(truncations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Delayed edited regeneration admission cannot rewrite a reloaded original conversation")
+    void saveEditedUserMessageAndRegenerate_whenConversationIsReloadedDuringAdmission_keepsReloadedHistory() throws Exception {
+        UUID originalConversationId = UUID.randomUUID();
+        UUID replacementConversationId = UUID.randomUUID();
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        var truncations = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+            subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer")));
+            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
+        });
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+        flushEdt();
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("updated question"));
+        JButton regenerateButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save & regenerate".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+
+        try {
+            runOnEdt(regenerateButton::doClick);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+                subject.setActiveConversationId(replacementConversationId);
+                subject.loadHistory(List.of(Message.user("replacement question")));
+                subject.setActiveConversationId(originalConversationId);
+                subject.loadHistory(List.of(Message.user("reloaded original question")));
+            });
+        } finally {
+            releaseAdmission.countDown();
+        }
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("reloaded original question");
+        assertThat(truncations).hasValue(0);
     }
 
     @Test
@@ -2327,20 +2775,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -2499,20 +2933,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -2651,20 +3071,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -2709,20 +3115,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -2766,20 +3158,6 @@ class ChatPanelTest {
                 onError.accept(new RuntimeException("late error"));
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         subject.getInputBar().setThinkingAvailable(true);
@@ -2822,20 +3200,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -2909,20 +3273,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3108,7 +3458,7 @@ class ChatPanelTest {
         StreamingSession session = new StreamingSession(1L, originalConversationId, null);
         session.response.append("background sonar result");
 
-        invokePersistAssistantResponse(subject, session, null, true);
+        invokePersistAssistantResponse(subject, session, null);
 
         @SuppressWarnings("unchecked")
         Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
@@ -3159,20 +3509,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3234,20 +3570,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("ollama-model");
-            }
-
-            @Override
-            public String name() {
-                return "Ollama";
-            }
-
-            @Override
-            public String envVarName() {
-                return "OLLAMA_API_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3319,20 +3641,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3405,20 +3713,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3479,20 +3773,6 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         });
 
         JTextArea textArea = readInputTextArea(subject.getInputBar());
@@ -3528,19 +3808,37 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
+        };
+    }
+
+    private static ProviderService providerWithApiKey(String apiKey) {
+        ProviderService delegate = immediateProvider("ok");
+        return new ProviderService() {
             @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                delegate.streamCompletion(
+                        history,
+                        reasoningLevel,
+                        onToken,
+                        onThinkingToken,
+                        onComplete,
+                        onError,
+                        isCancelled
+                );
             }
 
-            @Override
-            public String name() {
-                return "test";
-            }
 
             @Override
-            public String envVarName() {
-                return "TEST_KEY";
+            public String apiKey() {
+                return apiKey;
             }
         };
     }
@@ -3563,22 +3861,35 @@ class ChatPanelTest {
         return (JToggleButton) field.get(inputBar);
     }
 
-    private static Object readCurrentProvider(ChatPanel chatPanel) throws Exception {
-        return callOnEdt(() -> readField(chatPanel, "currentProvider"));
-    }
-
+    @SuppressWarnings("unchecked")
     private static void setCurrentProvider(ChatPanel chatPanel, ProviderService provider) throws Exception {
         runOnEdt(() -> {
-            AtomicLong providerSelectionCounter = (AtomicLong) readField(chatPanel, "providerSelectionCounter");
-            providerSelectionCounter.incrementAndGet();
-            setField(chatPanel, "currentProvider", provider);
-            setField(chatPanel, "currentProviderResolving", false);
+            String providerName = StringUtils.defaultIfBlank(
+                    (String) readField(chatPanel, "selectedProviderName"),
+                    "OpenAI"
+            );
+            String modelId = StringUtils.defaultIfBlank(
+                    (String) readField(chatPanel, "selectedModelId"),
+                    "gpt-5-mini"
+            );
+            setField(chatPanel, "selectedProviderName", providerName);
+            setField(chatPanel, "selectedModelId", modelId);
+            Map<String, ProviderRegistry.ProviderDef> providers =
+                    (Map<String, ProviderRegistry.ProviderDef>) readField(chatPanel, "providerMap");
+            ProviderRegistry.ProviderDef existing = providers.get(providerName);
+            ProviderRegistry.ProviderDef replacement = new ProviderRegistry.ProviderDef(
+                    providerName,
+                    existing == null ? null : existing.envVar(),
+                    existing == null ? null : existing.baseUrl(),
+                    existing == null ? List.of(modelId) : existing.seedModels(),
+                    existing == null ? ProviderCapabilities.chatAndModels() : existing.capabilities(),
+                    ignored -> provider,
+                    existing == null ? List::of : existing.fetcher()
+            );
+            Map<String, ProviderRegistry.ProviderDef> updated = new LinkedHashMap<>(providers);
+            updated.put(providerName, replacement);
+            setField(chatPanel, "providerMap", Map.copyOf(updated));
         });
-    }
-
-    private static void awaitProviderResolved(ChatPanel chatPanel) throws Exception {
-        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> readField(chatPanel, "currentProvider") != null
-                && !(boolean) readField(chatPanel, "currentProviderResolving")));
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
@@ -3648,6 +3959,68 @@ class ChatPanelTest {
         return (boolean) method.invoke(chatPanel, providers, scopeVersion);
     }
 
+    private static void installFailingProvider(ChatPanel chatPanel) throws Exception {
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "Failing Provider",
+                null,
+                null,
+                List.of("failing-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    throw new IllegalStateException("credential unavailable");
+                },
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(chatPanel, "providerMap", Map.of(provider.name(), provider));
+            chatPanel.setSelectedModel("Failing Provider > failing-model");
+        });
+    }
+
+    private static void installBlockingProvider(
+            ChatPanel chatPanel,
+            CountDownLatch admissionStarted,
+            CountDownLatch releaseAdmission
+    ) throws Exception {
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "Blocking Provider",
+                null,
+                null,
+                List.of("blocking-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    admissionStarted.countDown();
+                    try {
+                        releaseAdmission.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("provider admission interrupted", e);
+                    }
+                    return immediateProvider("new answer");
+                },
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(chatPanel, "providerMap", Map.of(provider.name(), provider));
+            chatPanel.setSelectedModel("Blocking Provider > blocking-model");
+        });
+    }
+
+    private static ProviderRegistry.ProviderDef testProviderDefinition(
+            String name,
+            ProviderCapabilities capabilities
+    ) {
+        return new ProviderRegistry.ProviderDef(
+                name,
+                null,
+                null,
+                List.of("test-model"),
+                capabilities,
+                model -> immediateProvider("pong"),
+                List::of
+        );
+    }
+
     private static ProviderRegistry.ProviderDef providerDef(String baseUrl) {
         return new ProviderRegistry.ProviderDef(
                 "OpenAI",
@@ -3673,7 +4046,8 @@ class ChatPanelTest {
                 SpeechToTextService.disabled(),
                 providerRegistry,
                 copilotAuthResolver,
-                codexAuthResolver
+                codexAuthResolver,
+                credentialResolver
         );
     }
 
@@ -3738,17 +4112,24 @@ class ChatPanelTest {
     private static void invokePersistAssistantResponse(
             ChatPanel chatPanel,
             StreamingSession session,
-            SendJob sendJob,
-            boolean allowBlankContent
+            SendJob sendJob
     ) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod(
                 "persistAssistantResponse",
                 StreamingSession.class,
-                SendJob.class,
-                boolean.class
+                SendJob.class
         );
         method.setAccessible(true);
-        method.invoke(chatPanel, session, sendJob, allowBlankContent);
+        method.invoke(chatPanel, session, sendJob);
+    }
+
+    private static SpeechToTextService.Callbacks invokeSpeechToTextCallbacks(
+            ChatPanel chatPanel,
+            long uiGeneration
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("speechToTextCallbacks", long.class);
+        method.setAccessible(true);
+        return (SpeechToTextService.Callbacks) method.invoke(chatPanel, uiGeneration);
     }
 
     private static boolean invokeNativeWebSearchEnabled(ChatPanel chatPanel, SendJob sendJob, List<Message> requestHistory) throws Exception {
@@ -3791,10 +4172,9 @@ class ChatPanelTest {
                 UUID.randomUUID(),
                 "Google AI",
                 "gemini-3.5-flash",
+                testProviderDefinition("Google AI", ProviderCapabilities.chatAndModels()),
                 "https://generativelanguage.googleapis.com/v1beta/openai",
-                "test-key",
                 ProviderCapabilities.chatAndModels(),
-                immediateProvider("pong"),
                 List.of(Message.user("Search")),
                 ReasoningLevel.OFF,
                 true,
@@ -3936,7 +4316,8 @@ class ChatPanelTest {
                 SpeechToTextService.disabled(),
                 providerRegistry,
                 copilotAuthResolver,
-                codexAuthResolver
+                codexAuthResolver,
+                credentialResolver
         )));
         return panelRef.get();
     }
@@ -4008,6 +4389,7 @@ class ChatPanelTest {
         private String requestedText = "";
         private String requestedKey = "";
         private String activeMessageKey = "";
+        private boolean disposed;
 
         private RecordingTextToSpeechService() throws IOException {
             super(
@@ -4068,6 +4450,16 @@ class ChatPanelTest {
         @Override
         public void stop() {
             activeMessageKey = "";
+        }
+
+        @Override
+        public void dispose() {
+            disposed = true;
+            super.dispose();
+        }
+
+        private boolean disposed() {
+            return disposed;
         }
 
         private String requestedText() {

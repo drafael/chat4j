@@ -29,6 +29,14 @@ public record ProviderDescriptor(
     @Override
     public String toString() {
         return "ProviderDescriptor[name=%s, authType=%s, credentialEnvVar=%s, fallbackApiKey=<masked>, defaultBaseUrl=%s, seedModels=%s, capabilities=%s, baseUrlNormalizer=%s]"
-                .formatted(name, authType, credentialEnvVar, defaultBaseUrl, seedModels, capabilities, baseUrlNormalizer);
+                .formatted(
+                        name,
+                        authType,
+                        credentialEnvVar,
+                        ProviderDiagnosticSanitizer.safeOrigin(defaultBaseUrl),
+                        seedModels,
+                        capabilities,
+                        baseUrlNormalizer
+                );
     }
 }

@@ -6,6 +6,8 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperInstalledModel;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelCatalog;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperValidationStatus;
 import java.io.RandomAccessFile;
@@ -31,7 +33,7 @@ class SpeechToTextWhisperSettingsTest {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), true)) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), tempDir.resolve("models"), null, service);
 
             SpeechToTextSettingsSnapshot snapshot = subject.resolve();
 
@@ -50,8 +52,14 @@ class SpeechToTextWhisperSettingsTest {
         Path models = tempDir.resolve("real-models");
         var entry = WhisperModelCatalog.find("tiny.en").orElseThrow();
         createInstalledModel(models.resolve("whisper").resolve("tiny.en"), entry);
-        try (var service = new WhisperModelManagementService(repo, models, tempDir.resolve("real-temp"))) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, models, null, service);
+        try (var service = new WhisperModelManagementService(
+                repo,
+                models,
+                tempDir.resolve("real-temp"),
+                WhisperNativeRuntime.shared(),
+                new WhisperModelUsageTracker()
+        )) {
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), models, null, service);
 
             service.refreshAsync(false);
             waitUntil(() -> !service.snapshot().installedModels().isEmpty());
@@ -69,13 +77,27 @@ class SpeechToTextWhisperSettingsTest {
         var repo = new SettingsRepository(tempDir.resolve("settings-unavailable.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, WhisperSpeechToTextProvider.ID);
         try (var service = new FakeWhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"), false)) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), CredentialSource.SYSTEM, tempDir.resolve("models"), null, service);
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), tempDir.resolve("models"), null, service);
 
             SpeechToTextSettingsSnapshot snapshot = subject.resolve();
 
             assertThat(snapshot.available()).isFalse();
             assertThat(snapshot.statusMessage()).isEqualTo("Whisper.cpp native runtime is unavailable on this platform.");
         }
+    }
+
+    private CredentialSource credentials() {
+        return new CredentialSource() {
+            @Override
+            public boolean hasRequiredCredentials(String envVar) {
+                return true;
+            }
+
+            @Override
+            public String resolveRequiredApiKey(String envVar) {
+                return "";
+            }
+        };
     }
 
     private void createInstalledModel(Path directory, com.github.drafael.chat4j.stt.provider.whisper.WhisperModelCatalogEntry entry) throws Exception {
@@ -112,7 +134,7 @@ class SpeechToTextWhisperSettingsTest {
         private final WhisperModelManagementSnapshot snapshot;
 
         private FakeWhisperModelManagementService(SettingsRepository repo, Path models, Path temp, boolean runtimeReady) {
-            super(repo, models, temp);
+            super(repo, models, temp, WhisperNativeRuntime.shared(), new WhisperModelUsageTracker());
             var entry = WhisperModelCatalog.find("tiny.en").orElseThrow();
             var installed = new WhisperInstalledModel(
                     entry.id(),

@@ -127,10 +127,6 @@ public class ApiTokenVault {
         refreshFromDiskReadOnly();
     }
 
-    public static ApiTokenVault defaultVault() {
-        return new ApiTokenVault(StoragePaths.defaultPaths());
-    }
-
     void refreshFromDiskReadOnly() {
         long expectedGeneration;
         synchronized (stateLock) {

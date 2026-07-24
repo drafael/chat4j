@@ -84,6 +84,10 @@ public class SpeechToTextSettings {
         this.whisperModelManagementService = whisperModelManagementService;
     }
 
+    CredentialSource credentialSource() {
+        return credentialSource;
+    }
+
     public SpeechToTextSettingsSnapshot resolve() {
         int maxDurationSeconds = resolveMaxDurationSeconds();
         Path directory = modelDirectory.resolve();
@@ -104,14 +108,14 @@ public class SpeechToTextSettings {
         SpeechToTextCatalogItem model = provider.normalizeModelSelection(selectedModel(provider));
         boolean available = provider.available(credentialSource);
         if (provider.supportsLocalModels()) {
-            String status = available ? provider.availableMessage() : provider.unavailableMessage();
+            String status = available ? provider.availableMessage(credentialSource) : provider.unavailableMessage();
             return snapshotBuilder(provider, model, available, maxDurationSeconds, directory)
                     .statusMessage(status)
                     .build();
         }
         try {
             SttEndpoint endpoint = resolveEndpoint(provider);
-            String status = available ? provider.availableMessage() : provider.unavailableMessage();
+            String status = available ? provider.availableMessage(credentialSource) : provider.unavailableMessage();
             return snapshotBuilder(provider, model, available, maxDurationSeconds, directory)
                     .baseUri(endpoint.baseUri())
                     .transcriptionUri(endpoint.transcriptionUri())

@@ -10,6 +10,9 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import java.util.Map;
 
 /**
  * Startup-created services required to construct the main UI.
@@ -24,6 +27,12 @@ public record AppServices(
     ProviderRegistry providerRegistry,
     CopilotAuthResolver copilotAuthResolver,
     CodexAuthResolver codexAuthResolver,
-    CopilotModelMetadataStore copilotModelMetadataStore
+    CopilotModelMetadataStore copilotModelMetadataStore,
+    CredentialResolver credentialResolver,
+    CredentialMutationService credentialMutationService,
+    Map<String, String> subprocessEnvironment
 ) {
+    public AppServices {
+        subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+    }
 }

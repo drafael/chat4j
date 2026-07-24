@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.tts.provider.deepgram;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
@@ -40,8 +41,8 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public DeepgramTextToSpeechProvider(TtsHttpTransport transport) {
-        super(transport);
+    public DeepgramTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
+        super(transport, credentialResolver);
     }
 
     @Override
@@ -143,12 +144,17 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request) throws Exception {
+        return synthesize(request, apiKey());
+    }
+
+    @Override
+    public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         String modelId = normalizeVoiceModelId(StringUtils.defaultIfBlank(request.voiceId(), request.modelId()));
         ObjectNode body = OBJECT_MAPPER.createObjectNode();
         body.put("text", request.text());
         TtsHttpResponse response = postJson(
                 URI.create("%s/speak?model=%s&encoding=linear16&container=none&sample_rate=%d".formatted(BASE_URL, modelId, SAMPLE_RATE)),
-                jsonHeaders(),
+                jsonHeaders(apiKey),
                 body
         );
         return new TextToSpeechAudio(wavBytes(response), "audio/wav", "wav");
@@ -178,9 +184,9 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         return Map.of("Authorization", "Token %s".formatted(apiKey()));
     }
 
-    private Map<String, String> jsonHeaders() {
+    private Map<String, String> jsonHeaders(String apiKey) {
         return Map.of(
-                "Authorization", "Token %s".formatted(apiKey()),
+                "Authorization", "Token %s".formatted(apiKey),
                 "Content-Type", "application/json",
                 "Accept", "audio/l16"
         );

@@ -1,8 +1,8 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.github.drafael.chat4j.provider.api.ProviderDiagnosticSanitizer;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 
 import javax.swing.*;
 import java.net.URI;
@@ -49,7 +49,11 @@ public final class LocalServiceHealth {
             Thread.currentThread().interrupt();
             return false;
         } catch (ExecutionException e) {
-            log.debug("Health refresh failed for {}: {}", baseUrl, ExceptionUtils.getMessage(e.getCause()));
+            log.debug(
+                    "Health refresh failed for {}: {}",
+                    ProviderDiagnosticSanitizer.safeOrigin(baseUrl),
+                    e.getCause() == null ? e.getClass().getSimpleName() : e.getCause().getClass().getSimpleName()
+            );
             return false;
         }
     }
@@ -136,10 +140,14 @@ public final class LocalServiceHealth {
             return response.statusCode() < 500;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.debug("Endpoint reachability check interrupted for {}", endpoint);
+            log.debug("Endpoint reachability check interrupted for {}", ProviderDiagnosticSanitizer.safeOrigin(endpoint));
             return false;
         } catch (Exception e) {
-            log.debug("Endpoint reachability check failed for {}: {}", endpoint, ExceptionUtils.getMessage(e));
+            log.debug(
+                    "Endpoint reachability check failed for {}: {}",
+                    ProviderDiagnosticSanitizer.safeOrigin(endpoint),
+                    e.getClass().getSimpleName()
+            );
             return false;
         }
     }

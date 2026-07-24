@@ -64,6 +64,7 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
@@ -146,6 +147,8 @@ import com.github.drafael.chat4j.sidebar.SidebarPanel;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.sidebar.SidebarToggleCoordinator;
 import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
@@ -239,10 +242,16 @@ public class MainFrame extends JFrame {
     private final CopilotAuthResolver copilotAuthResolver;
     private final CodexAuthResolver codexAuthResolver;
     private final CopilotModelMetadataStore copilotModelMetadataStore;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
+    private final Map<String, String> subprocessEnvironment;
     private final Path sttModelsDirectory;
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
+    private final WhisperNativeRuntime whisperNativeRuntime;
+    private final TextToSpeechService textToSpeechService;
+    private final SpeechToTextService speechToTextService;
     private final SpeechToTextCatalogStore sttCatalogStore;
     private final TextToSpeechCatalogStore ttsCatalogStore;
     private final ProviderSettingsApplyCoordinator providerSettingsApplyCoordinator;
@@ -367,6 +376,8 @@ public class MainFrame extends JFrame {
     private final Set<UUID> clearedConversationIds = new HashSet<>();
     private UUID pendingLoadConversationId;
     private final MainFrameShutdownState shutdownState = new MainFrameShutdownState();
+    private boolean permanentCleanupStarted;
+    private CompletableFuture<Void> permanentCleanupFuture = CompletableFuture.completedFuture(null);
     private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
     private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
     private final ChatSearchPopupCoordinator chatSearchPopupCoordinator = new ChatSearchPopupCoordinator();
@@ -413,20 +424,16 @@ public class MainFrame extends JFrame {
             @NonNull ProviderRegistry providerRegistry,
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver,
-            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull CredentialMutationService credentialMutationService,
+            @NonNull Map<String, String> subprocessEnvironment
     ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
         this.sttModelsDirectory = storagePaths.sttModelsDirectory();
         this.sttTempDirectory = storagePaths.sttTempDirectory();
-        this.voskModelManagementService = new VoskModelManagementService(
-                settingsRepo,
-                sttModelsDirectory,
-                sttTempDirectory,
-                catalogSnapshots
-        );
-        this.whisperModelManagementService = new WhisperModelManagementService(settingsRepo, sttModelsDirectory, sttTempDirectory);
         this.sttCatalogStore = new SpeechToTextCatalogStore(catalogSnapshots);
         this.ttsCatalogStore = new TextToSpeechCatalogStore(catalogSnapshots);
         this.chatWebViewRuntimeStatus = new WebViewRuntimeStatusResolver(settingsRepo).resolve();
@@ -447,6 +454,9 @@ public class MainFrame extends JFrame {
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
         this.copilotModelMetadataStore = copilotModelMetadataStore;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
+        this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
                 conversationRepo,
                 settingsRepo,
@@ -553,65 +563,134 @@ public class MainFrame extends JFrame {
         configureWindowChrome();
         restoreWindowState();
 
-        chatPanel = createConfiguredChatPanel();
-        providerRegistry.setAuthStatusRefreshListener(this::onProviderAuthStatusRefreshed);
-        voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
-            if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
-                chatPanel.reloadSpeechToTextSettings();
-            }
-        }));
-        whisperModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
-            if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
-                chatPanel.reloadSpeechToTextSettings();
-            }
-        }));
-        voskModelManagementService.refreshAsync();
-        whisperModelManagementService.refreshAsync();
-        applyProviderSettings();
-        applyGeneralSettings();
-        UIManager.addPropertyChangeListener(lookAndFeelListener);
-
-        MainFrameTitleBarFactory.TitleBar titleBar = titleBarFactory.create(
-                MainFrame.class,
-                chatPanel.getModelSelectorButton(),
-                chatPanel.getRenderTogglePanel(),
-                this::toggleSidebar,
-                this::openChatSearch,
-                this::newChat
+        VoskModelManagementService createdVoskModelManagementService = new VoskModelManagementService(
+                settingsRepo,
+                sttModelsDirectory,
+                sttTempDirectory,
+                catalogSnapshots
         );
-        sidebarToggleState.setSidebarToggleFilledIcon(titleBar.sidebarToggleFilledIcon());
-        sidebarToggleState.setSidebarToggleOutlineIcon(titleBar.sidebarToggleOutlineIcon());
-        sidebarToggleState.setSidebarToggleButton(titleBar.sidebarToggleButton());
-        sidebarToggleState.setSearchButton(titleBar.searchButton());
-        sidebarToggleState.setLeftButtons(titleBar.leftButtons());
-        sidebarToggleState.setRightPanel(titleBar.rightPanel());
-        updateTitleBarSearchVisibility(sidebarState.sidebarVisible());
-        add(titleBar.panel(), BorderLayout.NORTH);
-        sidebarPanel = new SidebarPanel(conversationRepo);
-        chatPanel.setOnConversationStreamingChanged(event ->
-                sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
+        this.whisperNativeRuntime = WhisperNativeRuntime.shared();
+        WhisperModelManagementService createdWhisperModelManagementService;
+        try {
+            createdWhisperModelManagementService = new WhisperModelManagementService(
+                    settingsRepo,
+                    sttModelsDirectory,
+                    sttTempDirectory,
+                    whisperNativeRuntime,
+                    new WhisperModelUsageTracker()
+            );
+        } catch (RuntimeException | Error e) {
+            runPreShutdownAction(
+                    "Failed to close Vosk after Whisper.cpp startup failure",
+                    createdVoskModelManagementService::close
+            );
+            throw e;
+        }
+        this.voskModelManagementService = createdVoskModelManagementService;
+        this.whisperModelManagementService = createdWhisperModelManagementService;
+        TextToSpeechService createdTextToSpeechService;
+        try {
+            createdTextToSpeechService = TextToSpeechService.createDefault(
+                    settingsRepo,
+                    credentialResolver,
+                    subprocessEnvironment
+            );
+        } catch (RuntimeException | Error e) {
+            runPreShutdownAction("Failed to close Vosk after startup failure", voskModelManagementService::close);
+            runPreShutdownAction("Failed to close Whisper.cpp after startup failure", whisperModelManagementService::close);
+            throw e;
+        }
+        SpeechToTextService createdSpeechToTextService;
+        try {
+            createdSpeechToTextService = SpeechToTextService.createDefault(
+                    settingsRepo,
+                    sttModelsDirectory,
+                    sttTempDirectory,
+                    voskModelManagementService,
+                    whisperModelManagementService,
+                    credentialResolver,
+                    whisperNativeRuntime
+            );
+        } catch (RuntimeException | Error e) {
+            runPreShutdownAction(
+                    "Failed to close Text to Speech after startup failure",
+                    createdTextToSpeechService::dispose
+            );
+            runPreShutdownAction("Failed to close Vosk after startup failure", voskModelManagementService::close);
+            runPreShutdownAction("Failed to close Whisper.cpp after startup failure", whisperModelManagementService::close);
+            throw e;
+        }
+        this.textToSpeechService = createdTextToSpeechService;
+        this.speechToTextService = createdSpeechToTextService;
+        try {
+            chatPanel = createConfiguredChatPanel();
+            providerRegistry.setAuthStatusRefreshListener(this::onProviderAuthStatusRefreshed);
+            voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
+                if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
+                    chatPanel.reloadSpeechToTextSettings();
+                }
+            }));
+            whisperModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
+                if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
+                    chatPanel.reloadSpeechToTextSettings();
+                }
+            }));
+            voskModelManagementService.refreshAsync();
+            whisperModelManagementService.refreshAsync();
+            applyProviderSettings();
+            applyGeneralSettings();
+            UIManager.addPropertyChangeListener(lookAndFeelListener);
 
-        sidebarPanel.setGuardedActionAllowed(this::allowSidebarGuardedAction);
-        sidebarPanel.setOnConversationSelected(this::loadConversation);
-        sidebarPanel.setOnNewChat(this::newChat);
-        sidebarPanel.setOnConversationsDeleted(this::handleConversationsDeleted);
-        sidebarPanel.setOnSettings(this::openSettings);
+            MainFrameTitleBarFactory.TitleBar titleBar = titleBarFactory.create(
+                    MainFrame.class,
+                    chatPanel.getModelSelectorButton(),
+                    chatPanel.getRenderTogglePanel(),
+                    this::toggleSidebar,
+                    this::openChatSearch,
+                    this::newChat
+            );
+            sidebarToggleState.setSidebarToggleFilledIcon(titleBar.sidebarToggleFilledIcon());
+            sidebarToggleState.setSidebarToggleOutlineIcon(titleBar.sidebarToggleOutlineIcon());
+            sidebarToggleState.setSidebarToggleButton(titleBar.sidebarToggleButton());
+            sidebarToggleState.setSearchButton(titleBar.searchButton());
+            sidebarToggleState.setLeftButtons(titleBar.leftButtons());
+            sidebarToggleState.setRightPanel(titleBar.rightPanel());
+            updateTitleBarSearchVisibility(sidebarState.sidebarVisible());
+            add(titleBar.panel(), BorderLayout.NORTH);
+            sidebarPanel = new SidebarPanel(conversationRepo);
+            chatPanel.setOnConversationStreamingChanged(event ->
+                    sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
 
-        splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
-        splitPane.setBorder(null);
-        splitPane.setDividerLocation(300);
-        splitPane.setDividerSize(1);
-        splitPane.setContinuousLayout(true);
+            sidebarPanel.setGuardedActionAllowed(this::allowSidebarGuardedAction);
+            sidebarPanel.setOnConversationSelected(this::loadConversation);
+            sidebarPanel.setOnNewChat(this::newChat);
+            sidebarPanel.setOnConversationsDeleted(this::handleConversationsDeleted);
+            sidebarPanel.setOnSettings(this::openSettings);
 
-        add(splitPane, BorderLayout.CENTER);
+            splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, chatPanel);
+            splitPane.setBorder(null);
+            splitPane.setDividerLocation(300);
+            splitPane.setDividerSize(1);
+            splitPane.setContinuousLayout(true);
 
-        installCloseHandlers();
-        windowPlacementCoordinator.registerDisplayChangeHandler(this);
-        installDesktopHandlers();
-        setupKeyboardShortcuts();
-        showChatWebViewFallbackWarningIfNeeded();
+            add(splitPane, BorderLayout.CENTER);
 
-        chatPanel.getInputBar().requestInputFocus();
+            installCloseHandlers();
+            windowPlacementCoordinator.registerDisplayChangeHandler(this);
+            installDesktopHandlers();
+            setupKeyboardShortcuts();
+            showChatWebViewFallbackWarningIfNeeded();
+
+            chatPanel.getInputBar().requestInputFocus();
+        } catch (RuntimeException | Error e) {
+            try {
+                beginPermanentCleanup();
+            } catch (Throwable cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+                warnWithoutStack("Failed to clean up after main-window construction failure", cleanupFailure);
+            }
+            throw e;
+        }
     }
 
     private void configureWindowChrome() {
@@ -638,17 +717,12 @@ public class MainFrame extends JFrame {
                 modelFavoritesService,
                 new ChatMessageViewFactory(),
                 chatWebViewRuntimeStatus.activeEngine(),
-                TextToSpeechService.createDefault(settingsRepo),
-                SpeechToTextService.createDefault(
-                        settingsRepo,
-                        sttModelsDirectory,
-                        sttTempDirectory,
-                        voskModelManagementService,
-                        whisperModelManagementService
-                ),
+                textToSpeechService,
+                speechToTextService,
                 providerRegistry,
                 copilotAuthResolver,
-                codexAuthResolver
+                codexAuthResolver,
+                credentialResolver
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -1047,16 +1121,26 @@ public class MainFrame extends JFrame {
         return conversationId != null && clearedConversationIds.contains(conversationId) && !history.isEmpty();
     }
 
+    @Override
+    public void dispose() {
+        try {
+            beginPermanentCleanup();
+        } catch (Throwable cleanupFailure) {
+            warnWithoutStack("Failed to clean up while disposing the main window", cleanupFailure);
+        } finally {
+            super.dispose();
+        }
+    }
+
     private void requestWindowClose() {
         runShutdownFlow(() -> {
-            CredentialMutationService.shared().closeSecrets();
             dispose();
             System.exit(0);
         });
     }
 
     private void runShutdownFlow(Runnable finishAction) {
-        AtomicReference<CompletableFuture<Void>> modelServicesClose = new AtomicReference<>(CompletableFuture.completedFuture(null));
+        AtomicReference<CompletableFuture<Void>> applicationCleanup = new AtomicReference<>(CompletableFuture.completedFuture(null));
         try {
             shutdownFlowCoordinator.request(
                     shutdownState::shutdownInProgress,
@@ -1064,21 +1148,12 @@ public class MainFrame extends JFrame {
                     SHUTDOWN_SAVE_TIMEOUT_MILLIS,
                     () -> {
                         runPreShutdownAction(
-                                "Failed to remove the look-and-feel listener during shutdown",
-                                () -> UIManager.removePropertyChangeListener(lookAndFeelListener)
+                                "Failed to start permanent application cleanup during shutdown",
+                                () -> applicationCleanup.set(beginPermanentCleanup())
                         );
-                        runPreShutdownAction(
-                                "Failed to cancel Speech to Text during shutdown",
-                                chatPanel::cancelSpeechToText
-                        );
-                        runPreShutdownAction(
-                                "Failed to start speech model cleanup during shutdown",
-                                () -> modelServicesClose.set(closeSttModelManagementServicesAsync())
-                        );
-                        runPreShutdownAction("Failed to cancel streaming during shutdown", chatPanel::cancelStreaming);
                         runPreShutdownAction("Failed to save window state during shutdown", this::saveWindowState);
                     },
-                    () -> saveThenAwaitCleanup(createShutdownSaveAction(), modelServicesClose.get()),
+                    () -> saveThenAwaitCleanup(createShutdownSaveAction(), applicationCleanup.get()),
                     finishAction,
                     () -> log.warn("Timed out persisting current conversation during shutdown"),
                     error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
@@ -1090,11 +1165,68 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private synchronized CompletableFuture<Void> beginPermanentCleanup() {
+        if (permanentCleanupStarted) {
+            return permanentCleanupFuture;
+        }
+        permanentCleanupStarted = true;
+
+        runPreShutdownAction(
+                "Failed to remove the look-and-feel listener during cleanup",
+                () -> UIManager.removePropertyChangeListener(lookAndFeelListener)
+        );
+        runPreShutdownAction(
+                "Failed to detach the provider auth listener during cleanup",
+                () -> providerRegistry.setAuthStatusRefreshListener(() -> {
+                })
+        );
+        runPreShutdownAction("Failed to cancel active requests during cleanup", () -> {
+            if (chatPanel != null) {
+                chatPanel.cancelAllRequests();
+            }
+        });
+        runPreShutdownAction("Failed to dispose chat view resources during cleanup", () -> {
+            if (chatPanel != null) {
+                chatPanel.disposeViewResources();
+            }
+        });
+        CompletableFuture<Void> speechCleanup = disposeSpeechServicesAsync();
+        runPreShutdownAction("Failed to close credential secrets during cleanup", credentialMutationService::closeSecrets);
+        CompletableFuture<Void> modelCleanup = closeSttModelManagementServicesAsync();
+        permanentCleanupFuture = CompletableFuture.allOf(speechCleanup, modelCleanup);
+        return permanentCleanupFuture;
+    }
+
+    private CompletableFuture<Void> disposeSpeechServicesAsync() {
+        CompletableFuture<Void> speechToTextCleanup;
+        try {
+            speechToTextCleanup = speechToTextService.disposeAsync().exceptionally(error -> {
+                warnWithoutStack("Failed to finish Speech to Text cleanup", error);
+                return null;
+            });
+        } catch (Throwable t) {
+            warnWithoutStack("Failed to start Speech to Text cleanup", t);
+            speechToTextCleanup = CompletableFuture.completedFuture(null);
+        }
+
+        CompletableFuture<Void> textToSpeechCleanup;
+        try {
+            textToSpeechCleanup = textToSpeechService.disposeAsync().exceptionally(error -> {
+                warnWithoutStack("Failed to finish Text to Speech cleanup", error);
+                return null;
+            });
+        } catch (Throwable t) {
+            warnWithoutStack("Failed to start Text to Speech cleanup", t);
+            textToSpeechCleanup = CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.allOf(speechToTextCleanup, textToSpeechCleanup);
+    }
+
     private void runPreShutdownAction(String failureMessage, Runnable action) {
         try {
             action.run();
-        } catch (Exception e) {
-            warnWithoutStack(failureMessage, e);
+        } catch (Throwable t) {
+            warnWithoutStack(failureMessage, t);
         }
     }
 
@@ -1126,8 +1258,8 @@ public class MainFrame extends JFrame {
     private void closeSttModelManagementService(String serviceName, Runnable closeAction) {
         try {
             closeAction.run();
-        } catch (Exception e) {
-            warnWithoutStack("Failed to close %s model management".formatted(serviceName), e);
+        } catch (Throwable t) {
+            warnWithoutStack("Failed to close %s model management".formatted(serviceName), t);
         }
     }
 
@@ -1441,7 +1573,11 @@ public class MainFrame extends JFrame {
                         whisperModelManagementService,
                         settingsCredentialChangeListener(),
                         copilotAuthResolver,
-                        codexAuthResolver
+                        codexAuthResolver,
+                        credentialResolver,
+                        credentialMutationService,
+                        subprocessEnvironment,
+                        whisperNativeRuntime
                 )),
                 () -> {
                     applyProviderSettings();
@@ -1687,8 +1823,8 @@ public class MainFrame extends JFrame {
         return value ? "yes" : "no";
     }
 
-    private void warnWithoutStack(String message, Exception e) {
-        log.warn("{}: {}", message, ExceptionUtils.getMessage(e));
+    private void warnWithoutStack(String message, Throwable throwable) {
+        log.warn("{}: {}", message, ExceptionUtils.getMessage(throwable));
     }
 
     private static String joinNames(List<String> names) {

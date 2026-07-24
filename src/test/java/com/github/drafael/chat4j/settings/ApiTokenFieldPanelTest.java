@@ -4,8 +4,10 @@ import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
-import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.github.drafael.chat4j.provider.support.CredentialTokenIds;
 import java.awt.Component;
 import java.nio.file.Files;
@@ -44,11 +46,13 @@ class ApiTokenFieldPanelTest {
     private Path tempDir;
 
     private final CopyOnWriteArrayList<ApiTokenFieldPanel> panels = new CopyOnWriteArrayList<>();
+    private ApiTokenVault tokenVault;
+    private CredentialResolver credentialResolver;
+    private CredentialMutationService credentialMutationService;
 
     @BeforeEach
     void setUp() {
-        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
-        CredentialResolver.init(emptyMap());
+        configureCredentials(emptyMap(), emptyMap());
     }
 
     @AfterEach
@@ -59,7 +63,7 @@ class ApiTokenFieldPanelTest {
             return null;
         });
         onEdt(() -> null);
-        CredentialTestSupport.reset();
+        credentialMutationService.closeSecrets();
     }
 
     @Test
@@ -72,6 +76,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 envVar,
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 change::set,
                 refreshes::incrementAndGet
         ));
@@ -87,8 +93,8 @@ class ApiTokenFieldPanelTest {
         });
 
         assertThat(save.get()).isTrue();
-        assertThat(CredentialResolver.resolveRequiredApiKey(envVar, null)).isEqualTo("saved-token");
-        assertThat(CredentialResolver.resolveCredentialStatus(envVar, null).source())
+        assertThat(credentialResolver.resolveRequiredApiKey(envVar, null)).isEqualTo("saved-token");
+        assertThat(credentialResolver.resolveCredentialStatus(envVar, null).source())
                 .isEqualTo(ApiCredentialSource.SAVED_TOKEN);
         onEdt(() -> {
             assertThat(subject.dirty()).isFalse();
@@ -105,6 +111,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 null
         ));
@@ -136,6 +144,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     listenerCalls.incrementAndGet();
                     listenerStarted.countDown();
@@ -176,6 +186,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     listenerRanOnEdt.set(SwingUtilities.isEventDispatchThread());
                     listenerStarted.countDown();
@@ -225,6 +237,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     listenerStarted.countDown();
                     try {
@@ -239,6 +253,8 @@ class ApiTokenFieldPanelTest {
         onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 peerRefreshes::incrementAndGet
         ));
@@ -279,6 +295,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     listenerStarted.countDown();
                     try {
@@ -320,7 +338,7 @@ class ApiTokenFieldPanelTest {
     void focusLost_whenBlankAndSavedTokenExists_deletesOverrideAndNotifiesListener() throws Exception {
         char[] savedToken = "saved-token".toCharArray();
         try {
-            CredentialTestSupport.saveToken("OPENAI_API_KEY", savedToken);
+            credentialMutationService.saveTokenOverride("OPENAI_API_KEY", savedToken, CredentialMutationListener.NO_OP);
         } finally {
             fill(savedToken, '\0');
         }
@@ -329,6 +347,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 change::set,
                 saved::countDown
         ));
@@ -341,7 +361,7 @@ class ApiTokenFieldPanelTest {
         });
 
         assertThat(saved.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.MISSING);
         onEdt(() -> {
             assertThat(findStatusLabel(subject).getParent().isVisible()).isFalse();
@@ -353,10 +373,12 @@ class ApiTokenFieldPanelTest {
     @Test
     @DisplayName("Blank dirty env-backed field reverts without writing a vault record")
     void savePendingChangesAsync_whenBlankWithoutSavedOverride_revertsToEffectiveCredential() throws Exception {
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "env-token"));
+        configureCredentials(emptyMap(), Map.of("OPENAI_API_KEY", "env-token"));
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 null
         ));
@@ -368,7 +390,7 @@ class ApiTokenFieldPanelTest {
         });
 
         assertThat(save.get()).isTrue();
-        assertThat(CredentialResolver.hasSavedTokenRecord("OPENAI_API_KEY")).isFalse();
+        assertThat(tokenVault.hasRecord("OPENAI_API_KEY")).isFalse();
         onEdt(() -> {
             assertThat(String.valueOf(tokenField.getPassword())).isEqualTo("env-token");
             assertThat(findStatusLabel(subject).getParent().isVisible()).isFalse();
@@ -383,6 +405,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 saved::countDown
         ));
@@ -395,7 +419,7 @@ class ApiTokenFieldPanelTest {
         });
 
         assertThat(saved.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("saved-on-blur");
+        assertThat(credentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("saved-on-blur");
     }
 
 
@@ -414,6 +438,8 @@ class ApiTokenFieldPanelTest {
                 ApiTokenFieldPanel subject = new ApiTokenFieldPanel(
                         "OPENAI_API_KEY",
                         new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                         null,
                         null
                 );
@@ -450,6 +476,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 () -> {
                     throw new IllegalStateException("cancel failed");
@@ -470,7 +498,7 @@ class ApiTokenFieldPanelTest {
             assertThat(subject.dirty()).isTrue();
             return null;
         });
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.MISSING);
     }
 
@@ -479,7 +507,7 @@ class ApiTokenFieldPanelTest {
     void savePendingChangesAsync_whenDeletionInvalidationFails_doesNotRetryAppliedChange() throws Exception {
         char[] savedToken = "saved-token".toCharArray();
         try {
-            CredentialTestSupport.saveToken("OPENAI_API_KEY", savedToken);
+            credentialMutationService.saveTokenOverride("OPENAI_API_KEY", savedToken, CredentialMutationListener.NO_OP);
         } finally {
             fill(savedToken, '\0');
         }
@@ -490,6 +518,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     if (invalidations.incrementAndGet() == 1) {
                         throw new IllegalStateException("invalidation failed");
@@ -500,6 +530,8 @@ class ApiTokenFieldPanelTest {
         onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 peerRefreshes::incrementAndGet
         ));
@@ -517,7 +549,7 @@ class ApiTokenFieldPanelTest {
             assertThat(subject.dirty()).isFalse();
             return null;
         });
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.MISSING);
         assertThat(invalidations).hasValue(1);
         assertThat(refreshes).hasValue(1);
@@ -535,6 +567,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 () -> {
                     throw new IllegalStateException("refresh failed");
@@ -562,6 +596,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 null,
                 null,
                 () -> false
@@ -571,7 +607,7 @@ class ApiTokenFieldPanelTest {
         CompletableFuture<Boolean> result = onEdt(subject::requestVaultRecreation);
 
         assertThat(result.get()).isFalse();
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.ERROR);
     }
 
@@ -583,6 +619,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel source = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 () -> {
                 },
@@ -591,6 +629,8 @@ class ApiTokenFieldPanelTest {
         onEdt(() -> new ApiTokenFieldPanel(
                 "ANTHROPIC_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 () -> {
                     throw new IllegalStateException("cancel failed");
@@ -607,7 +647,7 @@ class ApiTokenFieldPanelTest {
             assertThat(source.lastSaveError()).isEqualTo("cancel failed");
             return null;
         });
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.ERROR);
     }
 
@@ -620,6 +660,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 changes::add,
                 refreshes::incrementAndGet,
                 () -> true
@@ -629,7 +671,7 @@ class ApiTokenFieldPanelTest {
         CompletableFuture<Boolean> result = onEdt(subject::requestVaultRecreation);
 
         assertThat(result.get()).isTrue();
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.MISSING);
         assertThat(refreshes).hasValue(1);
         assertThat(changes)
@@ -648,6 +690,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     listenerRanOnEdt.set(SwingUtilities.isEventDispatchThread());
                     if (listenerCalls.incrementAndGet() == 1) {
@@ -699,6 +743,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 change -> {
                     if (listenerCalls.incrementAndGet() == 1) {
                         listenerStarted.countDown();
@@ -716,6 +762,8 @@ class ApiTokenFieldPanelTest {
         onEdt(() -> new ApiTokenFieldPanel(
                 "ANTHROPIC_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 peerRefreshes::incrementAndGet
         ));
@@ -747,6 +795,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel source = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 sourceRefreshes::incrementAndGet,
                 () -> true
@@ -754,6 +804,8 @@ class ApiTokenFieldPanelTest {
         ApiTokenFieldPanel peer = onEdt(() -> new ApiTokenFieldPanel(
                 "ANTHROPIC_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 peerRefreshes::incrementAndGet
         ));
@@ -772,10 +824,14 @@ class ApiTokenFieldPanelTest {
     void savePendingChangesAsync_whenSameTokenPeerIsClean_refreshesPeerUi() throws Exception {
         var registry = new ApiTokenFieldRegistry();
         var peerRefreshes = new AtomicInteger();
-        ApiTokenFieldPanel source = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry, null, null));
+        ApiTokenFieldPanel source = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry,
+                credentialResolver,
+                credentialMutationService, null, null));
         ApiTokenFieldPanel peer = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 null,
                 peerRefreshes::incrementAndGet
         ));
@@ -796,8 +852,12 @@ class ApiTokenFieldPanelTest {
     @DisplayName("Unregistered token fields no longer participate in conflict checks")
     void unregisterFromRegistry_whenFieldRemoved_excludesFieldFromConflicts() throws Exception {
         var registry = new ApiTokenFieldRegistry();
-        ApiTokenFieldPanel removed = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry, null, null));
-        ApiTokenFieldPanel active = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry, null, null));
+        ApiTokenFieldPanel removed = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry,
+                credentialResolver,
+                credentialMutationService, null, null));
+        ApiTokenFieldPanel active = onEdt(() -> new ApiTokenFieldPanel("OPENAI_API_KEY", registry,
+                credentialResolver,
+                credentialMutationService, null, null));
         JPasswordField removedField = onEdt(() -> findPasswordField(removed));
         JPasswordField activeField = onEdt(() -> findPasswordField(active));
 
@@ -819,8 +879,12 @@ class ApiTokenFieldPanelTest {
     void savePendingChangesAsync_whenSameTokenHasConflictingDirtyValues_returnsFalse() throws Exception {
         var registry = new ApiTokenFieldRegistry();
         String envVar = "OPENAI_API_KEY";
-        ApiTokenFieldPanel first = onEdt(() -> new ApiTokenFieldPanel(envVar, registry, null, null));
-        ApiTokenFieldPanel second = onEdt(() -> new ApiTokenFieldPanel(envVar, registry, null, null));
+        ApiTokenFieldPanel first = onEdt(() -> new ApiTokenFieldPanel(envVar, registry,
+                credentialResolver,
+                credentialMutationService, null, null));
+        ApiTokenFieldPanel second = onEdt(() -> new ApiTokenFieldPanel(envVar, registry,
+                credentialResolver,
+                credentialMutationService, null, null));
         JPasswordField firstField = onEdt(() -> findPasswordField(first));
         JPasswordField secondField = onEdt(() -> findPasswordField(second));
         assertPasswordFieldEnabled(first);
@@ -840,11 +904,24 @@ class ApiTokenFieldPanelTest {
         });
     }
 
+
+    private void configureCredentials(
+            Map<String, String> processEnvironment,
+            Map<String, String> shellEnvironment
+    ) {
+        if (credentialMutationService != null) {
+            credentialMutationService.closeSecrets();
+        }
+        tokenVault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
+        credentialResolver = new CredentialResolver(tokenVault, processEnvironment, shellEnvironment);
+        credentialMutationService = new CredentialMutationService(tokenVault, credentialResolver);
+    }
+
     private void makeVaultCorrupt() throws Exception {
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir);
         Files.createDirectories(storagePaths.secretsDirectory());
         Files.writeString(storagePaths.tokenVaultFile(), "not-json");
-        CredentialTestSupport.configureVault(storagePaths);
+        configureCredentials(emptyMap(), emptyMap());
     }
 
     private void assertRecreateVaultLinkVisible(ApiTokenFieldPanel panel) throws Exception {

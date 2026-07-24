@@ -53,20 +53,6 @@ class ModelWebQueryPlannerTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "Test";
-            }
-
-            @Override
-            public String envVarName() {
-                return null;
-            }
         };
     }
 }

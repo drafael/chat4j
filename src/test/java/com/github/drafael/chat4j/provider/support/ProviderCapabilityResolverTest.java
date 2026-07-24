@@ -1501,6 +1501,75 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Oversized capability responses are rejected without parsing")
+    void supportsImageInput_whenCapabilityResponseExceedsLimit_returnsFallback() throws Exception {
+        String modelId = "oversized-capability-model";
+        String bodyText = "{\"supports_vision\":true,\"padding\":\"%s\"}".formatted("x".repeat(1_100_000));
+        byte[] body = bodyText.getBytes(StandardCharsets.UTF_8);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models/%s".formatted(modelId), exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            boolean supported = ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    modelId,
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort())
+            );
+
+            assertThat(supported).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Distinct credentials with colliding String hashes keep separate capability entries")
+    void supportsImageInput_whenCredentialHashesCollide_doesNotReuseCachedResult() throws Exception {
+        String modelId = "credential-collision-model";
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models/%s".formatted(modelId), exchange -> {
+            boolean supportsImages = hasBearerToken(exchange, "Aa");
+            byte[] body = "{\"supports_vision\":%s}".formatted(supportsImages).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            boolean first = ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    modelId,
+                    baseUrl,
+                    "Aa"
+            );
+            boolean second = ProviderCapabilityResolver.supportsImageInput(
+                    ProviderCapabilities.chatAndModels(),
+                    "Custom Provider",
+                    modelId,
+                    baseUrl,
+                    "BB"
+            );
+
+            assertThat("Aa".hashCode()).isEqualTo("BB".hashCode());
+            assertThat(first).isTrue();
+            assertThat(second).isFalse();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Provider descriptor image capability flag is honored")
     void supportsImageInput_whenCapabilitiesDeclareImageSupport_returnsTrue() {
         boolean supported = ProviderCapabilityResolver.supportsImageInput(

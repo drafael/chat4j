@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.provider.api;
 
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -104,17 +103,12 @@ public interface ProviderService {
         );
     }
 
-    List<String> availableModels();
-
     default void cancelActiveRequest() {
         // no-op by default
     }
 
-    String name();
-
-    String envVarName();
-
-    default boolean isAvailable() {
-        return CredentialResolver.hasRequiredCredentials(envVarName());
+    default String apiKey() {
+        return "";
     }
+
 }

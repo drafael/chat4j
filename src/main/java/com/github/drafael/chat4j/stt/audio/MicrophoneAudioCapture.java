@@ -30,9 +30,21 @@ public class MicrophoneAudioCapture {
     private static final String TEMP_SUFFIX = ".wav";
 
     private final Path tempDirectory;
+    private final LineOpener lineOpener;
+    private final TempFileCreator tempFileCreator;
 
     public MicrophoneAudioCapture(@NonNull Path tempDirectory) {
+        this(tempDirectory, MicrophoneAudioCapture::openDefaultLine, MicrophoneAudioCapture::createTempFile);
+    }
+
+    MicrophoneAudioCapture(
+            @NonNull Path tempDirectory,
+            @NonNull LineOpener lineOpener,
+            @NonNull TempFileCreator tempFileCreator
+    ) {
         this.tempDirectory = tempDirectory;
+        this.lineOpener = lineOpener;
+        this.tempFileCreator = tempFileCreator;
     }
 
     public void cleanupStaleTempFiles() {
@@ -49,15 +61,22 @@ public class MicrophoneAudioCapture {
     public AudioCaptureSession start(int maxDurationSeconds, AudioLevelListener levelListener) throws Exception {
         Files.createDirectories(tempDirectory);
         applyOwnerOnlyDirectoryPermissions(tempDirectory);
-        TargetDataLine line = openLine();
-        Path tempFile = tempDirectory.resolve("%s%s%s".formatted(TEMP_PREFIX, UUID.randomUUID(), TEMP_SUFFIX));
-        applyOwnerOnlyFilePermissions(Files.createFile(tempFile));
-        CaptureSession session = new CaptureSession(line, tempFile, maxDurationSeconds, levelListener);
-        session.start();
-        return session;
+        TargetDataLine line = lineOpener.open();
+        Path tempFile = null;
+        try {
+            tempFile = tempFileCreator.create(tempDirectory);
+            applyOwnerOnlyFilePermissions(tempFile);
+            CaptureSession session = new CaptureSession(line, tempFile, maxDurationSeconds, levelListener);
+            session.start();
+            return session;
+        } catch (Exception | Error e) {
+            closeLine(line);
+            deleteTempFile(tempFile);
+            throw e;
+        }
     }
 
-    private TargetDataLine openLine() throws Exception {
+    private static TargetDataLine openDefaultLine() throws Exception {
         AudioFormat[] candidates = new AudioFormat[] {
                 TARGET_FORMAT,
                 new AudioFormat(48_000f, 16, 1, true, false),
@@ -82,6 +101,11 @@ public class MicrophoneAudioCapture {
             return line;
         }
         throw new SpeechToTextException("The default microphone could not provide or convert to 16 kHz mono recording.");
+    }
+
+    private static Path createTempFile(Path tempDirectory) throws IOException {
+        Path tempFile = tempDirectory.resolve("%s%s%s".formatted(TEMP_PREFIX, UUID.randomUUID(), TEMP_SUFFIX));
+        return Files.createFile(tempFile);
     }
 
     private void deleteIfStale(Path path, Instant cutoff) {
@@ -114,6 +138,40 @@ public class MicrophoneAudioCapture {
         }
     }
 
+    private static void closeLine(TargetDataLine line) {
+        if (line == null) {
+            return;
+        }
+        try {
+            line.stop();
+        } catch (Exception ignored) {
+        }
+        try {
+            line.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void deleteTempFile(Path tempFile) {
+        if (tempFile == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(tempFile);
+        } catch (IOException ignored) {
+        }
+    }
+
+    @FunctionalInterface
+    interface LineOpener {
+        TargetDataLine open() throws Exception;
+    }
+
+    @FunctionalInterface
+    interface TempFileCreator {
+        Path create(Path tempDirectory) throws Exception;
+    }
+
     private static final class CaptureSession implements AudioCaptureSession {
         private final TargetDataLine line;
         private final Path tempFile;
@@ -142,8 +200,7 @@ public class MicrophoneAudioCapture {
         @Override
         public void stop() {
             stopped.set(true);
-            line.stop();
-            line.close();
+            closeLine(line);
         }
 
         @Override
@@ -183,8 +240,6 @@ public class MicrophoneAudioCapture {
                         nextLevelNanos = System.nanoTime() + Duration.ofMillis(33).toNanos();
                     }
                 }
-                line.stop();
-                line.close();
                 if (cancelled.get()) {
                     Files.deleteIfExists(tempFile);
                     completion.cancel(false);
@@ -192,12 +247,11 @@ public class MicrophoneAudioCapture {
                 }
                 CapturedAudio audio = writer.finalizeAudio(Duration.ofNanos(System.nanoTime() - started).toMillis());
                 completion.complete(audio);
-            } catch (Exception e) {
-                try {
-                    Files.deleteIfExists(tempFile);
-                } catch (IOException ignored) {
-                }
+            } catch (Exception | LinkageError e) {
+                deleteTempFile(tempFile);
                 completion.completeExceptionally(e);
+            } finally {
+                closeLine(line);
             }
         }
 

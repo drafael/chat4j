@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.tts.provider.elevenlabs;
 
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
@@ -29,8 +30,8 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public ElevenLabsTextToSpeechProvider(TtsHttpTransport transport) {
-        super(transport);
+    public ElevenLabsTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
+        super(transport, credentialResolver);
     }
 
     @Override
@@ -119,13 +120,18 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request) throws Exception {
+        return synthesize(request, apiKey());
+    }
+
+    @Override
+    public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         String voiceId = StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id());
         ObjectNode body = OBJECT_MAPPER.createObjectNode();
         body.put("text", request.text());
         body.put("model_id", StringUtils.defaultIfBlank(request.modelId(), DEFAULT_MODEL.id()));
         String encodedVoiceId = URLEncoder.encode(voiceId, StandardCharsets.UTF_8);
         URI uri = URI.create("%s/v1/text-to-speech/%s?output_format=mp3_44100_128".formatted(BASE_URL, encodedVoiceId));
-        TtsHttpResponse response = postJson(uri, jsonHeaders(), body);
+        TtsHttpResponse response = postJson(uri, jsonHeaders(apiKey), body);
         return audioBody(response, "mp3");
     }
 
@@ -133,9 +139,9 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
         return Map.of("xi-api-key", apiKey());
     }
 
-    private Map<String, String> jsonHeaders() {
+    private Map<String, String> jsonHeaders(String apiKey) {
         return Map.of(
-                "xi-api-key", apiKey(),
+                "xi-api-key", apiKey,
                 "Content-Type", "application/json",
                 "Accept", "audio/mpeg"
         );

@@ -4,7 +4,6 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,13 +23,13 @@ public class SystemTextToSpeechProvider implements TextToSpeechProvider {
         this.backend = backend == null ? new UnavailableSystemTtsBackend() : backend;
     }
 
-    public static SystemTextToSpeechProvider createDefault() {
+    public static SystemTextToSpeechProvider createDefault(Map<String, String> subprocessEnvironment) {
         SystemTtsProcessRunner runner = new SystemTtsProcessRunner();
         SystemTtsExecutableLocator locator = new SystemTtsExecutableLocator();
         SystemTtsBackendFactory factory = new SystemTtsBackendFactory();
         SystemTtsBackend backend = factory.createDefault(
                 System.getProperty("os.name"),
-                CredentialResolver.mergedEnvironment(),
+                Map.copyOf(subprocessEnvironment),
                 runner,
                 locator
         );

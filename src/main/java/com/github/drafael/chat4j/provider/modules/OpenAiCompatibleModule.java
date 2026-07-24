@@ -16,8 +16,10 @@ import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 public class OpenAiCompatibleModule implements ProviderModule {
 
@@ -41,7 +43,8 @@ public class OpenAiCompatibleModule implements ProviderModule {
                 defaultBaseUrl,
                 copilotModelMetadataStore,
                 emptyList(),
-                declaredCapabilities(providerName)
+                declaredCapabilities(providerName),
+                emptyMap()
         );
     }
 
@@ -55,6 +58,30 @@ public class OpenAiCompatibleModule implements ProviderModule {
         List<String> seedModels,
         ProviderCapabilities capabilities
     ) {
+        this(
+                providerName,
+                authType,
+                credentialEnvVar,
+                fallbackApiKey,
+                defaultBaseUrl,
+                copilotModelMetadataStore,
+                seedModels,
+                capabilities,
+                emptyMap()
+        );
+    }
+
+    public OpenAiCompatibleModule(
+            String providerName,
+            AuthType authType,
+            String credentialEnvVar,
+            String fallbackApiKey,
+            String defaultBaseUrl,
+            CopilotModelMetadataStore copilotModelMetadataStore,
+            List<String> seedModels,
+            ProviderCapabilities capabilities,
+            Map<String, String> subprocessEnvironment
+    ) {
         this.descriptor = new ProviderDescriptor(
             providerName,
             authType,
@@ -64,7 +91,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
             seedModels,
             capabilities,
             configuredBaseUrl -> BaseUrlNormalizer.normalize(configuredBaseUrl, defaultBaseUrl));
-        this.chatCompletionClient = selectChatClient(providerName);
+        this.chatCompletionClient = selectChatClient(providerName, subprocessEnvironment);
         this.modelCatalogClient = selectModelCatalogClient(providerName, copilotModelMetadataStore);
     }
 
@@ -78,9 +105,9 @@ public class OpenAiCompatibleModule implements ProviderModule {
         return chatCompletionClient;
     }
 
-    private ChatCompletionClient selectChatClient(String providerName) {
+    private ChatCompletionClient selectChatClient(String providerName, Map<String, String> subprocessEnvironment) {
         return switch (providerName) {
-            case "OpenAI Codex" -> new CodexCliChatCompletionClient();
+            case "OpenAI Codex" -> new CodexCliChatCompletionClient(subprocessEnvironment);
             case "Perplexity" -> new PerplexityChatCompletionClient();
             case "Google AI" -> new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient());
             default -> new OpenAiChatCompletionClient();

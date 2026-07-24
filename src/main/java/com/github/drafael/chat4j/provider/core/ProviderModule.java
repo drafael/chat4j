@@ -15,10 +15,7 @@ public interface ProviderModule {
     ModelCatalogClient modelCatalogClient();
 
     default ProviderService createService(ProviderRuntime runtime) {
-        return new CapabilityProviderService(
-            runtime,
-            chatCompletionClient(),
-            modelCatalogClient());
+        return new CapabilityProviderService(runtime, chatCompletionClient());
     }
 
     default ModelFetcher createModelFetcher(ProviderRuntime runtime, long metadataGeneration) {

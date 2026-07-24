@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.BufferedReader;
@@ -42,6 +43,12 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private static final int TURN_START_REQUEST_ID = 3;
     private static final AtomicReference<DiagnosticsSnapshot> LAST_DIAGNOSTICS =
             new AtomicReference<>(DiagnosticsSnapshot.empty());
+
+    private final Map<String, String> subprocessEnvironment;
+
+    public CodexCliChatCompletionClient(@NonNull Map<String, String> subprocessEnvironment) {
+        this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+    }
 
     public record DiagnosticsSnapshot(String transport,
                                       boolean sawStreamingDelta,
@@ -122,7 +129,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         ProcessBuilder processBuilder = new ProcessBuilder("codex", "app-server", "--listen", "stdio://");
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
         applyExecutionDirectory(processBuilder);
-        ProcessCommandSupport.applyShellEnvironment(processBuilder);
+        ProcessCommandSupport.applyEnvironment(processBuilder, subprocessEnvironment);
 
         Process process = processBuilder.start();
         registerActiveStream.accept(process::destroyForcibly);
@@ -174,7 +181,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         );
         processBuilder.redirectErrorStream(true);
         applyExecutionDirectory(processBuilder);
-        ProcessCommandSupport.applyShellEnvironment(processBuilder);
+        ProcessCommandSupport.applyEnvironment(processBuilder, subprocessEnvironment);
 
         Process process = processBuilder.start();
         process.getOutputStream().close();

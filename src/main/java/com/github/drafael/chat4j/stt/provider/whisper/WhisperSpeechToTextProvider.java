@@ -23,10 +23,6 @@ public class WhisperSpeechToTextProvider implements SpeechToTextProvider {
 
     private final WhisperEngine engine;
 
-    public WhisperSpeechToTextProvider() {
-        this(new WhisperJniEngine());
-    }
-
     public WhisperSpeechToTextProvider(WhisperEngine engine) {
         this.engine = engine;
     }

@@ -16,6 +16,7 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.GeneratedImageAttachmentWriter;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
@@ -195,7 +196,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                     log.warn(
                             "Google AI native web search returned no answer for model {}; retrying without native web search: {}",
                             runtime.selectedModel(),
-                            e.getMessage()
+                            ProviderExceptionMapper.sanitizeMessage(e, runtime.apiKey())
                     );
                     if (clearActiveStream != null) {
                         clearActiveStream.run();

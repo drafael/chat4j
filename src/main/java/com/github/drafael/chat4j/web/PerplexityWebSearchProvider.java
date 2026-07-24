@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -28,9 +29,14 @@ public class PerplexityWebSearchProvider implements WebSearchProvider {
     private static final String API_KEY_ENV_VAR = "PERPLEXITY_API_KEY";
     private static final String ENDPOINT = "https://api.perplexity.ai/chat/completions";
 
+    private final CredentialResolver credentialResolver;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
+
+    public PerplexityWebSearchProvider(@NonNull CredentialResolver credentialResolver) {
+        this.credentialResolver = credentialResolver;
+    }
 
     @Override
     public String id() {
@@ -39,7 +45,7 @@ public class PerplexityWebSearchProvider implements WebSearchProvider {
 
     @Override
     public boolean available() {
-        return CredentialResolver.hasRequiredCredentials(API_KEY_ENV_VAR);
+        return credentialResolver.hasRequiredCredentials(API_KEY_ENV_VAR);
     }
 
     @Override
@@ -49,7 +55,7 @@ public class PerplexityWebSearchProvider implements WebSearchProvider {
 
     @Override
     public WebSearchResponse search(WebSearchRequest request, BooleanSupplier isCancelled) throws Exception {
-        String apiKey = CredentialResolver.resolveRequiredApiKey(API_KEY_ENV_VAR, null);
+        String apiKey = credentialResolver.resolveRequiredApiKey(API_KEY_ENV_VAR, null);
         String query = StringUtils.defaultIfBlank(request.query(), "latest information");
         HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(ENDPOINT))
                 .timeout(Duration.ofSeconds(45))

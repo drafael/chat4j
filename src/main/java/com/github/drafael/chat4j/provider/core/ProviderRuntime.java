@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.core;
 
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
+import com.github.drafael.chat4j.provider.api.ProviderDiagnosticSanitizer;
 
 import java.util.List;
 
@@ -34,6 +35,12 @@ public record ProviderRuntime(
     @Override
     public String toString() {
         return "ProviderRuntime[descriptor=%s, credentialEnvVar=%s, baseUrl=%s, apiKey=<masked>, selectedModel=%s, selectedModelSupportedEndpoints=%s]"
-                .formatted(descriptor, credentialEnvVar, baseUrl, selectedModel, selectedModelSupportedEndpoints);
+                .formatted(
+                        descriptor,
+                        credentialEnvVar,
+                        ProviderDiagnosticSanitizer.safeOrigin(baseUrl),
+                        selectedModel,
+                        selectedModelSupportedEndpoints
+                );
     }
 }

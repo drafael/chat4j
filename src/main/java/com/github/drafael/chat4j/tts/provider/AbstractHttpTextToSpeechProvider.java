@@ -1,6 +1,10 @@
 package com.github.drafael.chat4j.tts.provider;
 
+import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
+import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
+import lombok.NonNull;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -14,9 +18,37 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
     protected static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final TtsHttpTransport transport;
+    private final CredentialResolver credentialResolver;
 
-    protected AbstractHttpTextToSpeechProvider(TtsHttpTransport transport) {
+    protected AbstractHttpTextToSpeechProvider(
+            @NonNull TtsHttpTransport transport,
+            @NonNull CredentialResolver credentialResolver
+    ) {
         this.transport = transport;
+        this.credentialResolver = credentialResolver;
+    }
+
+    @Override
+    public boolean available() {
+        return credentialResolver.hasRequiredCredentials(requiredEnvVar());
+    }
+
+    @Override
+    public String apiKey() {
+        return credentialResolver.resolveRequiredApiKey(requiredEnvVar(), null);
+    }
+
+    @Override
+    public String availableMessage() {
+        ApiCredentialStatus status = credentialResolver.resolveCredentialStatus(requiredEnvVar(), null);
+        if (status.source() == ApiCredentialSource.SAVED_TOKEN) {
+            return "Using %s with entered/stored API token.".formatted(displayName());
+        }
+        if (status.source() == ApiCredentialSource.SHELL_ENV) {
+            return "Using %s with shell environment variable %s.".formatted(displayName(), status.credentialId());
+        }
+        String credentialId = status.credentialId() == null ? requiredEnvVar() : status.credentialId();
+        return "Using %s with environment variable %s.".formatted(displayName(), credentialId);
     }
 
     protected TtsHttpResponse get(URI uri, Map<String, String> headers) throws Exception {

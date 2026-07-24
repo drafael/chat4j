@@ -8,13 +8,16 @@ import com.github.drafael.chat4j.provider.capability.auth.impl.EnvVarCredentialS
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.modules.AnthropicModule;
 import com.github.drafael.chat4j.provider.modules.OpenAiCompatibleModule;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import java.util.List;
+import java.util.Map;
 import lombok.NonNull;
 
 final class ProviderCatalog {
@@ -28,11 +31,13 @@ final class ProviderCatalog {
     ProviderCatalog(
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver,
-            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull Map<String, String> subprocessEnvironment
     ) {
         this.copilotModelMetadataStore = copilotModelMetadataStore;
         providerFacade = new ProviderFacade(
-                new EnvVarCredentialStrategy(),
+                new EnvVarCredentialStrategy(credentialResolver),
                 copilotAuthResolver,
                 codexAuthResolver,
                 copilotModelMetadataStore
@@ -53,7 +58,10 @@ final class ProviderCatalog {
                         null,
                         null,
                         "https://api.openai.com/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        List.of(),
+                        ProviderCapabilities.chatAndModels(),
+                        subprocessEnvironment
                 ),
                 new OpenAiCompatibleModule(
                         "GitHub Copilot",
@@ -158,9 +166,17 @@ final class ProviderCatalog {
         return () -> {
             long metadataGeneration = copilotModelMetadataStore.currentGeneration();
             ProviderRuntime runtime = resolveRuntime(providerDefinition, envVar, baseUrl, null);
-            return providerDefinition.module()
-                    .createModelFetcher(runtime, metadataGeneration)
-                    .fetchModels();
+            try {
+                return providerDefinition.module()
+                        .createModelFetcher(runtime, metadataGeneration)
+                        .fetchModels();
+            } catch (Exception e) {
+                throw ProviderExceptionMapper.map(e, runtime.apiKey());
+            } catch (LinkageError e) {
+                throw new IllegalStateException(
+                        ProviderExceptionMapper.sanitizeMessage(e, runtime.apiKey())
+                );
+            }
         };
     }
 

@@ -2,10 +2,12 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.provider.api.ModelFetcher;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import com.github.drafael.chat4j.provider.api.ProviderDiagnosticSanitizer;
 import com.github.drafael.chat4j.provider.api.ProviderFactory;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
@@ -24,9 +26,26 @@ public class ProviderRegistry {
             ProviderFactory factory,
             ModelFetcher fetcher
     ) {
+        @Override
+        public String toString() {
+            return "ProviderDef[name=%s, envVar=%s, baseUrl=%s, seedModels=%s, capabilities=%s]".formatted(
+                    name,
+                    envVar,
+                    ProviderDiagnosticSanitizer.safeOrigin(baseUrl),
+                    seedModels,
+                    capabilities
+            );
+        }
     }
 
     public record ProviderRuntimeConfig(boolean enabled, String baseUrl) {
+        @Override
+        public String toString() {
+            return "ProviderRuntimeConfig[enabled=%s, baseUrl=%s]".formatted(
+                    enabled,
+                    ProviderDiagnosticSanitizer.safeOrigin(baseUrl)
+            );
+        }
     }
 
     public record ProviderStatus(
@@ -43,11 +62,19 @@ public class ProviderRegistry {
     public ProviderRegistry(
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver,
-            @NonNull CopilotModelMetadataStore copilotModelMetadataStore
+            @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull Map<String, String> subprocessEnvironment
     ) {
         this(
-                new ProviderCatalog(copilotAuthResolver, codexAuthResolver, copilotModelMetadataStore),
-                new ProviderRuntimePolicy(copilotAuthResolver, codexAuthResolver)
+                new ProviderCatalog(
+                        copilotAuthResolver,
+                        codexAuthResolver,
+                        copilotModelMetadataStore,
+                        credentialResolver,
+                        subprocessEnvironment
+                ),
+                new ProviderRuntimePolicy(copilotAuthResolver, codexAuthResolver, credentialResolver)
         );
     }
 

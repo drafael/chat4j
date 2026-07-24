@@ -12,11 +12,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CodexCliChatCompletionClientTest {
 
-    private final CodexCliChatCompletionClient subject = new CodexCliChatCompletionClient();
+    private final CodexCliChatCompletionClient subject = new CodexCliChatCompletionClient(emptyMap());
 
     @TempDir
     Path tempDir;

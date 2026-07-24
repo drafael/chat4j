@@ -15,7 +15,7 @@ import static java.util.Collections.synchronizedList;
 final class StreamingSession {
     final long sessionId;
     final UUID conversationId;
-    final ProviderService provider;
+    volatile ProviderService provider;
     final AtomicBoolean cancelled = new AtomicBoolean(false);
     final AtomicBoolean persisted = new AtomicBoolean(false);
     final AtomicBoolean terminalCallbackStarted = new AtomicBoolean(false);
@@ -46,8 +46,21 @@ final class StreamingSession {
     }
 
     void registerActiveRequest(AutoCloseable request) {
+        if (request == null) {
+            return;
+        }
         activeRequestRegistered.set(true);
-        activeRequest.set(request);
+        if (!isLive()) {
+            closeRequest(request);
+            return;
+        }
+        AutoCloseable previous = activeRequest.getAndSet(request);
+        if (previous != request) {
+            closeRequest(previous);
+        }
+        if (!isLive() && activeRequest.compareAndSet(request, null)) {
+            closeRequest(request);
+        }
     }
 
     void clearActiveRequest() {
@@ -58,16 +71,27 @@ final class StreamingSession {
         return activeRequestRegistered.get();
     }
 
+    void clearProvider() {
+        provider = null;
+    }
+
     boolean cancelActiveRequest() {
         AutoCloseable request = activeRequest.getAndSet(null);
         if (request == null) {
             return false;
         }
 
+        closeRequest(request);
+        return true;
+    }
+
+    private static void closeRequest(AutoCloseable request) {
+        if (request == null) {
+            return;
+        }
         try {
             request.close();
         } catch (Exception ignored) {
         }
-        return true;
     }
 }

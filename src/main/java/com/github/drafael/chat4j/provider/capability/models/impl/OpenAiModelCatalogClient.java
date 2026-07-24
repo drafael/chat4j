@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ModelFilters;
@@ -105,7 +106,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                 return emptyList();
             }
             log.debug("Primary model listing failed for {}: {}",
-                    runtime.descriptor().name(), ExceptionUtils.getMessage(e));
+                    runtime.descriptor().name(),
+                    ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
             return fallbackModels(runtime);
         }
     }
@@ -197,7 +199,8 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             return CatalogFetchResult.empty();
         } catch (Exception e) {
             log.debug("HTTP model listing failed for {}: {}",
-                    runtime.descriptor().name(), ExceptionUtils.getMessage(e));
+                    runtime.descriptor().name(),
+                    ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), apiKey));
             return CatalogFetchResult.empty();
         }
     }
@@ -258,7 +261,10 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             log.debug("Copilot token exchange interrupted");
             return null;
         } catch (Exception e) {
-            log.debug("Copilot token exchange failed: {}", ExceptionUtils.getMessage(e));
+            log.debug(
+                    "Copilot token exchange failed: {}",
+                    ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), githubToken)
+            );
             return null;
         }
     }

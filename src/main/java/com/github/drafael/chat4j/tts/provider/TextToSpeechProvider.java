@@ -1,8 +1,5 @@
 package com.github.drafael.chat4j.tts.provider;
 
-import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
-import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import java.util.List;
 import org.apache.commons.lang3.StringUtils;
@@ -26,11 +23,11 @@ public interface TextToSpeechProvider {
     List<TextToSpeechCatalogItem> bundledVoices();
 
     default boolean available() {
-        return CredentialResolver.hasRequiredCredentials(requiredEnvVar());
+        return StringUtils.isBlank(requiredEnvVar());
     }
 
     default String apiKey() {
-        return CredentialResolver.resolveRequiredApiKey(requiredEnvVar(), null);
+        throw new IllegalStateException("Credential resolver is unavailable for %s.".formatted(displayName()));
     }
 
     default int maxInputCharacters() {
@@ -54,17 +51,7 @@ public interface TextToSpeechProvider {
     }
 
     default String availableMessage() {
-        if (StringUtils.isBlank(requiredEnvVar())) {
-            return "Using %s.".formatted(displayName());
-        }
-        ApiCredentialStatus status = CredentialResolver.resolveCredentialStatus(requiredEnvVar(), null);
-        if (status.source() == ApiCredentialSource.SAVED_TOKEN) {
-            return "Using %s with entered/stored API token.".formatted(displayName());
-        }
-        if (status.source() == ApiCredentialSource.SHELL_ENV) {
-            return "Using %s with shell environment variable %s.".formatted(displayName(), status.credentialId());
-        }
-        return "Using %s with environment variable %s.".formatted(displayName(), status.credentialId() == null ? requiredEnvVar() : status.credentialId());
+        return "Using %s.".formatted(displayName());
     }
 
     default TextToSpeechCatalogItem normalizeModelSelection(TextToSpeechCatalogItem model) {
@@ -84,4 +71,11 @@ public interface TextToSpeechProvider {
     List<TextToSpeechCatalogItem> fetchVoices() throws Exception;
 
     TextToSpeechAudio synthesize(TextToSpeechRequest request) throws Exception;
+
+    default TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
+        if (StringUtils.isNotBlank(requiredEnvVar())) {
+            throw new IllegalStateException("Provider does not support request-owned credentials: %s".formatted(displayName()));
+        }
+        return synthesize(request);
+    }
 }

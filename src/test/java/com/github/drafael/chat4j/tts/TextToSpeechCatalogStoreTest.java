@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProviderSettingsFactory;
@@ -13,10 +16,12 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TextToSpeechCatalogStoreTest {
@@ -24,11 +29,22 @@ class TextToSpeechCatalogStoreTest {
     @TempDir
     Path tempDir;
 
+    private CredentialResolver credentialResolver;
+
+    @BeforeEach
+    void setUpCredentials() {
+        credentialResolver = new CredentialResolver(
+                new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials"))),
+                emptyMap(),
+                emptyMap()
+        );
+    }
+
     @Test
     @DisplayName("Saved catalogs use immutable snapshot references")
     void saveCatalogs_whenElevenLabsProvider_writesSnapshotReferencesAndReadsCatalogs() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
         subject.saveCatalogs(
@@ -57,7 +73,7 @@ class TextToSpeechCatalogStoreTest {
     @DisplayName("Models and voices can be saved together in one catalog update")
     void saveCatalogs_whenModelsAndVoicesProvided_writesBothCatalogs() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
         subject.saveCatalogs(
@@ -79,7 +95,7 @@ class TextToSpeechCatalogStoreTest {
     @DisplayName("Saved selection is included when absent from cached catalog")
     void voices_savedSelectionAbsent_includesSavedSelection() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
         subject.saveCatalogs(
                 ElevenLabsTextToSpeechProvider.ID,
@@ -96,7 +112,7 @@ class TextToSpeechCatalogStoreTest {
     @DisplayName("Authoritative TTS catalogs include bundled fallback without restoring saved items")
     void authoritativeVoices_whenSavedVoiceAbsent_omitsSavedVoice() {
         var settingsRepo = new SettingsRepository(tempDir.resolve("authoritative-voices.properties"));
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
         var voices = subject.authoritativeVoices(
@@ -116,7 +132,7 @@ class TextToSpeechCatalogStoreTest {
     @DisplayName("Cached catalog ignores null entries")
     void voices_cachedCatalogContainsNull_ignoresNullEntry() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
         subject.saveCatalogs(
                 ElevenLabsTextToSpeechProvider.ID,
@@ -133,7 +149,7 @@ class TextToSpeechCatalogStoreTest {
     @DisplayName("Deepgram stale cached voice-model catalogs are shown as model families")
     void models_whenDeepgramCacheContainsLegacyVoiceModels_normalizesToFamilies() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
-        var provider = new DeepgramTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new DeepgramTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
         subject.saveCatalogs(
                 DeepgramTextToSpeechProvider.ID,
@@ -186,7 +202,7 @@ class TextToSpeechCatalogStoreTest {
         Files.writeString(cacheDirectory.resolve(voicesReference), "not json");
         settingsRepo.put("chat4j.tts.catalog.elevenlabs.modelsFile", modelsReference);
         settingsRepo.put("chat4j.tts.catalog.elevenlabs.voicesFile", voicesReference);
-        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
         var catalogs = subject.catalogs(provider, provider.defaultModel(), provider.defaultVoice());
@@ -201,7 +217,7 @@ class TextToSpeechCatalogStoreTest {
     void models_malformedJson_usesBundledValues() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-catalog", ".properties"));
         settingsRepo.put("chat4j.tts.catalog.groq.modelsFile", "not json");
-        var provider = new GroqTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]));
+        var provider = new GroqTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]), credentialResolver);
         var subject = new TextToSpeechCatalogStore(settingsRepo);
 
         var models = subject.models(provider, provider.defaultModel());

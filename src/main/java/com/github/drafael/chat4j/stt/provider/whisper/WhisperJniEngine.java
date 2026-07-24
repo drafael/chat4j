@@ -26,10 +26,6 @@ public class WhisperJniEngine implements WhisperEngine {
         this.nativeRuntime = nativeRuntime;
     }
 
-    public WhisperJniEngine() {
-        this(WhisperNativeRuntime.shared());
-    }
-
     @Override
     public String transcribe(Path modelFile, Path wavFile, WhisperTranscriptionOptions options, SpeechToTextProviderContext.CancellationToken cancellationToken) throws Exception {
         checkCanceled(cancellationToken);

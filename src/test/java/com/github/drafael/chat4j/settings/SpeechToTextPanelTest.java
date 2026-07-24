@@ -1,7 +1,11 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
 import com.github.drafael.chat4j.stt.SpeechToTextSettingsSnapshot;
@@ -26,7 +30,9 @@ import com.github.drafael.chat4j.stt.provider.vosk.VoskValidationStatus;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperBinding;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperContextHandle;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperJniEngine;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
@@ -40,6 +46,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -55,6 +62,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -72,19 +80,51 @@ class SpeechToTextPanelTest {
 
     private final List<SpeechToTextPanel> panels = new ArrayList<>();
     private final List<AutoCloseable> ownedModelServices = new ArrayList<>();
+    private CredentialResolver credentialResolver;
+    private CredentialMutationService credentialMutationService;
+    private CredentialSource credentialSource;
+
+    @BeforeEach
+    void setUpCredentials() {
+        var credentials = CredentialTestSupport.create(
+                StoragePaths.ofConfigHome(tempDir.resolve("credentials"))
+        );
+        credentialResolver = credentials.resolver();
+        credentialMutationService = credentials.mutationService();
+        credentialSource = CredentialSource.from(credentialResolver);
+    }
 
     @AfterEach
     void cleanUpPanelsAndOwnedModelServices() throws Exception {
         for (SpeechToTextPanel panel : panels.reversed()) {
-            if (!(boolean) fieldValue(panel, "removed")) {
-                runOnEdt(panel::removeNotify);
-            }
+            runOnEdt(() -> {
+                if (!(boolean) fieldValue(panel, "removed")) {
+                    panel.removeNotify();
+                }
+                panel.disposePanel();
+            });
         }
         for (AutoCloseable service : ownedModelServices.reversed()) {
             service.close();
         }
+        credentialMutationService.closeSecrets();
         SwingUtilities.invokeAndWait(() -> {
         });
+    }
+
+    @Test
+    @DisplayName("Temporary removal can be followed by reattachment without disabling saves or model updates")
+    void removeNotify_whenPanelIsReadded_restoresAttachmentResources() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("reattach-settings.properties"));
+        SpeechToTextPanel subject = callOnEdt(() -> newPanel(repo, tempDir.resolve("reattach-models")));
+
+        runOnEdt(subject::removeNotify);
+        runOnEdt(subject::addNotify);
+
+        assertThat((boolean) fieldValue(subject, "removed")).isFalse();
+        assertThat((boolean) fieldValue(subject, "listenersSubscribed")).isTrue();
+        ExecutorService saveExecutor = (ExecutorService) fieldValue(subject, "saveExecutor");
+        assertThat(saveExecutor.isShutdown()).isFalse();
     }
 
     private SpeechToTextPanel newPanel(SettingsRepository settingsRepo, Path defaultModelDirectory) {
@@ -93,7 +133,7 @@ class SpeechToTextPanelTest {
                 defaultModelDirectory,
                 defaultModelDirectory.resolveSibling("temp")
         ));
-        WhisperModelManagementService whisperModels = own(new WhisperModelManagementService(
+        WhisperModelManagementService whisperModels = own(newWhisperModelManagementService(
                 settingsRepo,
                 defaultModelDirectory,
                 defaultModelDirectory.resolveSibling("temp")
@@ -106,7 +146,7 @@ class SpeechToTextPanelTest {
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService
     ) {
-        WhisperModelManagementService whisperModels = own(new WhisperModelManagementService(
+        WhisperModelManagementService whisperModels = own(newWhisperModelManagementService(
                 settingsRepo,
                 defaultModelDirectory,
                 defaultModelDirectory.resolveSibling("temp")
@@ -123,7 +163,9 @@ class SpeechToTextPanelTest {
         return newPanel(
                 settingsRepo,
                 defaultModelDirectory,
-                SpeechToTextProviderRegistry.createDefault(),
+                SpeechToTextProviderRegistry.createDefault(
+                        new WhisperJniEngine(WhisperNativeRuntime.shared())
+                ),
                 voskModelManagementService,
                 whisperModelManagementService
         );
@@ -139,7 +181,7 @@ class SpeechToTextPanelTest {
                 defaultModelDirectory,
                 defaultModelDirectory.resolveSibling("temp")
         ));
-        WhisperModelManagementService whisperModels = own(new WhisperModelManagementService(
+        WhisperModelManagementService whisperModels = own(newWhisperModelManagementService(
                 settingsRepo,
                 defaultModelDirectory,
                 defaultModelDirectory.resolveSibling("temp")
@@ -161,11 +203,27 @@ class SpeechToTextPanelTest {
                 new UnavailableSpeechToTextModelDownloader(),
                 voskModelManagementService,
                 whisperModelManagementService,
+                credentialResolver,
+                credentialMutationService,
                 new ApiTokenFieldRegistry(),
                 SettingsCredentialChangeListener.NO_OP
         );
         panels.add(panel);
         return panel;
+    }
+
+    private WhisperModelManagementService newWhisperModelManagementService(
+            SettingsRepository settingsRepository,
+            Path modelsDirectory,
+            Path tempDirectory
+    ) {
+        return new WhisperModelManagementService(
+                settingsRepository,
+                modelsDirectory,
+                tempDirectory,
+                WhisperNativeRuntime.shared(),
+                new WhisperModelUsageTracker()
+        );
     }
 
     private <T extends AutoCloseable> T own(T service) {
@@ -413,6 +471,7 @@ class SpeechToTextPanelTest {
         var saveCompleted = new CountDownLatch(1);
         var successCallback = new CountDownLatch(1);
         boolean[] removed = {false};
+        var panelRemoved = new CountDownLatch(1);
 
         try {
             scheduleSave(subject, () -> {
@@ -426,13 +485,17 @@ class SpeechToTextPanelTest {
             assertThat(saveStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
             runWhileEventDispatchThreadBlocked(() -> {
+                SwingUtilities.invokeLater(() -> {
+                    subject.removeNotify();
+                    removed[0] = true;
+                    panelRemoved.countDown();
+                });
                 releaseSave.countDown();
                 assertThat(saveCompleted.await(2, TimeUnit.SECONDS)).isTrue();
-                subject.removeNotify();
-                removed[0] = true;
             });
             SwingUtilities.invokeAndWait(() -> {
             });
+            assertThat(panelRemoved.getCount()).isZero();
 
             assertThat(successCallback.getCount()).isEqualTo(1);
         } finally {
@@ -1633,14 +1696,16 @@ class SpeechToTextPanelTest {
             assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
             runWhileEventDispatchThreadBlocked(() -> {
+                SwingUtilities.invokeLater(() -> {
+                    subject.removeNotify();
+                    removed[0] = true;
+                });
                 repo.releaseConditionalUpdate.countDown();
                 waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
                         .equals(provider.defaultModel().id()));
                 waitUntil(() -> new SpeechToTextCatalogStore(repo)
                         .cachedModels(ElevenLabsSpeechToTextProvider.ID).stream()
                         .anyMatch(model -> "account-b-model".equals(model.id())));
-                subject.removeNotify();
-                removed[0] = true;
             });
 
             var reopened = callOnEdt(() -> newPanel(

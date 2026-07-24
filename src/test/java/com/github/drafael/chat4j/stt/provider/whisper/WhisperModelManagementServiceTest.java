@@ -24,7 +24,9 @@ class WhisperModelManagementServiceTest {
         var subject = new WhisperModelManagementService(
                 repo,
                 tempDir.resolve("models-closed"),
-                tempDir.resolve("temp-closed")
+                tempDir.resolve("temp-closed"),
+                WhisperNativeRuntime.shared(),
+                new WhisperModelUsageTracker()
         );
 
         subject.close();
@@ -69,7 +71,9 @@ class WhisperModelManagementServiceTest {
         var subject = new WhisperModelManagementService(
                 repo,
                 tempDir.resolve("models-listener-failure"),
-                tempDir.resolve("temp-listener-failure")
+                tempDir.resolve("temp-listener-failure"),
+                WhisperNativeRuntime.shared(),
+                new WhisperModelUsageTracker()
         );
         var refreshCompleted = new CountDownLatch(1);
         try {
@@ -96,7 +100,13 @@ class WhisperModelManagementServiceTest {
     @DisplayName("Closing from a model service listener does not deadlock the worker")
     void close_whenCalledFromListener_returnsWithoutWaitingForItself() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
-        var subject = new WhisperModelManagementService(repo, tempDir.resolve("models"), tempDir.resolve("temp"));
+        var subject = new WhisperModelManagementService(
+                repo,
+                tempDir.resolve("models"),
+                tempDir.resolve("temp"),
+                WhisperNativeRuntime.shared(),
+                new WhisperModelUsageTracker()
+        );
         var closeReturned = new CountDownLatch(1);
         var worker = new AtomicReference<Thread>();
         try {

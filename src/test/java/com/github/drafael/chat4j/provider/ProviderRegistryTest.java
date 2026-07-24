@@ -1,10 +1,13 @@
 package com.github.drafael.chat4j.provider;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderRuntimeConfig;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.http.HttpClient;
@@ -27,11 +30,7 @@ class ProviderRegistryTest {
 
     @BeforeEach
     void setUp() {
-        subject = new ProviderRegistry(
-                new CopilotAuthResolver(tempDir.resolve("copilot-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CodexAuthResolver(tempDir.resolve("codex-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CopilotModelMetadataStore(tempDir.resolve("metadata"))
-        );
+        subject = registry("");
     }
 
     @Test
@@ -97,11 +96,7 @@ class ProviderRegistryTest {
     @Test
     @DisplayName("Separate provider registries keep runtime configuration isolated")
     void applyRuntimeConfig_whenRegistriesAreIndependent_doesNotChangeOtherRegistry() {
-        var other = new ProviderRegistry(
-                new CopilotAuthResolver(tempDir.resolve("other-copilot-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CodexAuthResolver(tempDir.resolve("other-codex-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CopilotModelMetadataStore(tempDir.resolve("other-metadata"))
-        );
+        var other = registry("other-");
         subject.applyRuntimeConfig(Map.of(
                 "Ollama",
                 new ProviderRuntimeConfig(false, "http://localhost:11434/v1")
@@ -109,6 +104,18 @@ class ProviderRegistryTest {
 
         assertThat(subject.availableProviders()).noneMatch(provider -> "Ollama".equals(provider.name()));
         assertThat(other.availableProviders()).anyMatch(provider -> "Ollama".equals(provider.name()));
+    }
+
+    private ProviderRegistry registry(String prefix) {
+        ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("%scredentials".formatted(prefix))));
+        CredentialResolver credentialResolver = new CredentialResolver(vault, emptyMap(), emptyMap());
+        return new ProviderRegistry(
+                new CopilotAuthResolver(tempDir.resolve("%scopilot-home".formatted(prefix)), emptyMap(), HttpClient.newHttpClient()),
+                new CodexAuthResolver(tempDir.resolve("%scodex-home".formatted(prefix)), emptyMap(), HttpClient.newHttpClient()),
+                new CopilotModelMetadataStore(tempDir.resolve("%smetadata".formatted(prefix))),
+                credentialResolver,
+                emptyMap()
+        );
     }
 
     private static Object readField(Object target, String fieldName) throws Exception {

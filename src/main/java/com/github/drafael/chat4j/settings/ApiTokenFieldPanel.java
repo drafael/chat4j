@@ -34,6 +34,8 @@ public class ApiTokenFieldPanel extends JPanel {
     private final String envVarExpression;
     private final String canonicalTokenId;
     private final ApiTokenFieldRegistry registry;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
     private final SettingsCredentialChangeListener credentialChangeListener;
     private final Runnable beforeCredentialChange;
     private final Runnable afterSaveRefresh;
@@ -54,35 +56,70 @@ public class ApiTokenFieldPanel extends JPanel {
     public ApiTokenFieldPanel(
             String envVarExpression,
             ApiTokenFieldRegistry registry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             SettingsCredentialChangeListener credentialChangeListener,
             Runnable afterSaveRefresh
     ) {
-        this(envVarExpression, registry, credentialChangeListener, null, afterSaveRefresh, null);
+        this(
+                envVarExpression,
+                registry,
+                credentialResolver,
+                credentialMutationService,
+                credentialChangeListener,
+                null,
+                afterSaveRefresh,
+                null
+        );
     }
 
     public ApiTokenFieldPanel(
             String envVarExpression,
             ApiTokenFieldRegistry registry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             SettingsCredentialChangeListener credentialChangeListener,
             Runnable beforeCredentialChange,
             Runnable afterSaveRefresh
     ) {
-        this(envVarExpression, registry, credentialChangeListener, beforeCredentialChange, afterSaveRefresh, null);
+        this(
+                envVarExpression,
+                registry,
+                credentialResolver,
+                credentialMutationService,
+                credentialChangeListener,
+                beforeCredentialChange,
+                afterSaveRefresh,
+                null
+        );
     }
 
     ApiTokenFieldPanel(
             String envVarExpression,
             ApiTokenFieldRegistry registry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             SettingsCredentialChangeListener credentialChangeListener,
             Runnable afterSaveRefresh,
             BooleanSupplier recreateVaultConfirmation
     ) {
-        this(envVarExpression, registry, credentialChangeListener, null, afterSaveRefresh, recreateVaultConfirmation);
+        this(
+                envVarExpression,
+                registry,
+                credentialResolver,
+                credentialMutationService,
+                credentialChangeListener,
+                null,
+                afterSaveRefresh,
+                recreateVaultConfirmation
+        );
     }
 
     private ApiTokenFieldPanel(
             String envVarExpression,
             ApiTokenFieldRegistry registry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             SettingsCredentialChangeListener credentialChangeListener,
             Runnable beforeCredentialChange,
             Runnable afterSaveRefresh,
@@ -91,6 +128,8 @@ public class ApiTokenFieldPanel extends JPanel {
         this.envVarExpression = envVarExpression;
         this.canonicalTokenId = CredentialResolver.canonicalTokenId(envVarExpression);
         this.registry = registry;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
@@ -172,8 +211,8 @@ public class ApiTokenFieldPanel extends JPanel {
     public void reloadFromEffectiveCredential() {
         setControlsEnabled(false);
         applyEffectiveCredential(new EffectiveCredential(
-                CredentialResolver.resolveCredential(envVarExpression, null),
-                CredentialResolver.resolveCredentialStatus(envVarExpression, null)
+                credentialResolver.resolveCredential(envVarExpression, null),
+                credentialResolver.resolveCredentialStatus(envVarExpression, null)
         ));
     }
 
@@ -303,7 +342,7 @@ public class ApiTokenFieldPanel extends JPanel {
         setInfo("Saving token...");
         CompletableFuture<Boolean> operation = CompletableFuture.supplyAsync(() -> {
             try {
-                CredentialMutationResult result = CredentialMutationService.shared().saveTokenOverride(
+                CredentialMutationResult result = credentialMutationService.saveTokenOverride(
                         envVarExpression,
                         password,
                         this::notifyCredentialMutation
@@ -352,7 +391,7 @@ public class ApiTokenFieldPanel extends JPanel {
         pendingCompletions++;
         setControlsEnabled(false);
         setInfo("Recreating token vault...");
-        return CompletableFuture.supplyAsync(() -> CredentialMutationService.shared().recreateVault(
+        return CompletableFuture.supplyAsync(() -> credentialMutationService.recreateVault(
                 this::notifyCredentialMutation
         )).thenCompose(this::completeVaultRecreationAsync);
     }

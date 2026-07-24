@@ -33,6 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.BiPredicate;
 import javax.swing.*;
@@ -91,13 +92,16 @@ public class ModelSelectorPopup extends JDialog {
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
     private final ProviderRegistry providerRegistry;
+    private final CredentialResolver credentialResolver;
     private final List<ProviderGroup> groups = new ArrayList<>();
     private final LinkedHashMap<String, ProviderEntry> entries = new LinkedHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, ModelCapabilities> capabilityCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<ModelCapabilityKey, Long> capabilityRefreshInFlight = new ConcurrentHashMap<>();
-    private final Set<ProviderModelCacheService.RefreshAttempt> catalogRefreshInFlight = ConcurrentHashMap.newKeySet();
+    private final Set<Thread> capabilityRefreshThreads = ConcurrentHashMap.newKeySet();
+    private final ConcurrentMap<ProviderModelCacheService.RefreshAttempt, Thread> catalogRefreshThreads = new ConcurrentHashMap<>();
     private final Object capabilityRefreshLock = new Object();
     private final AtomicLong providerLoadCounter = new AtomicLong();
+    private final AtomicReference<Thread> providerLoadThread = new AtomicReference<>();
     private final AtomicLong localHealthRefreshCounter = new AtomicLong();
     private final AtomicLong codexLocalRefreshCounter = new AtomicLong();
     private final AtomicBoolean codexModelsChangedPending = new AtomicBoolean();
@@ -159,7 +163,8 @@ public class ModelSelectorPopup extends JDialog {
             @NonNull BiConsumer<String, String> onSelect,
             @NonNull BiPredicate<List<ProviderDef>, Long> onProvidersLoaded,
             @NonNull Runnable onFavoritesChanged,
-            @NonNull Runnable onModelsChanged
+            @NonNull Runnable onModelsChanged,
+            @NonNull CredentialResolver credentialResolver
     ) {
         super(owner);
         this.onSelect = onSelect;
@@ -169,6 +174,7 @@ public class ModelSelectorPopup extends JDialog {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.providerRegistry = providerRegistry;
+        this.credentialResolver = credentialResolver;
 
         setUndecorated(true);
         setType(Type.POPUP);
@@ -317,8 +323,12 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     public void hidePopup() {
+        boolean wasVisible = isVisible();
         setVisible(false);
         uninstallOutsideClickListener();
+        if (wasVisible) {
+            invalidateModelList();
+        }
     }
 
     public void invalidateModelList() {
@@ -327,13 +337,24 @@ public class ModelSelectorPopup extends JDialog {
             capabilityCache.clear();
             capabilityRefreshInFlight.clear();
         }
+        interrupt(providerLoadThread.get());
+        capabilityRefreshThreads.forEach(Thread::interrupt);
+        catalogRefreshThreads.values().forEach(Thread::interrupt);
         localHealthRefreshCounter.incrementAndGet();
         codexLocalRefreshCounter.incrementAndGet();
-        catalogRefreshInFlight.forEach(modelCacheService::clearRefreshInFlight);
-        catalogRefreshInFlight.clear();
         preloaded = false;
-        loadingProviders = false;
+        Thread activeProviderLoad = providerLoadThread.get();
+        loadingProviders = activeProviderLoad != null && activeProviderLoad.isAlive();
         entries.clear();
+        if (loadingProviders) {
+            showProviderLoadingState();
+        }
+    }
+
+    private static void interrupt(Thread thread) {
+        if (thread != null) {
+            thread.interrupt();
+        }
     }
 
     @Override
@@ -716,7 +737,7 @@ public class ModelSelectorPopup extends JDialog {
         showProviderLoadingState();
         loadingProviders = true;
         long loadId = providerLoadCounter.incrementAndGet();
-        Thread.startVirtualThread(() -> {
+        Thread loadThread = Thread.ofVirtual().name("chat4j-model-providers").unstarted(() -> {
             long scopeVersion = -1L;
             try {
                 if (!isCurrentProviderLoad(loadId)) {
@@ -749,11 +770,31 @@ public class ModelSelectorPopup extends JDialog {
                 long loadedScopeVersion = scopeVersion;
                 SwingUtilities.invokeLater(() -> applyLoadedProviders(loadId, loadedScopeVersion, providers));
             } catch (Exception e) {
-                log.warn("Failed to load provider models: {}", ExceptionUtils.getMessage(e));
+                if (!Thread.currentThread().isInterrupted()) {
+                    log.warn("Failed to load provider models: {}", ExceptionUtils.getMessage(e));
+                }
                 long failedScopeVersion = scopeVersion;
                 SwingUtilities.invokeLater(() -> applyProviderLoadFailure(loadId, failedScopeVersion));
+            } finally {
+                if (providerLoadThread.compareAndSet(Thread.currentThread(), null)
+                        && !isCurrentProviderLoad(loadId)) {
+                    SwingUtilities.invokeLater(() -> {
+                        loadingProviders = false;
+                        if (isVisible() && !disposed) {
+                            ensureListBuilt();
+                        }
+                    });
+                }
             }
         });
+        providerLoadThread.set(loadThread);
+        try {
+            loadThread.start();
+        } catch (RuntimeException | Error e) {
+            providerLoadThread.compareAndSet(loadThread, null);
+            loadingProviders = false;
+            throw e;
+        }
     }
 
     private long synchronizeProviderScopes(long loadId, List<ProviderDef> providers) {
@@ -934,8 +975,7 @@ public class ModelSelectorPopup extends JDialog {
                 return;
             }
 
-            catalogRefreshInFlight.add(refreshAttempt);
-            Thread.startVirtualThread(() -> {
+            Thread refreshThread = Thread.ofVirtual().name("chat4j-model-catalog").unstarted(() -> {
                 try {
                     if (!isCatalogRefreshCurrent(providerGeneration)) {
                         return;
@@ -954,11 +994,27 @@ public class ModelSelectorPopup extends JDialog {
                                 entry.name(), ExceptionUtils.getMessage(e));
                     }
                 } finally {
-                    catalogRefreshInFlight.remove(refreshAttempt);
+                    boolean superseded = !isCatalogRefreshCurrent(providerGeneration);
+                    catalogRefreshThreads.remove(refreshAttempt, Thread.currentThread());
                     modelCacheService.clearRefreshInFlight(refreshAttempt);
                     modelCacheService.logMetricsSnapshot("refresh-complete:%s".formatted(entry.name()));
+                    if (superseded && !disposed) {
+                        SwingUtilities.invokeLater(() -> {
+                            if (isVisible()) {
+                                fetchModelsAsync();
+                            }
+                        });
+                    }
                 }
             });
+            catalogRefreshThreads.put(refreshAttempt, refreshThread);
+            try {
+                refreshThread.start();
+            } catch (RuntimeException | Error e) {
+                catalogRefreshThreads.remove(refreshAttempt, refreshThread);
+                modelCacheService.clearRefreshInFlight(refreshAttempt);
+                throw e;
+            }
         });
     }
 
@@ -1153,18 +1209,20 @@ public class ModelSelectorPopup extends JDialog {
         long providerGeneration;
         synchronized (capabilityRefreshLock) {
             providerGeneration = providerLoadCounter.get();
-            if (capabilityRefreshInFlight.putIfAbsent(key, providerGeneration) != null) {
+            Long activeGeneration = capabilityRefreshInFlight.get(key);
+            if (activeGeneration != null && activeGeneration >= providerGeneration) {
                 return;
             }
+            capabilityRefreshInFlight.put(key, providerGeneration);
         }
 
-        Thread.startVirtualThread(() -> {
+        Thread refreshThread = Thread.ofVirtual().name("chat4j-model-capability").unstarted(() -> {
             try {
                 if (!isCurrentProviderLoad(providerGeneration)) {
                     return;
                 }
 
-                String apiKey = CredentialResolver.resolveApiKey(entry.def.envVar(), null);
+                String apiKey = credentialResolver.resolveApiKey(entry.def.envVar(), null);
                 boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
                         entry.def.capabilities(),
                         entry.name(),
@@ -1213,8 +1271,17 @@ public class ModelSelectorPopup extends JDialog {
                 });
             } finally {
                 capabilityRefreshInFlight.remove(key, providerGeneration);
+                capabilityRefreshThreads.remove(Thread.currentThread());
             }
         });
+        capabilityRefreshThreads.add(refreshThread);
+        try {
+            refreshThread.start();
+        } catch (RuntimeException | Error e) {
+            capabilityRefreshThreads.remove(refreshThread);
+            capabilityRefreshInFlight.remove(key, providerGeneration);
+            throw e;
+        }
     }
 
     private void applyCapabilitiesToVisibleRows(ModelCapabilityKey key, ModelCapabilities capabilities) {

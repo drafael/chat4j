@@ -1,10 +1,10 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.UUID;
 import lombok.NonNull;
+
+import java.util.List;
+import java.util.Map;
 
 import static java.util.Collections.emptyMap;
 
@@ -13,15 +13,19 @@ public final class CredentialTestSupport {
     private CredentialTestSupport() {
     }
 
-    public static void configureVault(@NonNull StoragePaths storagePaths) {
-        CredentialResolver.configureTokenVault(new ApiTokenVault(storagePaths));
+    public static CredentialAssembly create(@NonNull StoragePaths storagePaths) {
+        return create(storagePaths, emptyMap(), emptyMap());
     }
 
-    public static void reset() {
-        Path isolatedConfigHome = Path.of("target", "credential-test-reset", UUID.randomUUID().toString());
-        CredentialResolver.configureProcessEnv(System::getenv);
-        configureVault(StoragePaths.ofConfigHome(isolatedConfigHome));
-        CredentialResolver.init(emptyMap());
+    public static CredentialAssembly create(
+            @NonNull StoragePaths storagePaths,
+            Map<String, String> processEnvironment,
+            Map<String, String> shellEnvironment
+    ) {
+        ApiTokenVault vault = new ApiTokenVault(storagePaths);
+        CredentialResolver resolver = new CredentialResolver(vault, processEnvironment, shellEnvironment);
+        CredentialMutationService mutationService = new CredentialMutationService(vault, resolver);
+        return new CredentialAssembly(vault, resolver, mutationService);
     }
 
     static void saveToken(@NonNull ApiTokenVault vault, String tokenId, @NonNull char[] token) {
@@ -32,11 +36,14 @@ public final class CredentialTestSupport {
         vault.applyTokenMutation(tokenId, List.of(tokenId), null);
     }
 
-    public static CredentialMutationResult saveToken(String envVarExpression, @NonNull char[] token) {
-        return CredentialMutationService.shared().saveTokenOverride(
-                envVarExpression,
-                token,
-                CredentialMutationListener.NO_OP
-        );
+    public record CredentialAssembly(
+            ApiTokenVault vault,
+            CredentialResolver resolver,
+            CredentialMutationService mutationService
+    ) implements AutoCloseable {
+        @Override
+        public void close() {
+            mutationService.closeSecrets();
+        }
     }
 }

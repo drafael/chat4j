@@ -70,20 +70,6 @@ class AgentOrchestratorTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         };
 
         Path projectRoot = Files.createTempDirectory("chat4j-agent-test");
@@ -393,20 +379,6 @@ class AgentOrchestratorTest {
                 onComplete.run();
             }
 
-            @Override
-            public List<String> availableModels() {
-                return List.of("test-model");
-            }
-
-            @Override
-            public String name() {
-                return "test";
-            }
-
-            @Override
-            public String envVarName() {
-                return "TEST_KEY";
-            }
         };
     }
 }

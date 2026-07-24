@@ -44,10 +44,6 @@ public class WhisperModelManagementService implements AutoCloseable {
     private volatile boolean runtimeReady = true;
     private volatile String runtimeStatusMessage = "Whisper.cpp native runtime has not been checked yet.";
 
-    public WhisperModelManagementService(@NonNull SettingsRepository settingsRepo, @NonNull Path defaultModelDirectory, @NonNull Path tempDirectory) {
-        this(settingsRepo, defaultModelDirectory, tempDirectory, WhisperNativeRuntime.shared(), new WhisperModelUsageTracker());
-    }
-
     public WhisperModelManagementService(
             @NonNull SettingsRepository settingsRepo,
             @NonNull Path defaultModelDirectory,

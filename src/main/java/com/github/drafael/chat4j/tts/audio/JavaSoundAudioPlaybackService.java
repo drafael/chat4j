@@ -1,67 +1,109 @@
 package com.github.drafael.chat4j.tts.audio;
 
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Locale;
-import java.util.concurrent.CountDownLatch;
+import javazoom.jl.player.Player;
+import org.apache.commons.lang3.StringUtils;
+
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
 import javax.sound.sampled.LineEvent;
-import javazoom.jl.player.Player;
-import org.apache.commons.lang3.StringUtils;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.BooleanSupplier;
 
 public class JavaSoundAudioPlaybackService implements AudioPlaybackService {
 
     private final Object lock = new Object();
+    private final PlaybackResourceFactory resourceFactory;
+    private long playbackGeneration;
     private Clip currentClip;
     private Player currentMp3Player;
 
+    public JavaSoundAudioPlaybackService() {
+        this(new DefaultPlaybackResourceFactory());
+    }
+
+    JavaSoundAudioPlaybackService(PlaybackResourceFactory resourceFactory) {
+        this.resourceFactory = resourceFactory;
+    }
+
     @Override
     public void play(TextToSpeechAudio audio) throws Exception {
-        stop();
+        play(audio, () -> false);
+    }
+
+    @Override
+    public void play(TextToSpeechAudio audio, BooleanSupplier isCancelled) throws Exception {
+        PlaybackResources previous;
+        long generation;
+        synchronized (lock) {
+            if (isCancelled.getAsBoolean()) {
+                return;
+            }
+            generation = ++playbackGeneration;
+            previous = detachCurrentLocked();
+        }
+        close(previous);
+
         if (isMp3(audio)) {
-            playMp3(audio);
+            playMp3(audio, generation, isCancelled);
             return;
         }
-        playJavaSound(audio);
+        playJavaSound(audio, generation, isCancelled);
     }
 
     @Override
     public void stop() {
-        Clip clip;
-        Player player;
-        synchronized (lock) {
-            clip = currentClip;
-            player = currentMp3Player;
-            currentClip = null;
-            currentMp3Player = null;
-        }
-        if (clip != null) {
-            clip.stop();
-            clip.close();
-        }
-        if (player != null) {
-            player.close();
-        }
+        stopAsync();
     }
 
-    private void playJavaSound(TextToSpeechAudio audio) throws Exception {
+    @Override
+    public CompletableFuture<Void> stopAsync() {
+        PlaybackResources previous;
+        synchronized (lock) {
+            playbackGeneration++;
+            previous = detachCurrentLocked();
+        }
+        if (previous.empty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.runAsync(
+                () -> close(previous),
+                command -> Thread.ofVirtual().name("chat4j-audio-playback-close").start(command)
+        );
+    }
+
+    private void playJavaSound(TextToSpeechAudio audio, long generation, BooleanSupplier isCancelled) throws Exception {
         CountDownLatch done = new CountDownLatch(1);
         Clip clip = null;
         try (AudioInputStream stream = AudioSystem.getAudioInputStream(new ByteArrayInputStream(normalizedWavBytes(audio.bytes())))) {
-            clip = AudioSystem.getClip();
-            synchronized (lock) {
-                currentClip = clip;
-            }
+            clip = resourceFactory.createClip();
+            Clip candidate = clip;
             clip.addLineListener(event -> {
                 if (event.getType() == LineEvent.Type.STOP || event.getType() == LineEvent.Type.CLOSE) {
                     done.countDown();
                 }
             });
+            synchronized (lock) {
+                if (generation != playbackGeneration || isCancelled.getAsBoolean()) {
+                    return;
+                }
+                currentClip = candidate;
+            }
             clip.open(stream);
+            if (!isPlaybackCurrent(generation) || isCancelled.getAsBoolean()) {
+                stopOwnedClip(clip);
+                return;
+            }
             clip.start();
-            done.await();
+            if (!isPlaybackCurrent(generation) || isCancelled.getAsBoolean()) {
+                stopOwnedClip(clip);
+            } else {
+                done.await();
+            }
         } finally {
             if (clip != null) {
                 clearCurrentClip(clip);
@@ -70,16 +112,64 @@ public class JavaSoundAudioPlaybackService implements AudioPlaybackService {
         }
     }
 
-    private void playMp3(TextToSpeechAudio audio) throws Exception {
-        Player player = new Player(new ByteArrayInputStream(audio.bytes()));
+    private void playMp3(TextToSpeechAudio audio, long generation, BooleanSupplier isCancelled) throws Exception {
+        Player player = resourceFactory.createPlayer(audio.bytes());
         synchronized (lock) {
+            if (generation != playbackGeneration || isCancelled.getAsBoolean()) {
+                player.close();
+                return;
+            }
             currentMp3Player = player;
         }
         try {
-            player.play();
+            if (isPlaybackCurrent(generation) && !isCancelled.getAsBoolean()) {
+                player.play();
+            }
         } finally {
             clearCurrentPlayer(player);
             player.close();
+        }
+    }
+
+    private boolean isPlaybackCurrent(long generation) {
+        synchronized (lock) {
+            return generation == playbackGeneration;
+        }
+    }
+
+    private void stopOwnedClip(Clip clip) {
+        synchronized (lock) {
+            if (currentClip != clip) {
+                return;
+            }
+            currentClip = null;
+        }
+        clip.stop();
+    }
+
+    private PlaybackResources detachCurrentLocked() {
+        PlaybackResources resources = new PlaybackResources(currentClip, currentMp3Player);
+        currentClip = null;
+        currentMp3Player = null;
+        return resources;
+    }
+
+    private static void close(PlaybackResources resources) {
+        if (resources.clip() != null) {
+            try {
+                resources.clip().stop();
+            } catch (RuntimeException ignored) {
+            }
+            try {
+                resources.clip().close();
+            } catch (RuntimeException ignored) {
+            }
+        }
+        if (resources.player() != null) {
+            try {
+                resources.player().close();
+            } catch (RuntimeException ignored) {
+            }
         }
     }
 
@@ -96,6 +186,30 @@ public class JavaSoundAudioPlaybackService implements AudioPlaybackService {
             if (currentMp3Player == player) {
                 currentMp3Player = null;
             }
+        }
+    }
+
+    interface PlaybackResourceFactory {
+        Clip createClip() throws Exception;
+
+        Player createPlayer(byte[] audio) throws Exception;
+    }
+
+    private static final class DefaultPlaybackResourceFactory implements PlaybackResourceFactory {
+        @Override
+        public Clip createClip() throws Exception {
+            return AudioSystem.getClip();
+        }
+
+        @Override
+        public Player createPlayer(byte[] audio) throws Exception {
+            return new Player(new ByteArrayInputStream(audio));
+        }
+    }
+
+    private record PlaybackResources(Clip clip, Player player) {
+        private boolean empty() {
+            return clip == null && player == null;
         }
     }
 

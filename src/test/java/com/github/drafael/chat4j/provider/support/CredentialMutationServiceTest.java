@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -10,6 +9,7 @@ import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -18,6 +18,7 @@ import javax.swing.SwingUtilities;
 
 import static java.util.Arrays.fill;
 import static java.util.Arrays.stream;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,16 +27,11 @@ class CredentialMutationServiceTest {
     @TempDir
     Path tempDir;
 
-    @AfterEach
-    void tearDown() {
-        CredentialTestSupport.reset();
-    }
-
     @Test
     @DisplayName("Saving a supported token applies one encrypted override and clears the caller buffer")
     void saveTokenOverride_whenTokenIsSupported_appliesOverrideAndClearsInput() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
         char[] token = "saved-secret".toCharArray();
 
         CredentialMutationResult result = subject.saveTokenOverride(
@@ -54,7 +50,7 @@ class CredentialMutationServiceTest {
     @DisplayName("Saving the same override reports unchanged without replacing the record")
     void saveTokenOverride_whenSavedTokenAlreadyMatches_reportsUnchanged() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
         subject.saveTokenOverride(
                 "OPENAI_API_KEY",
                 "saved-secret".toCharArray(),
@@ -77,7 +73,7 @@ class CredentialMutationServiceTest {
     void saveTokenOverride_whenGoogleAliasRequested_savesCanonicalGeminiRecord() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
         CredentialTestSupport.saveToken(vault, "GOOGLEAI_API_KEY", "old-alias".toCharArray());
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
 
         CredentialMutationResult result = subject.saveTokenOverride(
                 "GOOGLEAI_API_KEY",
@@ -88,8 +84,8 @@ class CredentialMutationServiceTest {
         assertThat(result.affectedTokenIds()).containsExactly("GEMINI_API_KEY");
         assertThat(vault.hasRecord("GEMINI_API_KEY")).isTrue();
         assertThat(vault.hasRecord("GOOGLEAI_API_KEY")).isFalse();
-        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
-        assertThat(CredentialResolver.resolveRequiredApiKey("GOOGLEAI_API_KEY", null)).isEqualTo("new-token");
+        var resolver = resolver(vault);
+        assertThat(resolver.resolveRequiredApiKey("GOOGLEAI_API_KEY", null)).isEqualTo("new-token");
     }
 
     @Test
@@ -98,9 +94,9 @@ class CredentialMutationServiceTest {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
         var vault = new ApiTokenVault(storagePaths);
         CredentialTestSupport.saveToken(vault, "GOOGLEAI_API_KEY", "legacy-alias".toCharArray());
-        CredentialTestSupport.configureVault(storagePaths);
+        var resolver = resolver(vault);
 
-        String result = CredentialResolver.resolveRequiredApiKey(
+        String result = resolver.resolveRequiredApiKey(
                 "GEMINI_API_KEY|GOOGLEAI_API_KEY",
                 null
         );
@@ -113,7 +109,7 @@ class CredentialMutationServiceTest {
     void saveTokenOverride_whenInputIsBlank_clearsSavedAliases() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
         CredentialTestSupport.saveToken(vault, "GOOGLEAI_API_KEY", "old-alias".toCharArray());
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
 
         CredentialMutationResult result = subject.saveTokenOverride(
                 "GEMINI_API_KEY|GOOGLEAI_API_KEY",
@@ -129,10 +125,9 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("A token matching the effective process environment removes redundant saved overrides")
     void saveTokenOverride_whenTokenMatchesEffectiveEnvironment_clearsSavedOverride() {
-        CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "environment-secret" : null);
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
         CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "old-saved-secret".toCharArray());
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault, Map.of("OPENAI_API_KEY", "environment-secret"));
 
         CredentialMutationResult result = subject.saveTokenOverride(
                 "OPENAI_API_KEY",
@@ -145,9 +140,52 @@ class CredentialMutationServiceTest {
     }
 
     @Test
+    @DisplayName("A token matching a lower-priority shell alias remains a saved override")
+    void saveTokenOverride_whenTokenMatchesLowerPriorityShellAlias_savesOverride() {
+        var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
+        var subject = mutationService(
+                vault,
+                Map.of("GEMINI_API_KEY", "process-primary"),
+                Map.of("GOOGLEAI_API_KEY", "shell-alias")
+        );
+
+        CredentialMutationResult result = subject.saveTokenOverride(
+                "GEMINI_API_KEY|GOOGLEAI_API_KEY",
+                "shell-alias".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+
+        assertThat(result.applied()).isTrue();
+        assertThat(vault.hasRecord("GEMINI_API_KEY")).isTrue();
+    }
+
+    @Test
+    @DisplayName("A token matching a lower-priority process alias remains a saved override")
+    void saveTokenOverride_whenTokenMatchesLowerPriorityProcessAlias_savesOverride() {
+        var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
+        var subject = mutationService(
+                vault,
+                Map.of(
+                        "GEMINI_API_KEY", "process-primary",
+                        "GOOGLEAI_API_KEY", "process-alias"
+                ),
+                emptyMap()
+        );
+
+        CredentialMutationResult result = subject.saveTokenOverride(
+                "GEMINI_API_KEY|GOOGLEAI_API_KEY",
+                "process-alias".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+
+        assertThat(result.applied()).isTrue();
+        assertThat(vault.hasRecord("GEMINI_API_KEY")).isTrue();
+    }
+
+    @Test
     @DisplayName("Unknown token identifiers are rejected before secret files are created")
     void saveTokenOverride_whenTokenIdIsUnknown_rejectsAndClearsInputBeforeIo() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         char[] token = "secret".toCharArray();
 
         assertThatThrownBy(() -> subject.saveTokenOverride(
@@ -165,7 +203,7 @@ class CredentialMutationServiceTest {
     @DisplayName("Null completion listener rejection still clears the caller token")
     void saveTokenOverride_whenListenerIsNull_rejectsAndClearsInput() {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
-        var subject = new CredentialMutationService(new ApiTokenVault(storagePaths));
+        var subject = mutationService(new ApiTokenVault(storagePaths));
         char[] token = "secret".toCharArray();
 
         assertThatThrownBy(() -> subject.saveTokenOverride("OPENAI_API_KEY", token, null))
@@ -179,7 +217,7 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("Malformed UTF-16 input is rejected and cleared before vault I/O")
     void saveTokenOverride_whenTokenContainsUnpairedSurrogate_rejectsAndClearsInput() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         char[] token = {'\uD800'};
 
         assertThatThrownBy(() -> subject.saveTokenOverride(
@@ -196,7 +234,7 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("The exact 64 KiB token bound is accepted")
     void saveTokenOverride_whenTokenIsExactlyAtLimit_appliesOverride() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         char[] token = new char[ApiTokenVault.MAX_TOKEN_BYTES];
         fill(token, 'a');
 
@@ -213,7 +251,7 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("Tokens over 64 KiB are rejected and cleared before vault I/O")
     void saveTokenOverride_whenTokenExceedsLimit_rejectsAndClearsInput() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         char[] token = new char[ApiTokenVault.MAX_TOKEN_BYTES + 1];
         fill(token, 'a');
 
@@ -234,7 +272,7 @@ class CredentialMutationServiceTest {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
         var vault = new ApiTokenVault(storagePaths);
         Files.createDirectories(storagePaths.tokenVaultFile());
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
 
         CredentialMutationResult result = subject.saveTokenOverride(
                 "OPENAI_API_KEY",
@@ -267,27 +305,36 @@ class CredentialMutationServiceTest {
                 throw new ApiTokenVaultException("Simulated admitted failure.");
             }
         };
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
         CompletableFuture<CredentialMutationResult> mutation = CompletableFuture.supplyAsync(() ->
                 subject.saveTokenOverride(
                         "OPENAI_API_KEY",
                         "new-secret".toCharArray(),
                         CredentialMutationListener.NO_OP
                 ));
-        assertThat(mutationReached.await(5, TimeUnit.SECONDS)).isTrue();
+        try {
+            assertThat(mutationReached.await(5, TimeUnit.SECONDS)).isTrue();
 
-        subject.closeSecrets();
-        releaseMutation.countDown();
+            subject.closeSecrets();
+            releaseMutation.countDown();
 
-        assertThat(mutation.get(5, TimeUnit.SECONDS).status())
-                .isEqualTo(CredentialMutationStatus.FAILED_RELOADED);
+            assertThat(mutation.get(5, TimeUnit.SECONDS).status())
+                    .isEqualTo(CredentialMutationStatus.FAILED_RELOADED);
+        } finally {
+            releaseMutation.countDown();
+            subject.closeSecrets();
+            try {
+                mutation.get(5, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     @Test
     @DisplayName("Listener failures are reported without retaining the applied mutation")
     void saveTokenOverride_whenCompletionListenerFails_reportsAppliedNotificationFailure() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
 
         CredentialMutationResult result = subject.saveTokenOverride(
                 "OPENAI_API_KEY",
@@ -308,7 +355,7 @@ class CredentialMutationServiceTest {
     @DisplayName("Terminal close rejects new mutations without creating secret files")
     void saveTokenOverride_whenServiceIsClosed_rejectsWithoutIo() {
         var storagePaths = StoragePaths.ofConfigHome(tempDir);
-        var subject = new CredentialMutationService(new ApiTokenVault(storagePaths));
+        var subject = mutationService(new ApiTokenVault(storagePaths));
         subject.closeSecrets();
 
         CredentialMutationResult result = subject.saveTokenOverride(
@@ -324,7 +371,7 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("Closed mutation listener failures are reported without leaking details")
     void saveTokenOverride_whenClosedListenerFails_reportsNotificationFailure() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         subject.closeSecrets();
         char[] token = "saved-secret".toCharArray();
 
@@ -346,7 +393,7 @@ class CredentialMutationServiceTest {
     @Test
     @DisplayName("Vault recreation notifies every supported canonical credential without duplicate aliases")
     void recreateVault_whenRequested_notifiesEveryCanonicalToken() {
-        var subject = new CredentialMutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
+        var subject = mutationService(new ApiTokenVault(StoragePaths.ofConfigHome(tempDir)));
         var notified = new AtomicReference<CredentialMutationResult>();
 
         CredentialMutationResult result = subject.recreateVault(notified::set);
@@ -363,7 +410,7 @@ class CredentialMutationServiceTest {
     void closeSecrets_whenCalledRepeatedlyOnEdt_isIdempotentAndRejectsReads() throws Exception {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
         CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "saved-secret".toCharArray());
-        var subject = new CredentialMutationService(vault);
+        var subject = mutationService(vault);
 
         SwingUtilities.invokeAndWait(subject::closeSecrets);
         SwingUtilities.invokeAndWait(subject::closeSecrets);
@@ -388,6 +435,36 @@ class CredentialMutationServiceTest {
         assertThat(stream(CredentialResolver.class.getDeclaredMethods())
                 .map(method -> method.getName()))
                 .doesNotContain("saveTokenOverride", "recreateTokenVault");
+    }
+
+    private CredentialMutationService mutationService(ApiTokenVault vault) {
+        return mutationService(vault, emptyMap());
+    }
+
+    private CredentialMutationService mutationService(
+            ApiTokenVault vault,
+            Map<String, String> processEnvironment
+    ) {
+        return mutationService(vault, processEnvironment, emptyMap());
+    }
+
+    private CredentialMutationService mutationService(
+            ApiTokenVault vault,
+            Map<String, String> processEnvironment,
+            Map<String, String> shellEnvironment
+    ) {
+        return new CredentialMutationService(
+                vault,
+                new CredentialResolver(vault, processEnvironment, shellEnvironment)
+        );
+    }
+
+    private CredentialResolver resolver(ApiTokenVault vault) {
+        return new CredentialResolver(
+                vault,
+                emptyMap(),
+                emptyMap()
+        );
     }
 
     private static void await(CountDownLatch latch) {

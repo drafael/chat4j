@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
@@ -16,6 +17,9 @@ import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class TextToSpeechSettingsTest {
 
@@ -23,9 +27,17 @@ class TextToSpeechSettingsTest {
     @DisplayName("Provider-specific model and voice selections are preserved independently")
     void resolve_providerSpecificSelections_preservesSelectionsIndependently() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-settings", ".properties"));
+        CredentialResolver credentialResolver = mock(CredentialResolver.class);
+        when(credentialResolver.hasRequiredCredentials(any())).thenReturn(true);
         var registry = new TextToSpeechProviderRegistry(List.of(
-                new GroqTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0])),
-                new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(200, null, new byte[0]))
+                new GroqTextToSpeechProvider(
+                        request -> new TtsHttpResponse(200, null, new byte[0]),
+                        credentialResolver
+                ),
+                new ElevenLabsTextToSpeechProvider(
+                        request -> new TtsHttpResponse(200, null, new byte[0]),
+                        credentialResolver
+                )
         ));
         var subject = new TextToSpeechSettings(settingsRepo, registry);
 

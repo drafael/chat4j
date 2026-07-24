@@ -53,9 +53,7 @@ final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter
         AgentTurnResult primaryResult = openAiToolAdapter.executeTurn(request, interceptedCallbacks);
         Exception error = primaryError.get();
         if (shouldFallback(error, emittedContent.get(), primaryResult, request, bufferedTokens)) {
-            log.warn("Falling back to provider chat adapter after OpenAI-compatible tool failure for {}: {}",
-                    providerName,
-                    StringUtils.defaultString(error == null ? "tool mode unavailable for this turn" : error.getMessage()));
+            log.warn("Falling back to provider chat adapter after OpenAI-compatible tool failure for {}", providerName);
             emitFallbackNotice(callbacks);
             return providerServiceAdapter.executeTurn(request, callbacks);
         }

@@ -1,6 +1,10 @@
 package com.github.drafael.chat4j.settings;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.github.drafael.chat4j.persistence.settings.SettingsStorageException;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
@@ -30,6 +34,8 @@ import java.util.stream.IntStream;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -42,6 +48,21 @@ class TextToSpeechPanelTest {
 
     @TempDir
     Path tempDir;
+
+    private CredentialResolver credentialResolver;
+    private CredentialMutationService credentialMutationService;
+
+    @BeforeEach
+    void setUpCredentials() {
+        var credentials = CredentialTestSupport.create(StoragePaths.ofConfigHome(tempDir.resolve("credentials")));
+        credentialResolver = credentials.resolver();
+        credentialMutationService = credentials.mutationService();
+    }
+
+    @AfterEach
+    void closeCredentials() {
+        credentialMutationService.closeSecrets();
+    }
 
     @Test
     @DisplayName("Changing the implicit System model persists the provider")
@@ -233,7 +254,7 @@ class TextToSpeechPanelTest {
                 repo,
                 new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(request -> {
                     throw new AssertionError("Unavailable Deepgram provider should not refresh catalogs");
-                }) {
+                }, credentialResolver) {
                     @Override
                     public boolean available() {
                         return false;
@@ -293,7 +314,7 @@ class TextToSpeechPanelTest {
                 List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
                 List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
         );
-        var provider = new AuthoritativeElevenLabsProvider();
+        var provider = new AuthoritativeElevenLabsProvider(credentialResolver);
         var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
         try {
             assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
@@ -340,7 +361,7 @@ class TextToSpeechPanelTest {
                 List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
                 List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
         );
-        var provider = new BlockingAuthoritativeElevenLabsProvider();
+        var provider = new BlockingAuthoritativeElevenLabsProvider(credentialResolver);
         var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
         try {
             assertThat(provider.started.await(2, TimeUnit.SECONDS)).isTrue();
@@ -383,7 +404,7 @@ class TextToSpeechPanelTest {
                 List.of(TextToSpeechCatalogItem.of("account-a-model", "Account A Model")),
                 List.of(TextToSpeechCatalogItem.of("account-a-voice", "Account A Voice"))
         );
-        var provider = new FailingElevenLabsProvider();
+        var provider = new FailingElevenLabsProvider(credentialResolver);
         var subject = createRefreshingPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
         try {
             assertThat(provider.completed.await(2, TimeUnit.SECONDS)).isTrue();
@@ -531,6 +552,52 @@ class TextToSpeechPanelTest {
     }
 
     @Test
+    @DisplayName("Removing the panel interrupts active catalog voice discovery")
+    void removeNotify_whenCatalogVoiceDiscoveryIsActive_interruptsRefreshWorker() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-refresh-removal-settings.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
+        var provider = new BlockingVoiceDiscoveryProvider();
+        var subject = createPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
+        try {
+            JButton refreshButton = callOnEdt(() -> (JButton) fieldValue(subject, "refreshButton"));
+            runOnEdt(refreshButton::doClick);
+            assertThat(provider.started.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(subject::removeNotify);
+
+            assertThat(provider.interrupted.await(2, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            provider.release.countDown();
+            removePanel(subject);
+        }
+    }
+
+    @Test
+    @DisplayName("Replacing and removing catalog refreshes interrupts every active worker")
+    void refreshCatalogs_whenRequestsOverlapAndPanelIsRemoved_interruptsBothWorkers() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-overlapping-refresh-settings.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, SystemTextToSpeechProvider.ID);
+        var provider = new OverlappingVoiceDiscoveryProvider();
+        var subject = createPanel(repo, new TextToSpeechProviderRegistry(List.of(provider)));
+        try {
+            JButton refreshButton = callOnEdt(() -> (JButton) fieldValue(subject, "refreshButton"));
+            runOnEdt(refreshButton::doClick);
+            assertThat(provider.firstStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(refreshButton::doClick);
+            assertThat(provider.firstInterrupted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(provider.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(subject::removeNotify);
+
+            assertThat(provider.secondInterrupted.await(2, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            provider.release.countDown();
+            removePanel(subject);
+        }
+    }
+
+    @Test
     @DisplayName("Queued preview failure status is ignored after panel removal")
     void previewSelection_whenPanelRemovedBeforeFailureStatusRuns_doesNotShowStaleStatus() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("tts-preview-removed-settings.properties"));
@@ -542,6 +609,7 @@ class TextToSpeechPanelTest {
         );
         CountDownLatch edtBlocked = new CountDownLatch(1);
         CountDownLatch releaseEdt = new CountDownLatch(1);
+        CountDownLatch panelRemoved = new CountDownLatch(1);
         try {
             JButton previewButton = callOnEdt(() -> (JButton) fieldValue(subject, "previewButton"));
             SwingUtilities.invokeAndWait(previewButton::doClick);
@@ -557,14 +625,18 @@ class TextToSpeechPanelTest {
             });
             assertThat(edtBlocked.await(5, TimeUnit.SECONDS)).isTrue();
 
+            SwingUtilities.invokeLater(() -> {
+                subject.removeNotify();
+                panelRemoved.countDown();
+            });
             provider.releaseSynthesize.countDown();
             assertThat(provider.synthesizeFinished.await(5, TimeUnit.SECONDS)).isTrue();
             waitForPreviewThreadToClear(subject);
-            subject.removeNotify();
 
             releaseEdt.countDown();
             SwingUtilities.invokeAndWait(() -> {
             });
+            assertThat(panelRemoved.getCount()).isZero();
 
             assertThat(callOnEdt(() -> subject.statusLabel().getText())).doesNotContain("Preview failed");
         } finally {
@@ -693,6 +765,8 @@ class TextToSpeechPanelTest {
         return callOnEdt(() -> new TextToSpeechPanel(
                 repo,
                 registry,
+                credentialResolver,
+                credentialMutationService,
                 new ApiTokenFieldRegistry(),
                 SettingsCredentialChangeListener.NO_OP,
                 false
@@ -703,7 +777,15 @@ class TextToSpeechPanelTest {
             SettingsRepository repo,
             TextToSpeechProviderRegistry registry
     ) throws Exception {
-        return callOnEdt(() -> new TextToSpeechPanel(repo, registry));
+        return callOnEdt(() -> new TextToSpeechPanel(
+                repo,
+                registry,
+                credentialResolver,
+                credentialMutationService,
+                new ApiTokenFieldRegistry(),
+                SettingsCredentialChangeListener.NO_OP,
+                true
+        ));
     }
 
     private void removePanel(TextToSpeechPanel subject) throws Exception {
@@ -743,11 +825,17 @@ class TextToSpeechPanelTest {
     }
 
     private void waitForPreviewThreadToClear(TextToSpeechPanel subject) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (fieldValue(subject, "previewThread") != null && System.nanoTime() < deadline) {
-            Thread.sleep(10);
+        Thread thread = previewThread(subject);
+        if (thread != null) {
+            thread.join(TimeUnit.SECONDS.toMillis(5));
         }
-        assertThat(fieldValue(subject, "previewThread")).isNull();
+        assertThat(previewThread(subject)).isNull();
+    }
+
+    private Thread previewThread(TextToSpeechPanel subject) throws Exception {
+        @SuppressWarnings("unchecked")
+        AtomicReference<Thread> previewThread = (AtomicReference<Thread>) fieldValue(subject, "previewThread");
+        return previewThread.get();
     }
 
     private JComboBox<TextToSpeechCatalogItem> catalogComboBox(TextToSpeechPanel subject, String fieldName) throws Exception {
@@ -791,7 +879,7 @@ class TextToSpeechPanelTest {
         void run() throws Exception;
     }
 
-    private static final class AvailableSystemProvider implements TextToSpeechProvider {
+    private static class AvailableSystemProvider implements TextToSpeechProvider {
         @Override
         public String id() {
             return SystemTextToSpeechProvider.ID;
@@ -838,7 +926,7 @@ class TextToSpeechPanelTest {
         }
 
         @Override
-        public List<TextToSpeechCatalogItem> fetchVoices() {
+        public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
             return bundledVoices();
         }
 
@@ -848,15 +936,59 @@ class TextToSpeechPanelTest {
         }
     }
 
+    private static final class BlockingVoiceDiscoveryProvider extends AvailableSystemProvider {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch interrupted = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
+            started.countDown();
+            try {
+                release.await();
+                return bundledVoices();
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+        }
+    }
+
+    private static final class OverlappingVoiceDiscoveryProvider extends AvailableSystemProvider {
+        private final AtomicInteger attempts = new AtomicInteger();
+        private final CountDownLatch firstStarted = new CountDownLatch(1);
+        private final CountDownLatch firstInterrupted = new CountDownLatch(1);
+        private final CountDownLatch secondStarted = new CountDownLatch(1);
+        private final CountDownLatch secondInterrupted = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
+            int attempt = attempts.incrementAndGet();
+            CountDownLatch started = attempt == 1 ? firstStarted : secondStarted;
+            CountDownLatch interrupted = attempt == 1 ? firstInterrupted : secondInterrupted;
+            started.countDown();
+            try {
+                release.await();
+                return bundledVoices();
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+        }
+    }
+
     private static final class AuthoritativeElevenLabsProvider extends ElevenLabsTextToSpeechProvider {
         private final CountDownLatch completed = new CountDownLatch(1);
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
         private final AtomicReference<String> modelUsedToScopeVoices = new AtomicReference<>();
 
-        private AuthoritativeElevenLabsProvider() {
+        private AuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
             super(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            });
+            }, credentialResolver);
         }
 
         @Override
@@ -899,10 +1031,10 @@ class TextToSpeechPanelTest {
         private final CountDownLatch completed = new CountDownLatch(1);
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
-        private FailingElevenLabsProvider() {
+        private FailingElevenLabsProvider(CredentialResolver credentialResolver) {
             super(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            });
+            }, credentialResolver);
         }
 
         @Override
@@ -924,10 +1056,10 @@ class TextToSpeechPanelTest {
         private final CountDownLatch completed = new CountDownLatch(1);
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
-        private BlockingAuthoritativeElevenLabsProvider() {
+        private BlockingAuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
             super(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            });
+            }, credentialResolver);
         }
 
         @Override
@@ -1009,6 +1141,7 @@ class TextToSpeechPanelTest {
                 try {
                     assertThat(releaseFirst.await(5, TimeUnit.SECONDS)).isTrue();
                 } catch (InterruptedException e) {
+                    firstFinished.countDown();
                     Thread.currentThread().interrupt();
                     return bundledModels();
                 }
@@ -1089,6 +1222,7 @@ class TextToSpeechPanelTest {
                 modelsReturned.countDown();
                 return List.of(TextToSpeechCatalogItem.of("fetched-model", "Fetched Model"));
             } catch (InterruptedException e) {
+                modelsReturned.countDown();
                 Thread.currentThread().interrupt();
                 return bundledModels();
             }

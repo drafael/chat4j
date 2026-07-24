@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.tts;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
@@ -12,13 +14,15 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,15 +32,20 @@ class TextToSpeechProviderTest {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @AfterEach
-    void tearDown() {
-        CredentialResolver.init(emptyMap());
+    @TempDir
+    Path tempDir;
+
+    private CredentialResolver credentialResolver;
+
+    @BeforeEach
+    void setUpCredentials() {
+        credentialResolver = resolver(emptyMap());
     }
 
     @Test
     @DisplayName("Default registry includes Deepgram without changing existing HTTP provider order")
     void createDefault_whenCalled_includesDeepgramBeforeExistingNetworkProviders() {
-        var subject = TextToSpeechProviderRegistry.createDefault();
+        var subject = TextToSpeechProviderRegistry.createDefault(credentialResolver, emptyMap());
 
         assertThat(subject.providers()).extracting(TextToSpeechProvider::id)
                 .containsSubsequence(
@@ -49,7 +58,7 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("ElevenLabs parses TTS-capable models and voices")
     void elevenLabsCatalogs_validResponses_parsesModelsAndVoices() throws Exception {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new ElevenLabsTextToSpeechProvider(request -> {
             if (request.uri().getPath().equals("/v1/models")) {
                 return json("""
@@ -62,7 +71,7 @@ class TextToSpeechProviderTest {
             return json("""
                     {"voices":[{"voice_id":"voice-1","name":"Voice One","description":"Warm"}]}
                     """);
-        });
+        }, credentialResolver);
 
         var models = subject.fetchModels();
         var voices = subject.fetchVoices();
@@ -75,8 +84,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("ElevenLabs model discovery rejects a missing model array")
     void fetchModels_whenElevenLabsModelArrayMissing_throws() {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -86,8 +95,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("ElevenLabs model discovery rejects entries without model ids")
     void fetchModels_whenElevenLabsModelIdsMissing_throws() {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new ElevenLabsTextToSpeechProvider(request -> json("[{}]"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("[{}]"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -97,8 +106,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("ElevenLabs voice discovery rejects a missing voice array")
     void fetchVoices_whenElevenLabsVoiceArrayMissing_throws() {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -108,8 +117,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("ElevenLabs voice discovery rejects entries without voice ids")
     void fetchVoices_whenElevenLabsVoiceIdsMissing_throws() {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{\"voices\":[{}]}"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new ElevenLabsTextToSpeechProvider(request -> json("{\"voices\":[{}]}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -119,10 +128,10 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Groq model discovery keeps current TTS models without showing obsolete PlayAI")
     void fetchModels_whenGroqTtsModelPresent_keepsCurrentTtsModel() throws Exception {
-        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new GroqTextToSpeechProvider(request -> json("""
                 {"data":[{"id":"llama-3.3-70b"},{"id":"playai-tts"},{"id":"canopylabs/orpheus-v1-english"}]}
-                """));
+                """), credentialResolver);
 
         var models = subject.fetchModels();
 
@@ -132,8 +141,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Groq model discovery rejects a missing data array")
     void fetchModels_whenGroqDataArrayMissing_throws() {
-        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new GroqTextToSpeechProvider(request -> json("{}"));
+        credentialResolver = resolver(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new GroqTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -143,8 +152,8 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Groq model discovery rejects entries without model ids")
     void fetchModels_whenGroqModelIdsMissing_throws() {
-        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new GroqTextToSpeechProvider(request -> json("{\"data\":[{}]}"));
+        credentialResolver = resolver(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        var subject = new GroqTextToSpeechProvider(request -> json("{\"data\":[{}]}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -154,7 +163,7 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Groq voices are scoped to the selected Orpheus model language")
     void groqVoicesForModel_whenModelLanguageChanges_filtersVoices() {
-        var subject = new GroqTextToSpeechProvider(request -> json("{}"));
+        var subject = new GroqTextToSpeechProvider(request -> json("{}"), credentialResolver);
 
         var englishVoices = subject.voicesForModel(
                 TextToSpeechCatalogItem.of("canopylabs/orpheus-v1-english", "English"),
@@ -177,12 +186,12 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Groq synthesis maps obsolete PlayAI selections to current Orpheus defaults")
     void groqSynthesize_legacyPlayAiSelection_sendsCurrentDefaults() throws Exception {
-        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
         TtsHttpRequest[] captured = new TtsHttpRequest[1];
         var subject = new GroqTextToSpeechProvider(request -> {
             captured[0] = request;
             return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/wav")), new byte[]{1, 2, 3});
-        });
+        }, credentialResolver);
 
         subject.synthesize(new TextToSpeechRequest("groq", "playai-tts", "Arista-PlayAI", "hello", "wav"));
 
@@ -217,12 +226,12 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Provider HTTP errors include safe API error message")
     void fetchModels_httpError_includesSafeApiMessage() {
-        CredentialResolver.init(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(GroqTextToSpeechProvider.ENV_VAR, "test-key"));
         var subject = new GroqTextToSpeechProvider(request -> new TtsHttpResponse(
                 400,
                 Map.of("content-type", List.of("application/json")),
                 "{\"error\":{\"message\":\"The model requires terms acceptance.\"}}".getBytes(StandardCharsets.UTF_8)
-        ));
+        ), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -232,13 +241,13 @@ class TextToSpeechProviderTest {
     @Test
     @DisplayName("Provider HTTP errors include full ElevenLabs detail message")
     void synthesize_elevenLabsHttpError_includesFullDetailMessage() throws Exception {
-        CredentialResolver.init(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
+        credentialResolver = resolver(Map.of(ElevenLabsTextToSpeechProvider.ENV_VAR, "test-key"));
         String message = "This request exceeds your quota of 10000. You have 34 credits remaining. Please upgrade your plan or wait until the quota resets before trying text to speech again.";
         var subject = new ElevenLabsTextToSpeechProvider(request -> new TtsHttpResponse(
                 401,
                 Map.of("content-type", List.of("application/json")),
                 "{\"detail\":{\"message\":%s}}".formatted(OBJECT_MAPPER.writeValueAsString(message)).getBytes(StandardCharsets.UTF_8)
-        ));
+        ), credentialResolver);
 
         assertThatThrownBy(() -> subject.synthesize(new TextToSpeechRequest(
                 ElevenLabsTextToSpeechProvider.ID,
@@ -249,6 +258,15 @@ class TextToSpeechProviderTest {
         )))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTP 401: %s".formatted(message));
+    }
+
+
+    private CredentialResolver resolver(Map<String, String> shellEnvironment) {
+        return new CredentialResolver(
+                new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials"))),
+                emptyMap(),
+                shellEnvironment
+        );
     }
 
     private static TtsHttpResponse json(String body) {

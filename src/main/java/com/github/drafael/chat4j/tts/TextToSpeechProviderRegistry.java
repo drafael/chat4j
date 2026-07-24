@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.tts;
 
 import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.JavaNetTtsHttpTransport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
@@ -9,6 +10,7 @@ import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechP
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static java.util.Collections.emptyList;
@@ -22,13 +24,16 @@ public class TextToSpeechProviderRegistry {
         SpeechCatalogKeySchema.validateUniqueProviderSlugs(this.providers.stream().map(TextToSpeechProvider::id).toList());
     }
 
-    public static TextToSpeechProviderRegistry createDefault() {
+    public static TextToSpeechProviderRegistry createDefault(
+            CredentialResolver credentialResolver,
+            Map<String, String> subprocessEnvironment
+    ) {
         TtsHttpTransport transport = new JavaNetTtsHttpTransport();
         return new TextToSpeechProviderRegistry(List.of(
-                SystemTextToSpeechProvider.createDefault(),
-                new DeepgramTextToSpeechProvider(transport),
-                new GroqTextToSpeechProvider(transport),
-                new ElevenLabsTextToSpeechProvider(transport)
+                SystemTextToSpeechProvider.createDefault(subprocessEnvironment),
+                new DeepgramTextToSpeechProvider(transport, credentialResolver),
+                new GroqTextToSpeechProvider(transport, credentialResolver),
+                new ElevenLabsTextToSpeechProvider(transport, credentialResolver)
         ));
     }
 

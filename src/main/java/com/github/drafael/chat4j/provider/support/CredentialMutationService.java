@@ -1,14 +1,13 @@
 package com.github.drafael.chat4j.provider.support;
 
 import java.util.Set;
-import lombok.AccessLevel;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.Validate;
 
 import static java.util.Arrays.fill;
 
-@RequiredArgsConstructor(access = AccessLevel.PACKAGE)
+@RequiredArgsConstructor
 public final class CredentialMutationService {
 
     private static final String MUTATION_FAILED_MESSAGE =
@@ -19,12 +18,10 @@ public final class CredentialMutationService {
 
     @NonNull
     private final ApiTokenVault tokenVault;
+    @NonNull
+    private final CredentialResolver credentialResolver;
     private final Object mutationLock = new Object();
     private volatile boolean closed;
-
-    public static CredentialMutationService shared() {
-        return CredentialResolver.mutationService();
-    }
 
     public CredentialMutationResult saveTokenOverride(
             String envVarExpression,
@@ -80,7 +77,7 @@ public final class CredentialMutationService {
                 return closedResult(affectedTokenIds);
             }
             boolean clearOverride = ApiTokenVault.isBlank(token)
-                    || CredentialResolver.matchesEffectiveRawEnvironment(tokenIds.aliases(), token);
+                    || credentialResolver.matchesEffectiveRawEnvironment(tokenIds.aliases(), token);
             try {
                 boolean changed = tokenVault.applyTokenMutation(
                         tokenIds.canonicalTokenId(),

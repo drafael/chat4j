@@ -52,6 +52,7 @@ import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
@@ -100,6 +101,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -176,7 +178,7 @@ public class ChatPanel extends JPanel {
     private final ProviderRegistry providerRegistry;
     private final AttachmentStager attachmentStager = new AttachmentStager();
     private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
-    private final WebSearchCoordinator webSearchCoordinator = new WebSearchCoordinator(List.of(new PerplexityWebSearchProvider()));
+    private final WebSearchCoordinator webSearchCoordinator;
     private final ChatMessageViewFactory messageViewFactory;
     private final WebViewEngine webViewEngine;
     private final SystemWebView systemWebView;
@@ -185,6 +187,7 @@ public class ChatPanel extends JPanel {
     private final SpeechToTextService speechToTextService;
     private final CodexAuthResolver codexAuthResolver;
     private final CopilotAuthResolver copilotAuthResolver;
+    private final CredentialResolver credentialResolver;
     private volatile AgentOrchestrator agentOrchestrator;
     private volatile String agentSystemPromptAppend = "";
     private final List<ChatMessageView> assistantBubbles = new ArrayList<>();
@@ -210,14 +213,13 @@ public class ChatPanel extends JPanel {
     private ComposerState speechToTextComposerSnapshot = ComposerState.empty();
 
     private final List<Message> history = new ArrayList<>();
+    private long historyRevision;
     private Map<String, ProviderRegistry.ProviderDef> providerMap = emptyMap();
     private String selectedProviderName;
     private String selectedModelId;
-    private ProviderService currentProvider;
-    private String currentProviderApiKey;
-    private volatile boolean currentProviderResolving;
     private boolean conversationLoading;
     private boolean batchMessageRefresh;
+    private volatile boolean removed;
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
@@ -226,6 +228,9 @@ public class ChatPanel extends JPanel {
     private final AtomicLong streamSessionCounter = new AtomicLong();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
     private final AtomicLong providerRefreshCounter = new AtomicLong();
+    private final AtomicReference<Thread> capabilityRefreshThread = new AtomicReference<>();
+    private final AtomicLong readAloudUiGeneration = new AtomicLong();
+    private final AtomicLong speechToTextUiGeneration = new AtomicLong();
     private long providerScopeVersion;
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
@@ -269,13 +274,18 @@ public class ChatPanel extends JPanel {
             @NonNull SpeechToTextService speechToTextService,
             @NonNull ProviderRegistry providerRegistry,
             @NonNull CopilotAuthResolver copilotAuthResolver,
-            @NonNull CodexAuthResolver codexAuthResolver
+            @NonNull CodexAuthResolver codexAuthResolver,
+            @NonNull CredentialResolver credentialResolver
     ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.providerRegistry = providerRegistry;
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
+        this.credentialResolver = credentialResolver;
+        this.webSearchCoordinator = new WebSearchCoordinator(
+                List.of(new PerplexityWebSearchProvider(credentialResolver))
+        );
         this.messageViewFactory = messageViewFactory;
         this.webViewEngine = webViewEngine;
         this.textToSpeechService = textToSpeechService;
@@ -503,26 +513,24 @@ public class ChatPanel extends JPanel {
 
     @Override
     public void addNotify() {
+        removed = false;
         super.addNotify();
         SwingUtilities.invokeLater(this::preloadModelPopup);
     }
 
     @Override
     public void removeNotify() {
+        removed = true;
         providerRefreshCounter.incrementAndGet();
         providerSelectionCounter.incrementAndGet();
+        cancelCapabilityRefresh();
         modelCacheService.cancelScopeVersion(providerScopeVersion);
-        speechToTextService.dispose();
+        cancelAllRequests();
+        cancelSpeechToText();
         stopReadAloudPlayback();
         if (modelPopup != null) {
             modelPopup.dispose();
             modelPopup = null;
-        }
-        if (systemWebView != null && !systemWebView.isDisposed()) {
-            systemWebView.dispose();
-        }
-        if (jcefBrowserView != null && !jcefBrowserView.isDisposed()) {
-            jcefBrowserView.dispose();
         }
         super.removeNotify();
     }
@@ -715,9 +723,6 @@ public class ChatPanel extends JPanel {
         providerSelectionCounter.incrementAndGet();
         selectedProviderName = null;
         selectedModelId = null;
-        currentProvider = null;
-        currentProviderApiKey = null;
-        currentProviderResolving = false;
         modelSelectorBtn.setSelection("", "");
         inputBar.setThinkingAvailable(false);
         inputBar.setWebSearchOptions(emptyList(), null);
@@ -767,7 +772,8 @@ public class ChatPanel extends JPanel {
                 this::selectModel,
                 this::updateProviderModelsFromPopup,
                 this::notifyModelFavoritesChanged,
-                this::notifyModelCatalogChanged
+                this::notifyModelCatalogChanged,
+                credentialResolver
             );
         }
 
@@ -789,87 +795,13 @@ public class ChatPanel extends JPanel {
         selectedModelId = modelId;
         modelSelectorBtn.setSelection(providerName, modelId);
 
-        currentProvider = null;
-        currentProviderApiKey = null;
-        currentProviderResolving = false;
-        ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
-        if (providerDef != null) {
-            resolveCurrentProviderAsync(selectionId, providerDef, modelId);
-        } else {
-            refreshComposerAvailability();
-        }
+        refreshComposerAvailability();
 
-        updateThinkingToggleAvailability(selectionId);
-        updateWebSearchAvailability(selectionId);
-        updateAgentToggleAvailability(selectionId);
+        updateCapabilityAvailability(selectionId);
 
         if (selectedModelChangedListener != null) {
             selectedModelChangedListener.run();
         }
-    }
-
-    private void resolveCurrentProviderAsync(
-            long selectionId,
-            ProviderRegistry.ProviderDef providerDef,
-            String modelId
-    ) {
-        currentProviderResolving = true;
-        refreshComposerAvailability();
-        String providerNameSnapshot = providerDef.name();
-        Thread.startVirtualThread(() -> {
-            try {
-                ProviderService resolvedProvider = providerDef.factory().create(modelId);
-                String resolvedApiKey = resolveProviderApiKey(providerDef);
-                SwingUtilities.invokeLater(() -> applyResolvedProvider(
-                        selectionId,
-                        providerNameSnapshot,
-                        modelId,
-                        resolvedProvider,
-                        resolvedApiKey
-                ));
-            } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> applyProviderResolutionFailure(
-                        selectionId,
-                        providerNameSnapshot,
-                        modelId,
-                        e
-                ));
-            }
-        });
-    }
-
-    private void applyResolvedProvider(
-            long selectionId,
-            String providerName,
-            String modelId,
-            ProviderService resolvedProvider,
-            String resolvedApiKey
-    ) {
-        if (!isSelectedModel(selectionId, providerName, modelId)) {
-            return;
-        }
-
-        currentProvider = resolvedProvider;
-        currentProviderApiKey = resolvedApiKey;
-        currentProviderResolving = false;
-        refreshComposerAvailability();
-    }
-
-    private void applyProviderResolutionFailure(
-            long selectionId,
-            String providerName,
-            String modelId,
-            Exception error
-    ) {
-        if (!isSelectedModel(selectionId, providerName, modelId)) {
-            return;
-        }
-
-        currentProvider = null;
-        currentProviderApiKey = null;
-        currentProviderResolving = false;
-        refreshComposerAvailability();
-        log.warn("Failed to prepare provider {}::{}: {}", providerName, modelId, ExceptionUtils.getMessage(error));
     }
 
     private void onSend() {
@@ -897,12 +829,8 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        ProviderService provider = currentProvider;
-        if (currentProviderResolving) {
-            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
-            return;
-        }
-        if (provider == null) {
+        ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
+        if (providerDefinition == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.showValidationMessage("Select a model/provider before sending.");
             return;
         }
@@ -922,10 +850,9 @@ public class ChatPanel extends JPanel {
                 resolveConversationId(),
                 selectedProviderName,
                 selectedModelId,
+                providerDefinition,
                 providerSnapshot.baseUrl(),
-                providerSnapshot.apiKey(),
                 providerSnapshot.capabilities(),
-                provider,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
                 inputBar.isWebSearchEnabled(),
@@ -940,9 +867,17 @@ public class ChatPanel extends JPanel {
 
         sendJob.worker = Thread.startVirtualThread(() -> {
             try {
-                Message userMessage = sendPreparer.prepare(composerState, providerSnapshot, sendJob.cancelled::get);
-                SwingUtilities.invokeLater(() -> commitPreparedSend(sendJob, userMessage));
-            } catch (Exception e) {
+                admitProvider(sendJob);
+                ProviderSelectionSnapshot admittedSnapshot = providerSelectionSnapshot(sendJob);
+                Message userMessage = sendPreparer.prepare(composerState, admittedSnapshot, sendJob.cancelled::get);
+                SwingUtilities.invokeLater(() -> {
+                    try {
+                        commitPreparedSend(sendJob, userMessage);
+                    } catch (Exception | LinkageError e) {
+                        handlePreparationFailure(sendJob, e);
+                    }
+                });
+            } catch (Exception | LinkageError e) {
                 SwingUtilities.invokeLater(() -> handlePreparationFailure(sendJob, e));
             }
         });
@@ -963,7 +898,6 @@ public class ChatPanel extends JPanel {
         }
 
         boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
-        boolean startsConversation = visibleConversation && history.isEmpty();
         clearPendingAssistantRecovery(sendJob.conversationId);
         if (visibleConversation) {
             inputBar.clear();
@@ -1009,28 +943,43 @@ public class ChatPanel extends JPanel {
         if (!session.isLive()) {
             return;
         }
-        persistAssistantResponse(session, sendJob, true);
-        if (isVisibleConversation(session.conversationId)) {
-            if (currentAssistantActivityBubble != null) {
-                currentAssistantActivityBubble.setStreaming(false);
+        try {
+            boolean persisted = persistAssistantResponse(session, sendJob);
+            if (isVisibleConversation(session.conversationId)) {
+                if (!persisted && currentAssistantBubble != null) {
+                    removeMessageComponentFromPanel(currentAssistantBubble.component());
+                }
+                if (currentAssistantActivityBubble != null) {
+                    currentAssistantActivityBubble.setStreaming(false);
+                }
+                removeCurrentWebSearchBubbleIfBlank();
+                removeCurrentActivityBubbleIfBlank();
+                removeCurrentAgentToolBubblesIfBlank();
+                currentAssistantWebSearchBubble = null;
+                currentAssistantActivityBubble = null;
+                clearCurrentAgentToolBubbleState();
+                currentAssistantBubble = null;
             }
-            removeCurrentWebSearchBubbleIfBlank();
-            removeCurrentActivityBubbleIfBlank();
-            removeCurrentAgentToolBubblesIfBlank();
-            currentAssistantWebSearchBubble = null;
-            currentAssistantActivityBubble = null;
-            clearCurrentAgentToolBubbleState();
-            currentAssistantBubble = null;
+        } finally {
+            try {
+                finishStreamingSession(session);
+            } finally {
+                finishSendJob(sendJob);
+            }
         }
-        finishStreamingSession(session);
-        finishSendJob(sendJob);
     }
 
-    private void handlePreparationFailure(SendJob sendJob, Exception error) {
+    private void handlePreparationFailure(SendJob sendJob, Throwable error) {
+        String safeMessage = ProviderExceptionMapper.sanitizeMessage(error, sendJob.apiKey);
         if (!activeSendJobs.containsKey(sendJob.jobId)) {
+            sendJob.clearCredentialReferences();
             return;
         }
 
+        Long streamSessionId = sendJob.streamSessionId;
+        if (streamSessionId != null) {
+            discardStreamingSession(activeSessions.get(streamSessionId));
+        }
         finishSendJob(sendJob);
 
         if (!isVisibleConversation(sendJob.conversationId)) {
@@ -1042,8 +991,7 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        String message = StringUtils.defaultIfBlank(error.getMessage(), "Failed to prepare message");
-        inputBar.showValidationMessage(message);
+        inputBar.showValidationMessage(StringUtils.defaultIfBlank(safeMessage, "Failed to prepare message"));
         inputBar.requestInputFocus();
     }
 
@@ -1079,17 +1027,25 @@ public class ChatPanel extends JPanel {
         return conversationId;
     }
 
-    private void startAssistantStream(UUID conversationId, ProviderService provider) {
+    private void startAssistantStream(
+            UUID conversationId,
+            long expectedHistoryRevision,
+            Runnable commitRegeneration
+    ) {
+        ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
+        if (providerDefinition == null || StringUtils.isBlank(selectedModelId)) {
+            inputBar.showValidationMessage("Select a model/provider before regenerating.");
+            return;
+        }
         ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
         SendJob sendJob = new SendJob(
                 sendJobCounter.incrementAndGet(),
                 conversationId,
                 selectedProviderName,
                 selectedModelId,
+                providerDefinition,
                 providerSnapshot.baseUrl(),
-                providerSnapshot.apiKey(),
                 providerSnapshot.capabilities(),
-                provider,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
                 inputBar.isWebSearchEnabled(),
@@ -1100,7 +1056,30 @@ public class ChatPanel extends JPanel {
                 agentSystemPromptAppend
         );
         activeSendJobs.put(sendJob.jobId, sendJob);
-        startAssistantStream(sendJob, new ArrayList<>(history));
+        beginPreparing(sendJob);
+        sendJob.worker = Thread.startVirtualThread(() -> {
+            try {
+                admitProvider(sendJob);
+                SwingUtilities.invokeLater(() -> {
+                    if (!isPreparing(sendJob)
+                            || !isVisibleConversation(sendJob.conversationId)
+                            || historyRevision != expectedHistoryRevision
+                    ) {
+                        sendJob.cancelled.set(true);
+                        finishSendJob(sendJob);
+                        return;
+                    }
+                    try {
+                        commitRegeneration.run();
+                        startAssistantStream(sendJob, new ArrayList<>(history));
+                    } catch (Exception | LinkageError e) {
+                        handlePreparationFailure(sendJob, e);
+                    }
+                });
+            } catch (Exception | LinkageError e) {
+                SwingUtilities.invokeLater(() -> handlePreparationFailure(sendJob, e));
+            }
+        });
     }
 
     private void startAssistantStream(SendJob sendJob, List<Message> requestHistory) {
@@ -1125,7 +1104,8 @@ public class ChatPanel extends JPanel {
                     if (!session.beginTerminalCallback()) {
                         return;
                     }
-                    String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(error), "Unknown error");
+                    Exception safeError = ProviderExceptionMapper.map(error, sendJob.apiKey);
+                    String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(safeError), "Unknown error");
                     log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
                             sendJob.providerName,
                             sendJob.modelId,
@@ -1137,51 +1117,57 @@ public class ChatPanel extends JPanel {
                         if (!session.isLive()) {
                             return;
                         }
-                        if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
-                            currentAssistantBubble.appendText(errorText);
-                        }
-                        persistAssistantResponse(session, sendJob, false);
-                        if (isVisibleConversation(session.conversationId)) {
-                            if (currentAssistantActivityBubble != null) {
-                                currentAssistantActivityBubble.setStreaming(false);
+                        try {
+                            if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
+                                currentAssistantBubble.appendText(errorText);
                             }
-                            removeCurrentWebSearchBubbleIfBlank();
-                            removeCurrentActivityBubbleIfBlank();
-                            removeCurrentAgentToolBubblesIfBlank();
-                            currentAssistantWebSearchBubble = null;
-                            currentAssistantActivityBubble = null;
-                            clearCurrentAgentToolBubbleState();
-                            currentAssistantBubble = null;
+                            persistAssistantResponse(session, sendJob);
+                            if (isVisibleConversation(session.conversationId)) {
+                                if (currentAssistantActivityBubble != null) {
+                                    currentAssistantActivityBubble.setStreaming(false);
+                                }
+                                removeCurrentWebSearchBubbleIfBlank();
+                                removeCurrentActivityBubbleIfBlank();
+                                removeCurrentAgentToolBubblesIfBlank();
+                                currentAssistantWebSearchBubble = null;
+                                currentAssistantActivityBubble = null;
+                                clearCurrentAgentToolBubbleState();
+                                currentAssistantBubble = null;
+                            }
+                        } finally {
+                            try {
+                                finishStreamingSession(session);
+                            } finally {
+                                finishSendJob(sendJob);
+                            }
                         }
-                        finishStreamingSession(session);
-                        finishSendJob(sendJob);
                     });
                 }
         );
 
         session.worker = Thread.startVirtualThread(() -> {
-            if (sendJob.agentModeEnabled) {
-                AgentRunRequest request = new AgentRunRequest(
-                        requestHistory,
-                        sendJob.reasoningLevel,
-                        sendJob.agentProjectRoot,
-                        emptyList(),
-                        session.cancelled::get
-                );
-                agentOrchestrator.streamCompletion(
-                        sendJob.providerName,
-                        sendJob.modelId,
-                        sendJob.baseUrl,
-                        sendJob.apiKey,
-                        sendJob.agentSystemPromptAppend,
-                        sessionScopedProvider(session),
-                        request,
-                        callbacks
-                );
-                return;
-            }
-
             try {
+                if (sendJob.agentModeEnabled) {
+                    AgentRunRequest request = new AgentRunRequest(
+                            requestHistory,
+                            sendJob.reasoningLevel,
+                            sendJob.agentProjectRoot,
+                            emptyList(),
+                            session.cancelled::get
+                    );
+                    agentOrchestrator.streamCompletion(
+                            sendJob.providerName,
+                            sendJob.modelId,
+                            sendJob.baseUrl,
+                            sendJob.apiKey,
+                            sendJob.agentSystemPromptAppend,
+                            sessionScopedProvider(session),
+                            request,
+                            callbacks
+                    );
+                    return;
+                }
+
                 List<Message> effectiveHistory = prepareWebSearchContext(sendJob, session, requestHistory, session.cancelled::get);
                 session.provider.streamCompletion(
                         effectiveHistory,
@@ -1197,8 +1183,8 @@ public class ChatPanel extends JPanel {
                         session::registerActiveRequest,
                         session::clearActiveRequest
                 );
-            } catch (Exception e) {
-                callbacks.onError().accept(e);
+            } catch (Exception | LinkageError e) {
+                callbacks.onError().accept(asStreamException(e));
             }
         });
     }
@@ -1292,29 +1278,10 @@ public class ChatPanel extends JPanel {
                 );
             }
 
-            @Override
-            public List<String> availableModels() {
-                return delegate.availableModels();
-            }
 
             @Override
             public void cancelActiveRequest() {
                 session.cancelActiveRequest();
-            }
-
-            @Override
-            public String name() {
-                return delegate.name();
-            }
-
-            @Override
-            public String envVarName() {
-                return delegate.envVarName();
-            }
-
-            @Override
-            public boolean isAvailable() {
-                return delegate.isAvailable();
             }
         };
     }
@@ -1747,160 +1714,121 @@ public class ChatPanel extends JPanel {
         return "Extracted text sent; native file upload is unavailable for %s (%s).".formatted(providerLabel, modelLabel);
     }
 
-    private void updateThinkingToggleAvailability(long selectionId) {
+    private void updateCapabilityAvailability(long selectionId) {
+        cancelCapabilityRefresh();
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setThinkingAvailable(false);
-            return;
-        }
-
-        boolean fallbackSupportsThinking = ProviderCapabilityResolver.supportsReasoning(
-                providerDef.capabilities(),
-                providerDef.name(),
-                selectedModelId
-        );
-        inputBar.setThinkingAvailable(fallbackSupportsThinking);
-
-        if (StringUtils.isBlank(providerDef.baseUrl())) {
-            return;
-        }
-
-        String providerNameSnapshot = providerDef.name();
-        String modelIdSnapshot = selectedModelId;
-        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
-        String baseUrlSnapshot = providerDef.baseUrl();
-
-        Thread.startVirtualThread(() -> {
-            try {
-                String apiKey = resolveProviderApiKey(providerDef);
-                boolean resolvedSupportsThinking = ProviderCapabilityResolver.supportsReasoning(
-                        capabilitiesSnapshot,
-                        providerNameSnapshot,
-                        modelIdSnapshot,
-                        baseUrlSnapshot,
-                        apiKey
-                );
-
-                SwingUtilities.invokeLater(() -> {
-                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
-                        return;
-                    }
-
-                    inputBar.setThinkingAvailable(resolvedSupportsThinking);
-                });
-            } catch (Exception e) {
-                log.debug("Failed to refresh thinking capability for {}::{}",
-                        providerNameSnapshot, modelIdSnapshot, e);
-            }
-        });
-    }
-
-    private void updateWebSearchAvailability(long selectionId) {
-        ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
-        if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setWebSearchLockedEnabled(false);
             inputBar.setWebSearchOptions(emptyList(), null);
-            return;
-        }
-
-        WebSearchAvailability availability = webSearchAvailabilityResolver.resolve(
-                providerDef,
-                selectedModelId,
-                new ArrayList<>(providerMap.values())
-        );
-        inputBar.setWebSearchLockedEnabled(Strings.CS.equals(providerDef.name(), "Perplexity"));
-        inputBar.setWebSearchOptions(availability.options(), availability.defaultOptionId());
-
-        if (StringUtils.isBlank(providerDef.baseUrl())) {
-            return;
-        }
-
-        String providerNameSnapshot = providerDef.name();
-        String modelIdSnapshot = selectedModelId;
-        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
-        String baseUrlSnapshot = providerDef.baseUrl();
-        List<ProviderRegistry.ProviderDef> providersSnapshot = new ArrayList<>(providerMap.values());
-
-        Thread.startVirtualThread(() -> {
-            try {
-                String apiKey = resolveProviderApiKey(providerDef);
-                boolean resolvedSupportsNative = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                        capabilitiesSnapshot,
-                        providerNameSnapshot,
-                        modelIdSnapshot,
-                        baseUrlSnapshot,
-                        apiKey
-                );
-                WebSearchAvailability resolvedAvailability = webSearchAvailabilityResolver.resolve(
-                        providerDef,
-                        modelIdSnapshot,
-                        providersSnapshot,
-                        resolvedSupportsNative
-                );
-
-                SwingUtilities.invokeLater(() -> {
-                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
-                        return;
-                    }
-
-                    inputBar.setWebSearchOptions(
-                            resolvedAvailability.options(),
-                            resolvedAvailability.defaultOptionId()
-                    );
-                });
-            } catch (Exception e) {
-                log.debug("Failed to refresh web search capability for {}::{}",
-                        providerNameSnapshot, modelIdSnapshot, e);
-            }
-        });
-    }
-
-    private void updateAgentToggleAvailability(long selectionId) {
-        ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
-        if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.setAgentModeAvailable(false);
             return;
         }
 
-        boolean fallbackSupportsTools = ProviderCapabilityResolver.supportsToolInvocation(
-                providerDef.capabilities(),
-                providerDef.name(),
-                selectedModelId
+        String providerName = providerDef.name();
+        String modelId = selectedModelId;
+        ProviderCapabilities capabilities = providerDef.capabilities();
+        inputBar.setThinkingAvailable(ProviderCapabilityResolver.supportsReasoning(
+                capabilities,
+                providerName,
+                modelId
+        ));
+        WebSearchAvailability fallbackWebSearch = webSearchAvailabilityResolver.resolve(
+                providerDef,
+                modelId,
+                new ArrayList<>(providerMap.values())
         );
-        inputBar.setAgentModeAvailable(fallbackSupportsTools);
+        inputBar.setWebSearchLockedEnabled(Strings.CS.equals(providerName, "Perplexity"));
+        inputBar.setWebSearchOptions(fallbackWebSearch.options(), fallbackWebSearch.defaultOptionId());
+        inputBar.setAgentModeAvailable(ProviderCapabilityResolver.supportsToolInvocation(
+                capabilities,
+                providerName,
+                modelId
+        ));
 
         if (StringUtils.isBlank(providerDef.baseUrl())) {
             return;
         }
 
-        String providerNameSnapshot = providerDef.name();
-        String modelIdSnapshot = selectedModelId;
-        ProviderCapabilities capabilitiesSnapshot = providerDef.capabilities();
-        String baseUrlSnapshot = providerDef.baseUrl();
-
-        Thread.startVirtualThread(() -> {
+        String baseUrl = providerDef.baseUrl();
+        List<ProviderRegistry.ProviderDef> providers = new ArrayList<>(providerMap.values());
+        Thread refreshThread = Thread.ofVirtual().name("chat4j-provider-capabilities").unstarted(() -> {
             try {
+                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                    return;
+                }
                 String apiKey = resolveProviderApiKey(providerDef);
-                boolean resolvedSupportsTools = ProviderCapabilityResolver.supportsToolInvocation(
-                        capabilitiesSnapshot,
-                        providerNameSnapshot,
-                        modelIdSnapshot,
-                        baseUrlSnapshot,
+                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                    return;
+                }
+                boolean supportsThinking = ProviderCapabilityResolver.supportsReasoning(
+                        capabilities,
+                        providerName,
+                        modelId,
+                        baseUrl,
                         apiKey
+                );
+                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                    return;
+                }
+                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
+                        capabilities,
+                        providerName,
+                        modelId,
+                        baseUrl,
+                        apiKey
+                );
+                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                    return;
+                }
+                boolean supportsTools = ProviderCapabilityResolver.supportsToolInvocation(
+                        capabilities,
+                        providerName,
+                        modelId,
+                        baseUrl,
+                        apiKey
+                );
+                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
+                    return;
+                }
+                WebSearchAvailability resolvedWebSearch = webSearchAvailabilityResolver.resolve(
+                        providerDef,
+                        modelId,
+                        providers,
+                        supportsNativeWebSearch
                 );
 
                 SwingUtilities.invokeLater(() -> {
-                    if (!isSelectedModel(selectionId, providerNameSnapshot, modelIdSnapshot)) {
+                    if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
                         return;
                     }
-
-                    inputBar.setAgentModeAvailable(resolvedSupportsTools);
+                    inputBar.setThinkingAvailable(supportsThinking);
+                    inputBar.setWebSearchOptions(resolvedWebSearch.options(), resolvedWebSearch.defaultOptionId());
+                    inputBar.setAgentModeAvailable(supportsTools);
                 });
             } catch (Exception e) {
-                log.debug("Failed to refresh agent capability for {}::{}",
-                        providerNameSnapshot, modelIdSnapshot, e);
+                if (!Thread.currentThread().isInterrupted()) {
+                    log.debug("Failed to refresh capabilities for {}::{}", providerName, modelId, e);
+                }
+            } finally {
+                capabilityRefreshThread.compareAndSet(Thread.currentThread(), null);
             }
         });
+        capabilityRefreshThread.set(refreshThread);
+        refreshThread.start();
+    }
+
+    private boolean capabilityRefreshCurrent(long selectionId, String providerName, String modelId) {
+        return !removed
+                && !Thread.currentThread().isInterrupted()
+                && isSelectedModel(selectionId, providerName, modelId);
+    }
+
+    private void cancelCapabilityRefresh() {
+        Thread refreshThread = capabilityRefreshThread.get();
+        if (refreshThread != null) {
+            refreshThread.interrupt();
+        }
     }
 
     private boolean isSelectedModel(long selectionId, String providerName, String modelId) {
@@ -1919,8 +1847,31 @@ public class ChatPanel extends JPanel {
                 selectedModelId,
                 capabilities,
                 baseUrl,
-                currentProviderApiKey
+                null
         );
+    }
+
+    private ProviderSelectionSnapshot providerSelectionSnapshot(SendJob sendJob) {
+        return new ProviderSelectionSnapshot(
+                sendJob.providerName,
+                sendJob.modelId,
+                sendJob.capabilities,
+                sendJob.baseUrl,
+                sendJob.apiKey
+        );
+    }
+
+    private void admitProvider(SendJob sendJob) {
+        ensureNotCancelled(sendJob.cancelled::get);
+        ProviderRegistry.ProviderDef providerDefinition = sendJob.providerDefinition;
+        try {
+            sendJob.provider = providerDefinition.factory().create(sendJob.modelId);
+            sendJob.apiKey = sendJob.provider.apiKey();
+            ensureNotCancelled(sendJob.cancelled::get);
+        } catch (RuntimeException | Error e) {
+            sendJob.clearCredentialReferences();
+            throw e;
+        }
     }
 
     private String resolveProviderApiKey(ProviderRegistry.ProviderDef providerDef) {
@@ -1928,7 +1879,7 @@ public class ChatPanel extends JPanel {
             return null;
         }
 
-        String apiKey = CredentialResolver.resolveApiKey(providerDef.envVar(), null);
+        String apiKey = credentialResolver.resolveApiKey(providerDef.envVar(), null);
         if (StringUtils.isNotBlank(apiKey)) {
             return apiKey;
         }
@@ -1942,6 +1893,15 @@ public class ChatPanel extends JPanel {
         }
 
         return null;
+    }
+
+    private static Exception asStreamException(Throwable failure) {
+        return failure instanceof Exception exception
+                ? exception
+                : new IllegalStateException(
+                        "Assistant stream failed with %s.".formatted(failure.getClass().getSimpleName()),
+                        failure
+                );
     }
 
     private void ensureNotCancelled(BooleanSupplier isCancelled) {
@@ -2202,16 +2162,17 @@ public class ChatPanel extends JPanel {
     }
 
     private void readBubbleAloud(ChatMessageView bubble) {
+        long uiGeneration = readAloudUiGeneration.incrementAndGet();
         if (speechToTextService.active()) {
-            showReadAloudStatus("Finish or cancel transcription before using read aloud.");
+            showReadAloudStatus(uiGeneration, "Finish or cancel transcription before using read aloud.");
             return;
         }
         textToSpeechService.readAloud(
                 swingReadAloudKey(bubble),
                 speakableText(bubble),
-                this::showReadAloudError,
-                this::showReadAloudStatus,
-                this::refreshReadAloudControls
+                message -> showReadAloudError(uiGeneration, message),
+                message -> showReadAloudStatus(uiGeneration, message),
+                () -> refreshReadAloudControls(uiGeneration)
         );
     }
 
@@ -2224,12 +2185,25 @@ public class ChatPanel extends JPanel {
         return StringUtils.defaultIfBlank(renderedText, bubble.getFullText());
     }
 
-    private void showReadAloudError(String message) {
-        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this, message, "Read aloud", JOptionPane.WARNING_MESSAGE));
+    private void showReadAloudError(long uiGeneration, String message) {
+        if (removed || uiGeneration != readAloudUiGeneration.get()) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            if (!removed && uiGeneration == readAloudUiGeneration.get()) {
+                JOptionPane.showMessageDialog(this, message, "Read aloud", JOptionPane.WARNING_MESSAGE);
+            }
+        });
     }
 
-    private void showReadAloudStatus(String message) {
+    private void showReadAloudStatus(long uiGeneration, String message) {
+        if (removed || uiGeneration != readAloudUiGeneration.get()) {
+            return;
+        }
         SwingUtilities.invokeLater(() -> {
+            if (removed || uiGeneration != readAloudUiGeneration.get()) {
+                return;
+            }
             if (StringUtils.isBlank(message)) {
                 readAloudStatusLabel.setVisible(false);
                 return;
@@ -2244,6 +2218,7 @@ public class ChatPanel extends JPanel {
     }
 
     private void stopReadAloudPlayback() {
+        readAloudUiGeneration.incrementAndGet();
         textToSpeechService.stop();
         readAloudStatusTimer.stop();
         readAloudStatusLabel.setVisible(false);
@@ -2410,11 +2385,7 @@ public class ChatPanel extends JPanel {
         if (state == null) {
             return;
         }
-        if (currentProviderResolving) {
-            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
-            return;
-        }
-        if (currentProvider == null) {
+        if (selectedProviderDef() == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.showValidationMessage("Select a model/provider before regenerating.");
             return;
         }
@@ -2427,35 +2398,27 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        history.set(state.messageIndex(), replacement);
         UUID conversationId = resolveConversationId();
-        clearPendingAssistantRecovery(conversationId);
         int keepCount = state.messageIndex() + 1;
-        if (history.size() > keepCount) {
-            history.subList(keepCount, history.size()).clear();
-        }
+        long expectedHistoryRevision = historyRevision;
+        startAssistantStream(conversationId, expectedHistoryRevision, () -> {
+            if (editingUserMessage != state) {
+                throw new SendCancelledException();
+            }
+            history.set(state.messageIndex(), replacement);
+            clearPendingAssistantRecovery(conversationId);
+            if (history.size() > keepCount) {
+                history.subList(keepCount, history.size()).clear();
+            }
 
-        finishEditingAndRestoreComposer(state);
-        loadHistory(new ArrayList<>(history));
-        if (historyTruncatedListener != null && conversationId != null) {
-            historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
-        }
-        notifyMessageSubmitted();
-
-        if (inputBar.isWebSearchEnabled()) {
-            currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
-            currentAssistantActivityBubble.setStreaming(true);
-            currentAssistantActivityBubble.setVisible(false);
-            addActivityBubble(currentAssistantActivityBubble, null);
-
-            currentAssistantWebSearchBubble = new ActivityBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
-            currentAssistantWebSearchBubble.setVisible(false);
-            addActivityBubble(currentAssistantWebSearchBubble, null);
-        }
-
-        currentAssistantBubble = createMessageView(Role.ASSISTANT);
-        addAssistantBubble(currentAssistantBubble, null);
-        startAssistantStream(conversationId, currentProvider);
+            finishEditingAndRestoreComposer(state);
+            loadHistory(new ArrayList<>(history));
+            if (historyTruncatedListener != null && conversationId != null) {
+                historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
+            }
+            notifyMessageSubmitted();
+            prepareRegenerationBubbles();
+        });
     }
 
     private Message editedReplacementMessage(int messageIndex) {
@@ -2489,7 +2452,7 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean canRegenerateFrom(ChatMessageView bubble) {
-        if (currentProvider == null || isVisibleConversationBusy()) {
+        if (selectedProviderDef() == null || isVisibleConversationBusy()) {
             return false;
         }
         int historyMessageIndex = messageIndex(bubble);
@@ -2501,7 +2464,7 @@ public class ChatPanel extends JPanel {
     }
 
     public boolean canRegenerateRecentResponse() {
-        if (currentProvider == null || isVisibleConversationBusy()) {
+        if (selectedProviderDef() == null || isVisibleConversationBusy()) {
             return false;
         }
         List<ChatMessageView> bubbles = collectBubbles();
@@ -2520,11 +2483,7 @@ public class ChatPanel extends JPanel {
             inputBar.showValidationMessage("Finish or cancel transcription before regenerating.");
             return;
         }
-        if (currentProviderResolving) {
-            inputBar.showValidationMessage("Selected provider is still loading. Try again in a moment.");
-            return;
-        }
-        if (currentProvider == null) {
+        if (selectedProviderDef() == null || StringUtils.isBlank(selectedModelId)) {
             inputBar.showValidationMessage("Select a model/provider before regenerating.");
             return;
         }
@@ -2543,12 +2502,30 @@ public class ChatPanel extends JPanel {
         }
 
         UUID conversationId = resolveConversationId();
-        clearPendingAssistantRecovery(conversationId);
-        truncateHistoryAndBubbles(keepCount);
-        if (historyTruncatedListener != null && conversationId != null) {
-            historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
+        long expectedHistoryRevision = historyRevision;
+        startAssistantStream(conversationId, expectedHistoryRevision, () -> {
+            clearPendingAssistantRecovery(conversationId);
+            truncateHistoryAndBubbles(keepCount);
+            if (historyTruncatedListener != null && conversationId != null) {
+                historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
+            }
+            prepareRegenerationBubbles();
+        });
+    }
+
+    private void truncateHistoryAndBubbles(int keepCount) {
+        if (history.size() > keepCount) {
+            history.subList(keepCount, history.size()).clear();
         }
 
+        loadHistory(new ArrayList<>(history));
+        currentAssistantWebSearchBubble = null;
+        currentAssistantActivityBubble = null;
+        clearCurrentAgentToolBubbleState();
+        currentAssistantBubble = null;
+    }
+
+    private void prepareRegenerationBubbles() {
         if (inputBar.isWebSearchEnabled()) {
             currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
             currentAssistantActivityBubble.setStreaming(true);
@@ -2562,19 +2539,6 @@ public class ChatPanel extends JPanel {
 
         currentAssistantBubble = createMessageView(Role.ASSISTANT);
         addAssistantBubble(currentAssistantBubble, null);
-        startAssistantStream(conversationId, currentProvider);
-    }
-
-    private void truncateHistoryAndBubbles(int keepCount) {
-        if (history.size() > keepCount) {
-            history.subList(keepCount, history.size()).clear();
-        }
-
-        loadHistory(new ArrayList<>(history));
-        currentAssistantWebSearchBubble = null;
-        currentAssistantActivityBubble = null;
-        clearCurrentAgentToolBubbleState();
-        currentAssistantBubble = null;
     }
 
     private void addMessageWrapper(JPanel wrapper) {
@@ -2693,7 +2657,21 @@ public class ChatPanel extends JPanel {
     }
 
     public void cancelSpeechToText() {
-        speechToTextService.cancel(speechToTextCallbacks());
+        long uiGeneration = speechToTextUiGeneration.incrementAndGet();
+        speechToTextService.cancel(speechToTextCallbacks(uiGeneration));
+    }
+
+    public void disposeViewResources() {
+        if (modelPopup != null) {
+            modelPopup.dispose();
+            modelPopup = null;
+        }
+        if (systemWebView != null && !systemWebView.isDisposed()) {
+            systemWebView.dispose();
+        }
+        if (jcefBrowserView != null && !jcefBrowserView.isDisposed()) {
+            jcefBrowserView.dispose();
+        }
     }
 
     private void startSpeechToTextRecording() {
@@ -2704,15 +2682,19 @@ public class ChatPanel extends JPanel {
         stopReadAloudPlayback();
         speechToTextComposerSnapshot = inputBar.getComposerState();
         inputBar.showPreparingSpeechToTextState();
-        speechToTextService.startRecording(speechToTextCallbacks());
+        long uiGeneration = speechToTextUiGeneration.incrementAndGet();
+        speechToTextService.startRecording(speechToTextCallbacks(uiGeneration));
         refreshBubbleActionBars();
         refreshWebTranscript(false, true);
     }
 
-    private SpeechToTextService.Callbacks speechToTextCallbacks() {
+    private SpeechToTextService.Callbacks speechToTextCallbacks(long uiGeneration) {
         return new SpeechToTextService.Callbacks() {
             @Override
             public void stateChanged() {
+                if (!speechToTextUiCurrent(uiGeneration)) {
+                    return;
+                }
                 if (speechToTextService.recording()) {
                     inputBar.showRecordingState();
                 } else if (speechToTextService.transcribing()) {
@@ -2727,6 +2709,9 @@ public class ChatPanel extends JPanel {
 
             @Override
             public void status(String message) {
+                if (!speechToTextUiCurrent(uiGeneration)) {
+                    return;
+                }
                 if (StringUtils.isNotBlank(message)) {
                     inputBar.showValidationMessage(message);
                 }
@@ -2734,6 +2719,9 @@ public class ChatPanel extends JPanel {
 
             @Override
             public void error(String message) {
+                if (!speechToTextUiCurrent(uiGeneration)) {
+                    return;
+                }
                 inputBar.setComposerState(speechToTextComposerSnapshot);
                 inputBar.clearSpeechToTextState();
                 inputBar.showValidationMessage(message);
@@ -2742,6 +2730,9 @@ public class ChatPanel extends JPanel {
 
             @Override
             public void transcript(String text) {
+                if (!speechToTextUiCurrent(uiGeneration)) {
+                    return;
+                }
                 inputBar.setComposerState(speechToTextComposerSnapshot);
                 inputBar.appendTranscriptToRawSnapshot(speechToTextComposerSnapshot.text(), text);
                 inputBar.clearSpeechToTextState();
@@ -2751,14 +2742,21 @@ public class ChatPanel extends JPanel {
 
             @Override
             public void level(double rms, double peak) {
+                if (!speechToTextUiCurrent(uiGeneration)) {
+                    return;
+                }
                 inputBar.updateSpeechToTextLevel(rms, peak);
             }
         };
     }
 
+    private boolean speechToTextUiCurrent(long uiGeneration) {
+        return !removed && uiGeneration == speechToTextUiGeneration.get();
+    }
+
     private void refreshComposerAvailability() {
         inputBar.setConversationBusy(conversationLoading || isVisibleConversationBusy());
-        inputBar.setProviderReady(currentProvider != null && !currentProviderResolving);
+        inputBar.setProviderReady(selectedProviderDef() != null && StringUtils.isNotBlank(selectedModelId));
         inputBar.setNormalComposeMode(editingUserMessage == null);
     }
 
@@ -3374,16 +3372,17 @@ public class ChatPanel extends JPanel {
     }
 
     private void readWebTranscriptAloud(int messageIndex, String text) {
+        long uiGeneration = readAloudUiGeneration.incrementAndGet();
         if (speechToTextService.active()) {
-            showReadAloudStatus("Finish or cancel transcription before using read aloud.");
+            showReadAloudStatus(uiGeneration, "Finish or cancel transcription before using read aloud.");
             return;
         }
         textToSpeechService.readAloud(
                 webReadAloudKey(messageIndex),
                 text,
-                this::showReadAloudError,
-                this::showReadAloudStatus,
-                this::refreshReadAloudControls
+                message -> showReadAloudError(uiGeneration, message),
+                message -> showReadAloudStatus(uiGeneration, message),
+                () -> refreshReadAloudControls(uiGeneration)
         );
     }
 
@@ -3391,8 +3390,14 @@ public class ChatPanel extends JPanel {
         return "web:%d".formatted(messageIndex);
     }
 
-    private void refreshReadAloudControls() {
+    private void refreshReadAloudControls(long uiGeneration) {
+        if (removed || uiGeneration != readAloudUiGeneration.get()) {
+            return;
+        }
         SwingUtilities.invokeLater(() -> {
+            if (removed || uiGeneration != readAloudUiGeneration.get()) {
+                return;
+            }
             refreshBubbleActionBars();
             refreshWebTranscript(false);
         });
@@ -3569,6 +3574,13 @@ public class ChatPanel extends JPanel {
         updateGenerationIndicator();
     }
 
+    public void cancelAllRequests() {
+        cancelStreaming();
+        activeSendJobs.values().stream().toList().forEach(this::discardSendJob);
+        activeSessions.values().stream().toList().forEach(this::discardStreamingSession);
+        updateGenerationIndicator();
+    }
+
     private void discardSendJob(SendJob sendJob) {
         if (sendJob == null) {
             return;
@@ -3580,22 +3592,27 @@ public class ChatPanel extends JPanel {
         if (worker != null) {
             worker.interrupt();
         }
+        sendJob.clearCredentialReferences();
     }
 
     private void discardStreamingSession(StreamingSession session) {
         if (session == null) {
             return;
         }
-        session.cancelled.set(true);
-        session.finished = true;
-        activeSessions.remove(session.sessionId);
-        cancelSessionActiveRequest(session, false);
-        Thread worker = session.worker;
-        if (worker != null) {
-            worker.interrupt();
-        }
-        if (!hasLiveStreamingSession(session.conversationId)) {
-            notifyConversationStreamingChanged(session.conversationId, false);
+        try {
+            session.cancelled.set(true);
+            session.finished = true;
+            activeSessions.remove(session.sessionId);
+            cancelSessionActiveRequest(session, false);
+            Thread worker = session.worker;
+            if (worker != null) {
+                worker.interrupt();
+            }
+            if (!hasLiveStreamingSession(session.conversationId)) {
+                notifyConversationStreamingChanged(session.conversationId, false);
+            }
+        } finally {
+            session.clearProvider();
         }
     }
 
@@ -3616,6 +3633,7 @@ public class ChatPanel extends JPanel {
         clearCurrentAgentToolBubbleState();
         currentAssistantBubble = null;
         history.clear();
+        historyRevision++;
         assistantBubbles.clear();
         thinkingBubbles.clear();
         messagesPanel.removeAll();
@@ -3689,6 +3707,7 @@ public class ChatPanel extends JPanel {
             return;
         }
         clearChatForHistoryLoad();
+        historyRevision++;
 
         batchMessageRefresh = true;
         try {
@@ -4099,8 +4118,13 @@ public class ChatPanel extends JPanel {
     }
 
     private void notifyConversationStreamingChanged(UUID conversationId, boolean streaming) {
-        if (conversationStreamingListener != null && conversationId != null) {
+        if (conversationStreamingListener == null || conversationId == null) {
+            return;
+        }
+        try {
             conversationStreamingListener.accept(new ConversationStreamingEvent(conversationId, streaming));
+        } catch (RuntimeException e) {
+            log.warn("Conversation streaming listener failed: {}", ExceptionUtils.getMessage(e));
         }
     }
 
@@ -4109,8 +4133,13 @@ public class ChatPanel extends JPanel {
             return;
         }
         this.streaming = streaming;
-        if (visibleStreamingChangedListener != null) {
+        if (visibleStreamingChangedListener == null) {
+            return;
+        }
+        try {
             visibleStreamingChangedListener.accept(streaming);
+        } catch (RuntimeException e) {
+            log.warn("Visible streaming listener failed: {}", ExceptionUtils.getMessage(e));
         }
     }
 
@@ -4336,7 +4365,7 @@ public class ChatPanel extends JPanel {
         return replaced;
     }
 
-    private void persistAssistantResponse(StreamingSession session, SendJob sendJob, boolean allowBlankContent) {
+    private boolean persistAssistantResponse(StreamingSession session, SendJob sendJob) {
         String assistantText;
         synchronized (session.response) {
             assistantText = session.response.toString();
@@ -4365,12 +4394,12 @@ public class ChatPanel extends JPanel {
                 || hasVisibleThinkingContent(assistantThinking)
                 || StringUtils.isNotBlank(assistantWebSearch)
                 || hasVisibleAgentToolActivity(session);
-        if (!allowBlankContent && !hasContent) {
-            return;
+        if (!hasContent) {
+            return false;
         }
 
         if (!session.persisted.compareAndSet(false, true)) {
-            return;
+            return true;
         }
 
         Message assistantMessage = new Message(
@@ -4412,6 +4441,7 @@ public class ChatPanel extends JPanel {
         if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
             notifyMessageSubmitted();
         }
+        return true;
     }
 
     private String mergeAssistantWebSearchWithAnswerSources(
@@ -4888,30 +4918,38 @@ public class ChatPanel extends JPanel {
         StreamingSession session = visibleStreamingSession();
         if (session != null) {
             session.cancelled.set(true);
-
-            if (markAsCancelled) {
-                String cancelledMarker = "\n\n[Cancelled]";
-                appendAssistantResponse(session, cancelledMarker);
-                if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
-                    currentAssistantBubble.appendText(cancelledMarker);
+            try {
+                if (markAsCancelled) {
+                    String cancelledMarker = "\n\n[Cancelled]";
+                    appendAssistantResponse(session, cancelledMarker);
+                    if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
+                        currentAssistantBubble.appendText(cancelledMarker);
+                    }
+                    persistAssistantResponse(session, findSendJobByStreamSession(session.sessionId));
+                    removeCurrentWebSearchBubbleIfBlank();
+                    removeCurrentActivityBubbleIfBlank();
+                    removeCurrentAgentToolBubblesIfBlank();
                 }
-                persistAssistantResponse(session, findSendJobByStreamSession(session.sessionId), false);
-                removeCurrentWebSearchBubbleIfBlank();
-                removeCurrentActivityBubbleIfBlank();
-                removeCurrentAgentToolBubblesIfBlank();
+            } finally {
+                try {
+                    cancelSessionActiveRequest(session, true);
+                    Thread worker = session.worker;
+                    if (worker != null) {
+                        worker.interrupt();
+                    }
+                    session.finished = true;
+                    activeSessions.remove(session.sessionId);
+                    if (!hasLiveStreamingSession(session.conversationId)) {
+                        notifyConversationStreamingChanged(session.conversationId, false);
+                    }
+                } finally {
+                    try {
+                        finishSendJobByStreamSession(session.sessionId);
+                    } finally {
+                        session.clearProvider();
+                    }
+                }
             }
-
-            cancelSessionActiveRequest(session, true);
-            Thread worker = session.worker;
-            if (worker != null) {
-                worker.interrupt();
-            }
-            session.finished = true;
-            activeSessions.remove(session.sessionId);
-            if (!hasLiveStreamingSession(session.conversationId)) {
-                notifyConversationStreamingChanged(session.conversationId, false);
-            }
-            finishSendJobByStreamSession(session.sessionId);
         }
 
         autoScrollQueued = false;
@@ -4926,8 +4964,10 @@ public class ChatPanel extends JPanel {
         currentAssistantBubble = null;
         updateGenerationIndicator();
         SwingUtilities.invokeLater(() -> {
-            inputBar.setEnabled(true);
-            inputBar.requestInputFocus();
+            if (!removed) {
+                inputBar.setEnabled(true);
+                inputBar.requestInputFocus();
+            }
         });
     }
 
@@ -4950,21 +4990,25 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        session.finished = true;
-        activeSessions.remove(session.sessionId);
-        if (!hasLiveStreamingSession(session.conversationId)) {
-            notifyConversationStreamingChanged(session.conversationId, false);
-        }
-
-        if (activeStreamSessionId == session.sessionId) {
-            autoScrollQueued = false;
-            activeStreamSessionId = -1L;
-            if (visiblePreparingJob() == null && visibleStreamingSession() == null) {
-                setVisibleStreaming(false);
-                inputBar.setEnabled(true);
-                inputBar.requestInputFocus();
+        try {
+            session.finished = true;
+            activeSessions.remove(session.sessionId);
+            if (!hasLiveStreamingSession(session.conversationId)) {
+                notifyConversationStreamingChanged(session.conversationId, false);
             }
-            updateGenerationIndicator();
+
+            if (activeStreamSessionId == session.sessionId) {
+                autoScrollQueued = false;
+                activeStreamSessionId = -1L;
+                if (visiblePreparingJob() == null && visibleStreamingSession() == null) {
+                    setVisibleStreaming(false);
+                    inputBar.setEnabled(true);
+                    inputBar.requestInputFocus();
+                }
+                updateGenerationIndicator();
+            }
+        } finally {
+            session.clearProvider();
         }
     }
 
@@ -4975,6 +5019,7 @@ public class ChatPanel extends JPanel {
 
         sendJob.finished = true;
         activeSendJobs.remove(sendJob.jobId);
+        sendJob.clearCredentialReferences();
 
         if (isVisibleConversation(sendJob.conversationId)
                 && visiblePreparingJob() == null
@@ -5018,7 +5063,11 @@ public class ChatPanel extends JPanel {
             return;
         }
         if (session.provider != null && !hasOtherLiveSessionUsingProvider(session)) {
-            session.provider.cancelActiveRequest();
+            try {
+                session.provider.cancelActiveRequest();
+            } catch (RuntimeException e) {
+                log.warn("Provider request cancellation failed: {}", ExceptionUtils.getMessage(e));
+            }
         }
     }
 

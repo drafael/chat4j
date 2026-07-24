@@ -57,7 +57,7 @@ class CapabilityProviderServiceTest {
     @DisplayName("Normal streaming sends the rendering hint to the chat client")
     void streamCompletion_whenNormalChat_routesHintedHistoryToClient() {
         AtomicReference<List<Message>> observedHistory = new AtomicReference<>();
-        var subject = new CapabilityProviderService(runtime(), recordingClient(observedHistory), runtime -> List.of());
+        var subject = new CapabilityProviderService(runtime(), recordingClient(observedHistory));
 
         subject.streamCompletion(
                 List.of(Message.user("show ethanol as MOL")),
@@ -80,7 +80,7 @@ class CapabilityProviderServiceTest {
     @DisplayName("Web-search streaming also sends the rendering hint to the chat client")
     void streamCompletion_whenWebSearchChat_routesHintedHistoryToClient() {
         AtomicReference<List<Message>> observedHistory = new AtomicReference<>();
-        var subject = new CapabilityProviderService(runtime(), recordingClient(observedHistory), runtime -> List.of());
+        var subject = new CapabilityProviderService(runtime(), recordingClient(observedHistory));
 
         subject.streamCompletion(
                 List.of(Message.user("show benzene SDF")),
@@ -101,6 +101,46 @@ class CapabilityProviderServiceTest {
     }
 
     @Test
+    @DisplayName("Provider failures redact the active API key before reaching callbacks")
+    void streamCompletion_whenFailureContainsApiKey_redactsCredential() {
+        AtomicReference<Exception> error = new AtomicReference<>();
+        ChatCompletionClient failingClient = new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                throw new IllegalStateException("401 rejected test-key");
+            }
+        };
+        var subject = new CapabilityProviderService(runtime(), failingClient);
+
+        subject.streamCompletion(
+                List.of(Message.user("hello")),
+                ReasoningLevel.OFF,
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> {
+                },
+                error::set,
+                () -> false
+        );
+
+        assertThat(error.get())
+                .hasMessageContaining("401 rejected [REDACTED]")
+                .hasMessageNotContaining("test-key");
+        assertThat(error.get().getCause()).isNull();
+    }
+
+    @Test
     @DisplayName("Citation-aware streaming forwards citations and completion callbacks")
     void streamCompletion_whenClientEmitsCitation_forwardsCitationAndCompletes() {
         AtomicReference<List<Message>> observedHistory = new AtomicReference<>();
@@ -110,7 +150,7 @@ class CapabilityProviderServiceTest {
                 .title("Source")
                 .url("https://example.test/source")
                 .build();
-        var subject = new CapabilityProviderService(runtime(), citationClient(observedHistory, expectedCitation), runtime -> List.of());
+        var subject = new CapabilityProviderService(runtime(), citationClient(observedHistory, expectedCitation));
         AtomicReference<CitationRef> observedCitation = new AtomicReference<>();
         AtomicBoolean completed = new AtomicBoolean(false);
         AtomicReference<Exception> error = new AtomicReference<>();

@@ -8,7 +8,6 @@ import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
-import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -34,17 +33,11 @@ public class CapabilityProviderService implements ProviderService {
 
     private final ProviderRuntime runtime;
     private final ChatCompletionClient chatCompletionClient;
-    private final ModelCatalogClient modelCatalogClient;
     private final AtomicReference<AutoCloseable> activeStream = new AtomicReference<>();
 
-    public CapabilityProviderService(
-        ProviderRuntime runtime,
-        ChatCompletionClient chatCompletionClient,
-        ModelCatalogClient modelCatalogClient
-    ) {
+    public CapabilityProviderService(ProviderRuntime runtime, ChatCompletionClient chatCompletionClient) {
         this.runtime = runtime;
         this.chatCompletionClient = chatCompletionClient;
-        this.modelCatalogClient = modelCatalogClient;
     }
 
     @Override
@@ -73,8 +66,9 @@ public class CapabilityProviderService implements ProviderService {
             }
         } catch (Exception e) {
             if (!shouldStop(isCancelled)) {
-                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
-                onError.accept(ProviderExceptionMapper.map(e));
+                Exception safeError = ProviderExceptionMapper.map(e, runtime.apiKey());
+                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(safeError));
+                onError.accept(safeError);
             }
         }
     }
@@ -200,25 +194,13 @@ public class CapabilityProviderService implements ProviderService {
             }
         } catch (Exception e) {
             if (!shouldStop(isCancelled)) {
-                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
-                onError.accept(ProviderExceptionMapper.map(e));
+                Exception safeError = ProviderExceptionMapper.map(e, runtime.apiKey());
+                log.warn("Provider stream failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(safeError));
+                onError.accept(safeError);
             }
         }
     }
 
-    @Override
-    public List<String> availableModels() {
-        if (runtime.selectedModel() != null) {
-            return List.of(runtime.selectedModel());
-        }
-
-        try {
-            return modelCatalogClient.fetchModels(runtime);
-        } catch (Exception e) {
-            log.debug("Model listing failed for {}: {}", runtime.descriptor().name(), ExceptionUtils.getMessage(e));
-            return emptyList();
-        }
-    }
 
     @Override
     public void cancelActiveRequest() {
@@ -234,13 +216,8 @@ public class CapabilityProviderService implements ProviderService {
     }
 
     @Override
-    public String name() {
-        return runtime.descriptor().name();
-    }
-
-    @Override
-    public String envVarName() {
-        return runtime.descriptor().credentialEnvVar();
+    public String apiKey() {
+        return runtime.apiKey();
     }
 
     static List<Message> withChat4jRenderingHint(List<Message> history) {

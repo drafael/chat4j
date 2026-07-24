@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.stt.SpeechToTextProviderRegistry;
 import com.github.drafael.chat4j.stt.SpeechToTextSettings;
@@ -23,7 +24,9 @@ import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperLocalModelRow;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperJniEngine;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
+import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.util.Fonts;
@@ -79,6 +82,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final CredentialSource credentialSource;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
     private final SettingsCredentialChangeListener credentialChangeListener;
     private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong cloudModelSaveGeneration = new AtomicLong();
@@ -127,6 +133,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     };
     private final List<CompletableFuture<Boolean>> pendingSaves = new CopyOnWriteArrayList<>();
     private volatile boolean removed;
+    private boolean listenersSubscribed;
+    private boolean permanentlyDisposed;
     private volatile String lastSaveError = "";
 
     SpeechToTextPanel(
@@ -134,16 +142,21 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             Path defaultModelDirectory,
             VoskModelManagementService voskModelManagementService,
             WhisperModelManagementService whisperModelManagementService,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
+            WhisperNativeRuntime whisperNativeRuntime,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
         this(
                 settingsRepo,
                 defaultModelDirectory,
-                SpeechToTextProviderRegistry.createDefault(),
+                SpeechToTextProviderRegistry.createDefault(new WhisperJniEngine(whisperNativeRuntime)),
                 new UnavailableSpeechToTextModelDownloader(),
                 voskModelManagementService,
                 whisperModelManagementService,
+                credentialResolver,
+                credentialMutationService,
                 tokenFieldRegistry,
                 credentialChangeListener
         );
@@ -156,6 +169,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             SpeechToTextModelDownloader modelDownloader,
             VoskModelManagementService voskModelManagementService,
             WhisperModelManagementService whisperModelManagementService,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
@@ -164,20 +179,24 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         this.voskModelManagementService = voskModelManagementService;
         this.whisperModelManagementService = whisperModelManagementService;
         this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
+        this.credentialSource = CredentialSource.from(credentialResolver);
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
-        this.settings = new SpeechToTextSettings(settingsRepo, providerRegistry, CredentialSource.SYSTEM, defaultModelDirectory, voskModelManagementService, whisperModelManagementService);
+        this.settings = new SpeechToTextSettings(
+                settingsRepo,
+                providerRegistry,
+                credentialSource,
+                defaultModelDirectory,
+                voskModelManagementService,
+                whisperModelManagementService
+        );
         this.catalogStore = new SpeechToTextCatalogStore(settingsRepo);
         this.modelDownloader = modelDownloader;
         buildUi();
-        voskUnsubscribe = voskModelManagementService.addListener(this::enqueueVoskModelSnapshot);
-        try {
-            whisperUnsubscribe = whisperModelManagementService.addListener(this::enqueueWhisperModelSnapshot);
-        } catch (RuntimeException e) {
-            voskUnsubscribe.run();
-            throw e;
-        }
+        subscribeModelListeners();
     }
 
     @Override
@@ -302,13 +321,65 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     }
 
     @Override
+    public void addNotify() {
+        boolean readded = removed;
+        removed = false;
+        if (!permanentlyDisposed) {
+            subscribeModelListeners();
+        }
+        super.addNotify();
+        if (readded && !permanentlyDisposed) {
+            enqueueVoskModelSnapshot(voskModelManagementService.snapshot());
+            enqueueWhisperModelSnapshot(whisperModelManagementService.snapshot());
+        }
+    }
+
+    @Override
     public void removeNotify() {
         removed = true;
         cancelCatalogRefreshes();
+        unsubscribeModelListeners();
+        super.removeNotify();
+    }
+
+    void disposePanel() {
+        if (permanentlyDisposed) {
+            return;
+        }
+        permanentlyDisposed = true;
+        removed = true;
+        cancelCatalogRefreshes();
+        unsubscribeModelListeners();
+        saveExecutor.shutdown();
+    }
+
+    private void subscribeModelListeners() {
+        if (listenersSubscribed) {
+            return;
+        }
+        voskUnsubscribe = voskModelManagementService.addListener(this::enqueueVoskModelSnapshot);
+        try {
+            whisperUnsubscribe = whisperModelManagementService.addListener(this::enqueueWhisperModelSnapshot);
+            listenersSubscribed = true;
+        } catch (RuntimeException e) {
+            voskUnsubscribe.run();
+            voskUnsubscribe = () -> {
+            };
+            throw e;
+        }
+    }
+
+    private void unsubscribeModelListeners() {
+        if (!listenersSubscribed) {
+            return;
+        }
+        listenersSubscribed = false;
         voskUnsubscribe.run();
         whisperUnsubscribe.run();
-        saveExecutor.shutdown();
-        super.removeNotify();
+        voskUnsubscribe = () -> {
+        };
+        whisperUnsubscribe = () -> {
+        };
     }
 
     private void buildUi() {
@@ -619,7 +690,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     }
 
     private boolean selectableProvider(SpeechToTextProvider provider) {
-        return provider.available(CredentialSource.SYSTEM)
+        return provider.available(credentialSource)
                 || StringUtils.isNotBlank(provider.requiredEnvVar());
     }
 
@@ -862,7 +933,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
                 SpeechToTextProviderContext context = new SpeechToTextProviderContext(
                         snapshot.baseUri(),
                         snapshot.transcriptionUri(),
-                        CredentialSource.SYSTEM,
+                        credentialSource,
                         () -> !catalogRefreshCurrent(refreshId),
                         Duration.ofSeconds(45)
                 );
@@ -1103,6 +1174,8 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         tokenField = withPreferredWidth(new ApiTokenFieldPanel(
                 requiredEnvVar,
                 tokenFieldRegistry,
+                credentialResolver,
+                credentialMutationService,
                 credentialChangeListener,
                 this::cancelCatalogRefreshes,
                 this::refreshAfterTokenFieldSave
@@ -1774,15 +1847,15 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         } else if (!snapshot.available()) {
             setHelperText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
         } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to Groq for transcription.".formatted(snapshot.provider().availableMessage()));
+            setHelperText("%s Recorded audio is sent to Groq for transcription.".formatted(snapshot.statusMessage()));
         } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to ElevenLabs for transcription.".formatted(snapshot.provider().availableMessage()));
+            setHelperText("%s Recorded audio is sent to ElevenLabs for transcription.".formatted(snapshot.statusMessage()));
         } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to Deepgram for transcription.".formatted(snapshot.provider().availableMessage()));
+            setHelperText("%s Recorded audio is sent to Deepgram for transcription.".formatted(snapshot.statusMessage()));
         } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to AssemblyAI for transcription.".formatted(snapshot.provider().availableMessage()));
+            setHelperText("%s Recorded audio is sent to AssemblyAI for transcription.".formatted(snapshot.statusMessage()));
         } else {
-            setHelperText(snapshot.provider().availableMessage());
+            setHelperText(snapshot.statusMessage());
         }
     }
 

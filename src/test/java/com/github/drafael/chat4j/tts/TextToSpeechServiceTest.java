@@ -9,6 +9,7 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -103,6 +104,153 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Fatal synthesis errors settle ownership and reach the uncaught exception handler")
+    void readAloud_whenProviderThrowsFatalError_cleansUpAndRethrows() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fatal-error");
+        var uncaught = new AtomicReference<Throwable>();
+        var uncaughtReported = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor(command -> {
+            var thread = new Thread(command, "tts-fatal-error-test");
+            thread.setUncaughtExceptionHandler((ignored, error) -> {
+                uncaught.set(error);
+                uncaughtReported.countDown();
+            });
+            return thread;
+        });
+        var reportedError = new AtomicReference<String>();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(new FatalErrorProvider()))),
+                new RecordingPlaybackService(),
+                executor
+        );
+
+        try {
+            subject.readAloud("message", "hello", reportedError::set);
+
+            assertThat(uncaughtReported.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(uncaught.get()).isInstanceOf(AssertionError.class).hasMessage("fatal synthesis failure");
+            assertThat(reportedError.get()).isNull();
+            assertThat(subject.isReadAloudActive("message")).isFalse();
+        } finally {
+            subject.disposeAsync().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("Synthesis cancellation ownership is published before provider work starts")
+    void stop_whenCalledFromProviderSynthesis_interruptsOwnedSynthesisThread() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "reentrant-stop");
+        var subjectReference = new AtomicReference<TextToSpeechService>();
+        var provider = new ReentrantStopProvider(subjectReference);
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                Executors.newSingleThreadExecutor()
+        );
+        subjectReference.set(subject);
+
+        try {
+            subject.readAloud("message", "hello", ignored -> {
+            });
+
+            assertThat(provider.finished.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(provider.interrupted).isTrue();
+            assertThat(subject.isReadAloudActive("message")).isFalse();
+        } finally {
+            subject.disposeAsync().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("Disposing read aloud interrupts active provider synthesis")
+    void dispose_whenSynthesisIsActive_interruptsProviderWork() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "blocking");
+        var provider = new BlockingSynthesisProvider();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                Executors.newSingleThreadExecutor()
+        );
+
+        try {
+            subject.readAloud("message", "hello", ignored -> {
+            });
+            assertThat(provider.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            subject.dispose();
+
+            assertThat(provider.interrupted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(subject.isReadAloudActive("message")).isFalse();
+        } finally {
+            subject.dispose();
+        }
+    }
+
+    @Test
+    @DisplayName("Asynchronous disposal waits for synthesis cleanup to settle")
+    void disposeAsync_whenSynthesisIgnoresInterruption_completesAfterProviderSettles() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "stubborn");
+        var provider = new StubbornSynthesisProvider();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                Executors.newSingleThreadExecutor()
+        );
+
+        CompletableFuture<Void> cleanup = null;
+        try {
+            subject.readAloud("message", "hello", ignored -> {
+            });
+            assertThat(provider.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            cleanup = subject.disposeAsync();
+
+            assertThat(cleanup.isDone()).isFalse();
+            provider.release.countDown();
+            cleanup.get(5, TimeUnit.SECONDS);
+            assertThat(cleanup.isDone()).isTrue();
+        } finally {
+            provider.release.countDown();
+            if (cleanup != null) {
+                cleanup.get(5, TimeUnit.SECONDS);
+            }
+            subject.dispose();
+        }
+    }
+
+    @Test
+    @DisplayName("Stopping after playback admission prevents late playback registration")
+    void stop_whenPlaybackAdmissionIsBlocked_preventsPlaybackStart() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
+        var playback = new CancellationAwarePlaybackService();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(new FakeProvider()))),
+                playback,
+                Executors.newSingleThreadExecutor()
+        );
+
+        try {
+            subject.readAloud("message", "hello", ignored -> {
+            });
+            assertThat(playback.admissionStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            subject.stop();
+            playback.releaseAdmission.countDown();
+
+            assertThat(playback.settled.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(playback.played).isFalse();
+        } finally {
+            playback.releaseAdmission.countDown();
+            subject.dispose();
+        }
+    }
+
+    @Test
     @DisplayName("Read aloud strips markdown syntax before synthesis")
     void readAloud_markdownText_synthesizesPlainSpeechText() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
@@ -146,6 +294,38 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Read aloud redacts provider credentials from synthesis errors")
+    void readAloud_whenProviderErrorContainsApiKey_redactsCredential() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "credential-error");
+        var error = new AtomicReference<String>();
+        var errorReported = new CountDownLatch(1);
+        var provider = new CredentialErrorProvider();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                Executors.newSingleThreadExecutor()
+        );
+
+        try {
+            subject.readAloud("message", "hello", message -> {
+                error.set(message);
+                errorReported.countDown();
+            });
+
+            assertThat(errorReported.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(provider.apiKeyResolutions).hasValue(1);
+            assertThat(provider.synthesisApiKey).isEqualTo("tts-secret-1");
+            assertThat(error.get())
+                    .contains("synthesis rejected [REDACTED]")
+                    .doesNotContain("tts-secret-1")
+                    .doesNotContain("tts-secret-2");
+        } finally {
+            subject.disposeAsync().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("Read aloud uses provider unavailable message")
     void readAloud_providerUnavailable_reportsProviderMessage() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
@@ -177,9 +357,95 @@ class TextToSpeechServiceTest {
         subject.dispose();
         var error = new AtomicReference<String>();
 
+        assertThat(subject.isReadAloudAvailable()).isFalse();
         subject.readAloud("message", "hello", error::set);
 
         assertThat(error.get()).contains("Read aloud is not available");
+    }
+
+    private static final class FatalErrorProvider extends FakeProvider {
+        @Override
+        public String id() {
+            return "fatal-error";
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            throw new AssertionError("fatal synthesis failure");
+        }
+    }
+
+    private static final class ReentrantStopProvider extends FakeProvider {
+        private final AtomicReference<TextToSpeechService> subject;
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private volatile boolean interrupted;
+
+        private ReentrantStopProvider(AtomicReference<TextToSpeechService> subject) {
+            this.subject = subject;
+        }
+
+        @Override
+        public String id() {
+            return "reentrant-stop";
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            subject.get().stop();
+            interrupted = Thread.currentThread().isInterrupted();
+            finished.countDown();
+            return new TextToSpeechAudio(new byte[] {1}, "audio/test", "test-format");
+        }
+    }
+
+    private static final class StubbornSynthesisProvider extends FakeProvider {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public String id() {
+            return "stubborn";
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            started.countDown();
+            boolean interrupted = false;
+            while (release.getCount() > 0) {
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            return new TextToSpeechAudio(new byte[] {1}, "audio/test", "test-format");
+        }
+    }
+
+    private static final class BlockingSynthesisProvider extends FakeProvider {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch interrupted = new CountDownLatch(1);
+
+        @Override
+        public String id() {
+            return "blocking";
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            started.countDown();
+            try {
+                TimeUnit.SECONDS.sleep(30);
+                return new TextToSpeechAudio(new byte[] {1}, "audio/test", "test-format");
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("synthesis interrupted", e);
+            }
+        }
     }
 
     private static class FakeProvider implements TextToSpeechProvider {
@@ -254,6 +520,42 @@ class TextToSpeechServiceTest {
         }
     }
 
+    private static final class CredentialErrorProvider extends FakeProvider {
+        private final AtomicInteger apiKeyResolutions = new AtomicInteger();
+        private volatile String synthesisApiKey;
+
+        @Override
+        public String id() {
+            return "credential-error";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return "TEST_API_KEY";
+        }
+
+        @Override
+        public boolean available() {
+            return true;
+        }
+
+        @Override
+        public String apiKey() {
+            return "tts-secret-%d".formatted(apiKeyResolutions.incrementAndGet());
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
+            throw new AssertionError("Expected request-owned credential overload");
+        }
+
+        @Override
+        public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) {
+            synthesisApiKey = apiKey;
+            throw new IllegalStateException("synthesis rejected %s".formatted(apiKey));
+        }
+    }
+
     private static final class UnavailableProvider extends FakeProvider {
         @Override
         public String id() {
@@ -268,6 +570,40 @@ class TextToSpeechServiceTest {
         @Override
         public String unavailableMessage() {
             return "Provider unavailable without credentials message.";
+        }
+    }
+
+    private static final class CancellationAwarePlaybackService implements AudioPlaybackService {
+        private final CountDownLatch admissionStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseAdmission = new CountDownLatch(1);
+        private final CountDownLatch settled = new CountDownLatch(1);
+        private volatile boolean played;
+
+        @Override
+        public void play(TextToSpeechAudio audio) {
+            played = true;
+            settled.countDown();
+        }
+
+        @Override
+        public void play(TextToSpeechAudio audio, java.util.function.BooleanSupplier isCancelled) {
+            admissionStarted.countDown();
+            boolean released = false;
+            while (!released) {
+                try {
+                    released = releaseAdmission.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.interrupted();
+                }
+            }
+            if (!isCancelled.getAsBoolean()) {
+                played = true;
+            }
+            settled.countDown();
+        }
+
+        @Override
+        public void stop() {
         }
     }
 

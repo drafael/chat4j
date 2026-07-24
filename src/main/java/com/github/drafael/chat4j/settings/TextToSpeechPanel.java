@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.JavaSoundAudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
@@ -16,9 +18,11 @@ import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.net.URL;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 import javax.swing.*;
 import org.apache.commons.lang3.StringUtils;
@@ -38,9 +42,10 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
     private final TextToSpeechSettings textToSpeechSettings;
     private final TextToSpeechCatalogStore catalogStore;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
+    private final CredentialResolver credentialResolver;
+    private final CredentialMutationService credentialMutationService;
     private final SettingsCredentialChangeListener credentialChangeListener;
     private final JavaSoundAudioPlaybackService previewPlayback = new JavaSoundAudioPlaybackService();
-    private final Object previewPlaybackLock = new Object();
     private final AtomicLong refreshCounter = new AtomicLong();
     private final AtomicLong previewCounter = new AtomicLong();
 
@@ -56,38 +61,35 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
     private ApiTokenFieldPanel tokenField;
     private boolean updating;
     private volatile boolean removed;
-    private volatile Thread previewThread;
+    private final AtomicReference<Thread> catalogRefreshThread = new AtomicReference<>();
+    private final AtomicReference<Thread> previewThread = new AtomicReference<>();
     private String lastProviderId = TextToSpeechSettings.PROVIDER_OFF;
     private volatile String lastSaveError = "";
 
-    public TextToSpeechPanel(SettingsRepository settingsRepo) {
-        this(settingsRepo, TextToSpeechProviderRegistry.createDefault(), new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
-    }
-
-    TextToSpeechPanel(SettingsRepository settingsRepo, TextToSpeechProviderRegistry providerRegistry) {
-        this(settingsRepo, providerRegistry, new ApiTokenFieldRegistry(), SettingsCredentialChangeListener.NO_OP);
-    }
-
-    TextToSpeechPanel(
+    public TextToSpeechPanel(
             SettingsRepository settingsRepo,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
+            Map<String, String> subprocessEnvironment,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener
     ) {
-        this(settingsRepo, TextToSpeechProviderRegistry.createDefault(), tokenFieldRegistry, credentialChangeListener);
+        this(
+                settingsRepo,
+                TextToSpeechProviderRegistry.createDefault(credentialResolver, subprocessEnvironment),
+                credentialResolver,
+                credentialMutationService,
+                tokenFieldRegistry,
+                credentialChangeListener,
+                true
+        );
     }
 
     TextToSpeechPanel(
             SettingsRepository settingsRepo,
             TextToSpeechProviderRegistry providerRegistry,
-            ApiTokenFieldRegistry tokenFieldRegistry,
-            SettingsCredentialChangeListener credentialChangeListener
-    ) {
-        this(settingsRepo, providerRegistry, tokenFieldRegistry, credentialChangeListener, true);
-    }
-
-    TextToSpeechPanel(
-            SettingsRepository settingsRepo,
-            TextToSpeechProviderRegistry providerRegistry,
+            CredentialResolver credentialResolver,
+            CredentialMutationService credentialMutationService,
             ApiTokenFieldRegistry tokenFieldRegistry,
             SettingsCredentialChangeListener credentialChangeListener,
             boolean automaticCatalogRefresh
@@ -97,6 +99,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         this.textToSpeechSettings = new TextToSpeechSettings(settingsRepo, providerRegistry);
         this.catalogStore = new TextToSpeechCatalogStore(settingsRepo);
         this.tokenFieldRegistry = tokenFieldRegistry;
+        this.credentialResolver = credentialResolver;
+        this.credentialMutationService = credentialMutationService;
         this.credentialChangeListener = credentialChangeListener == null
                 ? SettingsCredentialChangeListener.NO_OP
                 : credentialChangeListener;
@@ -274,6 +278,10 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
 
     private void cancelCatalogRefreshes() {
         refreshCounter.incrementAndGet();
+        Thread thread = catalogRefreshThread.getAndSet(null);
+        if (thread != null) {
+            thread.interrupt();
+        }
     }
 
     private boolean catalogRefreshCurrent(long requestId) {
@@ -302,8 +310,11 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         if (explicit) {
             setStatusInfo("Refreshing Text to Speech catalogs...");
         }
-        Thread.startVirtualThread(() -> {
+        Thread refreshThread = Thread.ofVirtual().unstarted(() -> {
             try {
+                if (!catalogRefreshCurrent(requestId)) {
+                    return;
+                }
                 List<TextToSpeechCatalogItem> models = List.copyOf(selection.provider().fetchModels());
                 if (!catalogRefreshCurrent(requestId)) {
                     return;
@@ -323,8 +334,15 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
                         setStatusError("Could not refresh %s catalogs.".formatted(selection.provider().displayName()));
                     }
                 });
+            } finally {
+                catalogRefreshThread.compareAndSet(Thread.currentThread(), null);
             }
         });
+        Thread previousRefresh = catalogRefreshThread.getAndSet(refreshThread);
+        if (previousRefresh != null) {
+            previousRefresh.interrupt();
+        }
+        refreshThread.start();
     }
 
     private void applyCatalogRefreshSafely(
@@ -514,21 +532,27 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         cancelPreviewWork();
         setStatusInfo("Preparing preview...");
         Thread thread = Thread.ofVirtual().unstarted(() -> {
+            String apiKey = null;
             try {
+                if (removed || requestId != previewCounter.get()) {
+                    return;
+                }
+                if (StringUtils.isNotBlank(selection.provider().requiredEnvVar())) {
+                    apiKey = selection.provider().apiKey();
+                }
                 String format = selection.provider().defaultResponseFormat();
-                TextToSpeechAudio audio = selection.provider().synthesize(new TextToSpeechRequest(
+                var request = new TextToSpeechRequest(
                         selection.providerId(),
                         selectedModel.id(),
                         selectedVoice.id(),
                         PREVIEW_TEXT,
                         format
-                ));
-                synchronized (previewPlaybackLock) {
-                    if (requestId != previewCounter.get()) {
-                        return;
-                    }
-                    previewPlayback.play(audio);
-                }
+                );
+                TextToSpeechAudio audio = selection.provider().synthesize(request, apiKey);
+                previewPlayback.play(
+                        audio,
+                        () -> removed || requestId != previewCounter.get()
+                );
                 if (requestId == previewCounter.get()) {
                     SwingUtilities.invokeLater(() -> {
                         if (!removed && requestId == previewCounter.get()) {
@@ -536,27 +560,25 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
                         }
                     });
                 }
-            } catch (Exception e) {
+            } catch (Exception | LinkageError e) {
+                String safeMessage = ProviderExceptionMapper.sanitizeMessage(e, apiKey);
                 if (requestId == previewCounter.get()) {
                     SwingUtilities.invokeLater(() -> {
                         if (!removed && requestId == previewCounter.get()) {
-                            setStatusError("Preview failed: %s".formatted(StringUtils.defaultIfBlank(e.getMessage(), "error")));
+                            setStatusError("Preview failed: %s".formatted(StringUtils.defaultIfBlank(safeMessage, "error")));
                         }
                     });
                 }
             } finally {
-                if (previewThread == Thread.currentThread()) {
-                    previewThread = null;
-                }
+                previewThread.compareAndSet(Thread.currentThread(), null);
             }
         });
-        previewThread = thread;
+        previewThread.set(thread);
         thread.start();
     }
 
     private void cancelPreviewWork() {
-        Thread thread = previewThread;
-        previewThread = null;
+        Thread thread = previewThread.getAndSet(null);
         if (thread != null) {
             thread.interrupt();
         }
@@ -666,6 +688,8 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         tokenField = withPreferredWidth(new ApiTokenFieldPanel(
                 requiredEnvVar,
                 tokenFieldRegistry,
+                credentialResolver,
+                credentialMutationService,
                 credentialChangeListener,
                 this::cancelCatalogRefreshes,
                 () -> {

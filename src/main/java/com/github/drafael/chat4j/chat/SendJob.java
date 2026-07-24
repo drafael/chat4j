@@ -4,10 +4,12 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import org.apache.commons.lang3.StringUtils;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -16,10 +18,11 @@ final class SendJob {
     volatile UUID conversationId;
     final String providerName;
     final String modelId;
+    final ProviderRegistry.ProviderDef providerDefinition;
     final String baseUrl;
-    final String apiKey;
+    volatile String apiKey;
     final ProviderCapabilities capabilities;
-    final ProviderService provider;
+    volatile ProviderService provider;
     final List<Message> historySnapshot;
     final ReasoningLevel reasoningLevel;
     final boolean webSearchEnabled;
@@ -39,10 +42,9 @@ final class SendJob {
             UUID conversationId,
             String providerName,
             String modelId,
+            ProviderRegistry.ProviderDef providerDefinition,
             String baseUrl,
-            String apiKey,
             ProviderCapabilities capabilities,
-            ProviderService provider,
             List<Message> historySnapshot,
             ReasoningLevel reasoningLevel,
             boolean webSearchEnabled,
@@ -56,10 +58,11 @@ final class SendJob {
         this.conversationId = conversationId;
         this.providerName = providerName;
         this.modelId = modelId;
+        this.providerDefinition = Objects.requireNonNull(providerDefinition, "providerDefinition should not be null");
         this.baseUrl = baseUrl;
-        this.apiKey = apiKey;
+        this.apiKey = null;
         this.capabilities = capabilities;
-        this.provider = provider;
+        this.provider = null;
         this.historySnapshot = List.copyOf(historySnapshot);
         this.reasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
         this.webSearchEnabled = webSearchEnabled;
@@ -72,5 +75,10 @@ final class SendJob {
 
     boolean isLive() {
         return !finished && !cancelled.get();
+    }
+
+    void clearCredentialReferences() {
+        apiKey = null;
+        provider = null;
     }
 }

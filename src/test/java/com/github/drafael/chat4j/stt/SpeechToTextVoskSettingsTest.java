@@ -25,7 +25,7 @@ class SpeechToTextVoskSettingsTest {
         repo.put(SpeechToTextSettings.PROVIDER_KEY, VoskSpeechToTextProvider.ID);
         Path models = tempDir.resolve("models");
         try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), models, voskModels);
 
             var snapshot = subject.resolve();
 
@@ -46,7 +46,7 @@ class SpeechToTextVoskSettingsTest {
         Path plausibleModel = models.resolve("vosk").resolve("custom-plausible");
         Files.createDirectories(plausibleModel.resolve("am"));
         try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("plausible-temp"))) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), models, voskModels);
             voskModels.refreshAsync();
             waitUntil(() -> !voskModels.snapshot().installedModels().isEmpty());
 
@@ -76,7 +76,7 @@ class SpeechToTextVoskSettingsTest {
         Path models = tempDir.resolve("models");
         createValidModel(models.resolve("vosk").resolve("vosk-model-small-en-us-0.15"));
         try (var voskModels = new VoskModelManagementService(repo, models, tempDir.resolve("temp"))) {
-            var subject = new SpeechToTextSettings(repo, SpeechToTextProviderRegistry.createDefault(), credentials(), models, voskModels);
+            var subject = new SpeechToTextSettings(repo, SpeechToTextTestProviders.createDefault(), credentials(), models, voskModels);
             voskModels.refreshAsync();
             waitUntil(() -> subject.resolve().model() != null);
 

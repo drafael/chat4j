@@ -4,6 +4,8 @@ import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.sun.net.httpserver.HttpServer;
@@ -50,15 +52,19 @@ class ProvidersPanelTest {
     @TempDir
     private Path tempDir;
 
+    private CredentialResolver credentialResolver;
+    private CredentialMutationService credentialMutationService;
+
     @BeforeEach
     void setUp() {
-        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
-        CredentialResolver.init(emptyMap());
+        var credentials = CredentialTestSupport.create(StoragePaths.ofConfigHome(tempDir));
+        credentialResolver = credentials.resolver();
+        credentialMutationService = credentials.mutationService();
     }
 
     @AfterEach
     void tearDown() {
-        CredentialTestSupport.reset();
+        credentialMutationService.closeSecrets();
     }
 
     @Test
@@ -96,7 +102,7 @@ class ProvidersPanelTest {
             JPanel missingTokenInfoPanel = callOnEdt(JPanel::new);
             char[] token = "saved-token".toCharArray();
             try {
-                CredentialTestSupport.saveToken("OPENAI_API_KEY", token);
+                credentialMutationService.saveTokenOverride("OPENAI_API_KEY", token, CredentialMutationListener.NO_OP);
             } finally {
                 fill(token, '\0');
             }
@@ -210,6 +216,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("auth-lifecycle.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 listener,
                 copilotAuthResolver,
                 new CodexAuthResolver(
@@ -288,6 +296,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("cancelled-ui.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 SettingsCredentialChangeListener.NO_OP,
                 copilotAuthResolver,
                 new CodexAuthResolver(
@@ -386,6 +396,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("throwing-logout-listener.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 listener,
                 copilotAuthResolver,
                 codexAuthResolver
@@ -479,6 +491,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("throwing-login-listener.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 listener,
                 copilotAuthResolver,
                 codexAuthResolver
@@ -552,6 +566,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("reattached.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 SettingsCredentialChangeListener.NO_OP,
                 copilotAuthResolver,
                 new CodexAuthResolver(
@@ -618,6 +634,8 @@ class ProvidersPanelTest {
         ProvidersPanel subject = callOnEdt(() -> new ProvidersPanel(
                 new SettingsRepository(tempDir.resolve("status-thread.properties")),
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 SettingsCredentialChangeListener.NO_OP,
                 copilotAuthResolver,
                 codexAuthResolver
@@ -785,6 +803,8 @@ class ProvidersPanelTest {
         return new ProvidersPanel(
                 settingsRepo,
                 new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
                 SettingsCredentialChangeListener.NO_OP,
                 new CopilotAuthResolver(
                         tempDir.resolve("copilot-home"),

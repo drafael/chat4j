@@ -17,6 +17,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WhisperSpeechToTextProviderTest {
 
+    private static final CredentialSource CREDENTIALS = new CredentialSource() {
+        @Override
+        public boolean hasRequiredCredentials(String envVar) {
+            return true;
+        }
+
+        @Override
+        public String resolveRequiredApiKey(String envVar) {
+            return "";
+        }
+    };
+
     @TempDir
     Path tempDir;
 
@@ -28,7 +40,7 @@ class WhisperSpeechToTextProviderTest {
         assertThat(subject.id()).isEqualTo("whisper");
         assertThat(subject.displayName()).isEqualTo("Whisper.cpp");
         assertThat(subject.requiredEnvVar()).isBlank();
-        assertThat(subject.available(CredentialSource.SYSTEM)).isTrue();
+        assertThat(subject.available(CREDENTIALS)).isTrue();
         assertThat(subject.supportsLocalModels()).isTrue();
         assertThat(subject.defaultModel()).isNull();
         assertThat(subject.bundledModels()).isEmpty();
@@ -104,6 +116,6 @@ class WhisperSpeechToTextProviderTest {
     }
 
     private SpeechToTextProviderContext context(LocalSpeechToTextModelReference reference, boolean canceled) {
-        return new SpeechToTextProviderContext(null, null, CredentialSource.SYSTEM, () -> canceled, Duration.ofSeconds(1), reference);
+        return new SpeechToTextProviderContext(null, null, CREDENTIALS, () -> canceled, Duration.ofSeconds(1), reference);
     }
 }

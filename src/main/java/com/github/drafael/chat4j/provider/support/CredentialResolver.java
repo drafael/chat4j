@@ -1,66 +1,42 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.formdev.flatlaf.util.SystemInfo;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 
 import static java.util.Collections.emptyMap;
 
 public final class CredentialResolver {
 
-    private static volatile Map<String, String> shellEnv = emptyMap();
-    private static volatile Function<String, String> processEnv = System::getenv;
-    private static volatile ApiTokenVault tokenVault = ApiTokenVault.defaultVault();
-    private static volatile CredentialMutationService mutationService = new CredentialMutationService(tokenVault);
+    private final ApiTokenVault tokenVault;
+    private final Map<String, String> processEnvironment;
+    private final Map<String, String> shellEnvironment;
 
-    private CredentialResolver() {
+    public CredentialResolver(
+            @NonNull ApiTokenVault tokenVault,
+            Map<String, String> processEnvironment,
+            Map<String, String> shellEnvironment
+    ) {
+        this.tokenVault = tokenVault;
+        this.processEnvironment = processEnvironment == null ? emptyMap() : Map.copyOf(processEnvironment);
+        this.shellEnvironment = shellEnvironment == null ? emptyMap() : Map.copyOf(shellEnvironment);
     }
 
-    public static void init(Map<String, String> env) {
-        shellEnv = env == null ? emptyMap() : Map.copyOf(env);
-        tokenVault.refreshFromDiskReadOnly();
-    }
-
-    static void configureTokenVault(@NonNull ApiTokenVault vault) {
-        mutationService.closeSecrets();
-        tokenVault = vault;
-        mutationService = new CredentialMutationService(tokenVault);
-        tokenVault.refreshFromDiskReadOnly();
-    }
-
-    static CredentialMutationService mutationService() {
-        return mutationService;
-    }
-
-    static void configureProcessEnv(Function<String, String> processEnvSupplier) {
-        processEnv = processEnvSupplier == null ? System::getenv : processEnvSupplier;
-    }
-
-    public static String getenv(String name) {
-        String processValue = processEnvValue(name);
-        return StringUtils.isNotBlank(processValue) ? processValue : shellEnvValue(name);
-    }
-
-    public static boolean hasAnyProviderCredentials() {
-        return supportedProviderEnvVars().stream()
+    public boolean hasAnyProviderCredentials() {
+        return CredentialTokenIds.supportedProviderEnvVars().stream()
                 .map(tokenId -> resolveCredential(tokenId, null))
                 .anyMatch(CredentialResolution::hasValue);
     }
 
-    public static List<String> supportedProviderEnvVars() {
-        return CredentialTokenIds.supportedProviderEnvVars();
-    }
-
-    public static boolean hasRequiredCredentials(String envVar) {
+    public boolean hasRequiredCredentials(String envVar) {
         return envVar == null || resolveCredential(envVar, null).hasValue();
     }
 
-    public static String resolveRequiredApiKey(String envVar, String fallbackApiKey) {
+    public String resolveRequiredApiKey(String envVar, String fallbackApiKey) {
         CredentialResolution resolution = resolveCredential(envVar, fallbackApiKey);
         if (resolution.source() == ApiCredentialSource.ERROR) {
             throw new IllegalStateException(StringUtils.defaultIfBlank(
@@ -75,11 +51,11 @@ public final class CredentialResolver {
         return resolution.value();
     }
 
-    public static String resolveApiKey(String envVar, String fallbackApiKey) {
+    public String resolveApiKey(String envVar, String fallbackApiKey) {
         return resolveCredential(envVar, fallbackApiKey).value();
     }
 
-    public static CredentialResolution resolveCredential(String envVar, String fallbackApiKey) {
+    public CredentialResolution resolveCredential(String envVar, String fallbackApiKey) {
         List<String> candidates = CredentialTokenIds.credentialCandidates(envVar);
         for (String candidate : candidates) {
             if (!CredentialTokenIds.supported(candidate)) {
@@ -109,7 +85,7 @@ public final class CredentialResolver {
         return CredentialResolution.missing();
     }
 
-    public static ApiCredentialStatus resolveCredentialStatus(String envVar, String fallbackApiKey) {
+    public ApiCredentialStatus resolveCredentialStatus(String envVar, String fallbackApiKey) {
         List<String> candidates = CredentialTokenIds.credentialCandidates(envVar);
         for (String candidate : candidates) {
             if (!CredentialTokenIds.supported(candidate)) {
@@ -129,26 +105,9 @@ public final class CredentialResolver {
                 : new ApiCredentialStatus(ApiCredentialSource.MISSING, null, "");
     }
 
-    public static String firstConfiguredEnvVar(String envVar) {
-        return envVarCandidates(envVar).stream()
-                .filter(candidate -> StringUtils.isNotBlank(getenv(candidate)))
-                .findFirst()
-                .orElse(null);
-    }
-
-    public static String firstConfiguredCredentialId(String envVar) {
+    public String firstConfiguredCredentialId(String envVar) {
         CredentialResolution resolution = resolveCredential(envVar, null);
         return resolution.hasValue() ? resolution.credentialId() : null;
-    }
-
-    public static boolean hasSavedTokenRecord(String tokenId) {
-        return tokenVault.hasRecord(tokenId);
-    }
-
-    public static Map<String, String> mergedEnvironment() {
-        var merged = new LinkedHashMap<>(System.getenv());
-        merged.putAll(shellEnv);
-        return Map.copyOf(merged);
     }
 
     public static List<String> envVarCandidates(String envVar) {
@@ -159,12 +118,12 @@ public final class CredentialResolver {
         return CredentialTokenIds.canonicalTokenId(envVar);
     }
 
-    static boolean matchesEffectiveRawEnvironment(List<String> candidates, char[] token) {
+    boolean matchesEffectiveRawEnvironment(List<String> candidates, char[] token) {
         CredentialResolution rawCredential = resolveRawEnvironmentCredential(candidates);
         return rawCredential.hasValue() && equalsChars(rawCredential.value(), token);
     }
 
-    private static CredentialResolution resolveRawEnvironmentCredential(List<String> candidates) {
+    private CredentialResolution resolveRawEnvironmentCredential(List<String> candidates) {
         for (String candidate : candidates) {
             String processValue = processEnvValue(candidate);
             if (StringUtils.isNotBlank(processValue)) {
@@ -197,12 +156,19 @@ public final class CredentialResolver {
         return true;
     }
 
-    private static String processEnvValue(String name) {
-        return StringUtils.trimToNull(processEnv.apply(name));
+    private String processEnvValue(String name) {
+        String value = processEnvironment.get(name);
+        if (value == null && SystemInfo.isWindows) {
+            value = processEnvironment.entrySet().stream()
+                    .filter(entry -> entry.getKey().equalsIgnoreCase(name))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(null);
+        }
+        return StringUtils.trimToNull(value);
     }
 
-    private static String shellEnvValue(String name) {
-        return StringUtils.trimToNull(shellEnv.get(name));
+    private String shellEnvValue(String name) {
+        return StringUtils.trimToNull(shellEnvironment.get(name));
     }
-
 }

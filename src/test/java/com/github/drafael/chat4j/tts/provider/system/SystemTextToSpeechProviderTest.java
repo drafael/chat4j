@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.tts.provider.system;
 
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
@@ -17,7 +18,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SystemTextToSpeechProviderTest {
@@ -25,7 +28,10 @@ class SystemTextToSpeechProviderTest {
     @Test
     @DisplayName("Default registry includes System provider first")
     void createDefault_always_includesSystemProviderFirst() {
-        var subject = TextToSpeechProviderRegistry.createDefault();
+        var subject = TextToSpeechProviderRegistry.createDefault(
+                mock(CredentialResolver.class),
+                emptyMap()
+        );
 
         assertThat(subject.providers()).isNotEmpty();
         assertThat(subject.providers().getFirst().id()).isEqualTo("system");

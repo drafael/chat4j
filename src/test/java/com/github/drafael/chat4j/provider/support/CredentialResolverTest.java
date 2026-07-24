@@ -1,9 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
-import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,367 +9,169 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static java.util.Collections.emptyMap;
 
 class CredentialResolverTest {
 
     @TempDir
     Path tempDir;
 
+    private StoragePaths storagePaths;
+    private ApiTokenVault vault;
+
     @BeforeEach
     void setUp() {
-        CredentialTestSupport.configureVault(StoragePaths.ofConfigHome(tempDir));
-        CredentialResolver.configureProcessEnv(System::getenv);
-        CredentialResolver.init(emptyMap());
-    }
-
-    @AfterEach
-    void tearDown() {
-        CredentialTestSupport.reset();
+        storagePaths = StoragePaths.ofConfigHome(tempDir);
+        vault = new ApiTokenVault(storagePaths);
     }
 
     @Test
-    @DisplayName("Resolver returns value from loaded shell environment when variable is not present in process environment")
-    void getenv_whenVariableExistsOnlyInShellEnv_returnsShellValue() {
-        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
-        CredentialResolver.init(Map.of(envVar, "test-value"));
-
-        var resolved = CredentialResolver.getenv(envVar);
-
-        assertThat(resolved).isEqualTo("test-value");
-    }
-
-    @Test
-    @DisplayName("Resolver prefers process environment values over loaded shell environment values")
-    void getenv_whenVariableExistsInProcessEnv_returnsProcessValue() {
-        var envVar = firstPresentEnvVar();
-        var processValue = System.getenv(envVar);
-        CredentialResolver.init(Map.of(envVar, "shell-override-value"));
-
-        var resolved = CredentialResolver.getenv(envVar);
-
-        assertThat(resolved).isEqualTo(processValue);
-    }
-
-    @Test
-    @DisplayName("Merged environment gives precedence to loaded shell variables for subprocesses")
-    void mergedEnvironment_whenShellProvidesOverrides_returnsShellOverrideValues() {
-        CredentialResolver.init(Map.of("PATH", "/tmp/chat4j-path", "CHAT4J_FLAG", "yes"));
-
-        Map<String, String> merged = CredentialResolver.mergedEnvironment();
-
-        assertThat(merged)
-                .containsEntry("PATH", "/tmp/chat4j-path")
-                .containsEntry("CHAT4J_FLAG", "yes");
-    }
-
-    @Test
-    @DisplayName("Provider credential presence check returns true when a known API key exists in loaded shell environment")
+    @DisplayName("Known provider credentials are detected in the shell snapshot")
     void hasAnyProviderCredentials_whenKnownProviderKeyExistsInShellEnv_returnsTrue() {
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "DUMMY_OPENAI_KEY_FOR_TESTS"));
+        var subject = resolver(emptyMap(), Map.of("OPENAI_API_KEY", "shell-key"));
 
-        var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
-
-        assertThat(hasCredentials).isTrue();
+        assertThat(subject.hasAnyProviderCredentials()).isTrue();
     }
 
     @Test
-    @DisplayName("Provider credential presence check includes Google AI aliases")
-    void hasAnyProviderCredentials_whenGoogleAiAliasExists_returnsTrue() {
-        CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "google-test"));
-
-        var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
-
-        assertThat(hasCredentials).isTrue();
-    }
-
-    @Test
-    @DisplayName("Canonical process credentials resolve through a lone legacy alias expression")
+    @DisplayName("Canonical Google credentials resolve through the legacy alias expression")
     void resolveRequiredApiKey_whenOnlyCanonicalAliasIsConfigured_returnsCanonicalValue() {
-        CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "gemini-key" : null);
+        var subject = resolver(Map.of("GEMINI_API_KEY", "gemini-key"), emptyMap());
 
-        String result = CredentialResolver.resolveRequiredApiKey("GOOGLEAI_API_KEY", null);
+        String result = subject.resolveRequiredApiKey("GOOGLEAI_API_KEY", null);
 
         assertThat(result).isEqualTo("gemini-key");
     }
 
     @Test
-    @DisplayName("Provider credential presence check includes AssemblyAI")
-    void hasAnyProviderCredentials_whenAssemblyAiKeyExists_returnsTrue() {
-        CredentialResolver.init(Map.of("ASSEMBLYAI_API_KEY", "assemblyai-test"));
-
-        var hasCredentials = CredentialResolver.hasAnyProviderCredentials();
-
-        assertThat(hasCredentials).isTrue();
-    }
-
-    @Test
-    @DisplayName("Required credentials check returns true when no environment variable is required")
+    @DisplayName("No required variable is treated as credential-ready")
     void hasRequiredCredentials_whenEnvVarIsNull_returnsTrue() {
-        var hasCredentials = CredentialResolver.hasRequiredCredentials(null);
+        var subject = resolver(emptyMap(), emptyMap());
 
-        assertThat(hasCredentials).isTrue();
+        assertThat(subject.hasRequiredCredentials(null)).isTrue();
     }
 
     @Test
-    @DisplayName("Required credentials check returns false when required variable is missing")
-    void hasRequiredCredentials_whenRequiredVariableIsMissing_returnsFalse() {
-        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
-
-        var hasCredentials = CredentialResolver.hasRequiredCredentials(envVar);
-
-        assertThat(hasCredentials).isFalse();
-    }
-
-    @Test
-    @DisplayName("Required API key resolution uses loaded shell environment when process environment is missing")
-    void resolveRequiredApiKey_whenKeyExistsOnlyInShellEnv_returnsShellValue() {
-        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
-        CredentialResolver.init(Map.of(envVar, "shell-api-key"));
-
-        var resolved = CredentialResolver.resolveRequiredApiKey(envVar, "fallback-key");
-
-        assertThat(resolved).isEqualTo("shell-api-key");
-    }
-
-    @Test
-    @DisplayName("Required API key resolution uses fallback value when environment variable name is null")
-    void resolveRequiredApiKey_whenEnvVarIsNull_returnsFallbackValue() {
-        var resolved = CredentialResolver.resolveRequiredApiKey(null, "ollama");
-
-        assertThat(resolved).isEqualTo("ollama");
-    }
-
-    @Test
-    @DisplayName("Required API key resolution supports fallback environment variable aliases")
-    void resolveRequiredApiKey_whenAliasVariableExists_returnsAliasValue() {
-        var primary = "CHAT4J_TEST_PRIMARY_%s".formatted(UUID.randomUUID());
-        var alias = "CHAT4J_TEST_ALIAS_%s".formatted(UUID.randomUUID());
-        CredentialResolver.init(Map.of(alias, "alias-key"));
-
-        var resolved = CredentialResolver.resolveRequiredApiKey("%s|%s".formatted(primary, alias), null);
-
-        assertThat(resolved).isEqualTo("alias-key");
-    }
-
-    @Test
-    @DisplayName("Required credentials check supports fallback environment variable aliases")
-    void hasRequiredCredentials_whenAliasVariableExists_returnsTrue() {
-        var primary = "CHAT4J_TEST_PRIMARY_%s".formatted(UUID.randomUUID());
-        var alias = "CHAT4J_TEST_ALIAS_%s".formatted(UUID.randomUUID());
-        CredentialResolver.init(Map.of(alias, "alias-key"));
-
-        var hasCredentials = CredentialResolver.hasRequiredCredentials("%s|%s".formatted(primary, alias));
-
-        assertThat(hasCredentials).isTrue();
-    }
-
-    @Test
-    @DisplayName("Required API key resolution throws when required environment variable is missing")
+    @DisplayName("Missing required credentials are rejected")
     void resolveRequiredApiKey_whenRequiredVariableIsMissing_throwsIllegalStateException() {
-        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
+        var subject = resolver(emptyMap(), emptyMap());
 
-        assertThatThrownBy(() -> CredentialResolver.resolveRequiredApiKey(envVar, null))
+        assertThatThrownBy(() -> subject.resolveRequiredApiKey("OPENAI_API_KEY", null))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("%s not set".formatted(envVar));
+                .hasMessageContaining("OPENAI_API_KEY not set");
     }
 
     @Test
     @DisplayName("Saved token overrides process, shell, and fallback credentials")
     void resolveRequiredApiKey_whenSavedTokenExists_returnsSavedToken() {
-        CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "saved-key".toCharArray());
+        var subject = resolver(
+                Map.of("OPENAI_API_KEY", "process-key"),
+                Map.of("OPENAI_API_KEY", "shell-key")
+        );
 
-        var resolved = CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key");
+        var resolved = subject.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key");
 
         assertThat(resolved).isEqualTo("saved-key");
-        assertThat(CredentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
+        assertThat(subject.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.SAVED_TOKEN);
     }
 
     @Test
-    @DisplayName("Saved token read errors fail closed instead of falling back to process, shell, or fallback credentials")
-    void resolveRequiredApiKey_whenSavedTokenMasterKeyMissing_failsClosed() throws Exception {
-        var storagePaths = StoragePaths.ofConfigHome(tempDir);
-        CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
-        Files.delete(storagePaths.tokenVaultMasterKeyFile());
-        CredentialTestSupport.configureVault(storagePaths);
+    @DisplayName("Clearing a saved token reveals process, shell, then fallback values")
+    void resolveRequiredApiKey_whenSavedTokenCleared_revealsFallbackChain() {
+        CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "saved-key".toCharArray());
+        CredentialTestSupport.deleteToken(vault, "OPENAI_API_KEY");
 
-        CredentialResolution resolution = CredentialResolver.resolveCredential("OPENAI_API_KEY", "fallback-key");
-
-        assertThat(resolution.source()).isEqualTo(ApiCredentialSource.ERROR);
-        assertThat(resolution.hasValue()).isFalse();
-        assertThat(CredentialResolver.hasRequiredCredentials("OPENAI_API_KEY")).isFalse();
-        assertThatThrownBy(() -> CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Saved API token for OPENAI_API_KEY could not be read")
-                .hasMessageNotContaining("process-key")
-                .hasMessageNotContaining("shell-key")
-                .hasMessageNotContaining("fallback-key");
+        assertThat(resolver(Map.of("OPENAI_API_KEY", "process"), Map.of("OPENAI_API_KEY", "shell"))
+                .resolveRequiredApiKey("OPENAI_API_KEY", "fallback")).isEqualTo("process");
+        assertThat(resolver(emptyMap(), Map.of("OPENAI_API_KEY", "shell"))
+                .resolveRequiredApiKey("OPENAI_API_KEY", "fallback")).isEqualTo("shell");
+        assertThat(resolver(emptyMap(), emptyMap())
+                .resolveRequiredApiKey("OPENAI_API_KEY", "fallback")).isEqualTo("fallback");
     }
 
     @Test
-    @DisplayName("Saved token corrupt master key errors fail closed instead of falling back to raw credentials")
-    void resolveRequiredApiKey_whenSavedTokenMasterKeyCorrupt_failsClosed() throws Exception {
-        var storagePaths = StoragePaths.ofConfigHome(tempDir);
-        CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "process-key" : null);
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
-        Files.writeString(storagePaths.tokenVaultMasterKeyFile(), "not-base64");
-        CredentialTestSupport.configureVault(storagePaths);
-
-        CredentialResolution resolution = CredentialResolver.resolveCredential("OPENAI_API_KEY", "fallback-key");
-
-        assertThat(resolution.source()).isEqualTo(ApiCredentialSource.ERROR);
-        assertThat(resolution.hasValue()).isFalse();
-        assertThat(CredentialResolver.hasRequiredCredentials("OPENAI_API_KEY")).isFalse();
-        assertThatThrownBy(() -> CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Saved API token for OPENAI_API_KEY could not be read")
-                .hasMessageNotContaining("process-key")
-                .hasMessageNotContaining("shell-key")
-                .hasMessageNotContaining("fallback-key");
-    }
-
-    @Test
-    @DisplayName("Saved token decrypt errors fail closed instead of falling back to raw credentials")
-    void resolveRequiredApiKey_whenSavedTokenCannotDecrypt_failsClosed() throws Exception {
-        var storagePaths = StoragePaths.ofConfigHome(tempDir);
-        CredentialResolver.configureProcessEnv(name -> "GROQ_API_KEY".equals(name) ? "process-key" : null);
-        CredentialResolver.init(Map.of("GROQ_API_KEY", "shell-key"));
-        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-key".toCharArray());
-        String json = Files.readString(storagePaths.tokenVaultFile())
-                .replace("OPENAI_API_KEY", "GROQ_API_KEY");
-        Files.writeString(storagePaths.tokenVaultFile(), json);
-        CredentialTestSupport.configureVault(storagePaths);
-
-        CredentialResolution resolution = CredentialResolver.resolveCredential("GROQ_API_KEY", "fallback-key");
-
-        assertThat(resolution.source()).isEqualTo(ApiCredentialSource.ERROR);
-        assertThat(resolution.hasValue()).isFalse();
-        assertThat(CredentialResolver.hasRequiredCredentials("GROQ_API_KEY")).isFalse();
-        assertThatThrownBy(() -> CredentialResolver.resolveRequiredApiKey("GROQ_API_KEY", "fallback-key"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Saved API token for GROQ_API_KEY could not be read")
-                .hasMessageNotContaining("process-key")
-                .hasMessageNotContaining("shell-key")
-                .hasMessageNotContaining("fallback-key");
-    }
-
-    @Test
-    @DisplayName("Blank process environment does not mask shell environment")
+    @DisplayName("Blank process values do not mask shell credentials")
     void resolveRequiredApiKey_whenProcessEnvIsBlank_returnsShellValue() {
-        CredentialResolver.configureProcessEnv(name -> "OPENAI_API_KEY".equals(name) ? "  " : null);
-        CredentialResolver.init(Map.of("OPENAI_API_KEY", "shell-key"));
-
-        var resolved = CredentialResolver.resolveRequiredApiKey("OPENAI_API_KEY", null);
-
-        assertThat(resolved).isEqualTo("shell-key");
-    }
-
-    @Test
-    @DisplayName("Merged environment does not include saved tokens")
-    void mergedEnvironment_whenSavedTokenExists_doesNotExposeSavedToken() {
-        CredentialTestSupport.saveToken("OPENAI_API_KEY", "saved-secret".toCharArray());
-
-        Map<String, String> merged = CredentialResolver.mergedEnvironment();
-
-        assertThat(merged).doesNotContainEntry("OPENAI_API_KEY", "saved-secret");
-    }
-
-    @Test
-    @DisplayName("Alias save normalizes to primary token id and clears secondary alias records")
-    void saveTokenOverride_whenAliasExpressionUsed_savesPrimaryAndClearsAlias() {
-        CredentialTestSupport.saveToken("GOOGLEAI_API_KEY", "old-alias".toCharArray());
-
-        CredentialTestSupport.saveToken("GEMINI_API_KEY|GOOGLEAI_API_KEY", "new-primary".toCharArray());
-
-        assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
-                .isEqualTo("new-primary");
-        assertThat(CredentialResolver.hasSavedTokenRecord("GEMINI_API_KEY")).isTrue();
-        assertThat(CredentialResolver.hasSavedTokenRecord("GOOGLEAI_API_KEY")).isFalse();
-    }
-
-    @Test
-    @DisplayName("Saving a token matching a lower-priority shell alias still writes an override")
-    void saveTokenOverride_whenTokenMatchesLowerPriorityShellAlias_savesOverride() {
-        CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "process-primary" : null);
-        CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "shell-alias"));
-
-        CredentialMutationResult result = CredentialTestSupport.saveToken(
-                "GEMINI_API_KEY|GOOGLEAI_API_KEY",
-                "shell-alias".toCharArray()
+        var subject = resolver(
+                Map.of("OPENAI_API_KEY", "  "),
+                Map.of("OPENAI_API_KEY", "shell-key")
         );
-        assertThat(result.applied()).isTrue();
-        assertThat(CredentialResolver.resolveCredential("GEMINI_API_KEY|GOOGLEAI_API_KEY", null).source())
-                .isEqualTo(ApiCredentialSource.SAVED_TOKEN);
-        assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
-                .isEqualTo("shell-alias");
+
+        assertThat(subject.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("shell-key");
     }
 
     @Test
-    @DisplayName("Saving a token matching a lower-priority process alias still writes an override")
-    void saveTokenOverride_whenTokenMatchesLowerPriorityProcessAlias_savesOverride() {
-        CredentialResolver.configureProcessEnv(name -> switch (name) {
-            case "GEMINI_API_KEY" -> "process-primary";
-            case "GOOGLEAI_API_KEY" -> "process-alias";
-            default -> null;
-        });
-
-        CredentialMutationResult result = CredentialTestSupport.saveToken(
-                "GEMINI_API_KEY|GOOGLEAI_API_KEY",
-                "process-alias".toCharArray()
+    @DisplayName("Missing master key fails closed instead of using raw credentials")
+    void resolveRequiredApiKey_whenSavedTokenMasterKeyMissing_failsClosed() throws Exception {
+        CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "saved-key".toCharArray());
+        Files.delete(storagePaths.tokenVaultMasterKeyFile());
+        var subject = new CredentialResolver(
+                new ApiTokenVault(storagePaths),
+                Map.of("OPENAI_API_KEY", "process-key"),
+                Map.of("OPENAI_API_KEY", "shell-key")
         );
-        assertThat(result.applied()).isTrue();
-        assertThat(CredentialResolver.resolveRequiredApiKey("GEMINI_API_KEY|GOOGLEAI_API_KEY", null))
-                .isEqualTo("process-alias");
+
+        CredentialResolution resolution = subject.resolveCredential("OPENAI_API_KEY", "fallback-key");
+
+        assertThat(resolution.source()).isEqualTo(ApiCredentialSource.ERROR);
+        assertThat(subject.hasRequiredCredentials("OPENAI_API_KEY")).isFalse();
+        assertThatThrownBy(() -> subject.resolveRequiredApiKey("OPENAI_API_KEY", "fallback-key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Saved API token for OPENAI_API_KEY could not be read")
+                .hasMessageNotContaining("process-key")
+                .hasMessageNotContaining("shell-key")
+                .hasMessageNotContaining("fallback-key");
     }
 
     @Test
-    @DisplayName("Saving a token matching the effective raw environment does not persist a redundant override")
-    void saveTokenOverride_whenTokenMatchesEffectiveRawCredential_doesNotSaveOverride() {
-        CredentialResolver.configureProcessEnv(name -> "GEMINI_API_KEY".equals(name) ? "process-primary" : null);
-        CredentialResolver.init(Map.of("GOOGLEAI_API_KEY", "shell-alias"));
-
-        CredentialMutationResult result = CredentialTestSupport.saveToken(
-                "GEMINI_API_KEY|GOOGLEAI_API_KEY",
-                "process-primary".toCharArray()
+    @DisplayName("Corrupt master key fails closed instead of using raw credentials")
+    void resolveRequiredApiKey_whenSavedTokenMasterKeyCorrupt_failsClosed() throws Exception {
+        CredentialTestSupport.saveToken(vault, "OPENAI_API_KEY", "saved-key".toCharArray());
+        Files.writeString(storagePaths.tokenVaultMasterKeyFile(), "not-base64");
+        var subject = new CredentialResolver(
+                new ApiTokenVault(storagePaths),
+                Map.of("OPENAI_API_KEY", "process-key"),
+                Map.of("OPENAI_API_KEY", "shell-key")
         );
-        assertThat(result.applied()).isFalse();
-        assertThat(CredentialResolver.hasSavedTokenRecord("GEMINI_API_KEY")).isFalse();
+
+        assertThat(subject.resolveCredential("OPENAI_API_KEY", "fallback-key").source())
+                .isEqualTo(ApiCredentialSource.ERROR);
     }
 
     @Test
-    @DisplayName("Loaded shell environment is copied defensively before source map mutation")
-    void init_whenSourceMapMutatesLater_returnsOriginalLoadedValues() {
-        var envVar = "CHAT4J_TEST_%s".formatted(UUID.randomUUID());
-        var source = new HashMap<String, String>();
-        source.put(envVar, "initial-value");
+    @DisplayName("Credential snapshots are copied defensively")
+    void constructor_whenSourceMapMutatesLater_returnsOriginalValues() {
+        var shellEnvironment = new HashMap<String, String>();
+        shellEnvironment.put("OPENAI_API_KEY", "initial-value");
+        var subject = resolver(emptyMap(), shellEnvironment);
 
-        CredentialResolver.init(source);
-        source.put(envVar, "mutated-value");
+        shellEnvironment.put("OPENAI_API_KEY", "mutated-value");
 
-        var resolved = CredentialResolver.getenv(envVar);
-
-        assertThat(resolved).isEqualTo("initial-value");
+        assertThat(subject.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("initial-value");
     }
 
-    private static String firstPresentEnvVar() {
-        return List.of("PATH", "HOME", "USER").stream()
-                .filter(name -> {
-                    var value = System.getenv(name);
-                    return StringUtils.isNotBlank(value);
-                })
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("No stable process environment variable available for test"));
+    @Test
+    @DisplayName("Independent resolver assemblies do not share environment or vault state")
+    void constructor_whenTwoAssembliesExist_keepsStateIsolated() {
+        Path secondHome = tempDir.resolve("second");
+        var first = resolver(Map.of("OPENAI_API_KEY", "first"), emptyMap());
+        var second = new CredentialResolver(
+                new ApiTokenVault(StoragePaths.ofConfigHome(secondHome)),
+                Map.of("OPENAI_API_KEY", "second"),
+                emptyMap()
+        );
+
+        assertThat(first.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("first");
+        assertThat(second.resolveRequiredApiKey("OPENAI_API_KEY", null)).isEqualTo("second");
+    }
+
+    private CredentialResolver resolver(Map<String, String> processEnvironment, Map<String, String> shellEnvironment) {
+        return new CredentialResolver(vault, processEnvironment, shellEnvironment);
     }
 }

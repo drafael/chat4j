@@ -1,7 +1,9 @@
 package com.github.drafael.chat4j.provider.registry;
 
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
@@ -17,7 +19,6 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,11 +30,6 @@ class ProviderCatalogTest {
 
     @TempDir
     private Path tempDir;
-
-    @AfterEach
-    void tearDown() {
-        CredentialResolver.init(emptyMap());
-    }
 
     @Test
     @DisplayName("Provider catalog uses dynamic model loading except static Perplexity seed models")
@@ -127,7 +123,13 @@ class ProviderCatalogTest {
                         emptyMap(),
                         HttpClient.newHttpClient()
                 ),
-                metadataStore
+                metadataStore,
+                new CredentialResolver(
+                        new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("generation-race-credentials"))),
+                        emptyMap(),
+                        emptyMap()
+                ),
+                emptyMap()
         );
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
@@ -221,9 +223,7 @@ class ProviderCatalogTest {
 
         try {
             int port = server.getAddress().getPort();
-            CredentialResolver.init(Map.of("ANTHROPIC_API_KEY", "test-api-key"));
-
-            var subject = newCatalog();
+            var subject = newCatalog(Map.of("ANTHROPIC_API_KEY", "test-api-key"));
             var fetcher = subject.createFetcher(
                     "Anthropic",
                     "ANTHROPIC_API_KEY",
@@ -242,10 +242,18 @@ class ProviderCatalogTest {
     }
 
     private ProviderCatalog newCatalog() {
+        return newCatalog(emptyMap());
+    }
+
+    private ProviderCatalog newCatalog(Map<String, String> processEnvironment) {
+        ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials")));
+        CredentialResolver credentialResolver = new CredentialResolver(vault, processEnvironment, emptyMap());
         return new ProviderCatalog(
                 new CopilotAuthResolver(tempDir.resolve("copilot-home"), emptyMap(), HttpClient.newHttpClient()),
                 new CodexAuthResolver(tempDir.resolve("codex-home"), emptyMap(), HttpClient.newHttpClient()),
-                new CopilotModelMetadataStore(tempDir.resolve("metadata"))
+                new CopilotModelMetadataStore(tempDir.resolve("metadata")),
+                credentialResolver,
+                emptyMap()
         );
     }
 }

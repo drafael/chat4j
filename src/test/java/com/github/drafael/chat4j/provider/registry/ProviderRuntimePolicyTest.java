@@ -6,9 +6,12 @@ import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
+import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,7 +55,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isFalse();
@@ -72,7 +75,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
@@ -95,7 +98,7 @@ class ProviderRuntimePolicyTest {
                 return CopilotAuthResolver.CopilotAuthStatus.authorized("ok", "Chat4J OAuth");
             }
         };
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), clock);
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver(), clock);
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
@@ -118,7 +121,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(copilotResolver(), resolver);
+        var subject = new ProviderRuntimePolicy(copilotResolver(), resolver, credentialResolver());
         var providerDefinition = codexAuthProvider("OpenAI Codex");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isFalse();
@@ -138,7 +141,7 @@ class ProviderRuntimePolicyTest {
             }
         };
 
-        var subject = new ProviderRuntimePolicy(copilotResolver(), resolver);
+        var subject = new ProviderRuntimePolicy(copilotResolver(), resolver, credentialResolver());
         var providerDefinition = codexAuthProvider("OpenAI Codex");
 
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isTrue();
@@ -171,7 +174,7 @@ class ProviderRuntimePolicyTest {
                 return CopilotAuthResolver.CopilotAuthStatus.unauthorized("not authorized");
             }
         };
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         subject.setAuthStatusRefreshListener(refreshPublished::countDown);
         List<ProviderDefinition> providers = List.of(copilotAuthProvider("GitHub Copilot"));
 
@@ -208,7 +211,7 @@ class ProviderRuntimePolicyTest {
                         : CopilotAuthResolver.CopilotAuthStatus.unauthorized("not authorized");
             }
         };
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
         assertThat(subject.hasRequiredCredentials(providerDefinition)).isFalse();
 
@@ -246,7 +249,7 @@ class ProviderRuntimePolicyTest {
                         : CopilotAuthResolver.CopilotAuthStatus.unauthorized("not authorized");
             }
         };
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
         var staleResult = new AtomicBoolean(true);
         Thread staleCheck = Thread.startVirtualThread(() -> staleResult.set(subject.hasRequiredCredentials(providerDefinition)));
@@ -299,7 +302,7 @@ class ProviderRuntimePolicyTest {
                         : CopilotAuthResolver.CopilotAuthStatus.unauthorized("not authorized");
             }
         };
-        var subject = new ProviderRuntimePolicy(resolver, codexResolver());
+        var subject = new ProviderRuntimePolicy(resolver, codexResolver(), credentialResolver());
         var providerDefinition = copilotAuthProvider("GitHub Copilot");
 
         try {
@@ -342,7 +345,7 @@ class ProviderRuntimePolicyTest {
                 return CodexAuthResolver.CodexAuthStatus.authorized("ok", "Chat4J OAuth");
             }
         };
-        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver);
+        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver, credentialResolver());
         var codexProvider = codexAuthProvider("OpenAI Codex");
         Thread codexCheck = Thread.startVirtualThread(() -> subject.hasRequiredCredentials(codexProvider));
 
@@ -362,7 +365,7 @@ class ProviderRuntimePolicyTest {
     @Test
     @DisplayName("Effective base URLs use the provider's canonical runtime normalization")
     void effectiveBaseUrl_whenAnthropicOverrideHasV1Suffix_returnsRootUrl() {
-        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver());
+        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver(), credentialResolver());
         var descriptor = new ProviderDescriptor(
                 "Anthropic",
                 AuthType.ENV_VAR,
@@ -385,7 +388,7 @@ class ProviderRuntimePolicyTest {
     @Test
     @DisplayName("Effective base URL trims runtime override whitespace")
     void effectiveBaseUrl_whenRuntimeBaseUrlHasWhitespace_returnsTrimmedValue() {
-        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver());
+        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver(), credentialResolver());
         ProviderDefinition providerDefinition = envVarProvider("Ollama", "http://localhost:11434/v1");
         subject.applyRuntimeConfig(Map.of(
                 "Ollama",
@@ -400,7 +403,7 @@ class ProviderRuntimePolicyTest {
     @Test
     @DisplayName("Effective base URL falls back to provider default for blank runtime override")
     void effectiveBaseUrl_whenRuntimeBaseUrlIsBlank_returnsProviderDefault() {
-        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver());
+        var subject = new ProviderRuntimePolicy(copilotResolver(), codexResolver(), credentialResolver());
         ProviderDefinition providerDefinition = envVarProvider("Ollama", "http://localhost:11434/v1");
         subject.applyRuntimeConfig(Map.of(
                 "Ollama",
@@ -501,6 +504,15 @@ class ProviderRuntimePolicyTest {
         };
 
         return new ProviderDefinition(descriptor, module);
+    }
+
+
+    private CredentialResolver credentialResolver() {
+        return new CredentialResolver(
+                new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials"))),
+                emptyMap(),
+                emptyMap()
+        );
     }
 
     private static final class MutableClock extends Clock {
