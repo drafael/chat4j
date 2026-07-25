@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence.shutdown;
 
 import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
@@ -20,15 +21,13 @@ public class ShutdownFlowCoordinator {
     public boolean request(
             @NonNull BooleanSupplier shutdownInProgressSupplier,
             @NonNull Runnable markShutdownInProgress,
-            long timeoutMillis,
+            @NonNull LongSupplier remainingTimeoutMillisSupplier,
             @NonNull Runnable preShutdownAction,
             @NonNull Supplier<ShutdownSaveDispatchCoordinator.SaveAction> saveActionSupplier,
             @NonNull Runnable finishAction,
             @NonNull Runnable timeoutAction,
             @NonNull ShutdownSaveDispatchCoordinator.FailureHandler failureHandler
     ) {
-        Validate.isTrue(timeoutMillis > 0, "timeoutMillis must be greater than zero");
-
         if (shutdownInProgressSupplier.getAsBoolean()) {
             return false;
         }
@@ -36,7 +35,19 @@ public class ShutdownFlowCoordinator {
         markShutdownInProgress.run();
         preShutdownAction.run();
         var saveAction = Validate.notNull(saveActionSupplier.get(), "saveActionSupplier must not return null");
-        shutdownDispatcher.dispatch(timeoutMillis, saveAction, finishAction::run, timeoutAction::run, failureHandler);
+        long remainingTimeoutMillis = remainingTimeoutMillisSupplier.getAsLong();
+        if (remainingTimeoutMillis <= 0) {
+            timeoutAction.run();
+            finishAction.run();
+            return true;
+        }
+        shutdownDispatcher.dispatch(
+                remainingTimeoutMillis,
+                saveAction,
+                finishAction::run,
+                timeoutAction::run,
+                failureHandler
+        );
         return true;
     }
 

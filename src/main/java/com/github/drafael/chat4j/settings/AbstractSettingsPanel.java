@@ -498,6 +498,10 @@ public abstract class AbstractSettingsPanel extends JPanel {
         return statusLabel;
     }
 
+    protected void disposeSettingsPanel() {
+        statusClearTimer.stop();
+    }
+
     protected ValidationResult<String> validate(SettingsValidator<String> validator, String value) {
         return validator != null ? validator.validate(value) : ValidationResult.valid(value);
     }

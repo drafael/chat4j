@@ -36,7 +36,7 @@ class ShutdownPersistenceFlowIntegrationTest {
                     calls.add("mark");
                     shutdownInProgress.set(true);
                 },
-                250,
+                () -> 250,
                 () -> calls.add("pre"),
                 () -> {
                     calls.add("factory");
@@ -79,7 +79,7 @@ class ShutdownPersistenceFlowIntegrationTest {
                 () -> false,
                 () -> {
                 },
-                25,
+                () -> 25,
                 () -> {
                 },
                 () -> () -> saveCanFinish.await(1, TimeUnit.SECONDS),
@@ -116,7 +116,7 @@ class ShutdownPersistenceFlowIntegrationTest {
                 () -> false,
                 () -> {
                 },
-                250,
+                () -> 250,
                 () -> {
                 },
                 () -> () -> {

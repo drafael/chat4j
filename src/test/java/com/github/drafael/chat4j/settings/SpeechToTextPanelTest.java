@@ -34,7 +34,6 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperJniEngine;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementService;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
-import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import io.github.freshsupasulley.whisperjni.WhisperFullParams;
 import java.lang.reflect.Method;
@@ -71,6 +70,8 @@ import static java.util.Collections.emptyList;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SpeechToTextPanelTest {
@@ -253,7 +254,7 @@ class SpeechToTextPanelTest {
             releaseFirstSave.countDown();
             assertThat(secondSaveSucceeded.await(2, TimeUnit.SECONDS)).isTrue();
 
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             assertThat(subject.lastSaveError()).isBlank();
         } finally {
             releaseFirstSave.countDown();
@@ -284,7 +285,7 @@ class SpeechToTextPanelTest {
             });
             releaseFailedSave.countDown();
 
-            assertThat(subject.savePendingChanges()).isFalse();
+            assertThat(awaitSave(subject)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("directory save failed");
             waitUntil(() -> statusLabelText(subject).contains("directory save failed"));
         } finally {
@@ -310,7 +311,7 @@ class SpeechToTextPanelTest {
                 runOnEdt(() -> selectProvider(subject, DeepgramSpeechToTextProvider.ID));
                 repo.releaseFirstProviderSave.countDown();
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 runOnEdt(() -> {
                 });
                 assertThat(repo.get(SpeechToTextSettings.PROVIDER_KEY)).contains(DeepgramSpeechToTextProvider.ID);
@@ -331,7 +332,7 @@ class SpeechToTextPanelTest {
             try {
                 SwingUtilities.invokeAndWait(() -> selectProvider(subject, VoskSpeechToTextProvider.ID));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(voskModels.refreshRequested.await(2, TimeUnit.SECONDS)).isTrue();
             } finally {
                 runOnEdt(subject::removeNotify);
@@ -352,7 +353,7 @@ class SpeechToTextPanelTest {
             try {
                 SwingUtilities.invokeAndWait(() -> selectProvider(subject, WhisperSpeechToTextProvider.ID));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(whisperModels.refreshRequested.await(2, TimeUnit.SECONDS)).isTrue();
                 assertThat(whisperModels.probeRuntime).isTrue();
             } finally {
@@ -371,7 +372,7 @@ class SpeechToTextPanelTest {
             try {
                 SwingUtilities.invokeAndWait(() -> selectProvider(subject, VoskSpeechToTextProvider.ID));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(repo.get(SpeechToTextSettings.PROVIDER_KEY)).contains(VoskSpeechToTextProvider.ID);
                 assertThat(subject.lastSaveError()).isBlank();
             } finally {
@@ -537,6 +538,41 @@ class SpeechToTextPanelTest {
     }
 
     @Test
+    @DisplayName("Permanent disposal prevents a draining save from starting token persistence")
+    void savePendingChangesAsync_whenDisposedDuringInitialDrain_doesNotStartTokenSave() throws Exception {
+        var subject = callOnEdt(() -> newPanel(
+                new SettingsRepository(tempDir.resolve("settings-disposed-save-drain.properties")),
+                tempDir.resolve("default-models")
+        ));
+        var saveStarted = new CountDownLatch(1);
+        var releaseSave = new CountDownLatch(1);
+        ApiTokenFieldPanel field = mock(ApiTokenFieldPanel.class);
+        when(field.dirty()).thenReturn(true);
+        try {
+            runOnEdt(() -> {
+                setField(subject, "tokenField", field);
+                scheduleSave(subject, "blocked-setting", () -> {
+                    saveStarted.countDown();
+                    if (!releaseSave.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Timed out waiting to release settings save");
+                    }
+                }, () -> {
+                });
+            });
+            assertThat(saveStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<Boolean> pendingSave = callOnEdt(subject::savePendingChangesAsync);
+
+            runOnEdt(subject::disposePanel);
+            releaseSave.countDown();
+
+            assertThat(pendingSave.get(5, TimeUnit.SECONDS)).isTrue();
+            verify(field, never()).savePendingChangesAsync();
+        } finally {
+            releaseSave.countDown();
+        }
+    }
+
+    @Test
     @DisplayName("A save callback that queues another save is included in the close drain")
     void savePendingChanges_whenSuccessCallbackQueuesFailedSave_reportsFailure() throws Exception {
         var subject = callOnEdt(() -> newPanel(
@@ -557,7 +593,7 @@ class SpeechToTextPanelTest {
             runOnEdt(() -> scheduleSave(subject, "initial-setting", () -> {
             }, queueFailedSave));
 
-            assertThat(subject.savePendingChanges()).isFalse();
+            assertThat(awaitSave(subject)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("callback settings save failed");
         } finally {
             runOnEdt(subject::removeNotify);
@@ -621,30 +657,6 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Synchronous Speech to Text save rejects event dispatch thread use")
-    void savePendingChanges_whenCalledOnEdt_returnsFailureWithoutBlocking() throws Exception {
-        var subject = callOnEdt(() -> newPanel(
-                new SettingsRepository(tempDir.resolve("settings-dirty-token-edt.properties")),
-                tempDir.resolve("default-models")
-        ));
-        ApiTokenFieldPanel field = mock(ApiTokenFieldPanel.class);
-        when(field.dirty()).thenReturn(true);
-        when(field.savePendingChangesAsync()).thenReturn(CompletableFuture.completedFuture(true));
-        try {
-            runOnEdt(() -> setField(subject, "tokenField", field));
-
-            assertThat(callOnEdt(subject::savePendingChanges)).isFalse();
-            assertThat(subject.lastSaveError())
-                    .isEqualTo("Pending Speech to Text changes must be saved asynchronously on the event dispatch thread.");
-            CompletableFuture<Boolean> pendingSave = callOnEdt(subject::savePendingChangesAsync);
-            assertThat(pendingSave.get(2, TimeUnit.SECONDS)).isTrue();
-            assertThat(subject.lastSaveError()).isBlank();
-        } finally {
-            runOnEdt(subject::removeNotify);
-        }
-    }
-
-    @Test
     @DisplayName("Failed Speech to Text directory saves do not poison later successful saves")
     void savePendingChanges_whenDirectorySaveFailsThenSucceeds_allowsCloseAfterCorrection() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings.properties"));
@@ -665,11 +677,11 @@ class SpeechToTextPanelTest {
             try {
                 SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, existingFile));
                 waitUntil(() -> !subject.lastSaveError().isBlank());
-                assertThat(subject.savePendingChanges()).isFalse();
+                assertThat(awaitSave(subject)).isFalse();
 
                 SwingUtilities.invokeAndWait(() -> setModelDirectoryAndSave(subject, validDirectory));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 waitUntil(() -> statusLabelText(subject).contains("Saved"));
                 assertThat(Files.isDirectory(validDirectory)).isTrue();
             } finally {
@@ -707,7 +719,7 @@ class SpeechToTextPanelTest {
 
                 runOnEdt(() -> setModelDirectoryAndSave(subject, selectedModels));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(voskModels.refreshRequests.get()).isGreaterThan(voskRefreshesBeforeSave);
                 assertThat(whisperModels.refreshRequests.get()).isEqualTo(whisperRefreshesBeforeSave);
             } finally {
@@ -743,7 +755,7 @@ class SpeechToTextPanelTest {
 
                 runOnEdt(() -> setModelDirectoryAndSave(subject, selectedModels));
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(whisperModels.refreshRequests.get()).isGreaterThan(whisperRefreshesBeforeSave);
                 assertThat(voskModels.refreshRequests.get()).isEqualTo(voskRefreshesBeforeSave);
             } finally {
@@ -846,7 +858,7 @@ class SpeechToTextPanelTest {
         )) {
             var subject = callOnEdt(() -> newPanel(repo, models, voskModels));
             try {
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
             } finally {
                 runOnEdt(subject::removeNotify);
             }
@@ -859,7 +871,7 @@ class SpeechToTextPanelTest {
         )) {
             var subject = callOnEdt(() -> newPanel(repo, models, voskModels));
             try {
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
             } finally {
                 runOnEdt(subject::removeNotify);
             }
@@ -874,11 +886,11 @@ class SpeechToTextPanelTest {
         try (var voskModels = new RecoveringBusyVoskModelManagementService(repo, models, tempDir.resolve("resolved-temp"))) {
             var subject = callOnEdt(() -> newPanel(repo, models, voskModels));
             try {
-                assertThat(subject.savePendingChanges()).isFalse();
+                assertThat(awaitSave(subject)).isFalse();
 
                 voskModels.finishOperation();
 
-                assertThat(subject.savePendingChanges()).isTrue();
+                assertThat(awaitSave(subject)).isTrue();
                 assertThat(subject.lastSaveError()).isBlank();
             } finally {
                 runOnEdt(subject::removeNotify);
@@ -1027,7 +1039,7 @@ class SpeechToTextPanelTest {
             assertThat(refreshThread).isNotNull();
             refreshThread.join(2_000);
             assertThat(refreshThread.isAlive()).isFalse();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
             waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
@@ -1092,7 +1104,7 @@ class SpeechToTextPanelTest {
             runOnEdt(() -> invokePanelMethod(subject, "cancelCatalogRefreshes"));
             new SpeechToTextCatalogStore(repo).invalidate(ElevenLabsSpeechToTextProvider.ID);
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
 
@@ -1130,7 +1142,7 @@ class SpeechToTextPanelTest {
             runOnEdt(() -> invokePanelMethod(subject, "cancelCatalogRefreshes"));
             new SpeechToTextCatalogStore(repo).invalidate(ElevenLabsSpeechToTextProvider.ID);
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
 
@@ -1179,7 +1191,7 @@ class SpeechToTextPanelTest {
             });
 
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             waitUntil(() -> repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID), "")
                     .equals("account-b-model"));
             assertThat(repo.get("chat4j.stt.elevenlabs.model.label")).contains("Account B Model");
@@ -1236,7 +1248,7 @@ class SpeechToTextPanelTest {
             }));
 
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             waitUntil(() -> callOnEdt(() -> {
                 @SuppressWarnings("unchecked")
                 JComboBox<SpeechToTextCatalogItem> modelComboBox =
@@ -1286,7 +1298,7 @@ class SpeechToTextPanelTest {
                     List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
             ));
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
 
@@ -1346,7 +1358,7 @@ class SpeechToTextPanelTest {
             ));
 
             releaseModelSave.countDown();
-            assertThat(subject.savePendingChanges()).isFalse();
+            assertThat(awaitSave(subject)).isFalse();
             assertThat(subject.lastSaveError()).isEqualTo("model selection save failed");
             assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
                     .extracting(SpeechToTextCatalogItem::id)
@@ -1391,7 +1403,7 @@ class SpeechToTextPanelTest {
                     }
             );
 
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             waitUntil(() -> statusLabelText(subject).contains("Could not cache ElevenLabs Speech to Text models"));
             assertThat(subject.lastSaveError()).isBlank();
             assertThat(new SpeechToTextCatalogStore(repo).cachedModels(ElevenLabsSpeechToTextProvider.ID))
@@ -1433,7 +1445,7 @@ class SpeechToTextPanelTest {
                     List.of(SpeechToTextCatalogItem.of("account-b-model", "Account B Model"))
             ));
 
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             waitUntil(() -> statusLabelText(subject).contains("Could not cache ElevenLabs Speech to Text models"));
             assertThat(repo.get(sttModelIdKey(ElevenLabsSpeechToTextProvider.ID)))
                     .contains(provider.defaultModel().id());
@@ -1505,7 +1517,7 @@ class SpeechToTextPanelTest {
             assertThat(repo.conditionalUpdateStarted.await(2, TimeUnit.SECONDS)).isTrue();
 
             repo.releaseConditionalUpdate.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             waitUntil(() -> staleSuccessCallbacks.get() == 1);
             waitUntil(() -> callOnEdt(() -> {
                 @SuppressWarnings("unchecked")
@@ -1520,7 +1532,7 @@ class SpeechToTextPanelTest {
         } finally {
             releaseStaleSave.countDown();
             repo.releaseConditionalUpdate.countDown();
-            subject.savePendingChanges();
+            awaitSave(subject);
             runOnEdt(subject::removeNotify);
             SwingUtilities.invokeAndWait(() -> {
             });
@@ -1575,7 +1587,7 @@ class SpeechToTextPanelTest {
             });
 
             releaseBlockingSave.countDown();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
 
@@ -1590,7 +1602,7 @@ class SpeechToTextPanelTest {
             assertThat(changedProviderRefreshThread).isNotNull();
             changedProviderRefreshThread.join(2_000);
             assertThat(changedProviderRefreshThread.isAlive()).isFalse();
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             SwingUtilities.invokeAndWait(() -> {
             });
             assertThat(providerSaveCallbacks).hasValue(1);
@@ -1650,7 +1662,7 @@ class SpeechToTextPanelTest {
         try {
             assertThat(provider.started.await(2, TimeUnit.SECONDS)).isTrue();
 
-            assertThat(subject.savePendingChanges()).isTrue();
+            assertThat(awaitSave(subject)).isTrue();
             provider.release.countDown();
             joinWorker(provider.refreshThread.get());
             SwingUtilities.invokeAndWait(() -> {
@@ -2236,6 +2248,10 @@ class SpeechToTextPanelTest {
         );
         method.setAccessible(true);
         method.invoke(subject, target, throwingRunnable, onSuccess);
+    }
+
+    private boolean awaitSave(SpeechToTextPanel subject) throws Exception {
+        return callOnEdt(subject::savePendingChangesAsync).get(10, TimeUnit.SECONDS);
     }
 
     private void runOnEdt(ThrowingAction action) throws Exception {

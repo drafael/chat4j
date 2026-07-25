@@ -102,6 +102,10 @@ class SettingsOpenFlowCoordinatorTest {
             @Override
             public void onClosed(Runnable callback) {
             }
+
+            @Override
+            public void requestApplicationExit() {
+            }
         };
     }
 }

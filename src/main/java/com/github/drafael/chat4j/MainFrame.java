@@ -92,6 +92,7 @@ import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderSelectableResolver;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
 import com.github.drafael.chat4j.settings.AppFontSizeAdjustCoordinator;
+import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.SettingsCredentialChangeListener;
 import com.github.drafael.chat4j.settings.CredentialChangeEffects;
 import com.github.drafael.chat4j.settings.FontMenuApplyCoordinator;
@@ -171,6 +172,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.*;
 import lombok.NonNull;
@@ -405,6 +407,7 @@ public class MainFrame extends JFrame {
     private final MainFrameModelMenuState modelMenuState = new MainFrameModelMenuState();
     private final MainFrameThemeMenuState themeMenuState = new MainFrameThemeMenuState();
     private final MainFrameFontMenuState fontMenuState = new MainFrameFontMenuState();
+    private long appliedFontCatalogGeneration = -1;
     private final MainFramePreviewMenuState previewMenuState = new MainFramePreviewMenuState();
     private final PropertyChangeListener lookAndFeelListener = event -> {
         if (!"lookAndFeel".equals(event.getPropertyName())) {
@@ -521,6 +524,7 @@ public class MainFrame extends JFrame {
                 fontSettingsResolver,
                 appFontSizeAdjustCoordinator
         );
+        AppearancePanel.prepareFontCatalogAsync();
         this.themeMenuApplyCoordinator = settingsWiring.themeMenuApplyCoordinator();
         this.themeMenuSelectionRefreshCoordinator = settingsWiring.themeMenuSelectionRefreshCoordinator();
         this.themeMenuSelectionDispatchCoordinator = settingsWiring.themeMenuSelectionDispatchCoordinator();
@@ -772,7 +776,7 @@ public class MainFrame extends JFrame {
 
             @Override
             public void windowClosing(WindowEvent e) {
-                requestWindowClose();
+                requestApplicationExit();
             }
         });
     }
@@ -795,7 +799,7 @@ public class MainFrame extends JFrame {
         }
         desktop.setQuitHandler((e, response) -> {
             response.cancelQuit();
-            requestWindowClose();
+            requestApplicationExit();
         });
     }
 
@@ -1132,20 +1136,28 @@ public class MainFrame extends JFrame {
         }
     }
 
+    private void requestApplicationExit() {
+        settingsDialogCoordinator.requestApplicationExit(this::requestWindowClose);
+    }
+
     private void requestWindowClose() {
+        requestWindowClose(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_SAVE_TIMEOUT_MILLIS));
+    }
+
+    private void requestWindowClose(long deadlineNanos) {
         runShutdownFlow(() -> {
             dispose();
             System.exit(0);
-        });
+        }, deadlineNanos);
     }
 
-    private void runShutdownFlow(Runnable finishAction) {
+    private void runShutdownFlow(Runnable finishAction, long deadlineNanos) {
         AtomicReference<CompletableFuture<Void>> applicationCleanup = new AtomicReference<>(CompletableFuture.completedFuture(null));
         try {
             shutdownFlowCoordinator.request(
                     shutdownState::shutdownInProgress,
                     () -> shutdownState.setShutdownInProgress(true),
-                    SHUTDOWN_SAVE_TIMEOUT_MILLIS,
+                    () -> remainingShutdownMillis(deadlineNanos),
                     () -> {
                         runPreShutdownAction(
                                 "Failed to start permanent application cleanup during shutdown",
@@ -1163,6 +1175,11 @@ public class MainFrame extends JFrame {
             warnWithoutStack("Shutdown flow setup failed, exiting without persistence", e);
             finishAction.run();
         }
+    }
+
+    private long remainingShutdownMillis(long deadlineNanos) {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        return remainingNanos > 0 ? TimeUnit.NANOSECONDS.toMillis(remainingNanos) : 0;
     }
 
     private synchronized CompletableFuture<Void> beginPermanentCleanup() {
@@ -1563,7 +1580,7 @@ public class MainFrame extends JFrame {
         settingsOpenFlowCoordinator.open(
                 SwingUtilities.isEventDispatchThread(),
                 () -> SwingUtilities.invokeLater(this::openSettings),
-                () -> SettingsDialogCoordinator.DialogHandle.forWindow(new SettingsDialog(
+                () -> SettingsDialogCoordinator.DialogHandle.forSettingsDialog(new SettingsDialog(
                         this,
                         settingsRepo,
                         chatWebViewRuntimeStatus,
@@ -1580,6 +1597,9 @@ public class MainFrame extends JFrame {
                         whisperNativeRuntime
                 )),
                 () -> {
+                    if (shutdownState.shutdownInProgress()) {
+                        return;
+                    }
                     applyProviderSettings();
                     applyGeneralSettings();
                     chatPanel.reloadTextToSpeechSettings();
@@ -1976,7 +1996,12 @@ public class MainFrame extends JFrame {
     }
 
     private void ensureFontMenuReady() {
+        long currentGeneration = AppearancePanel.fontCatalogGeneration();
+        if (appliedFontCatalogGeneration != currentGeneration) {
+            fontMenuState.setFontMenuBuilt(false);
+        }
         fontMenuCoordinator.ensureReady(fontMenuContext());
+        appliedFontCatalogGeneration = currentGeneration;
     }
 
     private void syncTogglePreviewMenuSelection() {

@@ -38,6 +38,18 @@ class FontSettingsTest {
     }
 
     @Test
+    @DisplayName("App font family and size persist in one repository batch")
+    void persistAppFontSelection_whenCalled_writesBothValuesWithoutSingleKeyWrites() {
+        var settingsRepo = new NoSingleKeyWriteSettingsRepo(tempDir.resolve("font-settings-batch.properties"));
+        var subject = new FontSettings(settingsRepo);
+
+        subject.persistAppFontSelection("Inter", 16);
+
+        assertThat(settingsRepo.get(FontSettings.APP_FONT_FAMILY_KEY)).contains("Inter");
+        assertThat(settingsRepo.get(FontSettings.APP_FONT_SIZE_KEY)).contains("16");
+    }
+
+    @Test
     @DisplayName("Font settings reads fall back when repository access fails")
     void readMethods_whenRepositoryFails_returnCallerDefaults() {
         var subject = new FontSettings(new ThrowingSettingsRepo());
@@ -49,6 +61,17 @@ class FontSettingsTest {
 
     private SettingsRepository settingsRepo(String name) {
         return new SettingsRepository(tempDir.resolve("%s.properties".formatted(name)));
+    }
+
+    private static class NoSingleKeyWriteSettingsRepo extends SettingsRepository {
+        private NoSingleKeyWriteSettingsRepo(Path settingsFile) {
+            super(settingsFile);
+        }
+
+        @Override
+        public void put(String key, String value) {
+            throw new AssertionError("paired font settings must use updateBatch");
+        }
     }
 
     private static class ThrowingSettingsRepo extends SettingsRepository {

@@ -29,7 +29,10 @@ class ShutdownFlowCoordinatorTest {
                     calls.add("mark");
                     shutdownInProgress.set(true);
                 },
-                500,
+                () -> {
+                    calls.add("timeout");
+                    return 500;
+                },
                 () -> calls.add("pre"),
                 () -> {
                     calls.add("factory");
@@ -48,13 +51,13 @@ class ShutdownFlowCoordinatorTest {
 
         assertThat(started).isTrue();
         assertThat(shutdownInProgress.get()).isTrue();
-        assertThat(calls).containsExactly("mark", "pre", "factory");
+        assertThat(calls).containsExactly("mark", "pre", "factory", "timeout");
         assertThat(dispatcher.timeoutMillis).isEqualTo(500);
 
         dispatcher.saveAction.save();
         dispatcher.completionHandler.complete();
 
-        assertThat(calls).containsExactly("mark", "pre", "factory", "save", "finish");
+        assertThat(calls).containsExactly("mark", "pre", "factory", "timeout", "save", "finish");
         assertThat(finishCalls.get()).isEqualTo(1);
         assertThat(timeoutCalls.get()).isZero();
         assertThat(failureRef.get()).isNull();
@@ -71,7 +74,7 @@ class ShutdownFlowCoordinatorTest {
         boolean started = subject.request(
                 () -> true,
                 markCalls::incrementAndGet,
-                500,
+                () -> 500,
                 preCalls::incrementAndGet,
                 () -> () -> {
                 },
@@ -90,34 +93,44 @@ class ShutdownFlowCoordinatorTest {
     }
 
     @Test
-    @DisplayName("Request validates timeout and required arguments")
-    void request_whenArgumentsInvalid_throwsException() {
-        var subject = new ShutdownFlowCoordinator(new RecordingShutdownDispatcher());
+    @DisplayName("An exhausted deadline skips save dispatch and finishes immediately")
+    void request_whenDeadlineIsExhausted_timesOutAndFinishesWithoutDispatch() {
+        var dispatcher = new RecordingShutdownDispatcher();
+        var subject = new ShutdownFlowCoordinator(dispatcher);
+        var timeoutCalls = new AtomicInteger();
+        var finishCalls = new AtomicInteger();
 
-        assertThatThrownBy(() -> subject.request(
+        boolean started = subject.request(
                 () -> false,
                 () -> {
                 },
-                0,
+                () -> 0,
                 () -> {
                 },
                 () -> () -> {
                 },
-                () -> {
-                },
-                () -> {
-                },
+                finishCalls::incrementAndGet,
+                timeoutCalls::incrementAndGet,
                 error -> {
                 }
-        ))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("timeoutMillis must be greater than zero");
+        );
+
+        assertThat(started).isTrue();
+        assertThat(dispatcher.invocationCount).hasValue(0);
+        assertThat(timeoutCalls).hasValue(1);
+        assertThat(finishCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Request validates required arguments")
+    void request_whenArgumentsInvalid_throwsException() {
+        var subject = new ShutdownFlowCoordinator(new RecordingShutdownDispatcher());
 
         assertThatThrownBy(() -> subject.request(
                 null,
                 () -> {
                 },
-                500,
+                () -> 500,
                 () -> {
                 },
                 () -> () -> {
@@ -142,7 +155,7 @@ class ShutdownFlowCoordinatorTest {
                 () -> false,
                 () -> {
                 },
-                500,
+                () -> 500,
                 () -> {
                 },
                 () -> null,

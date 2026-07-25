@@ -3,7 +3,6 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
 import lombok.NonNull;
 
-import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 
@@ -30,10 +29,24 @@ public class SettingsDialogCoordinator {
         DialogHandle dialog = dialogFactory.create();
         tracker.set(dialog);
         dialog.onClosed(() -> {
-            tracker.clear();
+            if (tracker.get() == dialog) {
+                tracker.clear();
+            }
             onDialogClosed.run();
         });
         dialog.setVisible(true);
+    }
+
+    public void requestApplicationExit(@NonNull Runnable whenNoDialog) {
+        DialogHandle dialog = tracker.get();
+        if (dialog != null && dialog.isDisplayable()) {
+            dialog.requestApplicationExit();
+            return;
+        }
+        if (dialog != null && tracker.get() == dialog) {
+            tracker.clear();
+        }
+        whenNoDialog.run();
     }
 
     @FunctionalInterface
@@ -43,42 +56,47 @@ public class SettingsDialogCoordinator {
 
     public interface DialogHandle {
 
-        static DialogHandle forWindow(@NonNull Window window) {
+        static DialogHandle forSettingsDialog(@NonNull SettingsDialog dialog) {
 
             return new DialogHandle() {
                 @Override
                 public boolean isDisplayable() {
-                    return window.isDisplayable();
+                    return dialog.isDisplayable();
                 }
 
                 @Override
                 public boolean isVisible() {
-                    return window.isVisible();
+                    return dialog.isVisible();
                 }
 
                 @Override
                 public void toFront() {
-                    window.toFront();
+                    dialog.toFront();
                 }
 
                 @Override
                 public void requestFocus() {
-                    window.requestFocus();
+                    dialog.requestFocus();
                 }
 
                 @Override
                 public void setVisible(boolean visible) {
-                    window.setVisible(visible);
+                    dialog.setVisible(visible);
                 }
 
                 @Override
                 public void onClosed(@NonNull Runnable callback) {
-                    window.addWindowListener(new WindowAdapter() {
+                    dialog.addWindowListener(new WindowAdapter() {
                         @Override
                         public void windowClosed(WindowEvent e) {
                             callback.run();
                         }
                     });
+                }
+
+                @Override
+                public void requestApplicationExit() {
+                    dialog.requestApplicationExit();
                 }
             };
         }
@@ -94,5 +112,7 @@ public class SettingsDialogCoordinator {
         void setVisible(boolean visible);
 
         void onClosed(Runnable callback);
+
+        void requestApplicationExit();
     }
 }

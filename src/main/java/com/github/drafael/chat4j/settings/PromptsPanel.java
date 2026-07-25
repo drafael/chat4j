@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
 import java.util.stream.IntStream;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -24,9 +26,10 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 
-public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipant {
+public class PromptsPanel extends JPanel implements AsyncPendingSettingsSaveParticipant {
 
     private final PromptCatalogRepo promptCatalogRepo;
+    private final BooleanSupplier resetConfirmation;
     private final DefaultListModel<PromptTemplate> promptListModel = new DefaultListModel<>();
     private final JList<PromptTemplate> promptList = new JList<>(promptListModel);
     private final JTextField titleField = new JTextField();
@@ -40,9 +43,23 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
     private boolean dirty;
     private String lastSaveError = "";
     private int currentEditingIndex = -1;
+    private final SettingsWriteQueue writeQueue = new SettingsWriteQueue("prompt-settings-");
+    private long revision;
+    private long loadRequest;
+    private Thread loadThread;
+    private boolean disposed;
 
     public PromptsPanel(@NonNull SettingsRepository settingsRepo) {
-        this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
+        this(new PromptCatalogRepo(settingsRepo));
+    }
+
+    PromptsPanel(@NonNull PromptCatalogRepo promptCatalogRepo) {
+        this(promptCatalogRepo, null);
+    }
+
+    PromptsPanel(@NonNull PromptCatalogRepo promptCatalogRepo, BooleanSupplier resetConfirmation) {
+        this.promptCatalogRepo = promptCatalogRepo;
+        this.resetConfirmation = resetConfirmation;
         setLayout(new BorderLayout());
         add(createHeader(), BorderLayout.NORTH);
         add(createBody(), BorderLayout.CENTER);
@@ -68,6 +85,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
 
     private JComponent createPromptListPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        promptList.setName("promptList");
         promptList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         promptList.setCellRenderer(new PromptListRenderer());
         promptList.setFixedCellHeight(34);
@@ -82,6 +100,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         JButton addButton = new JButton("+");
         JButton removeButton = new JButton("−");
         JButton resetButton = new JButton("Reset to Built-ins");
+        resetButton.setName("resetPromptsButton");
         addButton.addActionListener(e -> addPrompt());
         removeButton.addActionListener(e -> removeSelectedPrompt());
         resetButton.addActionListener(e -> resetToBuiltIns());
@@ -106,6 +125,9 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         addRow(form, gbc, row++, "Title", titleField);
         addRow(form, gbc, row++, "ID", idField);
 
+        titleField.setName("promptTitleField");
+        idField.setName("promptIdField");
+        promptArea.setName("promptTextArea");
         promptArea.setLineWrap(true);
         promptArea.setWrapStyleWord(true);
         promptScrollPane = new JScrollPane(promptArea);
@@ -171,6 +193,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
             return;
         }
         dirty = true;
+        revision++;
         setStatus("Unsaved changes", false);
     }
 
@@ -189,14 +212,15 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         form.add(field, gbc);
     }
 
-    public boolean savePendingChanges() {
+    @Override
+    public CompletableFuture<Boolean> savePendingChangesAsync() {
         if (!persistCurrentEditorToModel()) {
-            return false;
+            return CompletableFuture.completedFuture(false);
         }
         if (!dirty) {
-            return true;
+            return CompletableFuture.completedFuture(true);
         }
-        return saveCatalogFromList();
+        return saveCatalogSnapshot(promptSnapshot(), revision, "Saved");
     }
 
     public String lastSaveError() {
@@ -209,15 +233,62 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
     }
 
     private void reloadPrompts() {
+        long request = ++loadRequest;
+        loadingSelection = true;
+        setPanelEnabled(false);
+        setStatus("Loading prompts…", false);
+        Thread worker = Thread.ofVirtual().name("prompt-settings-load").unstarted(() -> {
+            try {
+                List<PromptTemplate> prompts = promptCatalogRepo.load();
+                SwingUtilities.invokeLater(() -> finishPromptLoad(request, prompts, null));
+            } catch (Exception | LinkageError e) {
+                SwingUtilities.invokeLater(() -> finishPromptLoad(request, emptyList(), e));
+            }
+        });
+        loadThread = worker;
+        worker.start();
+    }
+
+    private void finishPromptLoad(long request, List<PromptTemplate> prompts, Throwable error) {
+        if (disposed || request != loadRequest) {
+            return;
+        }
+        loadThread = null;
+        loadingSelection = false;
+        setPanelEnabled(true);
+        if (error != null) {
+            lastSaveError = "Failed to load prompt settings";
+            setStatus(lastSaveError, true);
+            return;
+        }
+        replacePromptList(prompts);
+        dirty = false;
+        setStatus(" ", false);
+    }
+
+    private void setPanelEnabled(boolean enabled) {
+        setEnabledRecursively(this, enabled);
+    }
+
+    private void setEnabledRecursively(Container container, boolean enabled) {
+        for (Component component : container.getComponents()) {
+            component.setEnabled(enabled);
+            if (component instanceof Container child) {
+                setEnabledRecursively(child, enabled);
+            }
+        }
+    }
+
+    private void replacePromptList(List<PromptTemplate> prompts) {
         currentEditingIndex = -1;
         loadingSelection = true;
         promptListModel.clear();
-        promptCatalogRepo.load().forEach(promptListModel::addElement);
-        loadingSelection = false;
-        dirty = false;
+        prompts.forEach(promptListModel::addElement);
         if (!promptListModel.isEmpty()) {
             promptList.setSelectedIndex(0);
         }
+        loadingSelection = false;
+        loadSelectedPrompt();
     }
 
     private void loadSelectedPrompt() {
@@ -257,6 +328,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         );
         promptListModel.addElement(prompt);
         dirty = true;
+        revision++;
         promptList.setSelectedValue(prompt, true);
     }
 
@@ -280,6 +352,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         promptListModel.remove(index);
         currentEditingIndex = -1;
         dirty = true;
+        revision++;
         if (!promptListModel.isEmpty()) {
             promptList.setSelectedIndex(Math.min(index, promptListModel.size() - 1));
         } else {
@@ -306,6 +379,7 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         if (!prompt.equals(promptListModel.get(currentEditingIndex))) {
             promptListModel.set(currentEditingIndex, prompt);
             dirty = true;
+            revision++;
         }
         return true;
     }
@@ -314,20 +388,53 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         return !variableTable.isEditing() || variableTable.getCellEditor().stopCellEditing();
     }
 
-    private boolean saveCatalogFromList() {
+    private List<PromptTemplate> promptSnapshot() {
+        return IntStream.range(0, promptListModel.size()).mapToObj(promptListModel::get).toList();
+    }
+
+    private CompletableFuture<Boolean> saveCatalogSnapshot(List<PromptTemplate> prompts, long savedRevision, String successMessage) {
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        writeQueue.submit(() -> promptCatalogRepo.save(prompts)).whenComplete((ignored, error) ->
+                SwingUtilities.invokeLater(() -> finishCatalogSave(savedRevision, successMessage, result, error)));
+        return result;
+    }
+
+    private void finishCatalogSave(
+            long savedRevision,
+            String successMessage,
+            CompletableFuture<Boolean> result,
+            Throwable writeError
+    ) {
+        Error writeFatalError = SettingsWriteQueue.fatalError(writeError);
+        Throwable callbackError = null;
         try {
-            List<PromptTemplate> prompts = IntStream.range(0, promptListModel.size())
-                    .mapToObj(promptListModel::get)
-                    .toList();
-            promptCatalogRepo.save(prompts);
-            dirty = false;
-            lastSaveError = "";
-            setStatus("Saved", false);
-            return true;
-        } catch (Exception e) {
-            lastSaveError = e.getMessage();
-            setStatus(lastSaveError, true);
-            return false;
+            if (writeError == null) {
+                if (savedRevision == revision) {
+                    dirty = false;
+                    lastSaveError = "";
+                    if (!disposed) {
+                        setStatus(successMessage, false);
+                    }
+                }
+            } else {
+                dirty = true;
+                lastSaveError = "Failed to save prompt catalog";
+                if (!disposed) {
+                    setStatus(lastSaveError, true);
+                }
+            }
+        } catch (Throwable t) {
+            callbackError = t;
+            dirty = true;
+            lastSaveError = "Failed to finish saving prompt catalog";
+        } finally {
+            result.complete(writeError == null && callbackError == null);
+        }
+        if (writeFatalError != null) {
+            throw writeFatalError;
+        }
+        if (callbackError instanceof Error error && !(error instanceof LinkageError)) {
+            throw error;
         }
     }
 
@@ -335,13 +442,31 @@ public class PromptsPanel extends JPanel implements PendingSettingsSaveParticipa
         if (!confirmResetToBuiltIns()) {
             return;
         }
-        promptCatalogRepo.resetToBuiltIns();
-        reloadPrompts();
-        dirty = false;
-        setStatus("Reset to built-ins", false);
+        List<PromptTemplate> builtIns = com.github.drafael.chat4j.prompts.BuiltInPromptCatalog.prompts();
+        replacePromptList(builtIns);
+        dirty = true;
+        revision++;
+        saveCatalogSnapshot(builtIns, revision, "Reset to built-ins");
+    }
+
+    void disposePanel() {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        loadRequest++;
+        if (loadThread != null) {
+            loadThread.interrupt();
+            loadThread = null;
+        }
+        writeQueue.close();
     }
 
     private boolean confirmResetToBuiltIns() {
+        return resetConfirmation != null ? resetConfirmation.getAsBoolean() : showResetConfirmation();
+    }
+
+    private boolean showResetConfirmation() {
         JOptionPane pane = new JOptionPane(
                 "<html><div style='width:260px'>Replace all custom prompts with the built-in prompt list?</div></html>",
                 JOptionPane.WARNING_MESSAGE,

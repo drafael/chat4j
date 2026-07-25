@@ -23,7 +23,10 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.LongConsumer;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import lombok.NonNull;
@@ -34,15 +37,20 @@ import static java.util.Collections.emptyList;
 public class SettingsDialog extends JDialog {
 
     private static final int SIDEBAR_WIDTH = 230;
+    private static final long APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS = 2_000;
 
     private JPanel titleBarSpacer;
     private JPanel actionBar;
     private JList<SettingsSection> sectionList;
     private List<SettingsSection> sections = emptyList();
     private boolean savingBeforeDispose;
+    private boolean exitAfterSave;
+    private boolean permanentlyClosed;
+    private long closeAttempt;
+    private long applicationExitDeadlineNanos;
     private final PropertyChangeListener lafChangeListener;
 
-    private final Runnable exitAction;
+    private final LongConsumer exitAction;
     private final Path sttModelsDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
@@ -58,7 +66,7 @@ public class SettingsDialog extends JDialog {
             @NonNull Frame owner,
             @NonNull SettingsRepository settingsRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
-            @NonNull Runnable exitAction,
+            @NonNull LongConsumer exitAction,
             @NonNull Path sttModelsDirectory,
             @NonNull VoskModelManagementService voskModelManagementService,
             @NonNull WhisperModelManagementService whisperModelManagementService,
@@ -91,7 +99,11 @@ public class SettingsDialog extends JDialog {
 
         lafChangeListener = event -> {
             if ("lookAndFeel".equals(event.getPropertyName())) {
-                SwingUtilities.invokeLater(this::applyThemeStyles);
+                SwingUtilities.invokeLater(() -> {
+                    if (!permanentlyClosed) {
+                        applyThemeStyles();
+                    }
+                });
             }
         };
         UIManager.addPropertyChangeListener(lafChangeListener);
@@ -184,8 +196,18 @@ public class SettingsDialog extends JDialog {
     private List<SettingsSection> createSections(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
         ApiTokenFieldRegistry tokenFieldRegistry = new ApiTokenFieldRegistry();
         return List.of(
-                new SettingsSection("general", "General", "/icons/sidebar/settings.svg", new GeneralPanel(settingsRepo, exitAction)),
-                new SettingsSection("appearance", "Appearance", "/icons/settings/palette.svg", new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, exitAction)),
+                new SettingsSection(
+                        "general",
+                        "General",
+                        "/icons/sidebar/settings.svg",
+                        new GeneralPanel(settingsRepo, this::requestApplicationExit)
+                ),
+                new SettingsSection(
+                        "appearance",
+                        "Appearance",
+                        "/icons/settings/palette.svg",
+                        new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, this::requestApplicationExit)
+                ),
                 new SettingsSection(
                         "providers",
                         "Providers",
@@ -252,28 +274,95 @@ public class SettingsDialog extends JDialog {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent e) {
-                UIManager.removePropertyChangeListener(lafChangeListener);
+                boolean cleanupRequired = !permanentlyClosed;
+                permanentlyClosed = true;
+                closeAttempt++;
+                try {
+                    if (cleanupRequired) {
+                        disposeSections();
+                    }
+                } finally {
+                    UIManager.removePropertyChangeListener(lafChangeListener);
+                }
             }
         });
     }
 
     @Override
     public void dispose() {
-        if (savingBeforeDispose) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::dispose);
             return;
         }
-        savingBeforeDispose = true;
-        setEnabled(false);
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        savePendingPanelChangesResultAsync()
-                .exceptionally(error -> new SavePendingResult(false, saveErrorMessage(error), "Settings"))
-                .thenAccept(saveResult -> SwingUtilities.invokeLater(() -> finishDisposeAfterSave(saveResult)));
+        if (savingBeforeDispose || permanentlyClosed) {
+            return;
+        }
+        exitAfterSave = false;
+        startSaveBeforeDispose();
     }
 
-    private void finishDisposeAfterSave(SavePendingResult saveResult) {
+    void requestApplicationExit() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::requestApplicationExit);
+            return;
+        }
+        if (permanentlyClosed) {
+            return;
+        }
+        if (!exitAfterSave) {
+            applicationExitDeadlineNanos = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS);
+        }
+        exitAfterSave = true;
+        if (!savingBeforeDispose) {
+            startSaveBeforeDispose();
+        }
+        scheduleApplicationExitTimeout(closeAttempt, applicationExitDeadlineNanos);
+    }
+
+    private void startSaveBeforeDispose() {
+        savingBeforeDispose = true;
+        long attempt = ++closeAttempt;
+        setEnabled(false);
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        savePendingPanelChangesResultAsync(attempt)
+                .exceptionally(error -> new SavePendingResult(false, saveErrorMessage(error), "Settings"))
+                .thenAccept(saveResult -> SwingUtilities.invokeLater(() -> finishDisposeAfterSave(attempt, saveResult)));
+    }
+
+    private void scheduleApplicationExitTimeout(long attempt, long deadlineNanos) {
+        long remainingNanos = Math.max(0, deadlineNanos - System.nanoTime());
+        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS).execute(() ->
+                SwingUtilities.invokeLater(() -> finishApplicationExitAfterTimeout(attempt)));
+    }
+
+    private void finishApplicationExitAfterTimeout(long attempt) {
+        if (permanentlyClosed || !exitAfterSave || attempt != closeAttempt) {
+            return;
+        }
+        exitAfterSave = false;
+        savingBeforeDispose = false;
+        permanentlyClosed = true;
+        closeAttempt++;
+        try {
+            disposeSections();
+        } finally {
+            try {
+                exitAction.accept(applicationExitDeadlineNanos);
+            } finally {
+                SettingsDialog.super.dispose();
+            }
+        }
+    }
+
+    private void finishDisposeAfterSave(long attempt, SavePendingResult saveResult) {
+        if (permanentlyClosed || attempt != closeAttempt) {
+            return;
+        }
         setCursor(Cursor.getDefaultCursor());
         savingBeforeDispose = false;
         if (!saveResult.saved()) {
+            exitAfterSave = false;
             setEnabled(true);
             JOptionPane.showMessageDialog(
                     this,
@@ -283,49 +372,117 @@ public class SettingsDialog extends JDialog {
             );
             return;
         }
-        sections.stream()
-                .map(SettingsSection::content)
-                .filter(SpeechToTextPanel.class::isInstance)
-                .map(SpeechToTextPanel.class::cast)
-                .forEach(SpeechToTextPanel::disposePanel);
-        SettingsDialog.super.dispose();
+        boolean shouldExit = exitAfterSave;
+        exitAfterSave = false;
+        permanentlyClosed = true;
+        try {
+            disposeSections();
+        } finally {
+            try {
+                if (shouldExit) {
+                    exitAction.accept(applicationExitDeadlineNanos);
+                }
+            } finally {
+                SettingsDialog.super.dispose();
+            }
+        }
     }
 
-    private CompletableFuture<SavePendingResult> savePendingPanelChangesResultAsync() {
-        List<PendingSettingsSaveParticipant> participants = sections.stream()
+    private void disposeSections() {
+        Throwable failure = null;
+        for (SettingsSection section : sections) {
+            try {
+                disposeSection(section.content());
+            } catch (Throwable t) {
+                if (failure == null) {
+                    failure = t;
+                } else {
+                    failure.addSuppressed(t);
+                }
+            }
+        }
+        if (failure instanceof RuntimeException e) {
+            throw e;
+        }
+        if (failure instanceof Error e) {
+            throw e;
+        }
+        if (failure != null) {
+            throw new IllegalStateException("Failed to dispose Settings sections", failure);
+        }
+    }
+
+    private void disposeSection(JComponent content) {
+        if (content instanceof GeneralPanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof AppearancePanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof PromptsPanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof SpeechToTextPanel panel) {
+            panel.disposePanel();
+            panel.disposeSettingsPanel();
+        } else if (content instanceof AbstractSettingsPanel panel) {
+            panel.disposeSettingsPanel();
+        }
+    }
+
+    private CompletableFuture<SavePendingResult> savePendingPanelChangesResultAsync(long attempt) {
+        List<AsyncPendingSettingsSaveParticipant> participants = sections.stream()
                 .map(SettingsSection::content)
-                .filter(PendingSettingsSaveParticipant.class::isInstance)
-                .map(PendingSettingsSaveParticipant.class::cast)
+                .filter(AsyncPendingSettingsSaveParticipant.class::isInstance)
+                .map(AsyncPendingSettingsSaveParticipant.class::cast)
                 .toList();
-        return saveParticipantAt(participants, 0);
+        return saveParticipants(participants, () -> attempt == closeAttempt && !permanentlyClosed);
     }
 
-    private CompletableFuture<SavePendingResult> saveParticipantAt(List<PendingSettingsSaveParticipant> participants, int index) {
+    static CompletableFuture<SavePendingResult> saveParticipants(
+            List<AsyncPendingSettingsSaveParticipant> participants,
+            BooleanSupplier active
+    ) {
+        return saveParticipantAt(participants, 0, active);
+    }
+
+    private static CompletableFuture<SavePendingResult> saveParticipantAt(
+            List<AsyncPendingSettingsSaveParticipant> participants,
+            int index,
+            BooleanSupplier active
+    ) {
         if (index >= participants.size()) {
             return CompletableFuture.completedFuture(new SavePendingResult(true, "", "Settings"));
         }
-        PendingSettingsSaveParticipant participant = participants.get(index);
-        CompletableFuture<Boolean> saved = runOnEdt(() -> participant instanceof AsyncPendingSettingsSaveParticipant asyncParticipant
-                ? asyncParticipant.savePendingChangesAsync()
-                : CompletableFuture.completedFuture(participant.savePendingChanges()))
-                .thenCompose(Function.identity());
-        return saved.handle((success, error) -> {
-                    if (error != null) {
-                        return CompletableFuture.completedFuture(
-                                new SavePendingResult(false, saveErrorMessage(error), participant.settingsSectionName())
-                        );
+        AsyncPendingSettingsSaveParticipant participant = participants.get(index);
+        CompletableFuture<Boolean> saved = runOnEdt(() -> active.getAsBoolean()
+                        ? participant.savePendingChangesAsync()
+                        : null)
+                .thenCompose(save -> save == null
+                        ? CompletableFuture.completedFuture(false)
+                        : save);
+        return saved.handle(SaveCompletion::new)
+                .thenCompose(completion -> runOnEdt(() -> {
+                    if (!active.getAsBoolean()) {
+                        return CompletableFuture.completedFuture(new SavePendingResult(true, "", "Settings"));
                     }
-                    if (success) {
-                        return saveParticipantAt(participants, index + 1);
+                    if (completion.error() != null) {
+                        return CompletableFuture.completedFuture(new SavePendingResult(
+                                false,
+                                saveErrorMessage(completion.error()),
+                                participant.settingsSectionName()
+                        ));
                     }
-                    return runOnEdt(() -> CompletableFuture.completedFuture(
-                            new SavePendingResult(false, participant.lastSaveError(), participant.settingsSectionName())
-                    )).thenCompose(Function.identity());
-                })
+                    if (Boolean.TRUE.equals(completion.saved())) {
+                        return saveParticipantAt(participants, index + 1, active);
+                    }
+                    return CompletableFuture.completedFuture(new SavePendingResult(
+                            false,
+                            participant.lastSaveError(),
+                            participant.settingsSectionName()
+                    ));
+                }))
                 .thenCompose(Function.identity());
     }
 
-    private String saveErrorMessage(Throwable error) {
+    private static String saveErrorMessage(Throwable error) {
         Throwable unwrapped = error instanceof CompletionException && error.getCause() != null
                 ? error.getCause()
                 : error;
@@ -335,13 +492,16 @@ public class SettingsDialog extends JDialog {
                 : message;
     }
 
-    private <T> CompletableFuture<T> runOnEdt(Callable<T> action) {
+    private static <T> CompletableFuture<T> runOnEdt(Callable<T> action) {
         CompletableFuture<T> result = new CompletableFuture<>();
         Runnable task = () -> {
             try {
                 result.complete(action.call());
-            } catch (Exception e) {
-                result.completeExceptionally(e);
+            } catch (Throwable t) {
+                result.completeExceptionally(t);
+                if (t instanceof Error error && !(error instanceof LinkageError)) {
+                    throw error;
+                }
             }
         };
         if (SwingUtilities.isEventDispatchThread()) {
@@ -413,6 +573,9 @@ public class SettingsDialog extends JDialog {
     private record SettingsSection(String id, String title, String iconPath, JComponent content) {
     }
 
-    private record SavePendingResult(boolean saved, String message, String sectionName) {
+    private record SaveCompletion(Boolean saved, Throwable error) {
+    }
+
+    record SavePendingResult(boolean saved, String message, String sectionName) {
     }
 }

@@ -68,6 +68,58 @@ class SettingsDialogCoordinatorTest {
         assertThat(closeHookCalls.get()).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("Application exit drains the tracked Settings dialog")
+    void requestApplicationExit_whenDialogIsTracked_routesExitThroughDialog() {
+        var subject = new SettingsDialogCoordinator();
+        var createdDialogs = new ArrayList<FakeDialogHandle>();
+        var fallbackCalls = new AtomicInteger();
+
+        subject.open(() -> createDialog(createdDialogs), () -> {
+        });
+        subject.requestApplicationExit(fallbackCalls::incrementAndGet);
+
+        assertThat(createdDialogs.getFirst().applicationExitCalls).hasValue(1);
+        assertThat(fallbackCalls).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Application exit proceeds directly when the tracked dialog is already closed")
+    void requestApplicationExit_whenTrackedDialogIsClosed_runsFallback() {
+        var subject = new SettingsDialogCoordinator();
+        var createdDialogs = new ArrayList<FakeDialogHandle>();
+        var fallbackCalls = new AtomicInteger();
+
+        subject.open(() -> createDialog(createdDialogs), () -> {
+        });
+        createdDialogs.getFirst().displayable = false;
+        subject.requestApplicationExit(fallbackCalls::incrementAndGet);
+
+        assertThat(createdDialogs.getFirst().applicationExitCalls).hasValue(0);
+        assertThat(fallbackCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("A delayed close callback cannot untrack a replacement dialog")
+    void open_whenOldCloseArrivesAfterReplacement_keepsReplacementTracked() {
+        var subject = new SettingsDialogCoordinator();
+        var createdDialogs = new ArrayList<FakeDialogHandle>();
+
+        subject.open(() -> createDialog(createdDialogs), () -> {
+        });
+        FakeDialogHandle firstDialog = createdDialogs.getFirst();
+        firstDialog.displayable = false;
+
+        subject.open(() -> createDialog(createdDialogs), () -> {
+        });
+        firstDialog.fireClosed();
+        subject.open(() -> createDialog(createdDialogs), () -> {
+        });
+
+        assertThat(createdDialogs).hasSize(2);
+        assertThat(createdDialogs.get(1).toFrontCalls).hasValue(1);
+    }
+
     private FakeDialogHandle createDialog(List<FakeDialogHandle> createdDialogs) {
         FakeDialogHandle dialog = new FakeDialogHandle();
         createdDialogs.add(dialog);
@@ -79,6 +131,7 @@ class SettingsDialogCoordinatorTest {
         private final AtomicInteger visibleCalls = new AtomicInteger();
         private final AtomicInteger toFrontCalls = new AtomicInteger();
         private final AtomicInteger requestFocusCalls = new AtomicInteger();
+        private final AtomicInteger applicationExitCalls = new AtomicInteger();
         private final AtomicReference<Runnable> onClosed = new AtomicReference<>();
         private boolean displayable = true;
         private boolean visible;
@@ -112,6 +165,11 @@ class SettingsDialogCoordinatorTest {
         @Override
         public void onClosed(Runnable callback) {
             onClosed.set(callback);
+        }
+
+        @Override
+        public void requestApplicationExit() {
+            applicationExitCalls.incrementAndGet();
         }
 
         private void fireClosed() {

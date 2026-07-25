@@ -14,6 +14,7 @@ import com.github.drafael.chat4j.chat.webview.WebViewSettings;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
+import java.awt.font.FontRenderContext;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.Collections;
@@ -23,6 +24,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -32,7 +39,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import static java.util.stream.Collectors.toSet;
 
-public class AppearancePanel extends AbstractSettingsPanel {
+public class AppearancePanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
     private static final String KEY_THEME = ThemeSettings.THEME_NAME_KEY;
     private static final String KEY_ACCENT_COLOR = ThemeSettings.THEME_ACCENT_KEY;
@@ -40,6 +47,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private static final String KEY_APP_FONT_SIZE = FontSettings.APP_FONT_SIZE_KEY;
     private static final String KEY_CODE_FONT = FontSettings.CODE_FONT_FAMILY_KEY;
 
+    private static final String APP_FONT_SAVE_TARGET = "app font";
     private static final String DEFAULT_THEME = ThemeSettings.DEFAULT_THEME;
     private static final String DEFAULT_APP_FONT = FontSettings.DEFAULT_APP_FONT;
     private static final String DEFAULT_CODE_FONT = FontSettings.DEFAULT_CODE_FONT;
@@ -76,6 +84,8 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
     private static final int WEB_VIEW_HEALTH_ICON_SIZE = 28;
     private static final int WEB_VIEW_ENGINE_SELECTOR_WIDTH = 340;
+    private static CompletableFuture<FontCatalog> sharedFontCatalog;
+    private static long fontCatalogGeneration;
 
     private final WebViewRuntimeStatus runtimeStatus;
     private final Runnable exitAction;
@@ -86,6 +96,19 @@ public class AppearancePanel extends AbstractSettingsPanel {
     private final JLabel restartHint = new JLabel("Changes apply after restarting Chat4J.");
     private boolean restoringWebViewEngineSelection;
     private String currentWebViewEngineSettingValue;
+    private String previousWebViewEngineSettingValue;
+    private final SettingsWriteQueue writeQueue = new SettingsWriteQueue("appearance-settings-save-");
+    private final Map<String, AppearanceSaveRequest> latestRequests = new LinkedHashMap<>();
+    private final Map<String, AppearanceSaveRequest> failedRequests = new LinkedHashMap<>();
+    private long fontDiscoveryRequest;
+    private boolean disposed;
+    private String lastSaveError = "";
+    private String appFontFamily;
+    private int appFontSize;
+    private String codeFontFamily;
+    private String durableAppFontFamily;
+    private int durableAppFontSize;
+    private String durableCodeFontFamily;
 
     // Theme name -> LaF class name, grouped for display
     private static final Map<String, String> CORE_THEMES = new LinkedHashMap<>();
@@ -166,7 +189,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
     public static void restoreAccentColor(SettingsRepository settings) {
         try {
             String hex = settings.get(KEY_ACCENT_COLOR, null);
-            accentColor = StringUtils.isNotEmpty(hex) ? Color.decode(hex) : null;
+            accentColor = StringUtils.isNotEmpty(hex) && isSupportedAccent(hex) ? Color.decode(hex) : null;
         } catch (Exception e) {
             accentColor = null;
         }
@@ -192,30 +215,84 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     public static String[] appFontOptions() {
-        String[] availableFonts = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+        return currentFontCatalog().appFonts().clone();
+    }
+
+    private static String[] appFontOptions(String[] availableFonts, String defaultFamily) {
         Set<String> ordered = new LinkedHashSet<>();
         ordered.add(DEFAULT_APP_FONT);
-
-        Font defaultFont = resolveLookAndFeelDefaultAppFont();
-        if (defaultFont != null && defaultFont.getFamily() != null && !defaultFont.getFamily().isBlank()) {
-            ordered.add(defaultFont.getFamily());
+        if (StringUtils.isNotBlank(defaultFamily)) {
+            ordered.add(defaultFamily);
         }
-
         Arrays.stream(UI_COMPATIBLE_FONT_CANDIDATES)
                 .map(candidate -> findFontFamilyIgnoreCase(availableFonts, candidate))
                 .filter(StringUtils::isNotBlank)
                 .forEach(ordered::add);
-
         Arrays.stream(availableFonts)
                 .filter(AppearancePanel::isHelveticaFamily)
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .forEach(ordered::add);
-
         return ordered.toArray(String[]::new);
     }
 
     public static String[] codeFontOptions() {
-        String[] availableFonts = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+        return currentFontCatalog().codeFonts().clone();
+    }
+
+    public static CompletableFuture<Void> prepareFontCatalogAsync() {
+        return fontCatalogAsync().handle((ignored, error) -> null);
+    }
+
+    public static synchronized long fontCatalogGeneration() {
+        return fontCatalogGeneration;
+    }
+
+    private static FontCatalog currentFontCatalog() {
+        CompletableFuture<FontCatalog> catalog = fontCatalogAsync();
+        CompletableFuture<FontCatalog> withFallback = catalog.exceptionally(error -> fallbackFontCatalog());
+        if (SwingUtilities.isEventDispatchThread()) {
+            return withFallback.getNow(fallbackFontCatalog());
+        }
+        return withFallback.join();
+    }
+
+    private static synchronized CompletableFuture<FontCatalog> fontCatalogAsync() {
+        if (sharedFontCatalog != null && !sharedFontCatalog.isCompletedExceptionally()) {
+            return sharedFontCatalog;
+        }
+        Font defaultFont = resolveLookAndFeelDefaultAppFont();
+        String defaultFamily = defaultFont == null ? null : defaultFont.getFamily();
+        CompletableFuture<FontCatalog> catalog = new CompletableFuture<>();
+        sharedFontCatalog = catalog;
+        Thread.ofVirtual().name("installed-font-discovery").start(() -> {
+            try {
+                String[] availableFonts = GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames();
+                FontCatalog discovered = new FontCatalog(
+                        appFontOptions(availableFonts, defaultFamily),
+                        codeFontOptions(availableFonts)
+                );
+                if (catalog.complete(discovered)) {
+                    incrementFontCatalogGeneration();
+                }
+            } catch (Throwable t) {
+                catalog.completeExceptionally(t);
+                if (t instanceof Error error && !(error instanceof LinkageError)) {
+                    throw error;
+                }
+            }
+        });
+        return catalog;
+    }
+
+    private static synchronized void incrementFontCatalogGeneration() {
+        fontCatalogGeneration++;
+    }
+
+    private static FontCatalog fallbackFontCatalog() {
+        return new FontCatalog(new String[]{DEFAULT_APP_FONT}, new String[]{DEFAULT_CODE_FONT});
+    }
+
+    private static String[] codeFontOptions(String[] availableFonts) {
         return withPreferredFont(DEFAULT_CODE_FONT, monospacedFontFamilies(availableFonts));
     }
 
@@ -311,10 +388,26 @@ public class AppearancePanel extends AbstractSettingsPanel {
             Runnable exitAction,
             RestartPrompt restartPrompt
     ) {
+        this(settingsRepo, runtimeStatus, exitAction, restartPrompt, AppearancePanel::fontCatalogAsync);
+    }
+
+    AppearancePanel(
+            SettingsRepository settingsRepo,
+            WebViewRuntimeStatus runtimeStatus,
+            Runnable exitAction,
+            RestartPrompt restartPrompt,
+            Supplier<CompletableFuture<FontCatalog>> fontCatalogLoader
+    ) {
         super(settingsRepo);
         this.runtimeStatus = runtimeStatus;
         this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
         this.restartPrompt = restartPrompt == null ? RestartRequiredDialog::show : restartPrompt;
+        appFontFamily = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
+        appFontSize = parseAppFontSize(readString(KEY_APP_FONT_SIZE, String.valueOf(defaultAppFontSize())));
+        codeFontFamily = readString(KEY_CODE_FONT, DEFAULT_CODE_FONT);
+        durableAppFontFamily = appFontFamily;
+        durableAppFontSize = appFontSize;
+        durableCodeFontFamily = codeFontFamily;
 
         JPanel form = createFormPanel("Appearance");
         GridBagConstraints gbc = createFormConstraints();
@@ -330,69 +423,381 @@ public class AppearancePanel extends AbstractSettingsPanel {
 
         row = addSectionHeader(form, gbc, row, "Typography");
 
-        String[] availableAppFontOptions = appFontOptions();
-        JComboBox<String> appFont = withPreferredWidth(createFontSelector(availableAppFontOptions), 300);
+        JComboBox<String> appFont = withPreferredWidth(createFontSelector(new String[]{appFontFamily}), 300);
+        appFont.setName("appFontComboBox");
+        appFont.putClientProperty("fontCatalogLoading", true);
+        appFont.setEnabled(false);
         addRow(form, gbc, row++, "App font", appFont);
-        bindComboBox(
-                appFont,
-                KEY_APP_FONT,
-                DEFAULT_APP_FONT,
-                Validators.oneOf(
-                        new LinkedHashSet<>(List.of(availableAppFontOptions)),
-                        "Invalid app font option"
-                ),
-                value -> {
-                    int appFontSize = parseAppFontSize(readString(
-                            KEY_APP_FONT_SIZE,
-                            String.valueOf(defaultAppFontSize())));
-                    applyAppFont(value, appFontSize);
-                    refreshAllWindows();
-                }
-        );
 
-        String[] availableAppFontSizeOptions = IntStream.of(appFontSizeOptions())
-                .mapToObj(String::valueOf)
-                .toArray(String[]::new);
-        JComboBox<String> appFontSize = withPreferredWidth(createFontSelector(availableAppFontSizeOptions), 130);
-        addRow(form, gbc, row++, "App font size", appFontSize);
-        bindComboBox(
-                appFontSize,
-                KEY_APP_FONT_SIZE,
-                String.valueOf(normalizeAppFontSize(defaultAppFontSize())),
-                Validators.oneOf(
-                        new LinkedHashSet<>(List.of(availableAppFontSizeOptions)),
-                        "Invalid app font size"
-                ),
-                value -> {
-                    int size = parseAppFontSize(value);
-                    String family = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
-                    applyAppFont(family, size);
-                    refreshAllWindows();
-                }
-        );
+        String[] availableAppFontSizeOptions = IntStream.of(appFontSizeOptions()).mapToObj(String::valueOf).toArray(String[]::new);
+        JComboBox<String> appFontSizeSelector = withPreferredWidth(createFontSelector(availableAppFontSizeOptions), 130);
+        appFontSizeSelector.setName("appFontSizeComboBox");
+        appFontSizeSelector.setSelectedItem(String.valueOf(appFontSize));
+        appFontSizeSelector.setEnabled(false);
+        addRow(form, gbc, row++, "App font size", appFontSizeSelector);
 
-        String[] availableCodeFontOptions = codeFontOptions();
-        JComboBox<String> codeFont = withPreferredWidth(createFontSelector(availableCodeFontOptions), 300);
+        JComboBox<String> codeFont = withPreferredWidth(createFontSelector(new String[]{codeFontFamily}), 300);
+        codeFont.setName("codeFontComboBox");
+        codeFont.putClientProperty("fontCatalogLoading", true);
+        codeFont.setEnabled(false);
         addRow(form, gbc, row++, "Code font", codeFont);
-        bindComboBox(
-                codeFont,
-                KEY_CODE_FONT,
-                DEFAULT_CODE_FONT,
-                Validators.oneOf(
-                        new LinkedHashSet<>(List.of(availableCodeFontOptions)),
-                        "Invalid code font option"
-                ),
-                value -> {
-                    applyCodeFont(value);
-                    refreshAllWindows();
-                }
-        );
+
+        bindTypographySelectors(appFont, appFontSizeSelector, codeFont);
+        discoverFonts(appFont, appFontSizeSelector, codeFont, fontCatalogLoader.get());
         row = addSectionHint(form, gbc, row, "Font changes are applied immediately across all open windows.");
 
         row = addSectionHeader(form, gbc, row, "Chat WebView");
         row = addChatWebViewSettings(form, gbc, row);
 
         addVerticalSpacer(form, gbc, row);
+    }
+
+    private void bindTypographySelectors(
+            JComboBox<String> appFontSelector,
+            JComboBox<String> appFontSizeSelector,
+            JComboBox<String> codeFontSelector
+    ) {
+        bindAsyncComboBox(
+                appFontSelector,
+                APP_FONT_SAVE_TARGET,
+                appFontFamily,
+                value -> ValidationResult.valid(value),
+                value -> {
+                    appFontFamily = value;
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, false);
+                },
+                value -> {
+                    int capturedSize = appFontSize;
+                    return new AppearanceMutation(
+                            () -> new FontSettings(settingsRepo()).persistAppFontSelection(value, capturedSize),
+                            () -> {
+                                durableAppFontFamily = value;
+                                durableAppFontSize = capturedSize;
+                            }
+                    );
+                },
+                value -> {
+                    applyAppFont(appFontFamily, appFontSize);
+                    refreshAllWindows();
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true);
+                },
+                value -> setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true)
+        );
+        bindAsyncComboBox(
+                appFontSizeSelector,
+                APP_FONT_SAVE_TARGET,
+                String.valueOf(appFontSize),
+                Validators.oneOf(new LinkedHashSet<>(List.of(IntStream.of(appFontSizeOptions())
+                        .mapToObj(String::valueOf).toArray(String[]::new))), "Invalid app font size"),
+                value -> {
+                    appFontSize = parseAppFontSize(value);
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, false);
+                },
+                value -> {
+                    String capturedFamily = appFontFamily;
+                    int capturedSize = appFontSize;
+                    return new AppearanceMutation(
+                            () -> new FontSettings(settingsRepo()).persistAppFontSelection(capturedFamily, capturedSize),
+                            () -> {
+                                durableAppFontFamily = capturedFamily;
+                                durableAppFontSize = capturedSize;
+                            }
+                    );
+                },
+                value -> {
+                    applyAppFont(appFontFamily, appFontSize);
+                    refreshAllWindows();
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true);
+                },
+                value -> setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true)
+        );
+        bindAsyncComboBox(
+                codeFontSelector,
+                "code font",
+                codeFontFamily,
+                value -> ValidationResult.valid(value),
+                value -> {
+                    codeFontFamily = value;
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, false);
+                },
+                value -> new AppearanceMutation(
+                        () -> new FontSettings(settingsRepo()).persistCodeFontFamily(value),
+                        () -> durableCodeFontFamily = value
+                ),
+                value -> {
+                    applyCodeFont(value);
+                    refreshAllWindows();
+                    setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true);
+                },
+                value -> setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true)
+        );
+    }
+
+    private void discoverFonts(
+            JComboBox<String> appFontSelector,
+            JComboBox<String> appFontSizeSelector,
+            JComboBox<String> codeFontSelector,
+            CompletableFuture<FontCatalog> catalogFuture
+    ) {
+        long request = ++fontDiscoveryRequest;
+        catalogFuture.whenComplete((catalog, error) -> SwingUtilities.invokeLater(() -> {
+            if (disposed || request != fontDiscoveryRequest) {
+                return;
+            }
+            if (error != null) {
+                FontCatalog fallback = fallbackFontCatalog();
+                replaceFontOptions(appFontSelector, fallback.appFonts(), appFontFamily);
+                replaceFontOptions(codeFontSelector, fallback.codeFonts(), codeFontFamily);
+                setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true);
+                setStatusError("Failed to load installed fonts");
+                return;
+            }
+            replaceFontOptions(appFontSelector, catalog.appFonts(), appFontFamily);
+            replaceFontOptions(codeFontSelector, catalog.codeFonts(), codeFontFamily);
+            setTypographyEnabled(appFontSelector, appFontSizeSelector, codeFontSelector, true);
+        }));
+    }
+
+    private void setTypographyEnabled(
+            JComboBox<String> appFontSelector,
+            JComboBox<String> appFontSizeSelector,
+            JComboBox<String> codeFontSelector,
+            boolean enabled
+    ) {
+        appFontSelector.setEnabled(enabled);
+        appFontSizeSelector.setEnabled(enabled);
+        codeFontSelector.setEnabled(enabled);
+    }
+
+    private void replaceFontOptions(JComboBox<String> selector, String[] options, String selectedValue) {
+        selector.putClientProperty("fontCatalogLoading", true);
+        selector.setModel(new DefaultComboBoxModel<>(withPreferredFont(selectedValue, options)));
+        selector.setSelectedItem(selectedValue);
+        selector.putClientProperty("fontCatalogLoading", false);
+        selector.setEnabled(true);
+    }
+
+    private void bindAsyncComboBox(
+            JComboBox<String> comboBox,
+            String target,
+            String initialValue,
+            SettingsValidator<String> validator,
+            Consumer<String> onCaptured,
+            Function<String, AppearanceMutation> mutationFactory,
+            Consumer<String> onApplied,
+            Consumer<String> onFailure
+    ) {
+        comboBox.setSelectedItem(initialValue);
+        AtomicBoolean updating = new AtomicBoolean();
+        AtomicReference<String> persistedValue = new AtomicReference<>(initialValue);
+        comboBox.addActionListener(e -> {
+            if (updating.get()
+                    || Boolean.TRUE.equals(comboBox.getClientProperty("fontCatalogLoading"))
+                    || (WebViewSettings.ENGINE_KEY.equals(target) && restoringWebViewEngineSelection)) {
+                return;
+            }
+            Object selected = comboBox.getSelectedItem();
+            if (!(selected instanceof String rawValue)) {
+                return;
+            }
+            ValidationResult<String> validation = validate(validator, rawValue);
+            if (!validation.valid()) {
+                updating.set(true);
+                comboBox.setSelectedItem(persistedValue.get());
+                updating.set(false);
+                setStatusError(validation.message());
+                return;
+            }
+            String value = validation.normalizedValue();
+            onCaptured.accept(value);
+            AppearanceMutation mutation = mutationFactory.apply(value);
+            enqueueSave(
+                    target,
+                    mutation.write(),
+                    () -> {
+                        mutation.onDurableSuccess().run();
+                        persistedValue.set(value);
+                    },
+                    () -> {
+                        onApplied.accept(value);
+                        setStatusInfo(STATUS_SAVED);
+                    },
+                    () -> onFailure.accept(value)
+            );
+        });
+    }
+
+    private void enqueueSave(
+            String target,
+            Runnable mutation,
+            Runnable onDurableSuccess,
+            Runnable onCurrentSuccess,
+            Runnable onCurrentFailure
+    ) {
+        enqueueSave(target, mutation, onDurableSuccess, onCurrentSuccess, onCurrentFailure, false);
+    }
+
+    private void enqueueSave(
+            String target,
+            Runnable mutation,
+            Runnable onDurableSuccess,
+            Runnable onCurrentSuccess,
+            Runnable onCurrentFailure,
+            boolean retry
+    ) {
+        if (disposed) {
+            return;
+        }
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        AppearanceSaveRequest request = new AppearanceSaveRequest(
+                mutation,
+                onDurableSuccess,
+                onCurrentSuccess,
+                onCurrentFailure,
+                completion
+        );
+        latestRequests.put(target, request);
+        if (!retry) {
+            failedRequests.remove(target);
+            refreshLastSaveError();
+        }
+        writeQueue.submit(mutation).whenComplete((ignored, error) ->
+                SwingUtilities.invokeLater(() -> finishSave(target, request, error)));
+    }
+
+    private void finishSave(String target, AppearanceSaveRequest request, Throwable writeError) {
+        Error writeFatalError = SettingsWriteQueue.fatalError(writeError);
+        Throwable callbackError = null;
+        try {
+            if (writeError == null) {
+                request.onDurableSuccess().run();
+            }
+            if (latestRequests.get(target) == request) {
+                if (writeError == null) {
+                    failedRequests.remove(target);
+                    refreshLastSaveError();
+                    if (!disposed) {
+                        try {
+                            request.onCurrentSuccess().run();
+                        } catch (Throwable t) {
+                            callbackError = t;
+                            showFollowUpFailure(target);
+                        }
+                    }
+                } else {
+                    failedRequests.put(target, request);
+                    refreshLastSaveError();
+                    if (!disposed) {
+                        request.onCurrentFailure().run();
+                    }
+                }
+                if (!disposed && !failedRequests.isEmpty()) {
+                    setStatusError(lastSaveError);
+                }
+            }
+        } catch (Throwable t) {
+            callbackError = t;
+            if (latestRequests.get(target) == request) {
+                if (writeError == null) {
+                    failedRequests.remove(target);
+                    refreshLastSaveError();
+                    if (!disposed) {
+                        showFollowUpFailure(target);
+                    }
+                } else {
+                    failedRequests.put(target, request);
+                    refreshLastSaveError();
+                    if (!disposed) {
+                        setStatusError(lastSaveError);
+                    }
+                }
+            }
+        } finally {
+            request.completion().complete(null);
+        }
+        if (writeFatalError != null) {
+            throw writeFatalError;
+        }
+        if (callbackError instanceof Error error && !(error instanceof LinkageError)) {
+            throw error;
+        }
+    }
+
+    private void showFollowUpFailure(String target) {
+        if (failedRequests.isEmpty()) {
+            setStatusError("%s was saved, but the follow-up action failed".formatted(saveTargetLabel(target)));
+        }
+    }
+
+    @Override
+    public CompletableFuture<Boolean> savePendingChangesAsync() {
+        List.copyOf(failedRequests.entrySet()).forEach(entry -> {
+            AppearanceSaveRequest request = entry.getValue();
+            enqueueSave(
+                    entry.getKey(),
+                    request.mutation(),
+                    request.onDurableSuccess(),
+                    request.onCurrentSuccess(),
+                    request.onCurrentFailure(),
+                    true
+            );
+        });
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        awaitStableSaves(result);
+        return result;
+    }
+
+    private void awaitStableSaves(CompletableFuture<Boolean> result) {
+        Set<CompletableFuture<Void>> observed = latestRequests.values().stream()
+                .map(AppearanceSaveRequest::completion)
+                .collect(toSet());
+        CompletableFuture.allOf(observed.toArray(CompletableFuture[]::new)).whenComplete((ignored, error) ->
+                SwingUtilities.invokeLater(() -> {
+                    Set<CompletableFuture<Void>> current = latestRequests.values().stream()
+                            .map(AppearanceSaveRequest::completion)
+                            .collect(toSet());
+                    if (!current.equals(observed)) {
+                        awaitStableSaves(result);
+                    } else {
+                        result.complete(failedRequests.isEmpty());
+                    }
+                }));
+    }
+
+    private void refreshLastSaveError() {
+        lastSaveError = failedRequests.keySet().stream()
+                .findFirst()
+                .map(target -> "Failed to save %s setting".formatted(saveTargetLabel(target)))
+                .orElse("");
+    }
+
+    private String saveTargetLabel(String target) {
+        return switch (target) {
+            case KEY_THEME -> "theme";
+            case KEY_ACCENT_COLOR -> "accent color";
+            case WebViewSettings.ENGINE_KEY -> "WebView engine";
+            default -> target;
+        };
+    }
+
+    @Override
+    public String lastSaveError() {
+        return lastSaveError;
+    }
+
+    @Override
+    public String settingsSectionName() {
+        return "Appearance settings";
+    }
+
+    void disposePanel() {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        fontDiscoveryRequest++;
+        writeQueue.close();
+        disposeSettingsPanel();
     }
 
     private int addChatWebViewSettings(JPanel form, GridBagConstraints gbc, int row) {
@@ -404,12 +809,23 @@ public class AppearancePanel extends AbstractSettingsPanel {
                 readString(WebViewSettings.ENGINE_KEY, runtimeStatus.configuredEngine().settingValue()),
                 runtimeStatus.configuredEngine()
         ).settingValue();
-        bindComboBox(
+        bindAsyncComboBox(
                 engineComboBox,
                 WebViewSettings.ENGINE_KEY,
-                runtimeStatus.configuredEngine().settingValue(),
+                currentWebViewEngineSettingValue,
                 engineValidator(),
-                value -> handleWebViewEngineApplied(engineComboBox, value)
+                value -> {
+                    previousWebViewEngineSettingValue = currentWebViewEngineSettingValue;
+                    currentWebViewEngineSettingValue = value;
+                },
+                value -> new AppearanceMutation(
+                        () -> settingsRepo().put(WebViewSettings.ENGINE_KEY, value),
+                        () -> {
+                        }
+                ),
+                value -> handleWebViewEngineApplied(engineComboBox, value),
+                value -> {
+                }
         );
 
         row = addFullWidthRow(form, gbc, row, restartHint);
@@ -428,21 +844,13 @@ public class AppearancePanel extends AbstractSettingsPanel {
         WebViewEngine selectedEngine = WebViewEngine.fromSettingValue(selectedValue, runtimeStatus.configuredEngine());
         String selectedEngineValue = selectedEngine.settingValue();
 
-        if (restoringWebViewEngineSelection) {
-            currentWebViewEngineSettingValue = selectedEngineValue;
-            refreshRestartHint(selectedEngineValue);
-            setStatusInfo(STATUS_SAVED);
-            return;
-        }
-
         String previousValue = StringUtils.defaultIfBlank(
-                currentWebViewEngineSettingValue,
+                previousWebViewEngineSettingValue,
                 runtimeStatus.configuredEngine().settingValue()
         );
         refreshRestartHint(selectedEngineValue);
 
         if (selectedEngine == runtimeStatus.activeEngine()) {
-            currentWebViewEngineSettingValue = selectedEngineValue;
             setStatusInfo(STATUS_SAVED);
             return;
         }
@@ -450,7 +858,6 @@ public class AppearancePanel extends AbstractSettingsPanel {
         setStatusInfo("Saved — restart Chat4J to apply");
         RestartRequiredDialog.Choice choice = showWebViewEngineChangePrompt(selectedEngine);
         if (choice == RestartRequiredDialog.Choice.EXIT_NOW) {
-            currentWebViewEngineSettingValue = selectedEngineValue;
             exitAction.run();
             return;
         }
@@ -458,11 +865,9 @@ public class AppearancePanel extends AbstractSettingsPanel {
             restoreWebViewEngineSelection(engineComboBox, previousValue);
             return;
         }
-        currentWebViewEngineSettingValue = selectedEngineValue;
     }
 
     private void restoreWebViewEngineSelection(JComboBox<String> engineComboBox, String value) {
-        writeSetting(WebViewSettings.ENGINE_KEY, value);
         restoringWebViewEngineSelection = true;
         try {
             engineComboBox.setSelectedItem(value);
@@ -471,7 +876,15 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
         currentWebViewEngineSettingValue = value;
         refreshRestartHint(value);
-        setStatusInfo(STATUS_SAVED);
+        enqueueSave(
+                WebViewSettings.ENGINE_KEY,
+                () -> settingsRepo().put(WebViewSettings.ENGINE_KEY, value),
+                () -> {
+                },
+                () -> setStatusInfo(STATUS_SAVED),
+                () -> {
+                }
+        );
     }
 
     private RestartRequiredDialog.Choice showWebViewEngineChangePrompt(WebViewEngine selectedEngine) {
@@ -653,6 +1066,7 @@ public class AppearancePanel extends AbstractSettingsPanel {
         });
 
         JComboBox<Object> themeCombo = new JComboBox<>(themeModel);
+        themeCombo.setName("themeComboBox");
         themeCombo.setRenderer(new ThemeListRenderer());
 
         String savedTheme = readString(KEY_THEME, DEFAULT_THEME);
@@ -660,28 +1074,46 @@ public class AppearancePanel extends AbstractSettingsPanel {
             themeCombo.setSelectedItem(savedTheme);
         } else {
             themeCombo.setSelectedItem(DEFAULT_THEME);
-            writeSetting(KEY_THEME, DEFAULT_THEME);
+            enqueueSave(
+                    KEY_THEME,
+                    () -> settingsRepo().put(KEY_THEME, DEFAULT_THEME),
+                    () -> {
+                    },
+                    () -> {
+                    },
+                    () -> {
+                    }
+            );
             setStatusError("Saved theme was invalid and has been reset to default");
         }
 
-        final Object[] lastValid = {themeCombo.getSelectedItem()};
+        AtomicBoolean updating = new AtomicBoolean();
+        AtomicReference<Object> lastApplied = new AtomicReference<>(themeCombo.getSelectedItem());
 
         themeCombo.addActionListener(e -> {
+            if (updating.get()) {
+                return;
+            }
             Object selected = themeCombo.getSelectedItem();
             if (!(selected instanceof String name)) {
                 return;
             }
 
             if (name.startsWith("---")) {
-                themeCombo.setSelectedItem(lastValid[0]);
+                updating.set(true);
+                themeCombo.setSelectedItem(lastApplied.get());
+                updating.set(false);
                 return;
             }
 
-            lastValid[0] = name;
             String className = allThemes.get(name);
-            if (className != null) {
-                applyTheme(name, className);
+            if (className == null || !applyTheme(name, className)) {
+                updating.set(true);
+                themeCombo.setSelectedItem(lastApplied.get());
+                updating.set(false);
+                return;
             }
+            lastApplied.set(name);
         });
 
         return themeCombo;
@@ -692,7 +1124,19 @@ public class AppearancePanel extends AbstractSettingsPanel {
         accentPanel.setOpaque(false);
 
         ButtonGroup accentGroup = new ButtonGroup();
-        String savedAccent = readString(KEY_ACCENT_COLOR, null);
+        String storedAccent = readString(KEY_ACCENT_COLOR, null);
+        String savedAccent = isSupportedAccent(storedAccent) ? storedAccent : null;
+        if (storedAccent != null && savedAccent == null) {
+            enqueueSave(
+                    KEY_ACCENT_COLOR,
+                    () -> settingsRepo().remove(KEY_ACCENT_COLOR),
+                    () -> {
+                    },
+                    () -> setStatusInfo("Invalid saved accent was reset to default"),
+                    () -> {
+                    }
+            );
+        }
 
         for (String[] option : ACCENT_COLORS) {
             String name = option[0];
@@ -719,6 +1163,12 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return accentPanel;
     }
 
+    private static boolean isSupportedAccent(String savedAccent) {
+        return savedAccent == null || Arrays.stream(ACCENT_COLORS)
+                .map(option -> option[1])
+                .anyMatch(savedAccent::equals);
+    }
+
     private JComboBox<String> createFontSelector(String[] options) {
         return new JComboBox<>(options);
     }
@@ -731,9 +1181,9 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private static String[] monospacedFontFamilies(String[] availableFonts) {
-        JLabel probe = new JLabel();
+        FontRenderContext context = new FontRenderContext(null, true, true);
         return Arrays.stream(availableFonts)
-                .filter(fontFamily -> isMonospacedFontFamily(probe, fontFamily))
+                .filter(fontFamily -> isMonospacedFontFamily(context, fontFamily))
                 .toArray(String[]::new);
     }
 
@@ -748,14 +1198,12 @@ public class AppearancePanel extends AbstractSettingsPanel {
         return fontFamily != null && fontFamily.toLowerCase(Locale.ROOT).contains("helvetica");
     }
 
-    private static boolean isMonospacedFontFamily(JLabel probe, String fontFamily) {
+    private static boolean isMonospacedFontFamily(FontRenderContext context, String fontFamily) {
         Font font = new Font(fontFamily, Font.PLAIN, FALLBACK_FONT_SIZE);
-        FontMetrics metrics = probe.getFontMetrics(font);
-
-        int i = metrics.charWidth('i');
-        int m = metrics.charWidth('m');
-        int w = metrics.charWidth('W');
-        int zero = metrics.charWidth('0');
+        double i = font.getStringBounds("i", context).getWidth();
+        double m = font.getStringBounds("m", context).getWidth();
+        double w = font.getStringBounds("W", context).getWidth();
+        double zero = font.getStringBounds("0", context).getWidth();
         return i > 0 && i == m && m == w && w == zero;
     }
 
@@ -796,44 +1244,66 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     void applyAccentSelection(Color color, String hex) {
-        accentColor = color;
-
-        if (hex != null) {
-            writeSetting(KEY_ACCENT_COLOR, hex);
-        } else {
-            removeSetting(KEY_ACCENT_COLOR);
-        }
-
-        try {
-            LookAndFeel current = UIManager.getLookAndFeel();
-            FlatLaf.setup(current.getClass().getDeclaredConstructor().newInstance());
-            applyConfiguredFontsFromSettings();
-            FlatLaf.updateUI();
-            setStatusInfo(STATUS_SAVED);
-        } catch (Exception e) {
-            setStatusError("Failed to apply accent color");
-        }
+        Runnable write = hex == null
+                ? () -> settingsRepo().remove(KEY_ACCENT_COLOR)
+                : () -> settingsRepo().put(KEY_ACCENT_COLOR, hex);
+        enqueueSave(
+                KEY_ACCENT_COLOR,
+                write,
+                () -> {
+                },
+                () -> {
+                    Color previousAccent = accentColor;
+                    try {
+                        accentColor = color;
+                        LookAndFeel current = UIManager.getLookAndFeel();
+                        FlatLaf.setup(current.getClass().getDeclaredConstructor().newInstance());
+                        applyConfiguredFonts();
+                        FlatLaf.updateUI();
+                        setStatusInfo(STATUS_SAVED);
+                    } catch (Exception e) {
+                        accentColor = previousAccent;
+                        setStatusError("Saved accent color, but failed to apply it");
+                    }
+                },
+                () -> {
+                }
+        );
     }
 
-    private void applyTheme(String name, String className) {
+    private boolean applyTheme(String name, String className) {
+        LookAndFeel previousLookAndFeel = UIManager.getLookAndFeel();
         try {
             UIManager.setLookAndFeel(className);
-            applyConfiguredFontsFromSettings();
+            applyConfiguredFonts();
             refreshAllWindows();
-            writeSetting(KEY_THEME, name);
-            setStatusInfo(STATUS_SAVED);
         } catch (Exception e) {
-            applyFallbackTheme();
+            restoreLookAndFeel(previousLookAndFeel);
+            setStatusError("Failed to apply theme");
+            return false;
         }
+        enqueueSave(
+                KEY_THEME,
+                () -> settingsRepo().put(KEY_THEME, name),
+                () -> {
+                },
+                () -> setStatusInfo(STATUS_SAVED),
+                () -> {
+                }
+        );
+        return true;
     }
 
-    private void applyFallbackTheme() {
+    private void restoreLookAndFeel(LookAndFeel lookAndFeel) {
+        if (lookAndFeel == null) {
+            return;
+        }
         try {
-            FlatMTMaterialLighterIJTheme.setup();
+            UIManager.setLookAndFeel(lookAndFeel);
+            applyConfiguredFonts();
             refreshAllWindows();
-            setStatusError("Failed to apply theme, reverted to Material Lighter");
-        } catch (Exception e) {
-            setStatusError("Failed to apply theme");
+        } catch (Exception ignored) {
+            // The original theme could not be restored; retain the primary apply failure.
         }
     }
 
@@ -847,15 +1317,9 @@ public class AppearancePanel extends AbstractSettingsPanel {
         }
     }
 
-    private void applyConfiguredFontsFromSettings() {
-        String savedAppFont = readString(KEY_APP_FONT, DEFAULT_APP_FONT);
-        int savedAppFontSize = parseAppFontSize(readString(
-                KEY_APP_FONT_SIZE,
-                String.valueOf(defaultAppFontSize())));
-        String savedCodeFont = readString(KEY_CODE_FONT, DEFAULT_CODE_FONT);
-
-        applyAppFont(savedAppFont, savedAppFontSize);
-        applyCodeFont(savedCodeFont);
+    private void applyConfiguredFonts() {
+        applyAppFont(durableAppFontFamily, durableAppFontSize);
+        applyCodeFont(durableCodeFontFamily);
     }
 
     /** Colored circle icon for accent color buttons */
@@ -910,6 +1374,21 @@ public class AppearancePanel extends AbstractSettingsPanel {
     }
 
     private record WebViewHealth(String iconPath, Color color, String title, String details) {
+    }
+
+    record FontCatalog(String[] appFonts, String[] codeFonts) {
+    }
+
+    private record AppearanceMutation(Runnable write, Runnable onDurableSuccess) {
+    }
+
+    private record AppearanceSaveRequest(
+            Runnable mutation,
+            Runnable onDurableSuccess,
+            Runnable onCurrentSuccess,
+            Runnable onCurrentFailure,
+            CompletableFuture<Void> completion
+    ) {
     }
 
     private static final class EngineRenderer extends DefaultListCellRenderer {

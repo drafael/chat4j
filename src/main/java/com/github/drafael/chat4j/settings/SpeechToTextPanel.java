@@ -69,7 +69,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private static final int LOCAL_MODELS_COLUMN_GAP = 12;
     private static final String VOSK_OPERATION_IN_PROGRESS_ERROR = "A Vosk model operation is still in progress.";
     private static final String WHISPER_OPERATION_IN_PROGRESS_ERROR = "A Whisper.cpp model operation is still in progress.";
-    private static final String SYNC_SAVE_EDT_ERROR = "Pending Speech to Text changes must be saved asynchronously on the event dispatch thread.";
     private static final String SAVE_PROVIDER = "provider";
     private static final String SAVE_MAX_DURATION = "max-duration";
     private static final String SAVE_MODEL_DIRECTORY = "model-directory";
@@ -134,7 +133,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private final List<CompletableFuture<Boolean>> pendingSaves = new CopyOnWriteArrayList<>();
     private volatile boolean removed;
     private boolean listenersSubscribed;
-    private boolean permanentlyDisposed;
+    private volatile boolean permanentlyDisposed;
     private volatile String lastSaveError = "";
 
     SpeechToTextPanel(
@@ -201,23 +200,26 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
 
     @Override
     public CompletableFuture<Boolean> savePendingChangesAsync() {
-        if (SYNC_SAVE_EDT_ERROR.equals(lastSaveError)) {
-            lastSaveError = "";
+        if (permanentlyDisposed) {
+            return CompletableFuture.completedFuture(true);
         }
         return CompletableFuture.supplyAsync(() -> saveNonTokenPendingChanges(false))
                 .thenCompose(saved -> {
-                    if (!saved) {
-                        return CompletableFuture.completedFuture(false);
+                    if (!saved || permanentlyDisposed) {
+                        return CompletableFuture.completedFuture(saved);
                     }
                     return onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
                             .thenCompose(future -> future);
                 })
-                .thenCompose(saved -> saved
+                .thenCompose(saved -> saved && !permanentlyDisposed
                         ? CompletableFuture.supplyAsync(() -> saveNonTokenPendingChanges(true))
-                        : CompletableFuture.completedFuture(false));
+                        : CompletableFuture.completedFuture(saved));
     }
 
     private CompletableFuture<Boolean> savePendingTokenChangesOnEventDispatchThread() {
+        if (permanentlyDisposed) {
+            return CompletableFuture.completedFuture(true);
+        }
         ApiTokenFieldPanel field = tokenField;
         if (field == null || !field.dirty()) {
             lastSaveError = currentSaveError();
@@ -232,19 +234,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
             lastSaveError = tokenSaved ? currentSaveError() : field.lastSaveError();
             return tokenSaved;
         });
-    }
-
-    @Override
-    public boolean savePendingChanges() {
-        if (SwingUtilities.isEventDispatchThread()) {
-            lastSaveError = SYNC_SAVE_EDT_ERROR;
-            return false;
-        }
-        return saveNonTokenPendingChanges(false)
-                && onEventDispatchThread(this::savePendingTokenChangesOnEventDispatchThread)
-                .thenCompose(future -> future)
-                .join()
-                && saveNonTokenPendingChanges(true);
     }
 
     private boolean saveNonTokenPendingChanges(boolean finalDrain) {

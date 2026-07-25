@@ -2,16 +2,13 @@ package com.github.drafael.chat4j.settings;
 
 import java.util.concurrent.CompletableFuture;
 
-public interface AsyncPendingSettingsSaveParticipant extends PendingSettingsSaveParticipant {
+public interface AsyncPendingSettingsSaveParticipant {
 
     CompletableFuture<Boolean> savePendingChangesAsync();
 
-    @Override
-    default boolean savePendingChanges() {
-        try {
-            return savePendingChangesAsync().get();
-        } catch (Exception e) {
-            return false;
-        }
+    String lastSaveError();
+
+    default String settingsSectionName() {
+        return "Settings";
     }
 }

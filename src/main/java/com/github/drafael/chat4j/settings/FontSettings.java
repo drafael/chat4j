@@ -30,8 +30,10 @@ public final class FontSettings {
     }
 
     public void persistAppFontSelection(String family, int size) {
-        settingsRepo.put(APP_FONT_FAMILY_KEY, family);
-        settingsRepo.put(APP_FONT_SIZE_KEY, String.valueOf(size));
+        settingsRepo.updateBatch(update -> {
+            update.put(APP_FONT_FAMILY_KEY, family);
+            update.put(APP_FONT_SIZE_KEY, String.valueOf(size));
+        });
     }
 
     public void persistCodeFontFamily(String family) {
