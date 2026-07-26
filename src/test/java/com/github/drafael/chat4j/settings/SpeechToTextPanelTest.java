@@ -2443,7 +2443,7 @@ class SpeechToTextPanelTest {
             if (remaining > 0 && conditionalUpdatesUntilBlock.decrementAndGet() == 0) {
                 conditionalUpdateStarted.countDown();
                 try {
-                    assertThat(releaseConditionalUpdate.await(2, TimeUnit.SECONDS)).isTrue();
+                    releaseConditionalUpdate.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException(e);

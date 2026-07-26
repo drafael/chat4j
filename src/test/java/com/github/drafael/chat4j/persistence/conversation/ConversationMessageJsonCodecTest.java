@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.api.content.TextPart;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -25,9 +26,10 @@ class ConversationMessageJsonCodecTest {
     @DisplayName("Generated image parts round-trip through content JSON")
     void deserializeMessage_whenGeneratedImagePartSerialized_returnsGeneratedImagePart() {
         UUID attachmentId = UUID.randomUUID();
+        String storagePath = Path.of("generated.png").toAbsolutePath().normalize().toString();
         var attachment = new AttachmentRef(
                 attachmentId,
-                "/tmp/generated.png",
+                storagePath,
                 "generated.png",
                 "image/png",
                 123L,
