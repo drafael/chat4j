@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
@@ -93,8 +92,7 @@ class MainFrameDependenciesFactoryTest {
                 new FontMenuSelectionApplyCoordinator(),
                 new ThemeMenuSelectionSynchronizer(),
                 new ThemeMenuSelectionApplyCoordinator(),
-                new MenuPopupVisibleRunner(),
-                new PersistedMessageCounter()
+                new MenuPopupVisibleRunner()
         ))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("settingsRepo");
@@ -129,8 +127,7 @@ class MainFrameDependenciesFactoryTest {
                 new FontMenuSelectionApplyCoordinator(),
                 new ThemeMenuSelectionSynchronizer(),
                 new ThemeMenuSelectionApplyCoordinator(),
-                new MenuPopupVisibleRunner(),
-                new PersistedMessageCounter()
+                new MenuPopupVisibleRunner()
         );
     }
 }

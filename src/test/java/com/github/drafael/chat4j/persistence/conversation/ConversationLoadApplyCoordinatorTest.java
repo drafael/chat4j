@@ -1,9 +1,9 @@
 package com.github.drafael.chat4j.persistence.conversation;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,23 +19,24 @@ class ConversationLoadApplyCoordinatorTest {
     @DisplayName("Apply loads history and selection without applying render mode")
     void apply_whenPlanIsActive_appliesConversationData() {
         UUID conversationId = UUID.randomUUID();
-        List<Message> messages = List.of(Message.user("hello"));
-        var loadedMessages = new AtomicReference<List<Message>>();
-        var markedCount = new AtomicInteger();
+        List<ConversationRepository.MessageRecord> records = List.of(new ConversationRepository.MessageRecord(
+                UUID.randomUUID(),
+                1,
+                Message.user("hello")
+        ));
+        var loadedRecords = new AtomicReference<List<ConversationRepository.MessageRecord>>();
         var selectedModel = new AtomicReference<String>();
         var selectedConversation = new AtomicReference<UUID>();
 
         boolean applied = subject.apply(
-                ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(conversationId, messages, 1, "OpenAI:gpt-4o"),
-                loadedMessages::set,
-                (id, count) -> markedCount.set(count),
+                ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(conversationId, records, "OpenAI:gpt-4o"),
+                loadedRecords::set,
                 selectedModel::set,
                 selectedConversation::set
         );
 
         assertThat(applied).isTrue();
-        assertThat(loadedMessages.get()).isEqualTo(messages);
-        assertThat(markedCount).hasValue(1);
+        assertThat(loadedRecords.get()).isEqualTo(records);
         assertThat(selectedModel.get()).isEqualTo("OpenAI:gpt-4o");
         assertThat(selectedConversation.get()).isEqualTo(conversationId);
     }
@@ -46,7 +47,6 @@ class ConversationLoadApplyCoordinatorTest {
         boolean applied = subject.apply(
                 ConversationLoadResultPlanner.LoadedConversationPlan.ignorePlan(),
                 messages -> {},
-                (conversationId, count) -> {},
                 selectedModel -> {},
                 selectedConversation -> {}
         );
@@ -57,7 +57,7 @@ class ConversationLoadApplyCoordinatorTest {
     @Test
     @DisplayName("Apply validates required arguments")
     void apply_whenPlanMissing_throwsException() {
-        assertThatThrownBy(() -> subject.apply(null, messages -> {}, (id, count) -> {}, model -> {}, id -> {}))
+        assertThatThrownBy(() -> subject.apply(null, messages -> {}, model -> {}, id -> {}))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("plan");
     }

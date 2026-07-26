@@ -34,6 +34,9 @@ import com.github.drafael.chat4j.chat.ui.JumpToLatestButton;
 import com.github.drafael.chat4j.chat.ui.ScrollablePanel;
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.Message;
@@ -91,6 +94,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -99,9 +104,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -109,6 +118,7 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
@@ -200,11 +210,12 @@ public class ChatPanel extends JPanel {
     private Runnable selectedModelChangedListener;
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
-    private Runnable messageSubmittedListener;
     private Runnable clearChatRequestedListener;
-    private UserMessagePersistenceListener userMessageSubmittedListener;
-    private AssistantMessagePersistenceListener assistantMessageCompletedListener;
-    private Consumer<HistoryTruncatedEvent> historyTruncatedListener;
+    private DurableUserMessagePersistenceListener durableUserMessageSubmittedListener;
+    private BiConsumer<UUID, UUID> durableUserMessageFailureDeliveredListener;
+    private DurableAssistantMessagePersistenceListener durableAssistantMessageCompletedListener;
+    private DurableHistoryMutationListener durableHistoryMutationListener;
+    private Consumer<HistoryMutationEvent> durableHistoryMutationFailureDeliveredListener;
     private Consumer<ConversationStreamingEvent> conversationStreamingListener;
     private Consumer<Boolean> visibleStreamingChangedListener;
     private Supplier<UUID> conversationIdSupplier;
@@ -213,28 +224,43 @@ public class ChatPanel extends JPanel {
     private ComposerState speechToTextComposerSnapshot = ComposerState.empty();
 
     private final List<Message> history = new ArrayList<>();
+    private final Map<Integer, ConversationHistoryEntry> userHistoryEntries = new LinkedHashMap<>();
+    private int nextMessageOrdinal = 1;
     private long historyRevision;
     private Map<String, ProviderRegistry.ProviderDef> providerMap = emptyMap();
     private String selectedProviderName;
     private String selectedModelId;
     private boolean conversationLoading;
+    private boolean conversationMutationPending;
     private boolean batchMessageRefresh;
     private volatile boolean removed;
+    private volatile boolean shutdownInProgress;
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
     private ChatMessageView currentAssistantBubble;
     private final AtomicLong sendJobCounter = new AtomicLong();
     private final AtomicLong streamSessionCounter = new AtomicLong();
+    private final Object terminalPersistenceLock = new Object();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
     private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final AtomicReference<Thread> capabilityRefreshThread = new AtomicReference<>();
     private final AtomicLong readAloudUiGeneration = new AtomicLong();
     private final AtomicLong speechToTextUiGeneration = new AtomicLong();
+    private final AtomicLong openActionUiGeneration = new AtomicLong();
     private long providerScopeVersion;
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
-    private final Map<UUID, Message> pendingCompletedAssistantRecoveries = new ConcurrentHashMap<>();
+    private final Set<Thread> shutdownPreparationWorkers = ConcurrentHashMap.newKeySet();
+    private final Set<CompletableFuture<Void>> attachmentDiscardTasks = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, List<PendingAssistantRecovery>> pendingCompletedAssistantRecoveries =
+            new ConcurrentHashMap<>();
+    private final Map<UUID, FailedUserSend> failedUserSends = new HashMap<>();
+    private FailedUserSend visibleFailedRecovery;
+    private final Set<UUID> blockedConversationIds = new HashSet<>();
+    private final Set<UUID> discardedConversationIds = new HashSet<>();
+    private PendingIndeterminateHistoryMutation pendingIndeterminateHistoryMutation;
+    private PendingHistoryFailureDelivery pendingHistoryFailureDelivery;
     private volatile long activeStreamSessionId = -1L;
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
@@ -244,10 +270,67 @@ public class ChatPanel extends JPanel {
     private boolean autoScrollQueued = false;
     private int messageRow = 0;
 
-    private record EditingUserMessage(int messageIndex, ComposerState savedComposerState) {
+    private static final class FailedUserSend {
+        private final SendJob sendJob;
+        private boolean recoveryAcknowledged;
+
+        private FailedUserSend(SendJob sendJob) {
+            this.sendJob = sendJob;
+        }
+
+        private SendJob sendJob() {
+            return sendJob;
+        }
+    }
+
+    private static final class PendingAssistantRecovery {
+        private final ConversationHistoryEntry entry;
+        private final boolean persistenceFailed;
+
+        private PendingAssistantRecovery(ConversationHistoryEntry entry, boolean persistenceFailed) {
+            this.entry = entry;
+            this.persistenceFailed = persistenceFailed;
+        }
+
+        private ConversationHistoryEntry entry() {
+            return entry;
+        }
+
+        private boolean persistenceFailed() {
+            return persistenceFailed;
+        }
+    }
+
+    private record PendingIndeterminateHistoryMutation(
+            HistoryMutationEvent event,
+            Runnable onCommitted,
+            Runnable onConfirmedFailure
+    ) {
+    }
+
+    private record PendingHistoryFailureDelivery(HistoryMutationEvent event, String message) {
+    }
+
+    private record PreparedAssistantResponse(
+            ConversationHistoryEntry entry,
+            String webSearchActivity
+    ) {
+    }
+
+    private record EditingUserMessage(
+            int messageIndex,
+            UUID conversationId,
+            ConversationHistoryEntry historyEntry,
+            ComposerState savedComposerState
+    ) {
         @Override
         public String toString() {
-            return "EditingUserMessage[messageIndex=%d]".formatted(messageIndex);
+            return "EditingUserMessage[messageIndex=%d, conversationId=%s, messageId=%s, ordinal=%d]".formatted(
+                    messageIndex,
+                    conversationId,
+                    historyEntry.messageId(),
+                    historyEntry.ordinal()
+            );
         }
     }
 
@@ -515,6 +598,14 @@ public class ChatPanel extends JPanel {
     public void addNotify() {
         removed = false;
         super.addNotify();
+        restoreVisibleFailedDraftIfComposerEmpty();
+        boolean historyFailureDelivered = deliverPendingHistoryFailure();
+        FailedUserSend failed = failedUserSendForCurrentView();
+        if (failed != null) {
+            inputBar.showValidationMessage("The message was not saved. Send again to retry.");
+        } else if (!historyFailureDelivered && hasFailedAssistantRecovery(activeConversationId)) {
+            inputBar.showValidationMessage("The assistant response could not be saved and will be retried.");
+        }
         SwingUtilities.invokeLater(this::preloadModelPopup);
     }
 
@@ -523,11 +614,10 @@ public class ChatPanel extends JPanel {
         removed = true;
         providerRefreshCounter.incrementAndGet();
         providerSelectionCounter.incrementAndGet();
+        speechToTextUiGeneration.incrementAndGet();
+        openActionUiGeneration.incrementAndGet();
         cancelCapabilityRefresh();
         modelCacheService.cancelScopeVersion(providerScopeVersion);
-        cancelAllRequests();
-        cancelSpeechToText();
-        stopReadAloudPlayback();
         if (modelPopup != null) {
             modelPopup.dispose();
             modelPopup = null;
@@ -805,6 +895,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void onSend() {
+        if (shutdownInProgress) {
+            return;
+        }
         if (editingUserMessage != null) {
             saveEditedUserMessageAndRegenerate();
             return;
@@ -827,6 +920,19 @@ public class ChatPanel extends JPanel {
         ComposerState composerState = inputBar.getComposerState();
         if (composerState.isEmpty()) {
             return;
+        }
+        FailedUserSend failedUserSend = failedUserSendForCurrentView();
+        if (failedUserSend != null && retryFailedUserSend(failedUserSend, composerState)) {
+            return;
+        }
+        if (failedUserSend != null) {
+            if (visibleFailedRecovery != failedUserSend) {
+                inputBar.showValidationMessage(
+                        "This conversation has an unsaved message. Clear the current draft and reopen the conversation to recover it."
+                );
+                return;
+            }
+            discardFailedUserSend(failedUserSend);
         }
 
         ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
@@ -860,8 +966,15 @@ public class ChatPanel extends JPanel {
                 inputBar.getWebBrowseTopN(),
                 agentModeEnabled,
                 agentProjectRoot,
-                agentSystemPromptAppend
+                agentSystemPromptAppend,
+                true
         );
+        sendJob.userMessageOrdinal = nextMessageOrdinal;
+        sendJob.assistantMessageOrdinal = sendJob.userMessageOrdinal + 1;
+        sendJob.composerState = composerState;
+        if (sendJob.createsConversation) {
+            activeConversationId = sendJob.conversationId;
+        }
         activeSendJobs.put(sendJobId, sendJob);
         beginPreparing(sendJob);
 
@@ -869,7 +982,22 @@ public class ChatPanel extends JPanel {
             try {
                 admitProvider(sendJob);
                 ProviderSelectionSnapshot admittedSnapshot = providerSelectionSnapshot(sendJob);
-                Message userMessage = sendPreparer.prepare(composerState, admittedSnapshot, sendJob.cancelled::get);
+                Message preparedMessage = sendPreparer.prepare(
+                        composerState,
+                        admittedSnapshot,
+                        sendJob.cancelled::get
+                );
+                Message userMessage = new Message(
+                        preparedMessage.role(),
+                        preparedMessage.parts(),
+                        sendJob.userMessageTimestamp,
+                        preparedMessage.meta()
+                );
+                if (!sendJob.isLive()) {
+                    discardStagedAttachments(userMessage);
+                    return;
+                }
+                sendJob.preparedUserMessage = userMessage;
                 SwingUtilities.invokeLater(() -> {
                     try {
                         commitPreparedSend(sendJob, userMessage);
@@ -883,6 +1011,46 @@ public class ChatPanel extends JPanel {
         });
     }
 
+    private FailedUserSend failedUserSendForCurrentView() {
+        if (activeConversationId != null) {
+            return failedUserSends.get(activeConversationId);
+        }
+        return failedUserSends.values().stream()
+                .filter(failed -> failed.sendJob().createsConversation)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean retryFailedUserSend(FailedUserSend failed, ComposerState composerState) {
+        if (!Objects.equals(failed.sendJob().composerState, composerState)) {
+            return false;
+        }
+
+        SendJob original = failed.sendJob();
+        boolean originCurrent = original.createsConversation
+                ? activeConversationId == null || Objects.equals(activeConversationId, original.conversationId)
+                : Objects.equals(activeConversationId, original.conversationId);
+        if (!originCurrent || original.preparedUserMessage == null) {
+            return false;
+        }
+        var retry = new SendJob(sendJobCounter.incrementAndGet(), original);
+        retry.providerContinuationCancelled = false;
+        if (retry.createsConversation) {
+            activeConversationId = retry.conversationId;
+        }
+        activeSendJobs.put(retry.jobId, retry);
+        beginPreparing(retry);
+        retry.worker = Thread.startVirtualThread(() -> {
+            try {
+                admitProvider(retry);
+                SwingUtilities.invokeLater(() -> commitPreparedSend(retry, original.preparedUserMessage));
+            } catch (Exception | LinkageError e) {
+                SwingUtilities.invokeLater(() -> handlePreparationFailure(retry, e));
+            }
+        });
+        return true;
+    }
+
     private void beginPreparing(SendJob sendJob) {
         sendJob.phase = SendPhase.PREPARING;
         if (isVisibleConversation(sendJob.conversationId)) {
@@ -892,59 +1060,153 @@ public class ChatPanel extends JPanel {
     }
 
     private void commitPreparedSend(SendJob sendJob, Message userMessage) {
+        sendJob.preparedUserMessage = userMessage;
         if (!isPreparing(sendJob)) {
+            discardStagedAttachments(userMessage);
             finishSendJob(sendJob);
             return;
         }
 
         boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
-        clearPendingAssistantRecovery(sendJob.conversationId);
+        if (durableUserMessageSubmittedListener == null) {
+            handleDurableUserMessageFailure(
+                    sendJob,
+                    new IllegalStateException("Durable user persistence is not configured")
+            );
+            return;
+        }
+
+        UserMessageEvent event = userMessageEvent(sendJob, userMessage, visibleConversation);
+        sendJob.durableUserMessageSubmissionStarted = true;
+        CompletionStage<UUID> persistence;
+        try {
+            persistence = durableUserMessageSubmittedListener.persist(event);
+        } catch (Exception e) {
+            handleDurableUserMessageFailure(sendJob, e);
+            return;
+        }
+        if (persistence == null) {
+            handleDurableUserMessageFailure(sendJob, new IllegalStateException("User persistence returned no completion stage"));
+            return;
+        }
+        persistence.whenComplete((conversationId, error) -> SwingUtilities.invokeLater(() -> {
+            if (shutdownInProgress) {
+                abandonSendJob(sendJob);
+                return;
+            }
+            if (error != null) {
+                handleDurableUserMessageFailure(sendJob, unwrapCompletion(error));
+                return;
+            }
+            if (!isPreparing(sendJob)) {
+                finishSendJob(sendJob);
+                return;
+            }
+            completePreparedSend(sendJob, userMessage, conversationId, isVisibleConversation(sendJob.conversationId));
+        }));
+    }
+
+    private void completePreparedSend(
+            SendJob sendJob,
+            Message userMessage,
+            UUID persistedConversationId,
+            boolean visibleConversation
+    ) {
+        failedUserSends.remove(sendJob.conversationId);
+        sendJob.conversationId = persistedConversationId == null ? sendJob.conversationId : persistedConversationId;
         if (visibleConversation) {
             inputBar.clear();
             history.add(userMessage);
-            addUserBubble(userMessage, history.size() - 1);
+            int userMessageIndex = history.size() - 1;
+            userHistoryEntries.put(
+                    userMessageIndex,
+                    new ConversationHistoryEntry(sendJob.userMessageId, sendJob.userMessageOrdinal, userMessage)
+            );
+            nextMessageOrdinal = sendJob.userMessageOrdinal + 1;
+            addUserBubble(userMessage, userMessageIndex);
             updateClearChatButtonVisibility();
         }
 
-        UUID persistedConversationId = persistUserMessage(sendJob, userMessage, visibleConversation);
-        if (persistedConversationId == null && visibleConversation) {
-            UUID resolvedConversationId = resolveConversationId();
-            if (resolvedConversationId != null) {
-                persistedConversationId = resolvedConversationId;
-            }
+        if (sendJob.providerContinuationCancelled) {
+            finishSendJob(sendJob);
+            return;
         }
-        sendJob.conversationId = persistedConversationId;
 
         List<Message> streamHistory = new ArrayList<>(sendJob.historySnapshot);
         streamHistory.add(userMessage);
-
         if (visibleConversation) {
             if (sendJob.webSearchEnabled) {
                 currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
                 currentAssistantActivityBubble.setStreaming(true);
                 currentAssistantActivityBubble.setVisible(false);
                 addActivityBubble(currentAssistantActivityBubble, null);
-
                 currentAssistantWebSearchBubble = new ActivityBubble("Web Search", WEB_SEARCH_COLLAPSED_BY_DEFAULT);
                 currentAssistantWebSearchBubble.setVisible(false);
                 addActivityBubble(currentAssistantWebSearchBubble, null);
             }
-
             if (!sendJob.agentModeEnabled) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addAssistantBubble(currentAssistantBubble, null);
             }
         }
-
         startAssistantStream(sendJob, streamHistory);
     }
 
-    private void finishSuccessfulStream(StreamingSession session, SendJob sendJob) {
+    private void handleDurableUserMessageFailure(SendJob sendJob, Throwable error) {
+        boolean indeterminate = error instanceof ConversationPersistenceIndeterminateException;
+        String safeMessage = ProviderExceptionMapper.sanitizeMessage(error, sendJob.apiKey);
+        boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
+        var failed = new FailedUserSend(sendJob);
+        failedUserSends.put(sendJob.conversationId, failed);
+        finishSendJob(sendJob);
+        if (!indeterminate) {
+            releaseFailedProvisionalConversation(sendJob);
+        }
+        if (visibleConversation && !removed && !shutdownInProgress) {
+            inputBar.showValidationMessage(indeterminate
+                    ? "Checking whether the message was saved."
+                    : StringUtils.defaultIfBlank(safeMessage, "Failed to save message"));
+            inputBar.requestInputFocus();
+            if (!indeterminate) {
+                visibleFailedRecovery = failed;
+                acknowledgeFailedUserSend(failed);
+            }
+        }
+    }
+
+    private UserMessageEvent userMessageEvent(SendJob sendJob, Message userMessage, boolean visibleConversation) {
+        return new UserMessageEvent(
+                sendJob.conversationId,
+                sendJob.userMessageId,
+                sendJob.userMessageOrdinal,
+                sendJob.createsConversation,
+                userMessage,
+                sendJob.providerName,
+                sendJob.modelId,
+                sendJob.reasoningLevel,
+                sendJob.agentModeEnabled,
+                sendJob.agentProjectRoot,
+                sendJob.webSearchEnabled,
+                sendJob.webSearchOptionId,
+                visibleConversation
+        );
+    }
+
+    private Throwable unwrapCompletion(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+    }
+
+    private void finishSuccessfulStream(
+            StreamingSession session,
+            SendJob sendJob,
+            PreparedAssistantResponse preparedResponse
+    ) {
         if (!session.isLive()) {
             return;
         }
         try {
-            boolean persisted = persistAssistantResponse(session, sendJob);
+            boolean persisted = preparedResponse != null || session.persisted.get();
+            applyPreparedAssistantResponse(session, preparedResponse);
             if (isVisibleConversation(session.conversationId)) {
                 if (!persisted && currentAssistantBubble != null) {
                     removeMessageComponentFromPanel(currentAssistantBubble.component());
@@ -976,13 +1238,17 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        boolean visibleConversation = isVisibleConversation(sendJob.conversationId);
         Long streamSessionId = sendJob.streamSessionId;
         if (streamSessionId != null) {
             discardStreamingSession(activeSessions.get(streamSessionId));
         }
         finishSendJob(sendJob);
+        if (!sendJob.persistenceAlreadyCanonical) {
+            releaseFailedProvisionalConversation(sendJob);
+        }
 
-        if (!isVisibleConversation(sendJob.conversationId)) {
+        if (!visibleConversation) {
             return;
         }
 
@@ -995,41 +1261,11 @@ public class ChatPanel extends JPanel {
         inputBar.requestInputFocus();
     }
 
-    private UUID persistUserMessage(SendJob sendJob, Message userMessage, boolean visibleConversation) {
-        UUID conversationId = sendJob.conversationId;
-        if (userMessageSubmittedListener != null) {
-            try {
-                UUID persistedConversationId = userMessageSubmittedListener.persist(new UserMessageEvent(
-                        conversationId,
-                        userMessage,
-                        sendJob.providerName,
-                        sendJob.modelId,
-                        sendJob.reasoningLevel,
-                        sendJob.agentModeEnabled,
-                        sendJob.agentProjectRoot,
-                        sendJob.webSearchEnabled,
-                        sendJob.webSearchOptionId,
-                        visibleConversation
-                ));
-                if (persistedConversationId != null) {
-                    return persistedConversationId;
-                }
-            } catch (Exception e) {
-                log.warn("User message persistence listener failed: {}", ExceptionUtils.getMessage(e));
-            }
-        }
-
-        persistAssistantMessageEvent(conversationId, userMessage);
-
-        if (visibleConversation || conversationId == null) {
-            notifyMessageSubmitted();
-        }
-        return conversationId;
-    }
-
     private void startAssistantStream(
             UUID conversationId,
             long expectedHistoryRevision,
+            int assistantMessageOrdinal,
+            HistoryMutationEvent mutationEvent,
             Runnable commitRegeneration
     ) {
         ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
@@ -1055,13 +1291,15 @@ public class ChatPanel extends JPanel {
                 inputBar.getAgentProjectRoot(),
                 agentSystemPromptAppend
         );
+        sendJob.assistantMessageOrdinal = assistantMessageOrdinal;
         activeSendJobs.put(sendJob.jobId, sendJob);
         beginPreparing(sendJob);
         sendJob.worker = Thread.startVirtualThread(() -> {
             try {
                 admitProvider(sendJob);
                 SwingUtilities.invokeLater(() -> {
-                    if (!isPreparing(sendJob)
+                    if (shutdownInProgress
+                            || !isPreparing(sendJob)
                             || !isVisibleConversation(sendJob.conversationId)
                             || historyRevision != expectedHistoryRevision
                     ) {
@@ -1069,17 +1307,123 @@ public class ChatPanel extends JPanel {
                         finishSendJob(sendJob);
                         return;
                     }
-                    try {
-                        commitRegeneration.run();
-                        startAssistantStream(sendJob, new ArrayList<>(history));
-                    } catch (Exception | LinkageError e) {
-                        handlePreparationFailure(sendJob, e);
-                    }
+                    persistRegenerationMutation(sendJob, expectedHistoryRevision, mutationEvent, commitRegeneration);
                 });
             } catch (Exception | LinkageError e) {
                 SwingUtilities.invokeLater(() -> handlePreparationFailure(sendJob, e));
             }
         });
+    }
+
+    private void persistRegenerationMutation(
+            SendJob sendJob,
+            long expectedHistoryRevision,
+            HistoryMutationEvent mutationEvent,
+            Runnable commitRegeneration
+    ) {
+        conversationMutationPending = true;
+        refreshComposerAvailability();
+        CompletionStage<Void> persistence;
+        if (durableHistoryMutationListener == null || mutationEvent.conversationId() == null) {
+            conversationMutationPending = false;
+            refreshComposerAvailability();
+            finishRegenerationMutationFailure(
+                    sendJob,
+                    mutationEvent,
+                    new IllegalStateException("Durable history persistence is not configured")
+            );
+            return;
+        }
+        sendJob.durableHistoryMutationSubmissionStarted = true;
+        try {
+            persistence = durableHistoryMutationListener.persist(mutationEvent);
+        } catch (Exception e) {
+            conversationMutationPending = false;
+            refreshComposerAvailability();
+            finishRegenerationMutationFailure(sendJob, mutationEvent, e);
+            return;
+        }
+        if (persistence == null) {
+            conversationMutationPending = false;
+            refreshComposerAvailability();
+            finishRegenerationMutationFailure(
+                    sendJob,
+                    mutationEvent,
+                    new IllegalStateException("History persistence returned no completion stage")
+            );
+            return;
+        }
+        persistence.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+            conversationMutationPending = false;
+            if (shutdownInProgress) {
+                abandonSendJob(sendJob);
+                return;
+            }
+            refreshComposerAvailability();
+            if (error != null) {
+                Throwable failure = unwrapCompletion(error);
+                if (failure instanceof ConversationPersistenceIndeterminateException) {
+                    deferIndeterminateHistoryMutation(
+                            mutationEvent,
+                            () -> continueRegenerationAfterHistoryCommit(
+                                    sendJob,
+                                    expectedHistoryRevision,
+                                    commitRegeneration
+                            ),
+                            () -> finishRegenerationMutationFailure(sendJob, mutationEvent, failure)
+                    );
+                    return;
+                }
+                finishRegenerationMutationFailure(sendJob, mutationEvent, failure);
+                return;
+            }
+            continueRegenerationAfterHistoryCommit(sendJob, expectedHistoryRevision, commitRegeneration);
+        }));
+    }
+
+    private void finishRegenerationMutationFailure(
+            SendJob sendJob,
+            HistoryMutationEvent mutationEvent,
+            Throwable failure
+    ) {
+        handlePreparationFailure(sendJob, failure);
+        if (removed) {
+            pendingHistoryFailureDelivery = new PendingHistoryFailureDelivery(
+                    mutationEvent,
+                    StringUtils.defaultIfBlank(
+                            ExceptionUtils.getMessage(failure),
+                            "Failed to save conversation change"
+                    )
+            );
+            return;
+        }
+        markHistoryMutationFailureDelivered(mutationEvent);
+    }
+
+    private void continueRegenerationAfterHistoryCommit(
+            SendJob sendJob,
+            long expectedHistoryRevision,
+            Runnable commitRegeneration
+    ) {
+        if (!isPreparing(sendJob)
+                || !isVisibleConversation(sendJob.conversationId)
+                || historyRevision != expectedHistoryRevision
+        ) {
+            sendJob.cancelled.set(true);
+            finishSendJob(sendJob);
+            return;
+        }
+        try {
+            nextMessageOrdinal = sendJob.assistantMessageOrdinal;
+            commitRegeneration.run();
+            if (sendJob.providerContinuationCancelled) {
+                finishSendJob(sendJob);
+                return;
+            }
+            startAssistantStream(sendJob, new ArrayList<>(history));
+        } catch (Exception | LinkageError e) {
+            handlePreparationFailure(sendJob, e);
+        }
     }
 
     private void startAssistantStream(SendJob sendJob, List<Message> requestHistory) {
@@ -1094,25 +1438,34 @@ public class ChatPanel extends JPanel {
                 citation -> handleAssistantCitation(session, citation),
                 activity -> handleAgentToolActivity(session, activity),
                 () -> {
-                    if (!session.beginTerminalCallback()) {
-                        return;
+                    PreparedAssistantResponse preparedResponse;
+                    synchronized (terminalPersistenceLock) {
+                        if (shutdownInProgress || !session.beginTerminalCallback()) {
+                            return;
+                        }
+                        flushThinkTagParser(session, sendJob);
+                        preparedResponse = prepareAssistantResponse(session, sendJob);
                     }
-                    flushThinkTagParser(session, sendJob);
-                    SwingUtilities.invokeLater(() -> finishSuccessfulStream(session, sendJob));
+                    SwingUtilities.invokeLater(() -> finishSuccessfulStream(session, sendJob, preparedResponse));
                 },
                 error -> {
-                    if (!session.beginTerminalCallback()) {
-                        return;
+                    String errorText;
+                    PreparedAssistantResponse preparedResponse;
+                    synchronized (terminalPersistenceLock) {
+                        if (shutdownInProgress || !session.beginTerminalCallback()) {
+                            return;
+                        }
+                        Exception safeError = ProviderExceptionMapper.map(error, sendJob.apiKey);
+                        String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(safeError), "Unknown error");
+                        log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
+                                sendJob.providerName,
+                                sendJob.modelId,
+                                session.conversationId,
+                                details);
+                        errorText = "\n\n[Error: %s]".formatted(details);
+                        appendAssistantResponse(session, errorText);
+                        preparedResponse = prepareAssistantResponse(session, sendJob);
                     }
-                    Exception safeError = ProviderExceptionMapper.map(error, sendJob.apiKey);
-                    String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(safeError), "Unknown error");
-                    log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
-                            sendJob.providerName,
-                            sendJob.modelId,
-                            session.conversationId,
-                            details);
-                    String errorText = "\n\n[Error: %s]".formatted(details);
-                    appendAssistantResponse(session, errorText);
                     SwingUtilities.invokeLater(() -> {
                         if (!session.isLive()) {
                             return;
@@ -1121,7 +1474,7 @@ public class ChatPanel extends JPanel {
                             if (currentAssistantBubble != null && isVisibleConversation(session.conversationId)) {
                                 currentAssistantBubble.appendText(errorText);
                             }
-                            persistAssistantResponse(session, sendJob);
+                            applyPreparedAssistantResponse(session, preparedResponse);
                             if (isVisibleConversation(session.conversationId)) {
                                 if (currentAssistantActivityBubble != null) {
                                     currentAssistantActivityBubble.setStreaming(false);
@@ -1615,6 +1968,7 @@ public class ChatPanel extends JPanel {
         ensureNotCancelled(isCancelled);
 
         List<ContentPart> parts = new ArrayList<>();
+        List<AttachmentRef> stagedAttachments = new ArrayList<>();
 
         if (!composerState.activeSkills().isEmpty()) {
             String skillDirective = "Activated skills: %s".formatted(String.join(", ", composerState.activeSkills()));
@@ -1626,19 +1980,26 @@ public class ChatPanel extends JPanel {
             parts.add(new TextPart(text));
         }
 
-        for (ComposerAttachment attachment : composerState.attachments()) {
-            ensureNotCancelled(isCancelled);
-            parts.add(toAttachmentPart(attachment, isCancelled));
-        }
+        try {
+            for (ComposerAttachment attachment : composerState.attachments()) {
+                ensureNotCancelled(isCancelled);
+                ContentPart part = toAttachmentPart(attachment, isCancelled);
+                parts.add(part);
+                stagedAttachments.add(attachmentRef(part));
+            }
 
-        ensureNotCancelled(isCancelled);
-        List<String> fallbackNotices = buildFallbackNotices(
-                composerState.attachments(),
-                providerSnapshot,
-                isCancelled
-        );
-        MessageMeta meta = new MessageMeta(composerState.activeSkills(), fallbackNotices, false, "");
-        return new Message(Role.USER, parts, Instant.now(), meta);
+            ensureNotCancelled(isCancelled);
+            List<String> fallbackNotices = buildFallbackNotices(
+                    composerState.attachments(),
+                    providerSnapshot,
+                    isCancelled
+            );
+            MessageMeta meta = new MessageMeta(composerState.activeSkills(), fallbackNotices, false, "");
+            return new Message(Role.USER, parts, Instant.now(), meta);
+        } catch (IOException | RuntimeException | Error e) {
+            stagedAttachments.forEach(attachmentStager::discard);
+            throw e;
+        }
     }
 
     private ContentPart toAttachmentPart(ComposerAttachment attachment, BooleanSupplier isCancelled) throws IOException {
@@ -1647,6 +2008,50 @@ public class ChatPanel extends JPanel {
         return attachment.image()
                 ? new ImagePart(attachmentRef, null, null)
                 : new FilePart(attachmentRef);
+    }
+
+    private void discardStagedAttachments(Message message) {
+        if (message == null) {
+            return;
+        }
+        discardAttachmentRefs(message.parts().stream()
+                .map(this::attachmentRef)
+                .filter(Objects::nonNull)
+                .toList());
+    }
+
+    private void discardStreamingResponseAttachments(StreamingSession session) {
+        if (session == null || session.persisted.get()) {
+            return;
+        }
+        List<AttachmentRef> attachments;
+        synchronized (session.responseParts) {
+            attachments = session.responseParts.stream()
+                    .map(this::attachmentRef)
+                    .filter(Objects::nonNull)
+                    .toList();
+            session.responseParts.clear();
+        }
+        discardAttachmentRefs(attachments);
+    }
+
+    private void discardAttachmentRefs(Collection<AttachmentRef> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return;
+        }
+        List<AttachmentRef> snapshot = List.copyOf(attachments);
+        CompletableFuture<Void> createdTask;
+        try {
+            createdTask = CompletableFuture.runAsync(
+                    () -> snapshot.forEach(attachmentStager::discard),
+                    command -> Thread.ofVirtual().name("chat4j-attachment-discard").start(command)
+            );
+        } catch (Throwable t) {
+            createdTask = CompletableFuture.failedFuture(t);
+        }
+        CompletableFuture<Void> task = createdTask;
+        attachmentDiscardTasks.add(task);
+        task.whenComplete((ignored, error) -> attachmentDiscardTasks.remove(task));
     }
 
     private List<String> buildFallbackNotices(
@@ -1820,6 +2225,7 @@ public class ChatPanel extends JPanel {
 
     private boolean capabilityRefreshCurrent(long selectionId, String providerName, String modelId) {
         return !removed
+                && !shutdownInProgress
                 && !Thread.currentThread().isInterrupted()
                 && isSelectedModel(selectionId, providerName, modelId);
     }
@@ -2186,22 +2592,22 @@ public class ChatPanel extends JPanel {
     }
 
     private void showReadAloudError(long uiGeneration, String message) {
-        if (removed || uiGeneration != readAloudUiGeneration.get()) {
+        if (shutdownInProgress || removed || uiGeneration != readAloudUiGeneration.get()) {
             return;
         }
         SwingUtilities.invokeLater(() -> {
-            if (!removed && uiGeneration == readAloudUiGeneration.get()) {
+            if (!shutdownInProgress && !removed && uiGeneration == readAloudUiGeneration.get()) {
                 JOptionPane.showMessageDialog(this, message, "Read aloud", JOptionPane.WARNING_MESSAGE);
             }
         });
     }
 
     private void showReadAloudStatus(long uiGeneration, String message) {
-        if (removed || uiGeneration != readAloudUiGeneration.get()) {
+        if (shutdownInProgress || removed || uiGeneration != readAloudUiGeneration.get()) {
             return;
         }
         SwingUtilities.invokeLater(() -> {
-            if (removed || uiGeneration != readAloudUiGeneration.get()) {
+            if (shutdownInProgress || removed || uiGeneration != readAloudUiGeneration.get()) {
                 return;
             }
             if (StringUtils.isBlank(message)) {
@@ -2323,7 +2729,17 @@ public class ChatPanel extends JPanel {
         }
 
         Message message = history.get(messageIndex);
-        editingUserMessage = new EditingUserMessage(messageIndex, inputBar.getComposerState());
+        ConversationHistoryEntry historyEntry = userHistoryEntries.get(messageIndex);
+        if (historyEntry == null) {
+            inputBar.showValidationMessage("This message cannot be edited until its history identity is available.");
+            return;
+        }
+        editingUserMessage = new EditingUserMessage(
+                messageIndex,
+                resolveConversationId(),
+                historyEntry,
+                inputBar.getComposerState()
+        );
         inputBar.clear();
         inputBar.setText(editableUserText(message));
         composerPanel.setComposer(new EditComposerPanel(
@@ -2349,6 +2765,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void cancelEditingUserMessage() {
+        if (conversationMutationPending) {
+            return;
+        }
         EditingUserMessage state = editingUserMessage;
         if (state == null) {
             return;
@@ -2362,6 +2781,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void saveEditedUserMessageOnly() {
+        if (shutdownInProgress) {
+            return;
+        }
         EditingUserMessage state = editingUserMessage;
         if (state == null) {
             return;
@@ -2372,15 +2794,30 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        history.set(state.messageIndex(), replacement);
-        clearPendingAssistantRecovery(resolveConversationId());
-        finishEditingAndRestoreComposer(state);
-        loadHistory(new ArrayList<>(history));
-        notifyMessageSubmitted();
-        inputBar.requestInputFocus();
+        var replacementEntry = new ConversationHistoryEntry(
+                state.historyEntry().messageId(),
+                state.historyEntry().ordinal(),
+                replacement
+        );
+        submitHistoryMutation(
+                new HistoryMutationEvent(state.conversationId(), HistoryMutationType.EDIT, replacementEntry),
+                () -> {
+                    if (editingUserMessage != state) {
+                        return;
+                    }
+                    history.set(state.messageIndex(), replacement);
+                    userHistoryEntries.put(state.messageIndex(), replacementEntry);
+                    finishEditingAndRestoreComposer(state);
+                    loadHistoryPreservingUserEntries();
+                    inputBar.requestInputFocus();
+                }
+        );
     }
 
     private void saveEditedUserMessageAndRegenerate() {
+        if (shutdownInProgress) {
+            return;
+        }
         EditingUserMessage state = editingUserMessage;
         if (state == null) {
             return;
@@ -2398,25 +2835,32 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        UUID conversationId = resolveConversationId();
+        UUID conversationId = state.conversationId();
         int keepCount = state.messageIndex() + 1;
         long expectedHistoryRevision = historyRevision;
-        startAssistantStream(conversationId, expectedHistoryRevision, () -> {
+        var replacementEntry = new ConversationHistoryEntry(
+                state.historyEntry().messageId(),
+                state.historyEntry().ordinal(),
+                replacement
+        );
+        startAssistantStream(
+                conversationId,
+                expectedHistoryRevision,
+                replacementEntry.ordinal() + 1,
+                new HistoryMutationEvent(conversationId, HistoryMutationType.EDIT_AND_TRUNCATE, replacementEntry),
+                () -> {
             if (editingUserMessage != state) {
                 throw new SendCancelledException();
             }
+            clearPendingAssistantRecovery(state.conversationId());
             history.set(state.messageIndex(), replacement);
-            clearPendingAssistantRecovery(conversationId);
+            userHistoryEntries.put(state.messageIndex(), replacementEntry);
             if (history.size() > keepCount) {
                 history.subList(keepCount, history.size()).clear();
             }
 
             finishEditingAndRestoreComposer(state);
-            loadHistory(new ArrayList<>(history));
-            if (historyTruncatedListener != null && conversationId != null) {
-                historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
-            }
-            notifyMessageSubmitted();
+            loadHistoryPreservingUserEntries();
             prepareRegenerationBubbles();
         });
     }
@@ -2451,6 +2895,145 @@ public class ChatPanel extends JPanel {
         refreshComposerAvailability();
     }
 
+    private void submitHistoryMutation(HistoryMutationEvent event, Runnable successAction) {
+        if (shutdownInProgress) {
+            return;
+        }
+        if (durableHistoryMutationListener == null || event.conversationId() == null) {
+            finishHistoryMutationFailure(
+                    event,
+                    new IllegalStateException("Durable history persistence is not configured")
+            );
+            return;
+        }
+        conversationMutationPending = true;
+        refreshComposerAvailability();
+        CompletionStage<Void> persistence;
+        try {
+            persistence = durableHistoryMutationListener.persist(event);
+        } catch (Exception e) {
+            finishHistoryMutationFailure(event, e);
+            return;
+        }
+        if (persistence == null) {
+            finishHistoryMutationFailure(
+                    event,
+                    new IllegalStateException("History persistence returned no completion stage")
+            );
+            return;
+        }
+        persistence.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+            conversationMutationPending = false;
+            if (shutdownInProgress
+                    || !Objects.equals(activeConversationId, event.conversationId())
+            ) {
+                return;
+            }
+            refreshComposerAvailability();
+            if (error != null) {
+                Throwable failure = unwrapCompletion(error);
+                if (failure instanceof ConversationPersistenceIndeterminateException) {
+                    deferIndeterminateHistoryMutation(
+                            event,
+                            successAction,
+                            () -> finishHistoryMutationFailure(event, failure)
+                    );
+                    return;
+                }
+                finishHistoryMutationFailure(event, failure);
+                return;
+            }
+            successAction.run();
+        }));
+    }
+
+    private void deferIndeterminateHistoryMutation(
+            HistoryMutationEvent event,
+            Runnable onCommitted,
+            Runnable onConfirmedFailure
+    ) {
+        pendingIndeterminateHistoryMutation = new PendingIndeterminateHistoryMutation(
+                event,
+                onCommitted,
+                onConfirmedFailure
+        );
+        if (!removed && !shutdownInProgress && Objects.equals(activeConversationId, event.conversationId())) {
+            inputBar.showValidationMessage("Checking whether the conversation change was saved.");
+        }
+    }
+
+    public void resolveIndeterminateHistoryMutation(UUID conversationId, boolean committed) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> resolveIndeterminateHistoryMutation(conversationId, committed));
+            return;
+        }
+        setConversationPersistenceBlocked(conversationId, false);
+        PendingIndeterminateHistoryMutation pending = pendingIndeterminateHistoryMutation;
+        if (pending == null || !Objects.equals(pending.event().conversationId(), conversationId)) {
+            return;
+        }
+        pendingIndeterminateHistoryMutation = null;
+        if (committed) {
+            pending.onCommitted().run();
+        } else {
+            pending.onConfirmedFailure().run();
+        }
+    }
+
+    private void markHistoryMutationFailureDelivered(HistoryMutationEvent event) {
+        if (durableHistoryMutationFailureDeliveredListener != null) {
+            durableHistoryMutationFailureDeliveredListener.accept(event);
+        }
+    }
+
+    private void finishHistoryMutationFailure(HistoryMutationEvent event, Throwable error) {
+        conversationMutationPending = false;
+        if (shutdownInProgress || !Objects.equals(activeConversationId, event.conversationId())) {
+            return;
+        }
+        String message = StringUtils.defaultIfBlank(
+                ExceptionUtils.getMessage(error),
+                "Failed to save conversation change"
+        );
+        if (removed) {
+            pendingHistoryFailureDelivery = new PendingHistoryFailureDelivery(event, message);
+            return;
+        }
+        deliverHistoryFailure(event, message);
+    }
+
+    private boolean deliverPendingHistoryFailure() {
+        PendingHistoryFailureDelivery pending = pendingHistoryFailureDelivery;
+        if (pending == null
+                || shutdownInProgress
+                || !Objects.equals(activeConversationId, pending.event().conversationId())
+        ) {
+            return false;
+        }
+        pendingHistoryFailureDelivery = null;
+        deliverHistoryFailure(pending.event(), pending.message());
+        return true;
+    }
+
+    private void deliverHistoryFailure(HistoryMutationEvent event, String message) {
+        refreshComposerAvailability();
+        inputBar.showValidationMessage(message);
+        inputBar.requestInputFocus();
+        markHistoryMutationFailureDelivered(event);
+    }
+
+    private void loadHistoryPreservingUserEntries() {
+        Map<Integer, ConversationHistoryEntry> retainedEntries = new LinkedHashMap<>(userHistoryEntries);
+        int retainedNextMessageOrdinal = nextMessageOrdinal;
+        loadHistory(new ArrayList<>(history));
+        nextMessageOrdinal = retainedNextMessageOrdinal;
+        retainedEntries.forEach((index, entry) -> {
+            if (index >= 0 && index < history.size() && history.get(index).role() == Role.USER) {
+                userHistoryEntries.put(index, entry);
+            }
+        });
+    }
+
     private boolean canRegenerateFrom(ChatMessageView bubble) {
         if (selectedProviderDef() == null || isVisibleConversationBusy()) {
             return false;
@@ -2464,7 +3047,7 @@ public class ChatPanel extends JPanel {
     }
 
     public boolean canRegenerateRecentResponse() {
-        if (selectedProviderDef() == null || isVisibleConversationBusy()) {
+        if (shutdownInProgress || selectedProviderDef() == null || isVisibleConversationBusy()) {
             return false;
         }
         List<ChatMessageView> bubbles = collectBubbles();
@@ -2479,6 +3062,9 @@ public class ChatPanel extends JPanel {
     }
 
     private void regenerateFromBubble(ChatMessageView bubble) {
+        if (shutdownInProgress) {
+            return;
+        }
         if (speechToTextService.active()) {
             inputBar.showValidationMessage("Finish or cancel transcription before regenerating.");
             return;
@@ -2502,13 +3088,20 @@ public class ChatPanel extends JPanel {
         }
 
         UUID conversationId = resolveConversationId();
+        ConversationHistoryEntry retainedEntry = userHistoryEntries.get(keepCount - 1);
+        if (retainedEntry == null) {
+            inputBar.showValidationMessage("This response cannot be regenerated until its history identity is available.");
+            return;
+        }
         long expectedHistoryRevision = historyRevision;
-        startAssistantStream(conversationId, expectedHistoryRevision, () -> {
+        startAssistantStream(
+                conversationId,
+                expectedHistoryRevision,
+                retainedEntry.ordinal() + 1,
+                new HistoryMutationEvent(conversationId, HistoryMutationType.TRUNCATE, retainedEntry),
+                () -> {
             clearPendingAssistantRecovery(conversationId);
             truncateHistoryAndBubbles(keepCount);
-            if (historyTruncatedListener != null && conversationId != null) {
-                historyTruncatedListener.accept(new HistoryTruncatedEvent(conversationId, keepCount));
-            }
             prepareRegenerationBubbles();
         });
     }
@@ -2518,7 +3111,8 @@ public class ChatPanel extends JPanel {
             history.subList(keepCount, history.size()).clear();
         }
 
-        loadHistory(new ArrayList<>(history));
+        userHistoryEntries.keySet().removeIf(index -> index >= keepCount);
+        loadHistoryPreservingUserEntries();
         currentAssistantWebSearchBubble = null;
         currentAssistantActivityBubble = null;
         clearCurrentAgentToolBubbleState();
@@ -2751,11 +3345,11 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean speechToTextUiCurrent(long uiGeneration) {
-        return !removed && uiGeneration == speechToTextUiGeneration.get();
+        return !shutdownInProgress && !removed && uiGeneration == speechToTextUiGeneration.get();
     }
 
     private void refreshComposerAvailability() {
-        inputBar.setConversationBusy(conversationLoading || isVisibleConversationBusy());
+        inputBar.setConversationBusy(isVisibleConversationBusy());
         inputBar.setProviderReady(selectedProviderDef() != null && StringUtils.isNotBlank(selectedModelId));
         inputBar.setNormalComposeMode(editingUserMessage == null);
     }
@@ -3404,12 +3998,30 @@ public class ChatPanel extends JPanel {
     }
 
     private void openDiagramHtml(String payload) {
-        try {
-            Path path = DiagramHtmlExporter.exportMermaidHtml(payload);
-            openHtmlFile(path);
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, e.getMessage(), "Open Diagram", JOptionPane.WARNING_MESSAGE);
-        }
+        long expectedHistoryRevision = historyRevision;
+        UUID expectedConversationId = activeConversationId;
+        runOpenActionInBackground(
+                expectedHistoryRevision,
+                expectedConversationId,
+                "chat4j-open-diagram",
+                "Open Diagram",
+                () -> openHtmlFile(DiagramHtmlExporter.exportMermaidHtml(payload)),
+                this::diagramOpenError
+        );
+    }
+
+    String diagramOpenError(Exception error) {
+        String message = error.getMessage();
+        return Strings.CS.equalsAny(
+                message,
+                "Diagram is too large.",
+                "Unsupported diagram type.",
+                "Diagram SVG is missing.",
+                "Diagram SVG is too large.",
+                "Diagram SVG contains unsupported active content.",
+                "Opening diagrams is not supported on this system.",
+                "Unable to open diagram."
+        ) ? message : "Unable to open diagram.";
     }
 
     private void openHtmlFile(Path path) throws IOException {
@@ -3419,45 +4031,112 @@ public class ChatPanel extends JPanel {
 
         Desktop desktop = Desktop.getDesktop();
         if (desktop.isSupported(Desktop.Action.OPEN)) {
-            desktop.open(path.toFile());
-            return;
+            try {
+                desktop.open(path.toFile());
+                return;
+            } catch (IOException e) {
+                throw new IOException("Unable to open diagram.", e);
+            }
         }
         if (desktop.isSupported(Desktop.Action.BROWSE)) {
-            desktop.browse(path.toUri());
-            return;
+            try {
+                desktop.browse(path.toUri());
+                return;
+            } catch (IOException e) {
+                throw new IOException("Unable to open diagram.", e);
+            }
         }
         throw new IOException("Opening diagrams is not supported on this system.");
     }
 
     private void openConversationAttachment(String storagePath) {
         if (StringUtils.isBlank(storagePath) || !isKnownConversationAttachment(storagePath)) {
-            showOpenAttachmentError("Attachment file is not available on disk.");
+            showOpenActionError("Open Attachment", "Attachment file is not available on disk.");
             return;
         }
 
-        Path path;
-        try {
-            path = Path.of(storagePath);
-        } catch (Exception e) {
-            showOpenAttachmentError("Attachment file is not available on disk.");
-            return;
-        }
+        long expectedHistoryRevision = historyRevision;
+        UUID expectedConversationId = activeConversationId;
+        runOpenActionInBackground(
+                expectedHistoryRevision,
+                expectedConversationId,
+                "chat4j-open-attachment",
+                "Open Attachment",
+                () -> openAttachment(storagePath),
+                e -> attachmentOpenError(storagePath, e)
+        );
+    }
 
-        if (!Files.exists(path)) {
-            showOpenAttachmentError("Attachment file is not available on disk.");
-            return;
+    private void openAttachment(String storagePath) throws IOException {
+        Path path = attachmentStager.managedPath(storagePath)
+                .orElseThrow(() -> new IOException("Attachment file is not available on disk."));
+        if (!Files.isRegularFile(path)) {
+            throw new IOException("Attachment file is not available on disk.");
         }
-
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-            showOpenAttachmentError("Opening attachments is not supported on this system.");
-            return;
+            throw new IOException("Opening attachments is not supported on this system.");
         }
-
         try {
             Desktop.getDesktop().open(path.toFile());
         } catch (IOException e) {
-            showOpenAttachmentError("Unable to open attachment: %s".formatted(path.getFileName()));
+            throw new IOException("Unable to open attachment.", e);
         }
+    }
+
+    private String attachmentOpenError(String storagePath, Exception error) {
+        if (Strings.CS.equalsAny(
+                error.getMessage(),
+                "Attachment file is not available on disk.",
+                "Opening attachments is not supported on this system."
+        )) {
+            return error.getMessage();
+        }
+        try {
+            return "Unable to open attachment: %s".formatted(Path.of(storagePath).getFileName());
+        } catch (RuntimeException ignored) {
+            return "Unable to open attachment.";
+        }
+    }
+
+    void runOpenActionInBackground(
+            long expectedHistoryRevision,
+            UUID expectedConversationId,
+            String threadName,
+            String dialogTitle,
+            OpenAction action,
+            Function<Exception, String> errorMessage
+    ) {
+        long expectedOpenActionUiGeneration = openActionUiGeneration.get();
+        Thread.ofVirtual().name(threadName).start(() -> {
+            if (shutdownInProgress) {
+                return;
+            }
+            try {
+                action.run();
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    if (isOpenActionUiCurrent(
+                            expectedHistoryRevision,
+                            expectedConversationId,
+                            expectedOpenActionUiGeneration
+                    )) {
+                        showOpenActionError(dialogTitle, errorMessage.apply(e));
+                    }
+                });
+            }
+        });
+    }
+
+    boolean isOpenActionUiCurrent(
+            long expectedHistoryRevision,
+            UUID expectedConversationId,
+            long expectedOpenActionUiGeneration
+    ) {
+        return !removed
+                && !shutdownInProgress
+                && historyRevision == expectedHistoryRevision
+                && Objects.equals(activeConversationId, expectedConversationId)
+                && openActionUiGeneration.get() == expectedOpenActionUiGeneration;
     }
 
     private boolean isKnownConversationAttachment(String storagePath) {
@@ -3469,8 +4148,8 @@ public class ChatPanel extends JPanel {
                 .anyMatch(path -> Strings.CS.equals(path, storagePath));
     }
 
-    private void showOpenAttachmentError(String message) {
-        JOptionPane.showMessageDialog(this, message, "Open Attachment", JOptionPane.WARNING_MESSAGE);
+    private void showOpenActionError(String title, String message) {
+        JOptionPane.showMessageDialog(this, message, title, JOptionPane.WARNING_MESSAGE);
     }
 
     private void scrollToBottom() {
@@ -3537,8 +4216,162 @@ public class ChatPanel extends JPanel {
         clearChat(true);
     }
 
+    public void reconcilePendingAssistantRecoveries(UUID conversationId, Set<UUID> pendingMessageIds) {
+        if (conversationId == null) {
+            return;
+        }
+        List<PendingAssistantRecovery> recoveries = pendingCompletedAssistantRecoveries.get(conversationId);
+        if (recoveries == null) {
+            return;
+        }
+        Set<PendingAssistantRecovery> settledRecoveries = recoveries.stream()
+                .filter(recovery -> !pendingMessageIds.contains(recovery.entry().messageId()))
+                .collect(toCollection(HashSet::new));
+        removePendingAssistantRecoveries(conversationId, settledRecoveries);
+    }
+
+    public void applyCanonicalClear(UUID conversationId) {
+        if (Objects.equals(activeConversationId, conversationId)) {
+            clearChat();
+            return;
+        }
+        clearPendingAssistantRecovery(conversationId);
+        FailedUserSend failed = failedUserSends.remove(conversationId);
+        if (failed != null) {
+            discardFailedUserSend(failed);
+        }
+    }
+
     public void clearChatView() {
         clearChat(false);
+    }
+
+    public void cancelConversationsForDeletion(Collection<UUID> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) {
+            return;
+        }
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> cancelConversationsForDeletion(conversationIds));
+            return;
+        }
+
+        Set<UUID> ids = conversationIds.stream()
+                .filter(Objects::nonNull)
+                .collect(toCollection(HashSet::new));
+        blockedConversationIds.addAll(ids);
+        activeSessions.values().stream()
+                .filter(session -> ids.contains(session.conversationId))
+                .toList()
+                .forEach(this::discardStreamingSession);
+        activeSendJobs.values().stream()
+                .filter(sendJob -> ids.contains(sendJob.conversationId))
+                .toList()
+                .forEach(this::discardSendJob);
+        if (ids.contains(activeConversationId)) {
+            discardVisibleStreamingComponents();
+        }
+        updateGenerationIndicator();
+        refreshComposerAvailability();
+    }
+
+    private void discardVisibleStreamingComponents() {
+        if (currentAssistantBubble != null) {
+            removeMessageComponentFromPanel(currentAssistantBubble.component());
+        }
+        if (currentAssistantWebSearchBubble != null) {
+            removeMessageComponentFromPanel(currentAssistantWebSearchBubble);
+        }
+        if (currentAssistantActivityBubble != null) {
+            removeMessageComponentFromPanel(currentAssistantActivityBubble);
+        }
+        currentAssistantAgentToolBubbles.values().forEach(this::removeMessageComponentFromPanel);
+        currentAssistantBubble = null;
+        currentAssistantWebSearchBubble = null;
+        currentAssistantActivityBubble = null;
+        clearCurrentAgentToolBubbleState();
+        refreshWebTranscript(false, true);
+    }
+
+    public void finishConversationDeletion(Collection<UUID> conversationIds) {
+        if (conversationIds == null || conversationIds.isEmpty()) {
+            return;
+        }
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> finishConversationDeletion(conversationIds));
+            return;
+        }
+        blockedConversationIds.removeAll(conversationIds);
+        refreshComposerAvailability();
+    }
+
+    public void resolveIndeterminateUserMessage(UUID conversationId, boolean committed) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> resolveIndeterminateUserMessage(conversationId, committed));
+            return;
+        }
+        setConversationPersistenceBlocked(conversationId, false);
+        FailedUserSend failed = failedUserSends.get(conversationId);
+        if (!committed) {
+            if (failed != null && isVisibleConversation(conversationId)) {
+                visibleFailedRecovery = failed;
+                inputBar.showValidationMessage("The message was not saved. Send again to retry.");
+                inputBar.requestInputFocus();
+                acknowledgeFailedUserSend(failed);
+            }
+            return;
+        }
+        if (failed == null || failed.sendJob().preparedUserMessage == null) {
+            return;
+        }
+
+        SendJob continuation = new SendJob(sendJobCounter.incrementAndGet(), failed.sendJob());
+        continuation.persistenceAlreadyCanonical = true;
+        activeSendJobs.put(continuation.jobId, continuation);
+        beginPreparing(continuation);
+        if (continuation.providerContinuationCancelled) {
+            completePreparedSend(
+                    continuation,
+                    continuation.preparedUserMessage,
+                    conversationId,
+                    isVisibleConversation(conversationId)
+            );
+            return;
+        }
+        continuation.worker = Thread.startVirtualThread(() -> {
+            try {
+                admitProvider(continuation);
+                SwingUtilities.invokeLater(() -> {
+                    if (shutdownInProgress || !isPreparing(continuation)) {
+                        abandonSendJob(continuation);
+                        return;
+                    }
+                    completePreparedSend(
+                            continuation,
+                            continuation.preparedUserMessage,
+                            conversationId,
+                            isVisibleConversation(conversationId)
+                    );
+                });
+            } catch (Exception | LinkageError e) {
+                SwingUtilities.invokeLater(() -> handlePreparationFailure(continuation, e));
+            }
+        });
+    }
+
+    public void setConversationPersistenceBlocked(UUID conversationId, boolean blocked) {
+        if (conversationId == null) {
+            return;
+        }
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> setConversationPersistenceBlocked(conversationId, blocked));
+            return;
+        }
+        if (blocked) {
+            blockedConversationIds.add(conversationId);
+        } else {
+            blockedConversationIds.remove(conversationId);
+        }
+        refreshComposerAvailability();
     }
 
     public void discardConversations(Collection<UUID> conversationIds) {
@@ -3557,7 +4390,13 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        pendingCompletedAssistantRecoveries.keySet().removeAll(ids);
+        blockedConversationIds.removeAll(ids);
+        discardedConversationIds.addAll(ids);
+        ids.forEach(this::clearPendingAssistantRecovery);
+        failedUserSends.values().stream()
+                .filter(failed -> ids.contains(failed.sendJob().conversationId))
+                .toList()
+                .forEach(this::discardFailedUserSend);
         activeSendJobs.values().stream()
                 .filter(sendJob -> ids.contains(sendJob.conversationId))
                 .toList()
@@ -3574,11 +4413,87 @@ public class ChatPanel extends JPanel {
         updateGenerationIndicator();
     }
 
-    public void cancelAllRequests() {
+    public CompletableFuture<Void> cancelAllRequestsAsync() {
+        List<SendJob> sendJobs = activeSendJobs.values().stream().toList();
+        List<StreamingSession> sessions = activeSessions.values().stream().toList();
+        List<Thread> workers = Stream.of(
+                        sendJobs.stream().map(sendJob -> sendJob.worker),
+                        sessions.stream().map(session -> session.worker),
+                        shutdownPreparationWorkers.stream()
+                )
+                .flatMap(Function.identity())
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        sessions.forEach(session -> session.cancelled.set(true));
+        List<AutoCloseable> activeRequests = sessions.stream()
+                .map(StreamingSession::detachActiveRequest)
+                .filter(Objects::nonNull)
+                .toList();
         cancelStreaming();
-        activeSendJobs.values().stream().toList().forEach(this::discardSendJob);
-        activeSessions.values().stream().toList().forEach(this::discardStreamingSession);
+        sendJobs.forEach(this::discardSendJob);
+        sessions.forEach(this::discardStreamingSession);
         updateGenerationIndicator();
+        CompletableFuture<?>[] cleanupTasks = Stream.concat(
+                        activeRequests.stream().map(this::closeActiveRequestAsync),
+                        workers.stream().map(this::awaitWorkerAsync)
+                )
+                .toArray(CompletableFuture[]::new);
+        return CompletableFuture.allOf(cleanupTasks)
+                .thenCompose(ignored -> awaitAttachmentDiscardTasks())
+                .thenRun(() -> {
+                    shutdownPreparationWorkers.removeAll(workers);
+                    sessions.stream()
+                            .map(StreamingSession::requestCloseFailure)
+                            .filter(Objects::nonNull)
+                            .findFirst()
+                            .ifPresent(failure -> {
+                                throw new CompletionException("Provider request cancellation failed", failure);
+                            });
+                });
+    }
+
+    private CompletableFuture<Void> awaitAttachmentDiscardTasks() {
+        attachmentDiscardTasks.removeIf(CompletableFuture::isDone);
+        CompletableFuture<?>[] tasks = attachmentDiscardTasks.toArray(CompletableFuture[]::new);
+        if (tasks.length == 0) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.allOf(tasks).thenCompose(ignored -> awaitAttachmentDiscardTasks());
+    }
+
+    private CompletableFuture<Void> closeActiveRequestAsync(AutoCloseable request) {
+        try {
+            return CompletableFuture.runAsync(
+                    () -> closeActiveRequest(request),
+                    command -> Thread.ofVirtual().name("chat4j-active-request-close").start(command)
+            );
+        } catch (Throwable t) {
+            return CompletableFuture.failedFuture(t);
+        }
+    }
+
+    private CompletableFuture<Void> awaitWorkerAsync(Thread worker) {
+        try {
+            return CompletableFuture.runAsync(() -> {
+                try {
+                    worker.join();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new CompletionException("Interrupted while waiting for chat worker shutdown", e);
+                }
+            }, command -> Thread.ofVirtual().name("chat4j-worker-shutdown").start(command));
+        } catch (Throwable t) {
+            return CompletableFuture.failedFuture(t);
+        }
+    }
+
+    private void closeActiveRequest(AutoCloseable request) {
+        try {
+            request.close();
+        } catch (Exception e) {
+            throw new CompletionException("Provider request cancellation failed", e);
+        }
     }
 
     private void discardSendJob(SendJob sendJob) {
@@ -3586,6 +4501,11 @@ public class ChatPanel extends JPanel {
             return;
         }
         sendJob.cancelled.set(true);
+        if (!sendJob.durableUserMessageSubmissionStarted
+                && !sendJob.durableHistoryMutationSubmissionStarted
+        ) {
+            discardStagedAttachments(sendJob.preparedUserMessage);
+        }
         sendJob.finished = true;
         activeSendJobs.remove(sendJob.jobId);
         Thread worker = sendJob.worker;
@@ -3601,6 +4521,7 @@ public class ChatPanel extends JPanel {
         }
         try {
             session.cancelled.set(true);
+            discardStreamingResponseAttachments(session);
             session.finished = true;
             activeSessions.remove(session.sessionId);
             cancelSessionActiveRequest(session, false);
@@ -3625,6 +4546,7 @@ public class ChatPanel extends JPanel {
             clearPendingAssistantRecovery(activeConversationId);
             cancelStreaming();
         }
+        discardFailedUserSendForCurrentView();
 
         stopReadAloudPlayback();
         disposeMessageViews();
@@ -3633,6 +4555,8 @@ public class ChatPanel extends JPanel {
         clearCurrentAgentToolBubbleState();
         currentAssistantBubble = null;
         history.clear();
+        userHistoryEntries.clear();
+        nextMessageOrdinal = 1;
         historyRevision++;
         assistantBubbles.clear();
         thinkingBubbles.clear();
@@ -3645,6 +4569,42 @@ public class ChatPanel extends JPanel {
         updateClearChatButtonVisibility();
     }
 
+    private void discardFailedUserSendForCurrentView() {
+        FailedUserSend failed = failedUserSendForCurrentView();
+        if (failed == null) {
+            return;
+        }
+        if (Objects.equals(inputBar.getComposerState(), failed.sendJob().composerState)) {
+            inputBar.clear();
+        }
+        discardFailedUserSend(failed);
+    }
+
+    private void discardFailedUserSend(FailedUserSend failed) {
+        failedUserSends.remove(failed.sendJob().conversationId, failed);
+        if (visibleFailedRecovery == failed) {
+            visibleFailedRecovery = null;
+        }
+        discardStagedAttachments(failed.sendJob().preparedUserMessage);
+        if (failed.sendJob().createsConversation
+                && Objects.equals(activeConversationId, failed.sendJob().conversationId)
+        ) {
+            activeConversationId = null;
+        }
+        acknowledgeFailedUserSend(failed);
+    }
+
+    private void acknowledgeFailedUserSend(FailedUserSend failed) {
+        if (failed.recoveryAcknowledged || durableUserMessageFailureDeliveredListener == null) {
+            return;
+        }
+        failed.recoveryAcknowledged = true;
+        durableUserMessageFailureDeliveredListener.accept(
+                failed.sendJob().conversationId,
+                failed.sendJob().userMessageId
+        );
+    }
+
     private void clearChatForHistoryLoad() {
         stopReadAloudPlayback();
         disposeMessageViews();
@@ -3653,6 +4613,8 @@ public class ChatPanel extends JPanel {
         clearCurrentAgentToolBubbleState();
         currentAssistantBubble = null;
         history.clear();
+        userHistoryEntries.clear();
+        nextMessageOrdinal = 1;
         assistantBubbles.clear();
         thinkingBubbles.clear();
         messagesPanel.removeAll();
@@ -3684,24 +4646,142 @@ public class ChatPanel extends JPanel {
                 .forEach(ChatMessageView::dispose);
     }
 
-    public List<Message> getHistory() {
+    List<Message> getHistory() {
         return new ArrayList<>(history);
     }
 
-    public boolean isStreaming() {
+    boolean isStreaming() {
         return streaming;
     }
 
-    public void loadConversationHistory(UUID conversationId, List<Message> messages) {
+    public boolean hasFailedProvisionalUserSend() {
+        FailedUserSend failed = failedUserSendForCurrentView();
+        return failed != null && failed.sendJob().createsConversation;
+    }
+
+    public void discardFailedProvisionalUserSend() {
+        FailedUserSend failed = failedUserSendForCurrentView();
+        if (failed != null && failed.sendJob().createsConversation) {
+            discardFailedUserSend(failed);
+        }
+    }
+
+    public boolean hasPendingConversationMutation() {
+        SendJob preparingJob = visiblePreparingJob();
+        return conversationMutationPending
+                || preparingJob != null && (preparingJob.durableUserMessageSubmissionStarted
+                        || preparingJob.durableHistoryMutationSubmissionStarted);
+    }
+
+    public void abandonVisibleUnsubmittedPreparation() {
+        SendJob preparingJob = visiblePreparingJob();
+        if (preparingJob == null
+                || preparingJob.durableUserMessageSubmissionStarted
+                || preparingJob.durableHistoryMutationSubmissionStarted
+                || preparingJob.persistenceAlreadyCanonical
+        ) {
+            return;
+        }
+        discardSendJob(preparingJob);
+        releaseFailedProvisionalConversation(preparingJob);
+        applyVisibleConversationInputState();
+    }
+
+    public void setConversationMutationPending(boolean pending) {
+        conversationMutationPending = pending;
+        refreshComposerAvailability();
+        refreshBubbleActionBars();
+    }
+
+    public boolean isEditingUserMessage() {
+        return editingUserMessage != null;
+    }
+
+    public boolean isDurableUserMessageContinuationCurrent(UUID conversationId) {
+        return activeSendJobs.values().stream()
+                .anyMatch(job -> Objects.equals(job.conversationId, conversationId) && isPreparing(job));
+    }
+
+    public void loadConversationHistoryEntries(
+            UUID conversationId,
+            List<ConversationRepository.MessageRecord> records
+    ) {
         if (speechToTextService.active()) {
             inputBar.showValidationMessage("Finish or cancel transcription before switching conversations.");
             return;
         }
         setActiveConversationId(conversationId);
+        List<PendingAssistantRecovery> recoveries = pendingCompletedAssistantRecoveries.get(conversationId);
+        Map<UUID, PendingAssistantRecovery> recoveriesById = recoveries == null
+                ? emptyMap()
+                : recoveries.stream().collect(toMap(
+                        recovery -> recovery.entry().messageId(),
+                        Function.identity()
+                ));
+        Set<PendingAssistantRecovery> canonicalRecoveries = records.stream()
+                .map(record -> {
+                    PendingAssistantRecovery recovery = recoveriesById.get(record.id());
+                    return recovery != null && recovery.entry().equals(record.historyEntry()) ? recovery : null;
+                })
+                .filter(Objects::nonNull)
+                .collect(toCollection(HashSet::new));
+        List<ConversationHistoryEntry> missingRecoveries = recoveries == null
+                ? emptyList()
+                : recoveries.stream()
+                        .filter(recovery -> !canonicalRecoveries.contains(recovery))
+                        .map(PendingAssistantRecovery::entry)
+                        .sorted(Comparator.comparingInt(ConversationHistoryEntry::ordinal))
+                        .toList();
+        removePendingAssistantRecoveries(conversationId, canonicalRecoveries);
+        List<ConversationRepository.MessageRecord> displayedRecords = records.stream()
+                .filter(record -> {
+                    PendingAssistantRecovery recovery = recoveriesById.get(record.id());
+                    return recovery == null || recovery.entry().equals(record.historyEntry());
+                })
+                .toList();
+        List<Message> messages = new ArrayList<>(displayedRecords.stream()
+                .map(ConversationRepository.MessageRecord::message)
+                .toList());
+        missingRecoveries.stream()
+                .map(ConversationHistoryEntry::message)
+                .forEach(messages::add);
         loadHistory(messages);
+        bindLoadedHistoryEntries(displayedRecords);
+        int highestRecoveryOrdinal = missingRecoveries.stream()
+                .mapToInt(ConversationHistoryEntry::ordinal)
+                .max()
+                .orElse(0);
+        nextMessageOrdinal = Math.max(nextMessageOrdinal, highestRecoveryOrdinal + 1);
+        if (!missingRecoveries.isEmpty()) {
+            inputBar.showValidationMessage("An assistant response is visible but has not been saved yet.");
+        }
     }
 
-    public void loadHistory(List<Message> messages) {
+    private void bindLoadedHistoryEntries(List<ConversationRepository.MessageRecord> records) {
+        userHistoryEntries.clear();
+        nextMessageOrdinal = records.isEmpty() ? 1 : records.getLast().ordinal() + 1;
+        int recordIndex = 0;
+        int historyIndex = 0;
+        while (recordIndex < records.size()) {
+            ConversationRepository.MessageRecord record = records.get(recordIndex);
+            if (record.message().role() != Role.ASSISTANT) {
+                if (record.message().role() == Role.USER) {
+                    userHistoryEntries.put(historyIndex, record.historyEntry());
+                }
+                recordIndex++;
+                historyIndex++;
+                continue;
+            }
+            while (recordIndex < records.size()
+                    && records.get(recordIndex).message().role() == Role.ASSISTANT
+            ) {
+                recordIndex++;
+            }
+            historyIndex++;
+        }
+    }
+
+    void loadHistory(List<Message> messages) {
         if (speechToTextService.active()) {
             inputBar.showValidationMessage("Finish or cancel transcription before loading history.");
             return;
@@ -3712,11 +4792,14 @@ public class ChatPanel extends JPanel {
         batchMessageRefresh = true;
         try {
             List<Message> normalizedMessages = new ArrayList<>(normalizeLoadedHistory(messages));
-            recoverPendingCompletedAssistantMessage(activeConversationId, normalizedMessages);
             for (Message msg : normalizedMessages) {
                 history.add(msg);
                 int messageIndex = history.size() - 1;
                 if (msg.role() == Role.USER) {
+                    userHistoryEntries.put(
+                            messageIndex,
+                            new ConversationHistoryEntry(UUID.randomUUID(), messageIndex + 1, msg)
+                    );
                     addUserBubble(msg, messageIndex);
                     continue;
                 }
@@ -3754,6 +4837,7 @@ public class ChatPanel extends JPanel {
             batchMessageRefresh = false;
         }
 
+        nextMessageOrdinal = history.size() + 1;
         attachVisibleStreamingSession(visibleStreamingSession());
         finishHistoryLoadRefresh();
     }
@@ -3814,6 +4898,9 @@ public class ChatPanel extends JPanel {
     }
 
     public void showModelPopupCentered() {
+        if (shutdownInProgress) {
+            return;
+        }
         if (speechToTextService.active()) {
             inputBar.showValidationMessage("Finish or cancel transcription before changing models.");
             return;
@@ -3882,25 +4969,64 @@ public class ChatPanel extends JPanel {
         this.modelCatalogChangedListener = listener;
     }
 
-    public void setOnMessageSubmitted(Runnable listener) {
-        this.messageSubmittedListener = listener;
-    }
-
     public void setOnClearChatRequested(Runnable listener) {
         this.clearChatRequestedListener = listener;
     }
 
 
-    public void setOnUserMessageSubmitted(UserMessagePersistenceListener listener) {
-        this.userMessageSubmittedListener = listener;
+    public void setOnDurableUserMessageSubmitted(DurableUserMessagePersistenceListener listener) {
+        this.durableUserMessageSubmittedListener = listener;
     }
 
-    public void setOnAssistantMessageCompleted(AssistantMessagePersistenceListener listener) {
-        this.assistantMessageCompletedListener = listener;
+    public void setOnDurableUserMessageFailureDelivered(BiConsumer<UUID, UUID> listener) {
+        this.durableUserMessageFailureDeliveredListener = listener;
     }
 
-    public void setOnHistoryTruncated(Consumer<HistoryTruncatedEvent> listener) {
-        this.historyTruncatedListener = listener;
+    public void setOnDurableAssistantMessageCompleted(DurableAssistantMessagePersistenceListener listener) {
+        this.durableAssistantMessageCompletedListener = listener;
+    }
+
+    public void setOnDurableHistoryMutation(DurableHistoryMutationListener listener) {
+        this.durableHistoryMutationListener = listener;
+    }
+
+    public void setOnDurableHistoryMutationFailureDelivered(Consumer<HistoryMutationEvent> listener) {
+        this.durableHistoryMutationFailureDeliveredListener = listener;
+    }
+
+    public void beginShutdown() {
+        synchronized (terminalPersistenceLock) {
+            shutdownInProgress = true;
+        }
+        activeSendJobs.values().stream()
+                .filter(sendJob -> !sendJob.durableUserMessageSubmissionStarted)
+                .filter(sendJob -> !sendJob.durableHistoryMutationSubmissionStarted)
+                .toList()
+                .forEach(sendJob -> {
+                    if (sendJob.worker != null) {
+                        shutdownPreparationWorkers.add(sendJob.worker);
+                    }
+                    discardSendJob(sendJob);
+                });
+        activeSessions.values().forEach(session -> {
+            session.cancelled.set(true);
+            discardStreamingResponseAttachments(session);
+        });
+        conversationMutationPending = false;
+        providerRefreshCounter.incrementAndGet();
+        providerSelectionCounter.incrementAndGet();
+        readAloudUiGeneration.incrementAndGet();
+        speechToTextUiGeneration.incrementAndGet();
+        openActionUiGeneration.incrementAndGet();
+        cancelCapabilityRefresh();
+        modelCacheService.cancelScopeVersion(providerScopeVersion);
+        failedUserSends.values().stream()
+                .filter(failed -> failed.recoveryAcknowledged)
+                .toList()
+                .forEach(this::discardFailedUserSend);
+        refreshComposerAvailability();
+        inputBar.beginShutdown();
+        inputBar.setEnabled(false);
     }
 
     public void setOnConversationStreamingChanged(Consumer<ConversationStreamingEvent> listener) {
@@ -3929,12 +5055,41 @@ public class ChatPanel extends JPanel {
 
     public void setActiveConversationId(UUID conversationId) {
         boolean conversationChanged = !Objects.equals(this.activeConversationId, conversationId);
+        if (conversationChanged) {
+            clearVisibleFailedDraft();
+            visibleFailedRecovery = null;
+        }
         this.activeConversationId = conversationId;
         if (conversationChanged) {
             clearVisibleStreamReferences();
+            restoreVisibleFailedDraftIfComposerEmpty();
+            deliverPendingHistoryFailure();
         }
 
         applyVisibleConversationInputState();
+    }
+
+    private void clearVisibleFailedDraft() {
+        FailedUserSend failed = failedUserSendForCurrentView();
+        if (failed != null && Objects.equals(inputBar.getComposerState(), failed.sendJob().composerState)) {
+            inputBar.clear();
+        }
+    }
+
+    private void restoreVisibleFailedDraftIfComposerEmpty() {
+        FailedUserSend failed = failedUserSendForCurrentView();
+        if (failed == null) {
+            return;
+        }
+        ComposerState composerState = inputBar.getComposerState();
+        if (!composerState.isEmpty() && !Objects.equals(composerState, failed.sendJob().composerState)) {
+            return;
+        }
+        if (composerState.isEmpty()) {
+            inputBar.setComposerState(failed.sendJob().composerState);
+        }
+        visibleFailedRecovery = failed;
+        acknowledgeFailedUserSend(failed);
     }
 
     public void setConversationLoading(boolean conversationLoading) {
@@ -4049,33 +5204,76 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void recoverPendingCompletedAssistantMessage(UUID conversationId, List<Message> messages) {
+    private void queuePendingAssistantRecovery(UUID conversationId, ConversationHistoryEntry entry) {
+        queuePendingAssistantRecovery(conversationId, entry, false);
+    }
+
+    private void queueFailedAssistantRecovery(UUID conversationId, ConversationHistoryEntry entry) {
+        queuePendingAssistantRecovery(conversationId, entry, true);
+    }
+
+    private void queuePendingAssistantRecovery(
+            UUID conversationId,
+            ConversationHistoryEntry entry,
+            boolean persistenceFailed
+    ) {
         if (conversationId == null) {
             return;
         }
-        Message completedAssistantMessage = pendingCompletedAssistantRecoveries.remove(conversationId);
-        if (completedAssistantMessage == null || completedAssistantMessage.role() != Role.ASSISTANT) {
+        pendingCompletedAssistantRecoveries.compute(conversationId, (ignored, existing) -> {
+            List<PendingAssistantRecovery> entries = new ArrayList<>(existing == null ? emptyList() : existing);
+            entries.removeIf(candidate -> candidate.entry().messageId().equals(entry.messageId()));
+            entries.add(new PendingAssistantRecovery(entry, persistenceFailed));
+            return List.copyOf(entries);
+        });
+    }
+
+    private void removePendingAssistantRecovery(UUID conversationId, UUID messageId) {
+        if (conversationId == null) {
             return;
         }
-        if (messages.stream().anyMatch(message -> isSameAssistantMessage(message, completedAssistantMessage))) {
+        pendingCompletedAssistantRecoveries.computeIfPresent(conversationId, (ignored, entries) -> {
+            List<PendingAssistantRecovery> retainedEntries = entries.stream()
+                    .filter(recovery -> !recovery.entry().messageId().equals(messageId))
+                    .toList();
+            return retainedEntries.isEmpty() ? null : retainedEntries;
+        });
+    }
+
+    private void removePendingAssistantRecoveries(
+            UUID conversationId,
+            Set<PendingAssistantRecovery> settledRecoveries
+    ) {
+        if (conversationId == null || settledRecoveries.isEmpty()) {
             return;
         }
-        messages.add(completedAssistantMessage);
+        pendingCompletedAssistantRecoveries.computeIfPresent(conversationId, (ignored, current) -> {
+            List<PendingAssistantRecovery> remaining = current.stream()
+                    .filter(recovery -> !settledRecoveries.contains(recovery))
+                    .toList();
+            return remaining.isEmpty() ? null : remaining;
+        });
+    }
+
+    private boolean hasFailedAssistantRecovery(UUID conversationId) {
+        if (conversationId == null) {
+            return false;
+        }
+        List<PendingAssistantRecovery> recoveries = pendingCompletedAssistantRecoveries.get(conversationId);
+        return recoveries != null && recoveries.stream().anyMatch(PendingAssistantRecovery::persistenceFailed);
     }
 
     private void clearPendingAssistantRecovery(UUID conversationId) {
-        if (conversationId != null) {
-            pendingCompletedAssistantRecoveries.remove(conversationId);
+        if (conversationId == null) {
+            return;
         }
-    }
-
-    private boolean isSameAssistantMessage(Message candidate, Message expected) {
-        if (candidate == null || expected == null || candidate.role() != Role.ASSISTANT) {
-            return false;
+        List<PendingAssistantRecovery> discarded = pendingCompletedAssistantRecoveries.remove(conversationId);
+        if (discarded != null) {
+            discarded.stream()
+                    .map(PendingAssistantRecovery::entry)
+                    .map(ConversationHistoryEntry::message)
+                    .forEach(this::discardStagedAttachments);
         }
-        return Strings.CS.equals(candidate.content(), expected.content())
-                && Objects.equals(candidate.parts(), expected.parts())
-                && Objects.equals(candidate.meta(), expected.meta());
     }
 
     private void notifyModelFavoritesChanged() {
@@ -4090,13 +5288,10 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private void notifyMessageSubmitted() {
-        if (messageSubmittedListener != null) {
-            messageSubmittedListener.run();
-        }
-    }
-
     public void requestClearChat() {
+        if (shutdownInProgress) {
+            return;
+        }
         if (speechToTextService.active()) {
             inputBar.showValidationMessage("Finish or cancel transcription before clearing the chat.");
             return;
@@ -4110,7 +5305,11 @@ public class ChatPanel extends JPanel {
     }
 
     public boolean canClearChat() {
-        return !history.isEmpty() && !isVisibleConversationBusy() && inputBar.isEnabled() && !speechToTextService.active();
+        return !shutdownInProgress
+                && !history.isEmpty()
+                && !isVisibleConversationBusy()
+                && inputBar.isEnabled()
+                && !speechToTextService.active();
     }
 
     private void updateClearChatButtonVisibility() {
@@ -4205,11 +5404,19 @@ public class ChatPanel extends JPanel {
     }
 
     private void handleAssistantPart(StreamingSession session, ContentPart part) {
-        if (!session.isLive() || part == null || part instanceof TextPart) {
+        if (part == null || part instanceof TextPart) {
             return;
         }
-
-        session.responseParts.add(part);
+        synchronized (session.responseParts) {
+            if (!session.isLive()) {
+                AttachmentRef discardedAttachment = attachmentRef(part);
+                if (discardedAttachment != null) {
+                    discardAttachmentRefs(List.of(discardedAttachment));
+                }
+                return;
+            }
+            session.responseParts.add(part);
+        }
         SwingUtilities.invokeLater(() -> {
             if (!session.isLive() || !isVisibleSession(session)) {
                 return;
@@ -4366,6 +5573,18 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean persistAssistantResponse(StreamingSession session, SendJob sendJob) {
+        if (session.persisted.get()) {
+            return true;
+        }
+        PreparedAssistantResponse preparedResponse = prepareAssistantResponse(session, sendJob);
+        if (preparedResponse == null) {
+            return session.persisted.get();
+        }
+        applyPreparedAssistantResponse(session, preparedResponse);
+        return true;
+    }
+
+    private PreparedAssistantResponse prepareAssistantResponse(StreamingSession session, SendJob sendJob) {
         String assistantText;
         synchronized (session.response) {
             assistantText = session.response.toString();
@@ -4383,23 +5602,17 @@ public class ChatPanel extends JPanel {
         List<AgentToolActivityMeta> agentToolActivities = snapshotAgentToolActivities(session);
         List<CitationRef> citations = snapshotCitations(session);
         assistantText = appendCitationSourcesIfNeeded(assistantText, citations);
-        assistantWebSearch = normalizeWebSearchActivity(mergeAssistantWebSearchWithAnswerSources(sendJob, assistantText, assistantWebSearch, citations));
-        if (isVisibleConversation(session.conversationId) && StringUtils.isNotBlank(assistantWebSearch)) {
-            showWebSearchActivity(session, assistantWebSearch);
-        }
-
+        assistantWebSearch = normalizeWebSearchActivity(
+                mergeAssistantWebSearchWithAnswerSources(sendJob, assistantText, assistantWebSearch, citations)
+        );
         List<ContentPart> assistantParts = assistantResponseParts(session, assistantText);
         boolean hasContent = StringUtils.isNotBlank(assistantText)
                 || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart))
                 || hasVisibleThinkingContent(assistantThinking)
                 || StringUtils.isNotBlank(assistantWebSearch)
                 || hasVisibleAgentToolActivity(session);
-        if (!hasContent) {
-            return false;
-        }
-
-        if (!session.persisted.compareAndSet(false, true)) {
-            return true;
+        if (!hasContent || !session.persisted.compareAndSet(false, true)) {
+            return null;
         }
 
         Message assistantMessage = new Message(
@@ -4417,31 +5630,43 @@ public class ChatPanel extends JPanel {
                         citations
                 )
         );
+        int assistantOrdinal = sendJob == null ? Math.max(1, history.size()) : sendJob.assistantMessageOrdinal;
+        var assistantEntry = new ConversationHistoryEntry(UUID.randomUUID(), assistantOrdinal, assistantMessage);
+        if (session.conversationId != null) {
+            queuePendingAssistantRecovery(session.conversationId, assistantEntry);
+        }
+        persistAssistantMessageEvent(session.conversationId, assistantEntry);
+        return new PreparedAssistantResponse(assistantEntry, assistantWebSearch);
+    }
+
+    private void applyPreparedAssistantResponse(
+            StreamingSession session,
+            PreparedAssistantResponse preparedResponse
+    ) {
+        if (preparedResponse == null) {
+            return;
+        }
         UUID conversationId = session.conversationId;
-        if (isVisibleConversation(conversationId)) {
-            history.add(assistantMessage);
-            int assistantMessageIndex = history.size() - 1;
-            if (currentAssistantBubble == null) {
-                addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);
-            } else {
-                currentAssistantBubble.setContentParts(assistantMessage.parts());
-                currentAssistantBubble.component().putClientProperty(MESSAGE_META_PROPERTY, assistantMessage.meta());
-                setMessageIndex(currentAssistantBubble, assistantMessageIndex);
-                refreshWebTranscript(false);
-            }
-            updateClearChatButtonVisibility();
-            refreshWebTranscript(false, true);
+        if (!isVisibleConversation(conversationId)) {
+            return;
         }
-
-        boolean persistedByListener = persistAssistantMessageEvent(conversationId, assistantMessage);
-        if (conversationId != null && !isVisibleConversation(conversationId) && hasContent) {
-            pendingCompletedAssistantRecoveries.put(conversationId, assistantMessage);
+        if (StringUtils.isNotBlank(preparedResponse.webSearchActivity())) {
+            showWebSearchActivity(session, preparedResponse.webSearchActivity());
         }
-
-        if (!persistedByListener && (isVisibleConversation(conversationId) || conversationId == null)) {
-            notifyMessageSubmitted();
+        Message assistantMessage = preparedResponse.entry().message();
+        history.add(assistantMessage);
+        int assistantMessageIndex = history.size() - 1;
+        if (currentAssistantBubble == null) {
+            addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);
+        } else {
+            currentAssistantBubble.setContentParts(assistantMessage.parts());
+            currentAssistantBubble.component().putClientProperty(MESSAGE_META_PROPERTY, assistantMessage.meta());
+            setMessageIndex(currentAssistantBubble, assistantMessageIndex);
+            refreshWebTranscript(false);
         }
-        return true;
+        updateClearChatButtonVisibility();
+        refreshWebTranscript(false, true);
+        nextMessageOrdinal = preparedResponse.entry().ordinal() + 1;
     }
 
     private String mergeAssistantWebSearchWithAnswerSources(
@@ -4850,22 +6075,25 @@ public class ChatPanel extends JPanel {
 
 
     public void refreshProviders() {
+        if (shutdownInProgress || removed) {
+            return;
+        }
         long refreshId = providerRefreshCounter.incrementAndGet();
         long scopeVersion = modelCacheService.nextScopeVersion();
         providerScopeVersion = scopeVersion;
         Thread.startVirtualThread(() -> {
             try {
-                if (providerRefreshCounter.get() != refreshId) {
+                if (!providerRefreshCurrent(refreshId)) {
                     return;
                 }
 
                 List<ProviderRegistry.ProviderDef> providers = providerRegistry.availableProviders();
-                if (providerRefreshCounter.get() != refreshId) {
+                if (!providerRefreshCurrent(refreshId)) {
                     return;
                 }
                 prepareProviderModels(providers, scopeVersion);
                 SwingUtilities.invokeLater(() -> {
-                    if (providerRefreshCounter.get() != refreshId) {
+                    if (!providerRefreshCurrent(refreshId)) {
                         return;
                     }
 
@@ -4907,17 +6135,36 @@ public class ChatPanel extends JPanel {
     private void cancelStreaming(boolean markAsCancelled) {
         SendJob preparingJob = visiblePreparingJob();
         if (preparingJob != null) {
-            preparingJob.cancelled.set(true);
-            Thread worker = preparingJob.worker;
-            if (worker != null) {
-                worker.interrupt();
+            if (preparingJob.durableUserMessageSubmissionStarted
+                    || preparingJob.durableHistoryMutationSubmissionStarted
+            ) {
+                preparingJob.providerContinuationCancelled = true;
+                preparingJob.clearCredentialReferences();
+            } else {
+                preparingJob.cancelled.set(true);
+                Thread worker = preparingJob.worker;
+                if (worker != null) {
+                    worker.interrupt();
+                }
+                finishSendJob(preparingJob);
+                releaseFailedProvisionalConversation(preparingJob);
             }
-            finishSendJob(preparingJob);
         }
 
-        StreamingSession session = visibleStreamingSession();
+        StreamingSession session;
+        synchronized (terminalPersistenceLock) {
+            session = visibleStreamingSession();
+            if (session != null && session.terminalCallbackStarted.get()) {
+                return;
+            }
+            if (session != null) {
+                session.cancelled.set(true);
+                if (!markAsCancelled) {
+                    discardStreamingResponseAttachments(session);
+                }
+            }
+        }
         if (session != null) {
-            session.cancelled.set(true);
             try {
                 if (markAsCancelled) {
                     String cancelledMarker = "\n\n[Cancelled]";
@@ -4964,7 +6211,11 @@ public class ChatPanel extends JPanel {
         currentAssistantBubble = null;
         updateGenerationIndicator();
         SwingUtilities.invokeLater(() -> {
-            if (!removed) {
+            if (!removed
+                    && !shutdownInProgress
+                    && visiblePreparingJob() == null
+                    && visibleStreamingSession() == null
+            ) {
                 inputBar.setEnabled(true);
                 inputBar.requestInputFocus();
             }
@@ -5002,8 +6253,10 @@ public class ChatPanel extends JPanel {
                 activeStreamSessionId = -1L;
                 if (visiblePreparingJob() == null && visibleStreamingSession() == null) {
                     setVisibleStreaming(false);
-                    inputBar.setEnabled(true);
-                    inputBar.requestInputFocus();
+                    inputBar.setEnabled(!shutdownInProgress);
+                    if (!shutdownInProgress) {
+                        inputBar.requestInputFocus();
+                    }
                 }
                 updateGenerationIndicator();
             }
@@ -5026,10 +6279,17 @@ public class ChatPanel extends JPanel {
                 && visibleStreamingSession() == null
         ) {
             setVisibleStreaming(false);
-            inputBar.setEnabled(true);
+            inputBar.setEnabled(!shutdownInProgress);
         }
 
         updateGenerationIndicator();
+    }
+
+    private void abandonSendJob(SendJob sendJob) {
+        sendJob.cancelled.set(true);
+        sendJob.finished = true;
+        activeSendJobs.remove(sendJob.jobId);
+        sendJob.clearCredentialReferences();
     }
 
     private void finishSendJobByStreamSession(long streamSessionId) {
@@ -5037,6 +6297,12 @@ public class ChatPanel extends JPanel {
                 .filter(job -> Objects.equals(job.streamSessionId, streamSessionId))
                 .findFirst()
                 .ifPresent(this::finishSendJob);
+    }
+
+    private void releaseFailedProvisionalConversation(SendJob sendJob) {
+        if (sendJob.createsConversation && Objects.equals(activeConversationId, sendJob.conversationId)) {
+            activeConversationId = null;
+        }
     }
 
     private SendJob findSendJobByStreamSession(long streamSessionId) {
@@ -5054,7 +6320,11 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean isVisibleConversationBusy() {
-        return conversationLoading || visiblePreparingJob() != null || visibleStreamingSession() != null;
+        return conversationLoading
+                || conversationMutationPending
+                || blockedConversationIds.contains(activeConversationId)
+                || visiblePreparingJob() != null
+                || visibleStreamingSession() != null;
     }
 
     private void cancelSessionActiveRequest(StreamingSession session, boolean allowLegacyProviderFallback) {
@@ -5118,26 +6388,71 @@ public class ChatPanel extends JPanel {
         refreshWebTranscript(false);
     }
 
+    private boolean providerRefreshCurrent(long refreshId) {
+        return !removed && !shutdownInProgress && providerRefreshCounter.get() == refreshId;
+    }
+
     private List<String> sanitizeModelIds(String providerName, List<String> modelIds) {
         return modelCacheService.modelsWithLocalOverlay(providerName, modelIds);
     }
 
-    private boolean persistAssistantMessageEvent(UUID conversationId, Message message) {
-        if (assistantMessageCompletedListener == null || conversationId == null || message == null) {
-            return false;
+    private void persistAssistantMessageEvent(UUID conversationId, ConversationHistoryEntry entry) {
+        if (conversationId == null || entry == null) {
+            return;
         }
 
-        AssistantMessageEvent event = new AssistantMessageEvent(conversationId, message);
+        AssistantMessageEvent event = new AssistantMessageEvent(
+                conversationId,
+                entry.messageId(),
+                entry.ordinal(),
+                entry.message()
+        );
+        if (durableAssistantMessageCompletedListener == null) {
+            log.warn("Durable assistant persistence is not configured");
+            handleAssistantPersistenceFailure(conversationId, entry);
+            return;
+        }
         try {
-            return assistantMessageCompletedListener.persist(event);
+            CompletionStage<Void> persistence = durableAssistantMessageCompletedListener.persist(event);
+            if (persistence == null) {
+                log.warn("Assistant message persistence returned no completion stage");
+                handleAssistantPersistenceFailure(conversationId, entry);
+                return;
+            }
+            persistence.whenComplete((ignored, error) -> {
+                if (error == null) {
+                    runOnEdt(() -> removePendingAssistantRecovery(conversationId, entry.messageId()));
+                    return;
+                }
+                log.warn("Assistant message persistence failed: {}", ExceptionUtils.getMessage(unwrapCompletion(error)));
+                runOnEdt(() -> handleAssistantPersistenceFailure(conversationId, entry));
+            });
         } catch (Exception e) {
             log.warn("Assistant message persistence listener failed: {}", ExceptionUtils.getMessage(e));
-            return false;
+            handleAssistantPersistenceFailure(conversationId, entry);
+        }
+    }
+
+    private void handleAssistantPersistenceFailure(UUID conversationId, ConversationHistoryEntry entry) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> handleAssistantPersistenceFailure(conversationId, entry));
+            return;
+        }
+        if (discardedConversationIds.contains(conversationId)) {
+            discardStagedAttachments(entry.message());
+            return;
+        }
+        queueFailedAssistantRecovery(conversationId, entry);
+        if (!shutdownInProgress && !removed && isVisibleConversation(conversationId)) {
+            inputBar.showValidationMessage("The assistant response could not be saved and will be retried.");
         }
     }
 
     public record UserMessageEvent(
             UUID conversationId,
+            UUID messageId,
+            int ordinal,
+            boolean createsConversation,
             Message message,
             String providerName,
             String modelId,
@@ -5150,9 +6465,12 @@ public class ChatPanel extends JPanel {
     ) {
         @Override
         public String toString() {
-            return "UserMessageEvent[conversationId=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, webSearchEnabled=%s, webSearchOptionId=%s, visibleConversation=%s]"
+            return "UserMessageEvent[conversationId=%s, messageId=%s, ordinal=%d, createsConversation=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, webSearchEnabled=%s, webSearchOptionId=%s, visibleConversation=%s]"
                     .formatted(
                             conversationId,
+                            messageId,
+                            ordinal,
+                            createsConversation,
                             providerName,
                             modelId,
                             reasoningLevel,
@@ -5164,27 +6482,51 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    public record AssistantMessageEvent(UUID conversationId, Message message) {
+    public record AssistantMessageEvent(UUID conversationId, UUID messageId, int ordinal, Message message) {
         @Override
         public String toString() {
             return "AssistantMessageEvent[conversationId=%s, message=<masked>]".formatted(conversationId);
         }
     }
 
-    public record HistoryTruncatedEvent(UUID conversationId, int keepMessageCount) {
+    public enum HistoryMutationType {
+        EDIT,
+        EDIT_AND_TRUNCATE,
+        TRUNCATE
+    }
+
+    public record HistoryMutationEvent(
+            UUID conversationId,
+            HistoryMutationType type,
+            ConversationHistoryEntry retainedEntry
+    ) {
+        public HistoryMutationEvent {
+            Objects.requireNonNull(type, "type can't be null");
+            Objects.requireNonNull(retainedEntry, "retainedEntry can't be null");
+        }
     }
 
     public record ConversationStreamingEvent(UUID conversationId, boolean streaming) {
     }
 
     @FunctionalInterface
-    public interface UserMessagePersistenceListener {
-        UUID persist(UserMessageEvent event) throws Exception;
+    interface OpenAction {
+        void run() throws Exception;
     }
 
     @FunctionalInterface
-    public interface AssistantMessagePersistenceListener {
-        boolean persist(AssistantMessageEvent event);
+    public interface DurableUserMessagePersistenceListener {
+        CompletionStage<UUID> persist(UserMessageEvent event) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface DurableAssistantMessagePersistenceListener {
+        CompletionStage<Void> persist(AssistantMessageEvent event) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface DurableHistoryMutationListener {
+        CompletionStage<Void> persist(HistoryMutationEvent event) throws Exception;
     }
 
     @FunctionalInterface

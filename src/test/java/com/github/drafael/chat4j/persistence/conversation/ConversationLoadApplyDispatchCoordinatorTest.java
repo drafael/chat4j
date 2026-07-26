@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence.conversation;
 
 import com.github.drafael.chat4j.provider.api.Message;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,8 +20,16 @@ class ConversationLoadApplyDispatchCoordinatorTest {
         var applierCalled = new AtomicBoolean(false);
         var subject = new ConversationLoadApplyDispatchCoordinator(
                 (requestId, activeConversationId, loadedConversationId, records, conversation) ->
-                        ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(conversationId, List.of(Message.user("hello")), 1, "OpenAI:gpt-4o"),
-                (plan, historyLoader, persistedCountMarker, selectedModelSetter, conversationSelector) -> {
+                        ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(
+                                conversationId,
+                                List.of(new ConversationRepository.MessageRecord(
+                                        UUID.randomUUID(),
+                                        1,
+                                        Message.user("hello")
+                                )),
+                                "OpenAI:gpt-4o"
+                        ),
+                (plan, historyLoader, selectedModelSetter, conversationSelector) -> {
                     applierCalled.set(true);
                     return !plan.ignore();
                 }
@@ -33,7 +42,6 @@ class ConversationLoadApplyDispatchCoordinatorTest {
                 List.of(),
                 null,
                 messages -> {},
-                (id, count) -> {},
                 model -> {},
                 id -> {}
         );
@@ -47,10 +55,10 @@ class ConversationLoadApplyDispatchCoordinatorTest {
     void applyLoaded_whenConversationIdMissing_throwsException() {
         var subject = new ConversationLoadApplyDispatchCoordinator(
                 (requestId, activeConversationId, loadedConversationId, records, conversation) -> ConversationLoadResultPlanner.LoadedConversationPlan.ignorePlan(),
-                (plan, historyLoader, persistedCountMarker, selectedModelSetter, conversationSelector) -> false
+                (plan, historyLoader, selectedModelSetter, conversationSelector) -> false
         );
 
-        assertThatThrownBy(() -> subject.applyLoaded(1L, null, null, List.of(), null, messages -> {}, (id, count) -> {}, model -> {}, id -> {}))
+        assertThatThrownBy(() -> subject.applyLoaded(1L, null, null, List.of(), null, messages -> {}, model -> {}, id -> {}))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("conversationId");
     }

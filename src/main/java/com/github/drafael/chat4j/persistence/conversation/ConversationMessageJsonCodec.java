@@ -18,8 +18,6 @@ import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -78,11 +76,10 @@ class ConversationMessageJsonCodec {
         return node.toString();
     }
 
-    Message deserializeMessage(String role, String content, String contentJson, String metaJson, LocalDateTime createdAt) {
+    Message deserializeMessage(String role, String content, String contentJson, String metaJson, Instant createdAt) {
         List<ContentPart> parts = deserializeParts(contentJson, content);
         MessageMeta meta = deserializeMeta(metaJson);
-        Instant timestamp = createdAt.atZone(ZoneId.systemDefault()).toInstant();
-        return new Message(parseRole(role), parts, timestamp, meta);
+        return new Message(parseRole(role), parts, createdAt, meta);
     }
 
     Role parseRole(String role) {
@@ -154,7 +151,7 @@ class ConversationMessageJsonCodec {
             node.put("id", value.id().toString());
         }
 
-        node.put("storagePath", value.storagePath());
+        node.put("storagePath", ConversationAttachmentStore.canonicalStoragePath(value.storagePath()));
         node.put("originalName", value.originalName());
         node.put("mimeType", value.mimeType());
         node.put("sizeBytes", value.sizeBytes());

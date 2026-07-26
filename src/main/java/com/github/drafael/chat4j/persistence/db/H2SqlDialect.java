@@ -5,7 +5,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.UUID;
 
-public final class H2SqlDialect extends AbstractSqlDialect {
+public final class H2SqlDialect implements SqlDialect {
 
     @Override
     public StorageBackend backend() {
@@ -28,27 +28,8 @@ public final class H2SqlDialect extends AbstractSqlDialect {
     }
 
     @Override
-    public String booleanToggleExpression(String columnName) {
-        return "NOT %s".formatted(columnName);
-    }
-
-    @Override
-    public String attachmentUpsertSql() {
-        return "MERGE INTO attachments (id, storage_path, original_name, mime_type, size_bytes, sha256) KEY (id) VALUES (?, ?, ?, ?, ?, ?)";
-    }
-
-    @Override
     public String substringExpression(String expression, int start, int length) {
         return "SUBSTRING(%s, %d, %d)".formatted(expression, start, length);
     }
 
-    @Override
-    protected String webSearchEnabledColumnDefinition() {
-        return "web_search_enabled BOOLEAN DEFAULT FALSE";
-    }
-
-    @Override
-    protected String webSearchOptionColumnDefinition() {
-        return "web_search_option VARCHAR(80)";
-    }
 }

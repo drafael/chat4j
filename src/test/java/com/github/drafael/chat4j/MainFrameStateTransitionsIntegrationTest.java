@@ -5,11 +5,32 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MainFrameStateTransitionsIntegrationTest {
+
+    @Test
+    @DisplayName("A pending conversation load blocks another Sidebar conversation action")
+    void conversationChangePending_whenLoadIsPending_returnsTrue() {
+        assertThat(MainFrame.conversationChangePending(false, UUID.randomUUID(), false)).isTrue();
+        assertThat(MainFrame.conversationChangePending(false, null, false)).isFalse();
+    }
+
+    @Test
+    @DisplayName("A pending conversation operation blocks actions only for its targeted conversations")
+    void conversationActionPending_whenTargetIsInPendingSet_returnsTrue() {
+        UUID firstConversationId = UUID.randomUUID();
+        UUID secondConversationId = UUID.randomUUID();
+        Set<UUID> pendingConversationIds = Set.of(firstConversationId, secondConversationId);
+
+        assertThat(MainFrame.conversationActionPending(pendingConversationIds, firstConversationId)).isTrue();
+        assertThat(MainFrame.conversationActionPending(pendingConversationIds, secondConversationId)).isTrue();
+        assertThat(MainFrame.conversationActionPending(pendingConversationIds, UUID.randomUUID())).isFalse();
+        assertThat(MainFrame.conversationActionPending(pendingConversationIds, null)).isFalse();
+    }
 
     @Test
     @DisplayName("New-chat transition clears conversation state without changing render mode")
@@ -20,7 +41,6 @@ class MainFrameStateTransitionsIntegrationTest {
         var calls = new ArrayList<String>();
 
         new NewChatCoordinator().start(
-                () -> calls.add("save"),
                 () -> {
                     calls.add("clear-current");
                     conversationState.clearCurrentConversationId();
@@ -34,7 +54,6 @@ class MainFrameStateTransitionsIntegrationTest {
 
         assertThat(conversationState.currentConversationId()).isNull();
         assertThat(calls).containsExactly(
-                "save",
                 "clear-current",
                 "clear-active",
                 "clear-selection",

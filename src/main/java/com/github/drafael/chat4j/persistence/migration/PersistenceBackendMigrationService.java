@@ -19,9 +19,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import javax.sql.DataSource;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -96,7 +99,7 @@ public class PersistenceBackendMigrationService {
         new DatabaseBootstrap(storagePaths, targetDataSource, targetDialect).init();
 
         copyData(sourceDataSource, sourceDialect, targetDataSource, targetDialect);
-        verifyCounts(sourceDataSource, targetDataSource);
+        verifyMigration(sourceDataSource, sourceDialect, targetDataSource, targetDialect);
         shutdownIfH2(targetBackend, targetDataSource);
         promoteStagedDatabase(targetBackend);
     }
@@ -155,13 +158,13 @@ public class PersistenceBackendMigrationService {
                 insert.setString(2, rows.getString("title"));
                 insert.setString(3, rows.getString("provider"));
                 insert.setString(4, rows.getString("model"));
-                insert.setBoolean(5, rows.getBoolean("is_favorite"));
+                bindNullableBoolean(insert, 5, rows, "is_favorite");
                 bindTimestamp(targetDialect, insert, 6, rows.getTimestamp("created_at"));
                 bindTimestamp(targetDialect, insert, 7, rows.getTimestamp("updated_at"));
-                insert.setBoolean(8, rows.getBoolean("agent_mode_enabled"));
+                bindNullableBoolean(insert, 8, rows, "agent_mode_enabled");
                 insert.setString(9, rows.getString("agent_project_root"));
                 insert.setString(10, rows.getString("reasoning_level"));
-                insert.setBoolean(11, rows.getBoolean("web_search_enabled"));
+                bindNullableBoolean(insert, 11, rows, "web_search_enabled");
                 insert.setString(12, rows.getString("web_search_option"));
                 insert.addBatch();
             }
@@ -177,16 +180,16 @@ public class PersistenceBackendMigrationService {
     ) throws SQLException {
         try (PreparedStatement select = source.prepareStatement(
                 """
-                SELECT id, conversation_id, role, content, content_json, meta_json, created_at
+                SELECT id, conversation_id, role, content, content_json, meta_json, created_at, ordinal
                 FROM messages
-                ORDER BY created_at, id
+                ORDER BY conversation_id, ordinal
                 """
         );
              ResultSet rows = select.executeQuery();
              PreparedStatement insert = target.prepareStatement(
                 """
-                INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO messages (id, conversation_id, role, content, content_json, meta_json, created_at, ordinal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """
              )
         ) {
@@ -197,7 +200,8 @@ public class PersistenceBackendMigrationService {
                 insert.setString(4, rows.getString("content"));
                 insert.setString(5, rows.getString("content_json"));
                 insert.setString(6, rows.getString("meta_json"));
-                bindTimestamp(targetDialect, insert, 7, rows.getTimestamp("created_at"));
+                insert.setLong(7, rows.getLong("created_at"));
+                insert.setInt(8, rows.getInt("ordinal"));
                 insert.addBatch();
             }
             insert.executeBatch();
@@ -230,7 +234,12 @@ public class PersistenceBackendMigrationService {
                 insert.setString(2, rows.getString("storage_path"));
                 insert.setString(3, rows.getString("original_name"));
                 insert.setString(4, rows.getString("mime_type"));
-                insert.setLong(5, rows.getLong("size_bytes"));
+                long sizeBytes = rows.getLong("size_bytes");
+                if (rows.wasNull()) {
+                    insert.setNull(5, Types.BIGINT);
+                } else {
+                    insert.setLong(5, sizeBytes);
+                }
                 insert.setString(6, rows.getString("sha256"));
                 bindTimestamp(targetDialect, insert, 7, rows.getTimestamp("created_at"));
                 insert.addBatch();
@@ -270,6 +279,20 @@ public class PersistenceBackendMigrationService {
         }
     }
 
+    private void bindNullableBoolean(
+            PreparedStatement statement,
+            int parameterIndex,
+            ResultSet rows,
+            String columnName
+    ) throws SQLException {
+        boolean value = rows.getBoolean(columnName);
+        if (rows.wasNull()) {
+            statement.setNull(parameterIndex, Types.BOOLEAN);
+        } else {
+            statement.setBoolean(parameterIndex, value);
+        }
+    }
+
     private void bindTimestamp(
             SqlDialect targetDialect,
             PreparedStatement statement,
@@ -284,7 +307,12 @@ public class PersistenceBackendMigrationService {
         statement.setString(parameterIndex, SQLITE_TIMESTAMP_FORMAT.format(timestamp.toLocalDateTime()));
     }
 
-    private void verifyCounts(DataSource sourceDataSource, DataSource targetDataSource) throws SQLException {
+    private void verifyMigration(
+            DataSource sourceDataSource,
+            SqlDialect sourceDialect,
+            DataSource targetDataSource,
+            SqlDialect targetDialect
+    ) throws SQLException {
         for (String tableName : List.of("conversations", "messages", "attachments", "message_attachments")) {
             long sourceCount = countRows(sourceDataSource, tableName);
             long targetCount = countRows(targetDataSource, tableName);
@@ -294,6 +322,129 @@ public class PersistenceBackendMigrationService {
                                 .formatted(tableName, sourceCount, targetCount)
                 );
             }
+        }
+        if (!orderedConversationMetadata(sourceDataSource, sourceDialect)
+                .equals(orderedConversationMetadata(targetDataSource, targetDialect))) {
+            throw new IllegalStateException("Migration verification failed for conversation metadata");
+        }
+        if (!orderedMessageIdentity(sourceDataSource, sourceDialect)
+                .equals(orderedMessageIdentity(targetDataSource, targetDialect))) {
+            throw new IllegalStateException("Migration verification failed for ordered message identity");
+        }
+        if (!orderedAttachmentLinks(sourceDataSource, sourceDialect)
+                .equals(orderedAttachmentLinks(targetDataSource, targetDialect))) {
+            throw new IllegalStateException("Migration verification failed for ordered attachment links");
+        }
+        if (!orderedAttachmentMetadata(sourceDataSource, sourceDialect)
+                .equals(orderedAttachmentMetadata(targetDataSource, targetDialect))) {
+            throw new IllegalStateException("Migration verification failed for attachment metadata");
+        }
+    }
+
+    private List<ConversationMetadata> orderedConversationMetadata(
+            DataSource dataSource,
+            SqlDialect dialect
+    ) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     """
+                     SELECT id, title, provider, model, is_favorite, created_at, updated_at,
+                            agent_mode_enabled, agent_project_root, reasoning_level,
+                            web_search_enabled, web_search_option
+                     FROM conversations
+                     ORDER BY id
+                     """
+             ); ResultSet rows = statement.executeQuery()) {
+            var values = new ArrayList<ConversationMetadata>();
+            while (rows.next()) {
+                Timestamp createdAt = rows.getTimestamp("created_at");
+                Timestamp updatedAt = rows.getTimestamp("updated_at");
+                values.add(new ConversationMetadata(
+                        dialect.readUuid(rows, "id"),
+                        rows.getString("title"),
+                        rows.getString("provider"),
+                        rows.getString("model"),
+                        readNullableBoolean(rows, "is_favorite"),
+                        normalizeConversationTimestamp(createdAt),
+                        normalizeConversationTimestamp(updatedAt),
+                        readNullableBoolean(rows, "agent_mode_enabled"),
+                        rows.getString("agent_project_root"),
+                        rows.getString("reasoning_level"),
+                        readNullableBoolean(rows, "web_search_enabled"),
+                        rows.getString("web_search_option")
+                ));
+            }
+            return List.copyOf(values);
+        }
+    }
+
+    private Boolean readNullableBoolean(ResultSet rows, String columnName) throws SQLException {
+        boolean value = rows.getBoolean(columnName);
+        return rows.wasNull() ? null : value;
+    }
+
+    private LocalDateTime normalizeConversationTimestamp(Timestamp timestamp) {
+        if (timestamp == null) {
+            return null;
+        }
+        LocalDateTime value = timestamp.toLocalDateTime();
+        return value.withNano(value.getNano() / 1_000_000 * 1_000_000);
+    }
+
+    private List<String> orderedMessageIdentity(DataSource dataSource, SqlDialect dialect) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT conversation_id, id, ordinal, created_at FROM messages ORDER BY conversation_id, ordinal"
+             ); ResultSet rows = statement.executeQuery()) {
+            var values = new ArrayList<String>();
+            while (rows.next()) {
+                values.add("%s|%s|%d|%d".formatted(
+                        dialect.readUuid(rows, "conversation_id"),
+                        dialect.readUuid(rows, "id"),
+                        rows.getInt("ordinal"),
+                        rows.getLong("created_at")
+                ));
+            }
+            return List.copyOf(values);
+        }
+    }
+
+    private List<String> orderedAttachmentLinks(DataSource dataSource, SqlDialect dialect) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT message_id, attachment_id, part_index FROM message_attachments ORDER BY message_id, part_index"
+             ); ResultSet rows = statement.executeQuery()) {
+            var values = new ArrayList<String>();
+            while (rows.next()) {
+                values.add("%s|%s|%d".formatted(
+                        dialect.readUuid(rows, "message_id"),
+                        dialect.readUuid(rows, "attachment_id"),
+                        rows.getInt("part_index")
+                ));
+            }
+            return List.copyOf(values);
+        }
+    }
+
+    private List<AttachmentMetadata> orderedAttachmentMetadata(DataSource dataSource, SqlDialect dialect) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT id, storage_path, original_name, mime_type, size_bytes, sha256 FROM attachments ORDER BY id"
+             ); ResultSet rows = statement.executeQuery()) {
+            var values = new ArrayList<AttachmentMetadata>();
+            while (rows.next()) {
+                long sizeBytes = rows.getLong("size_bytes");
+                boolean sizeBytesPresent = !rows.wasNull();
+                values.add(new AttachmentMetadata(
+                        dialect.readUuid(rows, "id"),
+                        rows.getString("storage_path"),
+                        rows.getString("original_name"),
+                        rows.getString("mime_type"),
+                        sizeBytesPresent ? sizeBytes : null,
+                        rows.getString("sha256")
+                ));
+            }
+            return List.copyOf(values);
         }
     }
 
@@ -305,6 +456,32 @@ public class PersistenceBackendMigrationService {
             rows.next();
             return rows.getLong(1);
         }
+    }
+
+    private record ConversationMetadata(
+            UUID id,
+            String title,
+            String provider,
+            String model,
+            Boolean favorite,
+            LocalDateTime createdAt,
+            LocalDateTime updatedAt,
+            Boolean agentModeEnabled,
+            String agentProjectRoot,
+            String reasoningLevel,
+            Boolean webSearchEnabled,
+            String webSearchOption
+    ) {
+    }
+
+    private record AttachmentMetadata(
+            UUID id,
+            String storagePath,
+            String originalName,
+            String mimeType,
+            Long sizeBytes,
+            String sha256
+    ) {
     }
 
     private void promoteStagedDatabase(StorageBackend targetBackend) throws IOException {

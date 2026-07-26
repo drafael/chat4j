@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.persistence.conversation;
 
 import com.github.drafael.chat4j.provider.api.Message;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -53,7 +53,7 @@ class ConversationLoadDispatchCoordinatorTest {
         capturedListener.get().onLoaded(
                 1L,
                 conversationId,
-                List.of(new ConversationRepository.MessageRecord(UUID.randomUUID(), Message.user("hello"), LocalDateTime.now())),
+                List.of(new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("hello"))),
                 null
         );
         capturedListener.get().onFailure(2L, conversationId, new RuntimeException("boom"));

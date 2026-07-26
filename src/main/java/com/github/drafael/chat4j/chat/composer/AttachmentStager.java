@@ -12,6 +12,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 import org.apache.commons.lang3.StringUtils;
 
@@ -31,16 +32,57 @@ public class AttachmentStager {
 
     public AttachmentRef stage(ComposerAttachment attachment) throws IOException {
         UUID id = UUID.randomUUID();
-        Path targetPath = targetPath(id, attachment.displayName());
-        Files.copy(attachment.path(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-        return attachmentRef(id, targetPath, attachment.displayName(), attachment.mimeType());
+        Path targetPath = targetPath(id);
+        try {
+            Files.copy(attachment.path(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+            return attachmentRef(id, targetPath, attachment.displayName(), attachment.mimeType());
+        } catch (IOException | RuntimeException e) {
+            try {
+                Files.deleteIfExists(targetPath);
+            } catch (IOException cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+            }
+            throw e;
+        }
     }
 
-    private Path targetPath(UUID id, String displayName) throws IOException {
+    public void discard(AttachmentRef attachmentRef) {
+        if (attachmentRef == null) {
+            return;
+        }
+        managedPath(attachmentRef.storagePath()).ifPresent(path -> {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException ignored) {
+                // Best-effort cleanup; repository orphan recovery remains authoritative after persistence.
+            }
+        });
+    }
+
+    public Optional<Path> managedPath(String storagePath) {
+        if (StringUtils.isBlank(storagePath)) {
+            return Optional.empty();
+        }
+        try {
+            Path attachmentRoot = normalizeExisting(storagePaths.attachmentsDirectory());
+            Path attachmentPath = normalizeExisting(Path.of(storagePath));
+            return attachmentPath.startsWith(attachmentRoot)
+                    ? Optional.of(attachmentPath)
+                    : Optional.empty();
+        } catch (IOException | RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    private Path normalizeExisting(Path path) throws IOException {
+        Path normalized = path.toAbsolutePath().normalize();
+        return Files.exists(normalized) ? normalized.toRealPath() : normalized;
+    }
+
+    private Path targetPath(UUID id) throws IOException {
         Path targetDirectory = attachmentsDirectory();
         Files.createDirectories(targetDirectory);
-        String safeName = sanitizeFileName(displayName);
-        return targetDirectory.resolve("%s-%s".formatted(id, safeName));
+        return targetDirectory.resolve(id.toString());
     }
 
     private AttachmentRef attachmentRef(UUID id, Path targetPath, String displayName, String mimeType) throws IOException {
@@ -60,16 +102,6 @@ public class AttachmentStager {
     private Path attachmentsDirectory() {
         String dayFolder = LocalDate.now().format(DAY_DIR_FORMAT);
         return storagePaths.attachmentsDirectory().resolve(dayFolder);
-    }
-
-    private String sanitizeFileName(String fileName) {
-        if (StringUtils.isBlank(fileName)) {
-            return "attachment";
-        }
-
-        return fileName
-                .replaceAll("[^a-zA-Z0-9._-]", "_")
-                .replaceAll("_+", "_");
     }
 
     private String sha256Hex(Path path) throws IOException {

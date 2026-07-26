@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -14,15 +13,12 @@ class MainFrameConversationWiringFactoryTest {
     @DisplayName("Create builds conversation wiring without render-mode persistence")
     void create_whenCalled_buildsConversationWiring() throws Exception {
         var subject = new MainFrameConversationWiringFactory();
-        var wiring = subject.create(new ConversationRepository(null), new PersistedMessageCounter());
+        var wiring = subject.create(new ConversationRepository(null));
 
         assertThat(wiring.conversationLoadCoordinator()).isNotNull();
         assertThat(wiring.conversationLoadResultPlanner()).isNotNull();
         assertThat(wiring.conversationLoadApplyDispatchCoordinator()).isNotNull();
         assertThat(wiring.conversationPersistenceCoordinator()).isNotNull();
-        assertThat(wiring.assistantMessageCompletionFlowCoordinator()).isNotNull();
-        assertThat(wiring.currentConversationSaveCoordinator()).isNotNull();
-
     }
 
     @Test
@@ -30,7 +26,7 @@ class MainFrameConversationWiringFactoryTest {
     void create_whenRequiredArgumentMissing_throwsException() {
         var subject = new MainFrameConversationWiringFactory();
 
-        assertThatThrownBy(() -> subject.create(null, new PersistedMessageCounter()))
+        assertThatThrownBy(() -> subject.create(null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("conversationRepo");
     }

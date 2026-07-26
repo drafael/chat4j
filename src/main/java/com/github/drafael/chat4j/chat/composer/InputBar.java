@@ -34,11 +34,15 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -118,9 +122,15 @@ public class InputBar extends JPanel {
         }
     };
     private final List<ComposerAttachment> attachments = new ArrayList<>();
+    private final Map<Path, Icon> attachmentThumbnails = new HashMap<>();
+    private final Set<Path> pendingAttachmentThumbnails = new HashSet<>();
+    private final AtomicLong attachmentWorkCounter = new AtomicLong();
     private final List<String> activeSkills = new ArrayList<>();
     private final List<SkillCommand> availableSkills = new ArrayList<>();
-    private final AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
+    private final AtomicLong skillRefreshCounter = new AtomicLong();
+    private boolean skillRefreshShutdown;
+    private AttachmentSelectionPolicy attachmentSelectionPolicy = new AttachmentSelectionPolicy();
+    private Runnable attachmentSelectionAppliedListener = () -> {};
     private final List<ActionListener> sendListeners = new ArrayList<>();
     private final List<ActionListener> commandCenterListeners = new ArrayList<>();
     private final List<ActionListener> clearChatListeners = new ArrayList<>();
@@ -140,6 +150,7 @@ public class InputBar extends JPanel {
     private boolean webSearchAvailable = false;
     private boolean webSearchEnabled = false;
     private boolean webSearchLockedEnabled = false;
+    private String defaultWebSearchOptionId;
     private String webSearchOptionId;
     private int webBrowseTopN = 3;
     private List<WebSearchOption> webSearchOptions = emptyList();
@@ -376,7 +387,6 @@ public class InputBar extends JPanel {
 
         configureSlashPopup();
         installSttEscapeBinding();
-        refreshSkills();
 
         applyThemeStyles();
         add(composerShell, BorderLayout.CENTER);
@@ -387,6 +397,45 @@ public class InputBar extends JPanel {
                 updateProjectRootPresentation();
             }
         });
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        if (!skillRefreshShutdown) {
+            refreshSkills();
+        }
+    }
+
+    @Override
+    public void removeNotify() {
+        invalidateSkillRefresh();
+        invalidateAttachmentWork();
+        super.removeNotify();
+    }
+
+    public void beginShutdown() {
+        skillRefreshShutdown = true;
+        invalidateSkillRefresh();
+        invalidateAttachmentWork();
+    }
+
+    void setAttachmentSelectionPolicyForTests(AttachmentSelectionPolicy attachmentSelectionPolicy) {
+        this.attachmentSelectionPolicy = attachmentSelectionPolicy;
+    }
+
+    void setAttachmentSelectionAppliedListenerForTests(Runnable listener) {
+        attachmentSelectionAppliedListener = listener == null ? () -> {} : listener;
+    }
+
+    private void invalidateSkillRefresh() {
+        skillRefreshCounter.incrementAndGet();
+        hideSlashPopup();
+    }
+
+    private void invalidateAttachmentWork() {
+        attachmentWorkCounter.incrementAndGet();
+        pendingAttachmentThumbnails.clear();
     }
 
     private void configureInputIconButton(AbstractButton button) {
@@ -449,7 +498,9 @@ public class InputBar extends JPanel {
         ComposerState safeState = state == null ? ComposerState.empty() : state;
         textArea.setText(safeState.text());
         textArea.setCaretPosition(textArea.getDocument().getLength());
+        invalidateAttachmentWork();
         attachments.clear();
+        attachmentThumbnails.clear();
         attachments.addAll(safeState.attachments());
         activeSkills.clear();
         activeSkills.addAll(safeState.activeSkills());
@@ -460,7 +511,9 @@ public class InputBar extends JPanel {
 
     public void clear() {
         textArea.setText("");
+        invalidateAttachmentWork();
         attachments.clear();
+        attachmentThumbnails.clear();
         activeSkills.clear();
         refreshChips();
         hideSlashPopup();
@@ -724,11 +777,7 @@ public class InputBar extends JPanel {
     }
 
     public void setWebSearchOptionId(String optionId) {
-        if (StringUtils.isBlank(optionId)) {
-            return;
-        }
-
-        webSearchOptionId = StringUtils.trim(optionId);
+        webSearchOptionId = resolveAvailableWebSearchOptionId(StringUtils.trimToNull(optionId));
         webSearchOptionItems.forEach((id, item) -> item.setSelected(Strings.CS.equals(id, webSearchOptionId)));
         updateWebSearchPresentation();
     }
@@ -787,18 +836,9 @@ public class InputBar extends JPanel {
 
     public void setWebSearchOptions(List<WebSearchOption> options, String defaultOptionId) {
         webSearchOptions = options == null ? emptyList() : List.copyOf(options);
+        defaultWebSearchOptionId = StringUtils.trimToNull(defaultOptionId);
         webSearchAvailable = webSearchOptions.stream().anyMatch(WebSearchOption::available);
-
-        boolean currentStillAvailable = webSearchOptions.stream()
-                .anyMatch(option -> option.available() && Strings.CS.equals(option.id(), webSearchOptionId));
-        if (!currentStillAvailable) {
-            webSearchOptionId = webSearchOptions.stream()
-                    .filter(option -> option.available() && Strings.CS.equals(option.id(), defaultOptionId))
-                    .findFirst()
-                    .or(() -> webSearchOptions.stream().filter(WebSearchOption::available).findFirst())
-                    .map(WebSearchOption::id)
-                    .orElse(null);
-        }
+        webSearchOptionId = resolveAvailableWebSearchOptionId(webSearchOptionId);
 
         if (!webSearchAvailable) {
             webSearchEnabled = false;
@@ -1032,6 +1072,23 @@ public class InputBar extends JPanel {
         if (notify) {
             notifyWebSearchOptionChanged(optionId);
         }
+    }
+
+    private String resolveAvailableWebSearchOptionId(String requestedOptionId) {
+        if (webSearchOptions.isEmpty()) {
+            return requestedOptionId;
+        }
+        return webSearchOptions.stream()
+                .filter(WebSearchOption::available)
+                .filter(option -> Strings.CS.equals(option.id(), requestedOptionId))
+                .findFirst()
+                .or(() -> webSearchOptions.stream()
+                        .filter(WebSearchOption::available)
+                        .filter(option -> Strings.CS.equals(option.id(), defaultWebSearchOptionId))
+                        .findFirst())
+                .or(() -> webSearchOptions.stream().filter(WebSearchOption::available).findFirst())
+                .map(WebSearchOption::id)
+                .orElse(null);
     }
 
     private void updateWebSearchPresentation() {
@@ -1491,29 +1548,46 @@ public class InputBar extends JPanel {
     }
 
     private void addAttachments(List<Path> candidatePaths) {
-        if (!isComposerMutable()) {
+        if (!isComposerMutable() || ObjectUtils.isEmpty(candidatePaths)) {
             return;
         }
         clearValidationMessage();
-
-        candidatePaths.stream()
-                .map(this::toComposerAttachment)
-                .flatMap(Optional::stream)
-                .filter(this::isNewAttachment)
-                .forEach(attachments::add);
-
-        refreshChips();
+        long workId = attachmentWorkCounter.get();
+        List<Path> paths = List.copyOf(candidatePaths);
+        Thread.startVirtualThread(() -> {
+            List<ComposerAttachment> accepted = new ArrayList<>();
+            List<String> errors = new ArrayList<>();
+            paths.forEach(path -> {
+                try {
+                    accepted.add(attachmentSelectionPolicy.create(path));
+                } catch (IllegalArgumentException e) {
+                    errors.add(e.getMessage());
+                } catch (IOException e) {
+                    errors.add("Failed to read attachment: %s".formatted(path.getFileName()));
+                }
+            });
+            SwingUtilities.invokeLater(() -> applyAttachmentSelection(workId, accepted, errors));
+        });
     }
 
-    private Optional<ComposerAttachment> toComposerAttachment(Path path) {
+    private void applyAttachmentSelection(
+            long workId,
+            List<ComposerAttachment> accepted,
+            List<String> errors
+    ) {
         try {
-            return Optional.of(attachmentSelectionPolicy.create(path));
-        } catch (IllegalArgumentException e) {
-            showValidationMessage(e.getMessage());
-            return Optional.empty();
-        } catch (IOException e) {
-            showValidationMessage("Failed to read attachment: %s".formatted(path.getFileName()));
-            return Optional.empty();
+            if (workId != attachmentWorkCounter.get() || !isComposerMutable()) {
+                return;
+            }
+            accepted.stream()
+                    .filter(this::isNewAttachment)
+                    .forEach(attachments::add);
+            if (!errors.isEmpty()) {
+                showValidationMessage(errors.getLast());
+            }
+            refreshChips();
+        } finally {
+            attachmentSelectionAppliedListener.run();
         }
     }
 
@@ -1529,10 +1603,15 @@ public class InputBar extends JPanel {
         new ArrayList<>(attachments).forEach(attachment -> {
             Runnable onRemove = () -> {
                 attachments.remove(attachment);
+                attachmentThumbnails.remove(attachment.path());
                 refreshChips();
             };
             if (attachment.image()) {
-                chipsPanel.add(createImageAttachmentChip(attachment, onRemove));
+                chipsPanel.add(createImageAttachmentChip(
+                        attachment,
+                        attachmentThumbnail(attachment),
+                        onRemove
+                ));
             } else {
                 chipsPanel.add(createAttachmentChip(
                         ellipsize(attachment.displayName(), 26),
@@ -1592,7 +1671,42 @@ public class InputBar extends JPanel {
         return chip;
     }
 
-    private JComponent createImageAttachmentChip(ComposerAttachment attachment, Runnable onRemove) {
+    private Icon attachmentThumbnail(ComposerAttachment attachment) {
+        Icon thumbnail = attachmentThumbnails.get(attachment.path());
+        if (thumbnail != null) {
+            return thumbnail;
+        }
+        scheduleAttachmentThumbnail(attachment);
+        return new FlatFileViewFileIcon();
+    }
+
+    private void scheduleAttachmentThumbnail(ComposerAttachment attachment) {
+        Path path = attachment.path();
+        if (!pendingAttachmentThumbnails.add(path)) {
+            return;
+        }
+        long workId = attachmentWorkCounter.get();
+        Thread.startVirtualThread(() -> {
+            RoundedImageIcon thumbnail = new RoundedImageIcon(path, 36);
+            Icon icon = thumbnail.hasImage() ? thumbnail : new FlatFileViewFileIcon();
+            SwingUtilities.invokeLater(() -> {
+                pendingAttachmentThumbnails.remove(path);
+                if (workId != attachmentWorkCounter.get()
+                        || attachments.stream().noneMatch(candidate -> candidate.path().equals(path))
+                ) {
+                    return;
+                }
+                attachmentThumbnails.put(path, icon);
+                refreshChips();
+            });
+        });
+    }
+
+    private JComponent createImageAttachmentChip(
+            ComposerAttachment attachment,
+            Icon thumbnail,
+            Runnable onRemove
+    ) {
         InputChipPanel chip = new InputChipPanel(
                 this::resolveChipBackground,
                 this::resolveChipBorderColor,
@@ -1603,14 +1717,7 @@ public class InputBar extends JPanel {
         chip.setLayout(new FlowLayout(FlowLayout.LEFT, 6, 0));
         chip.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
 
-        RoundedImageIcon thumbnail = new RoundedImageIcon(attachment.path(), 36);
-        JLabel thumbLabel;
-        if (thumbnail.hasImage()) {
-            thumbLabel = new JLabel(thumbnail);
-        } else {
-            thumbLabel = new JLabel(new FlatFileViewFileIcon());
-        }
-        chip.add(thumbLabel);
+        chip.add(new JLabel(thumbnail));
 
         JPanel textStack = new JPanel();
         textStack.setOpaque(false);
@@ -1900,10 +2007,22 @@ public class InputBar extends JPanel {
     }
 
     private void refreshSkills() {
-        Map<String, SkillCommand> byName = new LinkedHashMap<>();
-        skillSearchPaths().forEach(path -> loadSkills(path).forEach(skill -> byName.putIfAbsent(skill.name(), skill)));
-        availableSkills.clear();
-        availableSkills.addAll(byName.values());
+        long refreshId = skillRefreshCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            Map<String, SkillCommand> byName = new LinkedHashMap<>();
+            skillSearchPaths().forEach(path ->
+                    loadSkills(path).forEach(skill -> byName.putIfAbsent(skill.name(), skill))
+            );
+            List<SkillCommand> loadedSkills = List.copyOf(byName.values());
+            SwingUtilities.invokeLater(() -> {
+                if (skillRefreshShutdown || skillRefreshCounter.get() != refreshId) {
+                    return;
+                }
+                availableSkills.clear();
+                availableSkills.addAll(loadedSkills);
+                updateSlashSuggestions();
+            });
+        });
     }
 
     private List<Path> skillSearchPaths() {

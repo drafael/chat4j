@@ -28,28 +28,22 @@ import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
-import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionDispatchCoordinator;
-import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionEventDispatchCoordinator;
-import com.github.drafael.chat4j.persistence.conversation.AssistantMessageCompletionFlowCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadApplyDispatchCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadDispatchCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadFailureCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadResultPlanner;
-import com.github.drafael.chat4j.persistence.conversation.ConversationLoadStartCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistencePrerequisiteIndeterminateException;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.MessageRecord;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.conversation.ConversationTitleDeriver;
-import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveCoordinator;
-import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveDispatchCoordinator;
-import com.github.drafael.chat4j.persistence.conversation.CurrentConversationSaveUiApplyCoordinator;
-import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.persistence.shutdown.ShutdownFlowCoordinator;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
 import com.github.drafael.chat4j.prompts.CommandCenterAction;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
@@ -57,7 +51,6 @@ import com.github.drafael.chat4j.prompts.PromptCommandCenter;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptTemplateRenderer;
 import com.github.drafael.chat4j.prompts.PromptVariable;
-import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -168,12 +161,15 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import javax.swing.*;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -229,7 +225,6 @@ public class MainFrame extends JFrame {
     private final MainFrameDependenciesFactory mainFrameDependenciesFactory = new MainFrameDependenciesFactory();
     private final MainFrameTitleBarFactory titleBarFactory = new MainFrameTitleBarFactory();
     private final ClearChatConfirmationDialog clearChatConfirmationDialog = new ClearChatConfirmationDialog();
-    private final MainFrameShutdownSaveActionFactory shutdownSaveActionFactory = new MainFrameShutdownSaveActionFactory();
     private final JSplitPane splitPane;
     private final ConversationRepository conversationRepo;
     private final SettingsRepository settingsRepo;
@@ -353,27 +348,13 @@ public class MainFrame extends JFrame {
     private final ConversationLoadCoordinator conversationLoadCoordinator;
     private final ConversationLoadDispatchCoordinator conversationLoadDispatchCoordinator =
             new ConversationLoadDispatchCoordinator();
-    private final ConversationLoadStartCoordinator conversationLoadStartCoordinator =
-            new ConversationLoadStartCoordinator(conversationLoadDispatchCoordinator);
     private final ConversationLoadFailureCoordinator conversationLoadFailureCoordinator =
             new ConversationLoadFailureCoordinator();
     private final ConversationLoadResultPlanner conversationLoadResultPlanner;
     private final ConversationLoadApplyDispatchCoordinator conversationLoadApplyDispatchCoordinator;
     private final ConversationPersistenceCoordinator conversationPersistenceCoordinator;
     private final ConversationTitleDeriver conversationTitleDeriver = new ConversationTitleDeriver();
-    private final AssistantMessageCompletionDispatchCoordinator assistantMessageCompletionDispatchCoordinator =
-            new AssistantMessageCompletionDispatchCoordinator();
-    private final AssistantMessageCompletionEventDispatchCoordinator assistantMessageCompletionEventDispatchCoordinator =
-            new AssistantMessageCompletionEventDispatchCoordinator(assistantMessageCompletionDispatchCoordinator);
-    private final AssistantMessageCompletionFlowCoordinator assistantMessageCompletionFlowCoordinator;
-    private final CurrentConversationSaveCoordinator currentConversationSaveCoordinator;
-    private final CurrentConversationSaveDispatchCoordinator currentConversationSaveDispatchCoordinator =
-            new CurrentConversationSaveDispatchCoordinator();
-    private final CurrentConversationSaveUiApplyCoordinator currentConversationSaveUiApplyCoordinator =
-            new CurrentConversationSaveUiApplyCoordinator();
     private final ShutdownSaveDispatchCoordinator shutdownSaveDispatchCoordinator = new ShutdownSaveDispatchCoordinator();
-    private final ShutdownFlowCoordinator shutdownFlowCoordinator =
-            new ShutdownFlowCoordinator(shutdownSaveDispatchCoordinator);
     private final MainFrameConversationState conversationState = new MainFrameConversationState();
     private final Set<UUID> clearedConversationIds = new HashSet<>();
     private UUID pendingLoadConversationId;
@@ -403,11 +384,17 @@ public class MainFrame extends JFrame {
     private final ModelMenuDirtyRefreshTriggerCoordinator modelMenuDirtyRefreshTriggerCoordinator;
     private final MainFrameModelMenuCoordinator modelMenuCoordinator;
     private final LookAndFeelMenuRefreshCoordinator lookAndFeelMenuRefreshCoordinator;
-    private final PersistedMessageCounter persistedMessageCounter = new PersistedMessageCounter();
     private final MainFrameModelMenuState modelMenuState = new MainFrameModelMenuState();
     private final MainFrameThemeMenuState themeMenuState = new MainFrameThemeMenuState();
     private final MainFrameFontMenuState fontMenuState = new MainFrameFontMenuState();
     private long appliedFontCatalogGeneration = -1;
+    private boolean conversationMutationPending;
+    private final Set<UUID> conversationReconciliationPending = new HashSet<>();
+    private final Set<UUID> pendingDeletionConversationIds = new HashSet<>();
+    private final Set<UUID> indeterminateUserConversationIds = new HashSet<>();
+    private final Set<UUID> indeterminateNewConversationIds = new HashSet<>();
+    private final Set<UUID> indeterminateHistoryConversationIds = new HashSet<>();
+    private final Set<UUID> indeterminateClearConversationIds = new HashSet<>();
     private final MainFramePreviewMenuState previewMenuState = new MainFramePreviewMenuState();
     private final PropertyChangeListener lookAndFeelListener = event -> {
         if (!"lookAndFeel".equals(event.getPropertyName())) {
@@ -446,11 +433,6 @@ public class MainFrame extends JFrame {
             PopupMenuSupport.preferHeavyweightPopups();
         }
         this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
-        this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
-                conversationRepo,
-                new AgentModeSettings(settingsRepo),
-                new WebSearchSettings(settingsRepo)
-        );
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.providerRegistry = providerRegistry;
@@ -482,8 +464,7 @@ public class MainFrame extends JFrame {
                 fontMenuSelectionApplyCoordinator,
                 themeMenuSelectionSynchronizer,
                 themeMenuSelectionApplyCoordinator,
-                menuPopupVisibleRunner,
-                persistedMessageCounter
+                menuPopupVisibleRunner
         ));
 
         var providerMenuWiring = dependencies.providerMenuWiring();
@@ -561,8 +542,11 @@ public class MainFrame extends JFrame {
         this.conversationLoadResultPlanner = conversationWiring.conversationLoadResultPlanner();
         this.conversationLoadApplyDispatchCoordinator = conversationWiring.conversationLoadApplyDispatchCoordinator();
         this.conversationPersistenceCoordinator = conversationWiring.conversationPersistenceCoordinator();
-        this.assistantMessageCompletionFlowCoordinator = conversationWiring.assistantMessageCompletionFlowCoordinator();
-        this.currentConversationSaveCoordinator = conversationWiring.currentConversationSaveCoordinator();
+        this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
+                conversationPersistenceCoordinator,
+                new AgentModeSettings(settingsRepo),
+                new WebSearchSettings(settingsRepo)
+        );
 
         configureWindowChrome();
         restoreWindowState();
@@ -661,13 +645,18 @@ public class MainFrame extends JFrame {
             sidebarToggleState.setRightPanel(titleBar.rightPanel());
             updateTitleBarSearchVisibility(sidebarState.sidebarVisible());
             add(titleBar.panel(), BorderLayout.NORTH);
-            sidebarPanel = new SidebarPanel(conversationRepo);
+            sidebarPanel = new SidebarPanel(conversationRepo, conversationPersistenceCoordinator);
+            sidebarPanel.setLifecycleCurrent(() -> !shutdownState.shutdownInProgress());
             chatPanel.setOnConversationStreamingChanged(event ->
                     sidebarPanel.setConversationStreaming(event.conversationId(), event.streaming()));
 
             sidebarPanel.setGuardedActionAllowed(this::allowSidebarGuardedAction);
+            sidebarPanel.setGuardedConversationActionAllowed(this::allowSidebarConversationAction);
             sidebarPanel.setOnConversationSelected(this::loadConversation);
+            sidebarPanel.setOnConversationPersistenceIndeterminate(this::reconcileBlockedConversation);
             sidebarPanel.setOnNewChat(this::newChat);
+            sidebarPanel.setOnConversationsDeleteRequested(this::handleConversationsDeleteRequested);
+            sidebarPanel.setOnConversationsDeleteSettled(this::handleConversationsDeleteSettled);
             sidebarPanel.setOnConversationsDeleted(this::handleConversationsDeleted);
             sidebarPanel.setOnSettings(this::openSettings);
 
@@ -732,8 +721,10 @@ public class MainFrame extends JFrame {
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
-        panel.setOnMessageSubmitted(() -> saveCurrentConversation(true));
-        panel.setOnUserMessageSubmitted(this::onUserMessageSubmitted);
+        panel.setOnDurableUserMessageSubmitted(this::onUserMessageSubmitted);
+        panel.setOnDurableUserMessageFailureDelivered(
+                conversationPersistenceCoordinator::markUserMessageFailureDelivered
+        );
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
         panel.setPromptQuickActions(promptQuickActions());
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
@@ -744,7 +735,14 @@ public class MainFrame extends JFrame {
         panel.getInputBar().addAgentModeListener(this::onAgentModeChanged);
         panel.getInputBar().addAgentProjectRootListener(this::onAgentProjectRootChanged);
         panel.setConversationIdSupplier(conversationState::currentConversationId);
-        panel.setOnAssistantMessageCompleted(this::onAssistantMessageCompleted);
+        panel.setOnDurableAssistantMessageCompleted(this::onAssistantMessageCompleted);
+        panel.setOnDurableHistoryMutation(this::onHistoryMutation);
+        panel.setOnDurableHistoryMutationFailureDelivered(event ->
+                conversationPersistenceCoordinator.markHistoryMutationFailureDelivered(
+                        event.conversationId(),
+                        event.retainedEntry().messageId()
+                )
+        );
         panel.setActiveConversationId(conversationState.currentConversationId());
         return panel;
     }
@@ -754,17 +752,22 @@ public class MainFrame extends JFrame {
             return;
         }
 
-        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
-                this,
-                "%s could not start, so Chat4J is using %s for this session.\n\n%s"
-                        .formatted(
-                                chatWebViewRuntimeStatus.configuredEngine().displayName(),
-                                chatWebViewRuntimeStatus.activeEngine().displayName(),
-                                chatWebViewRuntimeStatus.fallbackReason()
-                        ),
-                "Chat WebView Fallback",
-                JOptionPane.WARNING_MESSAGE
-        ));
+        SwingUtilities.invokeLater(() -> {
+            if (shutdownState.shutdownInProgress() || !isDisplayable()) {
+                return;
+            }
+            JOptionPane.showMessageDialog(
+                    this,
+                    "%s could not start, so Chat4J is using %s for this session.\n\n%s"
+                            .formatted(
+                                    chatWebViewRuntimeStatus.configuredEngine().displayName(),
+                                    chatWebViewRuntimeStatus.activeEngine().displayName(),
+                                    chatWebViewRuntimeStatus.fallbackReason()
+                            ),
+                    "Chat WebView Fallback",
+                    JOptionPane.WARNING_MESSAGE
+            );
+        });
     }
 
     private void installCloseHandlers() {
@@ -804,14 +807,266 @@ public class MainFrame extends JFrame {
     }
 
     private boolean allowSidebarGuardedAction() {
-        if (!chatPanel.isSpeechToTextActive()) {
-            return true;
+        return allowSidebarGuardedAction(false);
+    }
+
+    private boolean allowSidebarGuardedAction(boolean allowFailedProvisionalDiscard) {
+        if (shutdownState.shutdownInProgress()) {
+            return false;
         }
-        chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before changing conversations.");
-        return false;
+        if (chatPanel.isSpeechToTextActive()) {
+            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before changing conversations.");
+            return false;
+        }
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (conversationActionPending(conversationReconciliationPending, currentConversationId)
+                || conversationActionPending(pendingDeletionConversationIds, currentConversationId)
+        ) {
+            chatPanel.getInputBar().showValidationMessage("Checking the last conversation change. Try again shortly.");
+            return false;
+        }
+        if (conversationPersistenceCoordinator.hasIndeterminateMutation(currentConversationId)) {
+            reconcileBlockedConversation(currentConversationId);
+            chatPanel.getInputBar().showValidationMessage("Checking the last conversation change. Try again shortly.");
+            return false;
+        }
+        if (conversationChangePending(
+                conversationMutationPending,
+                pendingLoadConversationId,
+                chatPanel.hasPendingConversationMutation()
+        )) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the conversation change to finish.");
+            return false;
+        }
+        if (conversationPersistenceCoordinator.isConversationBlocked(currentConversationId)) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the conversation change to finish.");
+            return false;
+        }
+        if (chatPanel.hasFailedProvisionalUserSend() && !allowFailedProvisionalDiscard) {
+            chatPanel.getInputBar().showValidationMessage("Send or start a new chat to discard the unsaved message first.");
+            return false;
+        }
+        if (chatPanel.isEditingUserMessage()) {
+            chatPanel.getInputBar().showValidationMessage("Save or cancel the message edit before changing conversations.");
+            return false;
+        }
+        return true;
+    }
+
+    static boolean conversationChangePending(
+            boolean mutationPending,
+            UUID pendingLoadConversationId,
+            boolean chatMutationPending
+    ) {
+        return mutationPending || pendingLoadConversationId != null || chatMutationPending;
+    }
+
+    static boolean conversationActionPending(Set<UUID> pendingConversationIds, UUID conversationId) {
+        return conversationId != null && pendingConversationIds.contains(conversationId);
+    }
+
+    private boolean allowSidebarConversationAction(UUID conversationId) {
+        if (conversationActionPending(conversationReconciliationPending, conversationId)
+                || conversationActionPending(pendingDeletionConversationIds, conversationId)
+        ) {
+            chatPanel.getInputBar().showValidationMessage("Checking the last conversation change. Try again shortly.");
+            return false;
+        }
+        if (conversationPersistenceCoordinator.hasIndeterminateMutation(conversationId)) {
+            reconcileBlockedConversation(conversationId);
+            chatPanel.getInputBar().showValidationMessage("Checking the last conversation change. Try again shortly.");
+            return false;
+        }
+        if (conversationPersistenceCoordinator.isConversationBlocked(conversationId)) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the conversation change to finish.");
+            return false;
+        }
+        return true;
+    }
+
+    private void reconcileBlockedConversation(UUID conversationId) {
+        if (conversationId == null) {
+            return;
+        }
+        List<UUID> deletingConversationIds =
+                conversationPersistenceCoordinator.indeterminateDeleteConversationIds(conversationId);
+        if (!deletingConversationIds.isEmpty()) {
+            reconcileBlockedDeletion(deletingConversationIds);
+            return;
+        }
+        if (!conversationReconciliationPending.add(conversationId)) {
+            return;
+        }
+        conversationPersistenceCoordinator.reconcileBlocked(conversationId)
+                .whenComplete((reconciliation, error) -> SwingUtilities.invokeLater(() -> {
+                    conversationReconciliationPending.remove(conversationId);
+                    if (shutdownState.shutdownInProgress()) {
+                        return;
+                    }
+                    if (error != null) {
+                        Throwable failure = error instanceof CompletionException && error.getCause() != null
+                                ? error.getCause()
+                                : error;
+                        warnWithoutStack("Conversation persistence reconciliation failed", failure);
+                        chatPanel.getInputBar().showValidationMessage(
+                                "The last conversation change is still unresolved. Try again shortly."
+                        );
+                        return;
+                    }
+                    if (reconciliation.reconcilesDelete()) {
+                        List<UUID> deleteConversationIds = reconciliation.deleteConversationIds();
+                        if (deleteConversationIds.stream().anyMatch(pendingDeletionConversationIds::contains)) {
+                            completeDeletionReconciliation(deleteConversationIds, reconciliation.canonical());
+                        }
+                        return;
+                    }
+                    boolean canonical = reconciliation.canonical();
+                    if (!conversationPersistenceCoordinator.hasIndeterminateMutation(conversationId)) {
+                        finishSidebarRecoveryDelivery(conversationId);
+                    }
+                    boolean userMessageReconciliation = indeterminateUserConversationIds.remove(conversationId);
+                    if (userMessageReconciliation) {
+                        boolean newConversation = indeterminateNewConversationIds.remove(conversationId);
+                        chatPanel.resolveIndeterminateUserMessage(conversationId, canonical);
+                        if (!canonical
+                                && newConversation
+                                && Objects.equals(conversationState.currentConversationId(), conversationId)
+                        ) {
+                            conversationState.setCurrentConversationId(null);
+                        }
+                        if (canonical) {
+                            clearedConversationIds.remove(conversationId);
+                        }
+                        sidebarPanel.refresh();
+                        if (Objects.equals(conversationState.currentConversationId(), conversationId)) {
+                            sidebarPanel.selectConversation(conversationId);
+                        }
+                        reconcileFollowOnIfBlocked(conversationId);
+                        return;
+                    }
+                    boolean clearReconciliation = indeterminateClearConversationIds.remove(conversationId);
+                    if (clearReconciliation) {
+                        chatPanel.setConversationPersistenceBlocked(conversationId, false);
+                        if (canonical) {
+                            applyCanonicalClear(conversationId);
+                        } else {
+                            reloadConversationAfterReconciliation(conversationId);
+                        }
+                        reconcileFollowOnIfBlocked(conversationId);
+                        return;
+                    }
+                    boolean historyMutationReconciliation = indeterminateHistoryConversationIds.remove(conversationId);
+                    if (historyMutationReconciliation) {
+                        chatPanel.resolveIndeterminateHistoryMutation(conversationId, canonical);
+                        reconcileFollowOnIfBlocked(conversationId);
+                        return;
+                    }
+                    if (conversationPersistenceCoordinator.hasIndeterminateMutation(conversationId)) {
+                        chatPanel.setConversationPersistenceBlocked(conversationId, true);
+                        reconcileBlockedConversation(conversationId);
+                        return;
+                    }
+                    chatPanel.setConversationPersistenceBlocked(conversationId, false);
+                    reloadConversationAfterReconciliation(conversationId);
+                }));
+    }
+
+    private void finishSidebarRecoveryDelivery(UUID conversationId) {
+        sidebarPanel.settlePendingFavoriteReconciliation(conversationId);
+        if (conversationPersistenceCoordinator.consumeFailedSidebarRecovery(conversationId)) {
+            chatPanel.getInputBar().showValidationMessage("Failed to save the conversation name or favorite.");
+        }
+    }
+
+    private void reconcileFollowOnIfBlocked(UUID conversationId) {
+        if (!conversationPersistenceCoordinator.hasIndeterminateMutation(conversationId)) {
+            return;
+        }
+        chatPanel.setConversationPersistenceBlocked(conversationId, true);
+        reconcileBlockedConversation(conversationId);
+    }
+
+    private void reloadConversationAfterReconciliation(UUID conversationId) {
+        sidebarPanel.refresh();
+        if (!Objects.equals(conversationState.currentConversationId(), conversationId)) {
+            return;
+        }
+        pendingLoadConversationId = conversationId;
+        chatPanel.setConversationLoading(true);
+        conversationLoadDispatchCoordinator.dispatch(
+                conversationId,
+                conversationLoadCoordinator::loadAsync,
+                this::applyLoadedConversation,
+                this::handleConversationLoadFailure
+        );
+    }
+
+    private void applyCanonicalClear(UUID conversationId) {
+        clearedConversationIds.add(conversationId);
+        chatPanel.applyCanonicalClear(conversationId);
+        sidebarPanel.refresh();
+        if (Objects.equals(conversationState.currentConversationId(), conversationId)) {
+            sidebarPanel.selectConversation(conversationId);
+            chatPanel.getInputBar().requestInputFocus();
+        }
+    }
+
+    private void reconcileBlockedDeletion(List<UUID> conversationIds) {
+        List<UUID> ids = conversationIds.stream().distinct().toList();
+        if (ids.isEmpty() || ids.stream().anyMatch(conversationReconciliationPending::contains)) {
+            return;
+        }
+        conversationReconciliationPending.addAll(ids);
+        conversationPersistenceCoordinator.reconcileBlocked(ids.getFirst())
+                .whenComplete((reconciliation, error) -> SwingUtilities.invokeLater(() -> {
+                    conversationReconciliationPending.removeAll(ids);
+                    if (shutdownState.shutdownInProgress()) {
+                        return;
+                    }
+                    if (error != null) {
+                        pendingDeletionConversationIds.removeAll(ids);
+                        Throwable failure = error instanceof CompletionException && error.getCause() != null
+                                ? error.getCause()
+                                : error;
+                        warnWithoutStack("Conversation delete reconciliation failed", failure);
+                        chatPanel.getInputBar().showValidationMessage(
+                                "The conversation deletion is still unresolved. Try again shortly."
+                        );
+                        return;
+                    }
+                    List<UUID> reconciledIds = reconciliation.reconcilesDelete()
+                            ? reconciliation.deleteConversationIds()
+                            : ids;
+                    completeDeletionReconciliation(reconciledIds, reconciliation.canonical());
+                }));
+    }
+
+    private void completeDeletionReconciliation(List<UUID> conversationIds, boolean canonical) {
+        pendingDeletionConversationIds.removeAll(conversationIds);
+        if (canonical) {
+            handleConversationsDeleted(conversationIds);
+            sidebarPanel.refresh();
+            return;
+        }
+        chatPanel.finishConversationDeletion(conversationIds);
+        sidebarPanel.refresh();
+        UUID currentConversationId = conversationState.currentConversationId();
+        if (currentConversationId != null && conversationIds.contains(currentConversationId)) {
+            pendingLoadConversationId = currentConversationId;
+            chatPanel.setConversationLoading(true);
+            conversationLoadDispatchCoordinator.dispatch(
+                    currentConversationId,
+                    conversationLoadCoordinator::loadAsync,
+                    this::applyLoadedConversation,
+                    this::handleConversationLoadFailure
+            );
+        }
     }
 
     private void showAboutDialog() {
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening About.");
             return;
@@ -820,6 +1075,9 @@ public class MainFrame extends JFrame {
     }
 
     private void toggleSidebar() {
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         SidebarToggleCoordinator.ToggleState toggleState = sidebarToggleCoordinator.toggle(
                 sidebarState.sidebarVisible(),
                 sidebarState.lastDividerLocation(),
@@ -877,15 +1135,15 @@ public class MainFrame extends JFrame {
     }
 
     private void newChat() {
-        if (chatPanel.isSpeechToTextActive()) {
-            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before starting a new chat.");
+        if (!allowSidebarGuardedAction(true)) {
             return;
         }
+        chatPanel.discardFailedProvisionalUserSend();
+        chatPanel.abandonVisibleUnsubmittedPreparation();
         pendingLoadConversationId = null;
         chatPanel.setConversationLoading(false);
         conversationLoadCoordinator.invalidatePendingLoads();
         newChatCoordinator.start(
-                this::saveCurrentConversationInBackgroundForNavigation,
                 conversationState::clearCurrentConversationId,
                 () -> chatPanel.setActiveConversationId(null),
                 sidebarPanel::clearSelection,
@@ -896,11 +1154,44 @@ public class MainFrame extends JFrame {
         applyCurrentRenderMode();
     }
 
+    private void handleConversationsDeleteRequested(List<UUID> conversationIds) {
+        pendingDeletionConversationIds.addAll(conversationIds);
+        chatPanel.cancelConversationsForDeletion(conversationIds);
+    }
+
+    private void handleConversationsDeleteSettled(List<UUID> conversationIds) {
+        var settledOutcome = conversationPersistenceCoordinator.consumeSettledDeleteReconciliation(conversationIds);
+        if (settledOutcome.isPresent()) {
+            completeDeletionReconciliation(conversationIds, settledOutcome.get());
+            return;
+        }
+        List<UUID> indeterminateDeleteIds = conversationIds.stream()
+                .map(conversationPersistenceCoordinator::indeterminateDeleteConversationIds)
+                .filter(ids -> !ids.isEmpty())
+                .findFirst()
+                .orElse(emptyList());
+        if (!indeterminateDeleteIds.isEmpty()) {
+            reconcileBlockedDeletion(indeterminateDeleteIds);
+            return;
+        }
+
+        chatPanel.finishConversationDeletion(conversationIds);
+        pendingDeletionConversationIds.removeAll(conversationIds);
+        conversationIds.stream()
+                .filter(conversationPersistenceCoordinator::hasIndeterminateMutation)
+                .forEach(conversationId -> {
+                    chatPanel.setConversationPersistenceBlocked(conversationId, true);
+                    reconcileBlockedConversation(conversationId);
+                });
+    }
+
     private void handleConversationsDeleted(List<UUID> deletedConversationIds) {
         if (deletedConversationIds == null || deletedConversationIds.isEmpty()) {
             return;
         }
 
+        pendingDeletionConversationIds.removeAll(deletedConversationIds);
+        sidebarPanel.removeConversationProjections(deletedConversationIds);
         clearedConversationIds.removeAll(deletedConversationIds);
         if (pendingLoadConversationId != null && deletedConversationIds.contains(pendingLoadConversationId)) {
             pendingLoadConversationId = null;
@@ -924,17 +1215,17 @@ public class MainFrame extends JFrame {
     }
 
     private void loadConversation(UUID id) {
-        if (chatPanel.isSpeechToTextActive()) {
-            chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before switching conversations.");
+        if (!allowSidebarGuardedAction()) {
             return;
         }
+        if (!allowSidebarConversationAction(id)) {
+            return;
+        }
+        chatPanel.abandonVisibleUnsubmittedPreparation();
         pendingLoadConversationId = id;
         chatPanel.setConversationLoading(true);
-        conversationLoadStartCoordinator.start(
+        conversationLoadDispatchCoordinator.dispatch(
                 id,
-                this::saveCurrentConversationInBackgroundForNavigation,
-                ignored -> {},
-                ignored -> {},
                 conversationLoadCoordinator::loadAsync,
                 this::applyLoadedConversation,
                 this::handleConversationLoadFailure
@@ -943,8 +1234,16 @@ public class MainFrame extends JFrame {
     }
 
     private void confirmClearCurrentChat() {
+        if (conversationMutationPending || shutdownState.shutdownInProgress()) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the conversation change to finish.");
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before clearing the chat.");
+            return;
+        }
+        if (chatPanel.isEditingUserMessage()) {
+            chatPanel.getInputBar().showValidationMessage("Save or cancel the message edit before clearing the chat.");
             return;
         }
         if (!clearChatConfirmationDialog.confirm(this)) {
@@ -956,177 +1255,85 @@ public class MainFrame extends JFrame {
 
     private void clearCurrentChatMessages() {
         UUID currentConversationId = conversationState.currentConversationId();
-        try {
-            if (currentConversationId != null) {
-                conversationRepo.deleteMessages(currentConversationId);
-                conversationPersistenceCoordinator.markConversationLoaded(currentConversationId, 0);
-                clearedConversationIds.add(currentConversationId);
-            }
-
+        if (currentConversationId == null) {
             chatPanel.clearChat();
-            sidebarPanel.refresh();
-            if (currentConversationId != null) {
-                sidebarPanel.selectConversation(currentConversationId);
-            }
             chatPanel.getInputBar().requestInputFocus();
-        } catch (Exception e) {
-            warnWithoutStack("Failed to clear current conversation messages", e);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Failed to clear chat: %s".formatted(e.getMessage()),
-                    "Clear Chat",
-                    JOptionPane.ERROR_MESSAGE
-            );
-        }
-    }
-
-    private void saveCurrentConversationInBackgroundForNavigation() {
-        UUID currentConversationId = conversationState.currentConversationId();
-        List<Message> history = chatPanel.getHistory();
-        if (history.isEmpty()) {
             return;
         }
 
-        String selectedModel = chatPanel.getSelectedModel();
-        ReasoningLevel reasoningLevel = chatPanel.getInputBar().getReasoningLevel();
-        boolean agentModeEnabled = chatPanel.getInputBar().isAgentModeRequested();
-        Path agentProjectRoot = chatPanel.getInputBar().getAgentProjectRoot();
-        boolean webSearchEnabled = chatPanel.getInputBar().isWebSearchEnabled();
-        String webSearchOptionId = chatPanel.getInputBar().getWebSearchOptionId();
-        boolean retitleClearedConversation = shouldRetitleClearedConversation(currentConversationId, history);
-
-        Thread.startVirtualThread(() -> {
-            try {
-                UUID savedConversationId = saveConversationSnapshotForNavigation(
-                        currentConversationId,
-                        history,
-                        selectedModel,
-                        reasoningLevel,
-                        agentModeEnabled,
-                        agentProjectRoot,
-                        webSearchEnabled,
-                        webSearchOptionId
-                );
-                if (savedConversationId == null) {
-                    return;
-                }
-                if (retitleClearedConversation) {
-                    conversationRepo.updateTitle(savedConversationId, conversationTitleDeriver.derive(history.getFirst()));
-                    SwingUtilities.invokeLater(() -> clearedConversationIds.remove(savedConversationId));
-                }
-                SwingUtilities.invokeLater(sidebarPanel::refresh);
-            } catch (Exception e) {
-                warnWithoutStack("Failed to persist current conversation", e);
-            }
-        });
-    }
-
-    private UUID saveConversationSnapshotForNavigation(
-            UUID currentConversationId,
-            List<Message> history,
-            String selectedModel,
-            ReasoningLevel reasoningLevel,
-            boolean agentModeEnabled,
-            Path agentProjectRoot,
-            boolean webSearchEnabled,
-            String webSearchOptionId
-    ) throws Exception {
-        if (currentConversationId == null) {
-            CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
-                    null,
-                    history,
-                    selectedModel,
-                    reasoningLevel,
-                    agentModeEnabled,
-                    agentProjectRoot,
-                    webSearchEnabled,
-                    webSearchOptionId
-            );
-            return saveResult.saved() ? saveResult.conversationId() : null;
-        }
-
-        if (!conversationPersistenceCoordinator.conversationExists(currentConversationId)) {
-            return null;
-        }
-
-        int persistedCount = conversationPersistenceCoordinator.persistConversationHistory(currentConversationId, history);
-        return persistedCount == history.size() ? currentConversationId : null;
-    }
-
-    private void saveCurrentConversation(boolean selectCreatedConversation) {
-        UUID currentConversationId = conversationState.currentConversationId();
-        List<Message> history = chatPanel.getHistory();
-        boolean retitleClearedConversation = shouldRetitleClearedConversation(currentConversationId, history);
-
-        currentConversationSaveDispatchCoordinator.save(
-                currentConversationId,
-                history,
-                chatPanel.getSelectedModel(),
-                chatPanel.getInputBar().getReasoningLevel(),
-                chatPanel.getInputBar().isAgentModeRequested(),
-                chatPanel.getInputBar().getAgentProjectRoot(),
-                chatPanel.getInputBar().isWebSearchEnabled(),
-                chatPanel.getInputBar().getWebSearchOptionId(),
-                (conversationId, messages, selectedModel, reasoningLevel, agentModeEnabled, agentProjectRoot, webSearchEnabled, webSearchOptionId) ->
-                        saveConversationAndRetitleIfNeeded(
-                                conversationId,
-                                messages,
-                                selectedModel,
-                                reasoningLevel,
-                                agentModeEnabled,
-                                agentProjectRoot,
-                                webSearchEnabled,
-                                webSearchOptionId,
-                                retitleClearedConversation
-                        ),
-                saveResult -> currentConversationSaveUiApplyCoordinator.apply(
-                        saveResult,
-                        conversationState::setCurrentConversationId,
-                        chatPanel::setActiveConversationId,
-                        sidebarPanel::refresh,
-                        sidebarPanel::selectConversation,
-                        selectCreatedConversation
-                ),
-                error -> warnWithoutStack("Failed to persist current conversation", error)
-        );
-    }
-
-    private CurrentConversationSaveCoordinator.SaveResult saveConversationAndRetitleIfNeeded(
-            UUID currentConversationId,
-            List<Message> history,
-            String selectedModelKey,
-            ReasoningLevel reasoningLevel,
-            boolean agentModeEnabled,
-            Path agentProjectRoot,
-            boolean webSearchEnabled,
-            String webSearchOptionId,
-            boolean retitleClearedConversation
-    ) throws Exception {
-        CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
-                currentConversationId,
-                history,
-                selectedModelKey,
-                reasoningLevel,
-                agentModeEnabled,
-                agentProjectRoot,
-                webSearchEnabled,
-                webSearchOptionId
-        );
-
-        if (saveResult.saved() && retitleClearedConversation) {
-            conversationRepo.updateTitle(saveResult.conversationId(), conversationTitleDeriver.derive(history.getFirst()));
-            clearedConversationIds.remove(saveResult.conversationId());
-        }
-
-        return saveResult;
-    }
-
-    private boolean shouldRetitleClearedConversation(UUID conversationId, List<Message> history) {
-        return conversationId != null && clearedConversationIds.contains(conversationId) && !history.isEmpty();
+        conversationMutationPending = true;
+        chatPanel.setConversationMutationPending(true);
+        conversationPersistenceCoordinator.submitClear(currentConversationId)
+                .whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+                    if (shutdownState.shutdownInProgress()) {
+                        conversationMutationPending = false;
+                        return;
+                    }
+                    Throwable failure = error instanceof CompletionException && error.getCause() != null
+                            ? error.getCause()
+                            : error;
+                    if (failure instanceof ConversationPersistencePrerequisiteIndeterminateException) {
+                        conversationMutationPending = false;
+                        chatPanel.setConversationMutationPending(false);
+                        chatPanel.setConversationPersistenceBlocked(currentConversationId, true);
+                        chatPanel.getInputBar().showValidationMessage(
+                                "Checking the previous conversation change."
+                        );
+                        reconcileBlockedConversation(currentConversationId);
+                        return;
+                    }
+                    if (error != null
+                            && conversationPersistenceCoordinator.hasIndeterminateMutation(currentConversationId)
+                    ) {
+                        conversationMutationPending = false;
+                        chatPanel.setConversationMutationPending(false);
+                        warnWithoutStack("Could not determine whether the conversation was cleared", failure);
+                        indeterminateClearConversationIds.add(currentConversationId);
+                        chatPanel.setConversationPersistenceBlocked(currentConversationId, true);
+                        chatPanel.getInputBar().showValidationMessage(
+                                "Checking whether the clear operation completed."
+                        );
+                        reconcileBlockedConversation(currentConversationId);
+                        return;
+                    }
+                    conversationMutationPending = false;
+                    chatPanel.setConversationMutationPending(false);
+                    if (error != null) {
+                        warnWithoutStack("Failed to clear current conversation messages", failure);
+                        JOptionPane.showMessageDialog(
+                                this,
+                                "Failed to clear chat: %s".formatted(failure.getMessage()),
+                                "Clear Chat",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        return;
+                    }
+                    if (!Objects.equals(conversationState.currentConversationId(), currentConversationId)) {
+                        return;
+                    }
+                    applyCanonicalClear(currentConversationId);
+                }));
     }
 
     @Override
     public void dispose() {
+        requestApplicationExit();
+    }
+
+    public void disposeAfterStartupFailure() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::disposeAfterStartupFailure);
+            return;
+        }
+        if (!shutdownState.shutdownInProgress()) {
+            shutdownState.setShutdownInProgress(true);
+            chatPanel.beginShutdown();
+            conversationLoadCoordinator.invalidatePendingLoads();
+        }
+        disposeNativeWindow();
+    }
+
+    private void disposeNativeWindow() {
         try {
             beginPermanentCleanup();
         } catch (Throwable cleanupFailure) {
@@ -1137,49 +1344,67 @@ public class MainFrame extends JFrame {
     }
 
     private void requestApplicationExit() {
-        settingsDialogCoordinator.requestApplicationExit(this::requestWindowClose);
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_SAVE_TIMEOUT_MILLIS);
+        requestApplicationExit(deadlineNanos);
     }
 
-    private void requestWindowClose() {
-        requestWindowClose(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_SAVE_TIMEOUT_MILLIS));
+    private void requestApplicationExit(long deadlineNanos) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> requestApplicationExit(deadlineNanos));
+            return;
+        }
+        settingsDialogCoordinator.requestApplicationExit(deadlineNanos, () -> requestWindowClose(deadlineNanos));
     }
 
     private void requestWindowClose(long deadlineNanos) {
         runShutdownFlow(() -> {
-            dispose();
+            disposeNativeWindow();
             System.exit(0);
         }, deadlineNanos);
     }
 
     private void runShutdownFlow(Runnable finishAction, long deadlineNanos) {
-        AtomicReference<CompletableFuture<Void>> applicationCleanup = new AtomicReference<>(CompletableFuture.completedFuture(null));
-        try {
-            shutdownFlowCoordinator.request(
-                    shutdownState::shutdownInProgress,
-                    () -> shutdownState.setShutdownInProgress(true),
-                    () -> remainingShutdownMillis(deadlineNanos),
-                    () -> {
-                        runPreShutdownAction(
-                                "Failed to start permanent application cleanup during shutdown",
-                                () -> applicationCleanup.set(beginPermanentCleanup())
-                        );
-                        runPreShutdownAction("Failed to save window state during shutdown", this::saveWindowState);
-                    },
-                    () -> saveThenAwaitCleanup(createShutdownSaveAction(), applicationCleanup.get()),
-                    finishAction,
-                    () -> log.warn("Timed out persisting current conversation during shutdown"),
-                    error -> warnWithoutStack("Failed to persist current conversation during shutdown", error)
-            );
-        } catch (Exception e) {
-            shutdownState.setShutdownInProgress(false);
-            warnWithoutStack("Shutdown flow setup failed, exiting without persistence", e);
-            finishAction.run();
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> runShutdownFlow(finishAction, deadlineNanos));
+            return;
         }
-    }
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
+        shutdownState.setShutdownInProgress(true);
+        List<CompletableFuture<Void>> admissionBranches = List.of(
+                cleanupAction(chatPanel::beginShutdown),
+                cleanupAction(conversationLoadCoordinator::invalidatePendingLoads)
+        );
+        CompletableFuture<Void> admission = combineCleanupBranches(admissionBranches);
+        runPreShutdownAction("Failed to save window state during shutdown", this::saveWindowState);
 
-    private long remainingShutdownMillis(long deadlineNanos) {
-        long remainingNanos = deadlineNanos - System.nanoTime();
-        return remainingNanos > 0 ? TimeUnit.NANOSECONDS.toMillis(remainingNanos) : 0;
+        CompletableFuture<Void> terminal;
+        try {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            terminal = remainingNanos > 0 && !admission.isCompletedExceptionally()
+                    ? conversationPersistenceCoordinator.sealWithFinal()
+                    : conversationPersistenceCoordinator.sealWithoutFinal();
+        } catch (Throwable t) {
+            terminal = CompletableFuture.failedFuture(t);
+        }
+        CompletableFuture<Void> persistence = combineCleanupBranches(List.of(admission, terminal));
+
+        CompletableFuture<Void> cleanup;
+        try {
+            cleanup = beginPermanentCleanup();
+        } catch (Throwable t) {
+            cleanup = CompletableFuture.failedFuture(t);
+        }
+
+        shutdownSaveDispatchCoordinator.dispatchStages(
+                deadlineNanos,
+                persistence,
+                cleanup,
+                finishAction::run,
+                () -> log.warn("Timed out persisting current conversation during shutdown"),
+                error -> warnWithoutStack("Failed to finish application shutdown", error)
+        );
     }
 
     private synchronized CompletableFuture<Void> beginPermanentCleanup() {
@@ -1187,56 +1412,65 @@ public class MainFrame extends JFrame {
             return permanentCleanupFuture;
         }
         permanentCleanupStarted = true;
+        permanentCleanupFuture = new CompletableFuture<>();
 
-        runPreShutdownAction(
-                "Failed to remove the look-and-feel listener during cleanup",
-                () -> UIManager.removePropertyChangeListener(lookAndFeelListener)
-        );
-        runPreShutdownAction(
-                "Failed to detach the provider auth listener during cleanup",
-                () -> providerRegistry.setAuthStatusRefreshListener(() -> {
-                })
-        );
-        runPreShutdownAction("Failed to cancel active requests during cleanup", () -> {
+        try {
+            List<CompletableFuture<Void>> branches = new ArrayList<>();
+            branches.add(cleanupAction(() -> UIManager.removePropertyChangeListener(lookAndFeelListener)));
+            branches.add(cleanupAction(() -> providerRegistry.setAuthStatusRefreshListener(() -> {
+            })));
             if (chatPanel != null) {
-                chatPanel.cancelAllRequests();
+                branches.add(cleanupStage(chatPanel::cancelAllRequestsAsync));
             }
-        });
-        runPreShutdownAction("Failed to dispose chat view resources during cleanup", () -> {
+            branches.add(disposeSpeechServicesAsync());
+            branches.add(cleanupStage(conversationRuntimeSettingsCoordinator::sealWebBrowsePersistence));
+            branches.add(cleanupAction(credentialMutationService::closeSecrets));
+            branches.add(closeSttModelManagementServicesAsync());
+            branches.add(cleanupAction(conversationPersistenceCoordinator::close));
             if (chatPanel != null) {
-                chatPanel.disposeViewResources();
+                branches.add(disposeViewResourcesOnEdt());
             }
-        });
-        CompletableFuture<Void> speechCleanup = disposeSpeechServicesAsync();
-        runPreShutdownAction("Failed to close credential secrets during cleanup", credentialMutationService::closeSecrets);
-        CompletableFuture<Void> modelCleanup = closeSttModelManagementServicesAsync();
-        permanentCleanupFuture = CompletableFuture.allOf(speechCleanup, modelCleanup);
+            combineCleanupBranches(branches).whenComplete((ignored, error) -> {
+                if (error == null) {
+                    permanentCleanupFuture.complete(null);
+                } else {
+                    permanentCleanupFuture.completeExceptionally(error);
+                }
+            });
+        } catch (Throwable t) {
+            permanentCleanupFuture.completeExceptionally(t);
+        }
         return permanentCleanupFuture;
+    }
+
+    private CompletableFuture<Void> disposeViewResourcesOnEdt() {
+        var result = new CompletableFuture<Void>();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                chatPanel.disposeViewResources();
+                result.complete(null);
+            } catch (Throwable t) {
+                result.completeExceptionally(t);
+            }
+        });
+        return result;
     }
 
     private CompletableFuture<Void> disposeSpeechServicesAsync() {
         CompletableFuture<Void> speechToTextCleanup;
         try {
-            speechToTextCleanup = speechToTextService.disposeAsync().exceptionally(error -> {
-                warnWithoutStack("Failed to finish Speech to Text cleanup", error);
-                return null;
-            });
+            speechToTextCleanup = speechToTextService.disposeAsync();
         } catch (Throwable t) {
-            warnWithoutStack("Failed to start Speech to Text cleanup", t);
-            speechToTextCleanup = CompletableFuture.completedFuture(null);
+            speechToTextCleanup = CompletableFuture.failedFuture(t);
         }
 
         CompletableFuture<Void> textToSpeechCleanup;
         try {
-            textToSpeechCleanup = textToSpeechService.disposeAsync().exceptionally(error -> {
-                warnWithoutStack("Failed to finish Text to Speech cleanup", error);
-                return null;
-            });
+            textToSpeechCleanup = textToSpeechService.disposeAsync();
         } catch (Throwable t) {
-            warnWithoutStack("Failed to start Text to Speech cleanup", t);
-            textToSpeechCleanup = CompletableFuture.completedFuture(null);
+            textToSpeechCleanup = CompletableFuture.failedFuture(t);
         }
-        return CompletableFuture.allOf(speechToTextCleanup, textToSpeechCleanup);
+        return combineCleanupBranches(List.of(speechToTextCleanup, textToSpeechCleanup));
     }
 
     private void runPreShutdownAction(String failureMessage, Runnable action) {
@@ -1248,51 +1482,70 @@ public class MainFrame extends JFrame {
     }
 
     private CompletableFuture<Void> closeSttModelManagementServicesAsync() {
-        CompletableFuture<Void> voskClose = CompletableFuture.runAsync(
-                () -> closeSttModelManagementService("Vosk", voskModelManagementService::close),
-                command -> Thread.ofVirtual().name("chat4j-main-vosk-model-service-close").start(command)
+        CompletableFuture<Void> voskClose = asyncCleanupAction(
+                "chat4j-main-vosk-model-service-close",
+                voskModelManagementService::close
         );
-        CompletableFuture<Void> whisperClose = CompletableFuture.runAsync(
-                () -> closeSttModelManagementService("Whisper.cpp", whisperModelManagementService::close),
-                command -> Thread.ofVirtual().name("chat4j-main-whisper-model-service-close").start(command)
+        CompletableFuture<Void> whisperClose = asyncCleanupAction(
+                "chat4j-main-whisper-model-service-close",
+                whisperModelManagementService::close
         );
-        return CompletableFuture.allOf(voskClose, whisperClose);
+        return combineCleanupBranches(List.of(voskClose, whisperClose));
     }
 
-    static ShutdownSaveDispatchCoordinator.SaveAction saveThenAwaitCleanup(
-            ShutdownSaveDispatchCoordinator.SaveAction saveAction,
-            CompletableFuture<Void> cleanup
-    ) {
-        return () -> {
-            try {
-                saveAction.save();
-            } finally {
-                cleanup.join();
-            }
-        };
-    }
-
-    private void closeSttModelManagementService(String serviceName, Runnable closeAction) {
+    private CompletableFuture<Void> asyncCleanupAction(String threadName, Runnable action) {
         try {
-            closeAction.run();
+            return CompletableFuture.runAsync(
+                    action,
+                    command -> Thread.ofVirtual().name(threadName).start(command)
+            );
         } catch (Throwable t) {
-            warnWithoutStack("Failed to close %s model management".formatted(serviceName), t);
+            return CompletableFuture.failedFuture(t);
         }
     }
 
-    private ShutdownSaveDispatchCoordinator.SaveAction createShutdownSaveAction() {
-        return shutdownSaveActionFactory.create(new MainFrameShutdownSaveActionFactory.ShutdownSaveRequest(
-                conversationState::currentConversationId,
-                chatPanel::getHistory,
-                chatPanel::getSelectedModel,
-                chatPanel.getInputBar()::getReasoningLevel,
-                chatPanel.getInputBar()::isAgentModeRequested,
-                chatPanel.getInputBar()::getAgentProjectRoot,
-                chatPanel.getInputBar()::isWebSearchEnabled,
-                chatPanel.getInputBar()::getWebSearchOptionId,
-                currentConversationSaveCoordinator,
-                error -> warnWithoutStack("Failed to capture shutdown save snapshot", error)
-        ));
+    private CompletableFuture<Void> cleanupAction(Runnable action) {
+        try {
+            action.run();
+            return CompletableFuture.completedFuture(null);
+        } catch (Throwable t) {
+            return CompletableFuture.failedFuture(t);
+        }
+    }
+
+    private CompletableFuture<Void> cleanupStage(Supplier<CompletableFuture<Void>> action) {
+        try {
+            CompletableFuture<Void> stage = action.get();
+            return stage == null
+                    ? CompletableFuture.failedFuture(new IllegalStateException("Cleanup returned no completion stage"))
+                    : stage;
+        } catch (Throwable t) {
+            return CompletableFuture.failedFuture(t);
+        }
+    }
+
+    private CompletableFuture<Void> combineCleanupBranches(List<CompletableFuture<Void>> branches) {
+        return CompletableFuture.allOf(branches.toArray(CompletableFuture[]::new)).handle((ignored, aggregateError) -> {
+            Throwable primary = null;
+            for (CompletableFuture<Void> branch : branches) {
+                try {
+                    branch.join();
+                } catch (Throwable t) {
+                    Throwable failure = t instanceof CompletionException && t.getCause() != null
+                            ? t.getCause()
+                            : t;
+                    if (primary == null) {
+                        primary = failure;
+                    } else if (primary != failure) {
+                        primary.addSuppressed(failure);
+                    }
+                }
+            }
+            if (primary != null) {
+                throw new CompletionException(primary);
+            }
+            return null;
+        });
     }
 
     private void applyLoadedConversation(
@@ -1307,21 +1560,36 @@ public class MainFrame extends JFrame {
                 conversationId,
                 records,
                 conversation,
-                messages -> chatPanel.loadConversationHistory(conversationId, messages),
-                conversationPersistenceCoordinator::markConversationLoaded,
+                loadedRecords -> chatPanel.loadConversationHistoryEntries(conversationId, loadedRecords),
                 chatPanel::setSelectedModel,
                 sidebarPanel::selectConversation
         );
+
+        if (!applied && conversationLoadCoordinator.mutationChangedSinceRead(requestId, conversationId)) {
+            conversationLoadDispatchCoordinator.dispatch(
+                    conversationId,
+                    conversationLoadCoordinator::loadAsync,
+                    this::applyLoadedConversation,
+                    this::handleConversationLoadFailure
+            );
+            return;
+        }
 
         if (applied) {
             pendingLoadConversationId = null;
             chatPanel.setConversationLoading(false);
             conversationState.setCurrentConversationId(conversationId);
+            if (records.isEmpty()) {
+                clearedConversationIds.add(conversationId);
+            } else {
+                clearedConversationIds.remove(conversationId);
+            }
             applyCurrentRenderMode();
             conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
                     conversation,
                     runtimeSettingsTarget()
             );
+            finishSidebarRecoveryDelivery(conversationId);
         }
     }
 
@@ -1345,6 +1613,27 @@ public class MainFrame extends JFrame {
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
+        if (e instanceof ConversationLoadCoordinator.ConversationNotFoundException
+                && conversationLoadResultPlanner.shouldHandleFailure(
+                        requestId,
+                        pendingLoadConversationId,
+                        conversationId
+                )
+        ) {
+            pendingLoadConversationId = null;
+            chatPanel.setConversationLoading(false);
+            sidebarPanel.refresh();
+            UUID currentConversationId = conversationState.currentConversationId();
+            if (Objects.equals(currentConversationId, conversationId)) {
+                handleConversationsDeleted(List.of(conversationId));
+            } else if (currentConversationId == null) {
+                sidebarPanel.clearSelection();
+            } else {
+                sidebarPanel.selectConversation(currentConversationId);
+            }
+            chatPanel.getInputBar().showValidationMessage("That conversation no longer exists.");
+            return;
+        }
         boolean handled = conversationLoadFailureCoordinator.handle(
                 requestId,
                 pendingLoadConversationId,
@@ -1359,71 +1648,168 @@ public class MainFrame extends JFrame {
         }
     }
 
-    private UUID onUserMessageSubmitted(ChatPanel.UserMessageEvent event) throws Exception {
+    private CompletionStage<UUID> onUserMessageSubmitted(ChatPanel.UserMessageEvent event) {
         if (event == null || event.message() == null) {
-            return event == null ? null : event.conversationId();
+            return CompletableFuture.failedFuture(new IllegalArgumentException("User message event is required"));
         }
 
-        UUID conversationId = event.conversationId();
-        String modelKey = ModelSelectionCodec.format(
-                StringUtils.defaultIfBlank(event.providerName(), "Unknown"),
-                StringUtils.defaultIfBlank(event.modelId(), "unknown")
-        );
-
-        boolean persistedExistingConversation = conversationId != null
-                && conversationPersistenceCoordinator.persistMessageIfConversationExists(conversationId, event.message());
-        if (persistedExistingConversation) {
-            sidebarPanel.refresh();
-            return conversationId;
-        }
-
-        if (conversationId != null) {
-            log.warn("Conversation {} was missing while persisting a user message; creating a replacement conversation", conversationId);
-        }
-
-        CurrentConversationSaveCoordinator.SaveResult saveResult = currentConversationSaveCoordinator.save(
-                null,
-                List.of(event.message()),
-                modelKey,
-                event.reasoningLevel(),
-                event.agentModeEnabled(),
-                event.agentProjectRoot(),
-                event.webSearchEnabled(),
-                event.webSearchOptionId()
-        );
-
-        if (event.visibleConversation()) {
-            currentConversationSaveUiApplyCoordinator.apply(
-                    saveResult,
-                    conversationState::setCurrentConversationId,
-                    chatPanel::setActiveConversationId,
-                    sidebarPanel::refresh,
-                    sidebarPanel::selectConversation,
-                    true
+        var entry = new ConversationHistoryEntry(event.messageId(), event.ordinal(), event.message());
+        CompletionStage<UUID> persistence;
+        if (clearedConversationIds.contains(event.conversationId())) {
+            persistence = conversationPersistenceCoordinator.submitFirstAfterClear(
+                    new ConversationRepository.FirstAfterClearCommand(
+                            event.conversationId(),
+                            conversationTitleDeriver.derive(event.message()),
+                            entry
+                    )
+            );
+        } else if (event.createsConversation()) {
+            persistence = conversationPersistenceCoordinator.submitNewConversation(
+                    new ConversationRepository.CreateConversationCommand(
+                            event.conversationId(),
+                            conversationTitleDeriver.derive(event.message()),
+                            StringUtils.defaultIfBlank(event.providerName(), "Unknown"),
+                            StringUtils.defaultIfBlank(event.modelId(), "unknown"),
+                            event.reasoningLevel(),
+                            event.agentModeEnabled(),
+                            event.agentProjectRoot(),
+                            event.webSearchEnabled(),
+                            event.webSearchOptionId(),
+                            entry
+                    )
             );
         } else {
-            sidebarPanel.refresh();
+            persistence = conversationPersistenceCoordinator.submitUserMessage(event.conversationId(), entry);
         }
-        return saveResult.conversationId();
+        CompletionStage<UUID> reconciledPersistence = persistence.handle((conversationId, error) -> {
+            if (error == null) {
+                return conversationId;
+            }
+            Throwable failure = error instanceof CompletionException && error.getCause() != null
+                    ? error.getCause()
+                    : error;
+            if (failure instanceof ConversationPersistencePrerequisiteIndeterminateException) {
+                SwingUtilities.invokeLater(() -> {
+                    if (shutdownState.shutdownInProgress()) {
+                        return;
+                    }
+                    chatPanel.setConversationPersistenceBlocked(event.conversationId(), true);
+                    reconcileBlockedConversation(event.conversationId());
+                });
+                throw new CompletionException(failure);
+            }
+            if (!(failure instanceof ConversationPersistenceIndeterminateException)) {
+                throw new CompletionException(failure);
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (shutdownState.shutdownInProgress()) {
+                    return;
+                }
+                indeterminateUserConversationIds.add(event.conversationId());
+                if (event.createsConversation()) {
+                    indeterminateNewConversationIds.add(event.conversationId());
+                }
+                chatPanel.setConversationPersistenceBlocked(event.conversationId(), true);
+                if (event.visibleConversation()
+                        && chatPanel.isDurableUserMessageContinuationCurrent(event.conversationId())
+                ) {
+                    conversationState.setCurrentConversationId(event.conversationId());
+                    chatPanel.setActiveConversationId(event.conversationId());
+                }
+                reconcileBlockedConversation(event.conversationId());
+            });
+            throw new CompletionException(failure);
+        });
+        return reconciledPersistence.thenApplyAsync(conversationId -> {
+            if (!shutdownState.shutdownInProgress()) {
+                chatPanel.reconcilePendingAssistantRecoveries(
+                        conversationId,
+                        conversationPersistenceCoordinator.pendingAssistantRecoveryMessageIds(conversationId)
+                );
+                clearedConversationIds.remove(conversationId);
+                sidebarPanel.refresh();
+                if (event.visibleConversation()
+                        && chatPanel.isDurableUserMessageContinuationCurrent(conversationId)
+                ) {
+                    conversationState.setCurrentConversationId(conversationId);
+                    chatPanel.setActiveConversationId(conversationId);
+                    sidebarPanel.selectConversation(conversationId);
+                }
+            }
+            return conversationId;
+        }, SwingUtilities::invokeLater);
     }
 
-    private boolean onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
-        return assistantMessageCompletionEventDispatchCoordinator.handle(
-                event,
-                conversationState.currentConversationId(),
-                (conversationId, message, activeConversationId) -> assistantMessageCompletionFlowCoordinator.handle(
-                        conversationId,
-                        message,
-                        activeConversationId,
-                        sidebarPanel::refresh,
-                        sidebarPanel::selectConversation
-                ),
-                (conversationId, error) -> {
-                    String message = "Failed to persist assistant message for conversation %s"
-                            .formatted(conversationId);
-                    warnWithoutStack(message, error);
+    private CompletionStage<Void> onHistoryMutation(ChatPanel.HistoryMutationEvent event) {
+        if (event == null || event.conversationId() == null || event.retainedEntry() == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("History mutation event is required"));
+        }
+        CompletionStage<Void> persistence = switch (event.type()) {
+            case EDIT -> conversationPersistenceCoordinator.submitEdit(
+                    event.conversationId(),
+                    event.retainedEntry()
+            );
+            case EDIT_AND_TRUNCATE -> conversationPersistenceCoordinator.submitEditAndTruncate(
+                    event.conversationId(),
+                    event.retainedEntry()
+            );
+            case TRUNCATE -> conversationPersistenceCoordinator.submitTruncate(
+                    event.conversationId(),
+                    event.retainedEntry().messageId(),
+                    event.retainedEntry().ordinal()
+            );
+        };
+        return persistence.handle((ignored, error) -> {
+            if (error == null) {
+                return null;
+            }
+            Throwable failure = error instanceof CompletionException && error.getCause() != null
+                    ? error.getCause()
+                    : error;
+            if (!(failure instanceof ConversationPersistenceIndeterminateException)) {
+                throw new CompletionException(failure);
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (shutdownState.shutdownInProgress()) {
+                    return;
                 }
-        );
+                indeterminateHistoryConversationIds.add(event.conversationId());
+                chatPanel.setConversationPersistenceBlocked(event.conversationId(), true);
+                reconcileBlockedConversation(event.conversationId());
+            });
+            throw new CompletionException(failure);
+        });
+    }
+
+    private CompletionStage<Void> onAssistantMessageCompleted(ChatPanel.AssistantMessageEvent event) {
+        if (event == null || event.conversationId() == null || event.message() == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        var entry = new ConversationHistoryEntry(event.messageId(), event.ordinal(), event.message());
+        return conversationPersistenceCoordinator.submitAssistant(event.conversationId(), entry)
+                .handle((ignored, error) -> {
+                    if (error == null) {
+                        return null;
+                    }
+                    Throwable failure = error instanceof CompletionException && error.getCause() != null
+                            ? error.getCause()
+                            : error;
+                    if (failure instanceof ConversationPersistenceIndeterminateException) {
+                        SwingUtilities.invokeLater(() -> {
+                            if (shutdownState.shutdownInProgress()) {
+                                return;
+                            }
+                            chatPanel.setConversationPersistenceBlocked(event.conversationId(), true);
+                            reconcileBlockedConversation(event.conversationId());
+                        });
+                    }
+                    throw new CompletionException(failure);
+                })
+                .thenRunAsync(() -> {
+                    if (!shutdownState.shutdownInProgress()) {
+                        sidebarPanel.refresh();
+                    }
+                }, SwingUtilities::invokeLater);
     }
 
     private void saveWindowState() {
@@ -1453,6 +1839,9 @@ public class MainFrame extends JFrame {
     }
 
     private void openChatSearch(Component relativeTo) {
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before searching chats.");
             return;
@@ -1538,6 +1927,9 @@ public class MainFrame extends JFrame {
     }
 
     private void invokePromptTemplate(PromptTemplate promptTemplate) {
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before inserting prompts.");
             return;
@@ -1573,6 +1965,13 @@ public class MainFrame extends JFrame {
     }
 
     private void openSettings() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::openSettings);
+            return;
+        }
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening Settings.");
             return;
@@ -1633,7 +2032,7 @@ public class MainFrame extends JFrame {
 
     private void onProviderAuthStatusRefreshed() {
         SwingUtilities.invokeLater(() -> {
-            if (!isDisplayable()) {
+            if (!isDisplayable() || shutdownState.shutdownInProgress()) {
                 return;
             }
             chatPanel.refreshProviders();
@@ -2017,6 +2416,9 @@ public class MainFrame extends JFrame {
     }
 
     private void onLookAndFeelChanged() {
+        if (shutdownState.shutdownInProgress() || !isDisplayable()) {
+            return;
+        }
         lookAndFeelMenuRefreshCoordinator.refresh(
                 ProviderMenuIconRenderer::clearCache,
                 this::markModelsMenuDirty,

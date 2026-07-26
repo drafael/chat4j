@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.persistence.conversation;
 
-import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import java.util.List;
 import java.util.Objects;
@@ -29,20 +28,11 @@ public class ConversationLoadResultPlanner {
             return LoadedConversationPlan.ignorePlan();
         }
 
-        List<Message> messages = records.stream()
-                .map(ConversationRepository.MessageRecord::message)
-                .toList();
-
         String selectedModelKey = conversation == null
                 ? null
                 : ModelSelectionCodec.format(conversation.provider(), conversation.model());
 
-        return LoadedConversationPlan.applyPlan(
-                loadedConversationId,
-                messages,
-                records.size(),
-                selectedModelKey
-        );
+        return LoadedConversationPlan.applyPlan(loadedConversationId, records, selectedModelKey);
     }
 
     public boolean shouldHandleFailure(long requestId, UUID activeConversationId, @NonNull UUID failedConversationId) {
@@ -57,29 +47,23 @@ public class ConversationLoadResultPlanner {
     public record LoadedConversationPlan(
             boolean ignore,
             UUID conversationId,
-            List<Message> messages,
-            int persistedCount,
+            List<ConversationRepository.MessageRecord> records,
             String selectedModelKey
     ) {
+        public LoadedConversationPlan {
+            records = List.copyOf(records);
+        }
 
         static LoadedConversationPlan ignorePlan() {
-            return new LoadedConversationPlan(true, null, emptyList(), 0, null);
+            return new LoadedConversationPlan(true, null, emptyList(), null);
         }
 
         static LoadedConversationPlan applyPlan(
                 UUID conversationId,
-                List<Message> messages,
-                int persistedCount,
+                List<ConversationRepository.MessageRecord> records,
                 String selectedModelKey
         ) {
-
-            return new LoadedConversationPlan(
-                    false,
-                    conversationId,
-                    messages,
-                    persistedCount,
-                    selectedModelKey
-            );
+            return new LoadedConversationPlan(false, conversationId, records, selectedModelKey);
         }
     }
 

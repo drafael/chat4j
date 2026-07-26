@@ -5,54 +5,27 @@ import com.github.drafael.chat4j.web.WebSearchMode;
 import com.github.drafael.chat4j.web.WebSearchOption;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.InvocationInterceptor;
+import org.junit.jupiter.api.extension.ReflectiveInvocationContext;
+import org.junit.jupiter.api.extension.ExtensionContext;
 
 import javax.swing.*;
 import javax.swing.plaf.basic.BasicListUI;
 import java.awt.Dimension;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.atomic.AtomicReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@ExtendWith(InputBarValidationTest.EdtInvocationExtension.class)
 class InputBarValidationTest {
-
-    @Test
-    @DisplayName("Executable attachment is rejected and inline validation is shown")
-    void toComposerAttachment_whenExecutableExtensionProvided_rejectsAttachmentAndShowsValidationMessage() throws Exception {
-        InputBar subject = new InputBar();
-        Path executable = Files.createTempFile("chat4j-validation", ".exe");
-
-        Optional<?> result = invokeToComposerAttachment(subject, executable);
-        JLabel validationLabel = readValidationLabel(subject);
-
-        assertThat(result).isEmpty();
-        assertThat(validationLabel.isVisible()).isTrue();
-        assertThat(validationLabel.getText()).contains("Unsupported file type");
-
-        Files.deleteIfExists(executable);
-    }
-
-    @Test
-    @DisplayName("Text attachment with allowed extension is accepted")
-    void toComposerAttachment_whenMarkdownFileProvided_acceptsAttachment() throws Exception {
-        InputBar subject = new InputBar();
-        Path markdown = Files.createTempFile("chat4j-validation", ".md");
-        Files.writeString(markdown, "# hello");
-
-        Optional<?> result = invokeToComposerAttachment(subject, markdown);
-        JLabel validationLabel = readValidationLabel(subject);
-
-        assertThat(result).isPresent();
-        assertThat(validationLabel.isVisible()).isFalse();
-
-        Files.deleteIfExists(markdown);
-    }
 
     @Test
     @DisplayName("Thinking toggle visibility follows model thinking capability")
@@ -114,7 +87,7 @@ class InputBarValidationTest {
         subject.setAgentModeAvailable(true);
         subject.setProjectRootChooserForTests(parent -> Optional.empty());
 
-        SwingUtilities.invokeAndWait(agentModeButton::doClick);
+        runOnEdt(agentModeButton::doClick);
 
         assertThat(subject.isAgentModeEnabled()).isFalse();
         assertThat(subject.getAgentProjectRoot()).isNull();
@@ -149,7 +122,7 @@ class InputBarValidationTest {
         subject.setAgentModeAvailable(true);
         subject.setProjectRootChooserForTests(parent -> Optional.of(projectRoot));
 
-        SwingUtilities.invokeAndWait(agentModeButton::doClick);
+        runOnEdt(agentModeButton::doClick);
 
         assertThat(subject.isAgentModeEnabled()).isTrue();
         assertThat(subject.getAgentProjectRoot()).isEqualTo(projectRoot.normalize());
@@ -166,7 +139,7 @@ class InputBarValidationTest {
         JButton projectRootButton = readProjectRootButton(subject);
         Path longNamedRoot = Files.createTempDirectory("chat4j-agent-project-name-is-intentionally-very-long-for-ui-width-test-");
 
-        SwingUtilities.invokeAndWait(() -> {
+        runOnEdt(() -> {
             subject.setSize(600, 220);
             subject.doLayout();
         });
@@ -192,7 +165,7 @@ class InputBarValidationTest {
         subject.setAgentProjectRoot(firstRoot);
         subject.setAgentModeEnabled(true);
 
-        SwingUtilities.invokeAndWait(projectRootButton::doClick);
+        runOnEdt(projectRootButton::doClick);
 
         assertThat(subject.getAgentProjectRoot()).isEqualTo(secondRoot.normalize());
         assertThat(projectRootButton.getText()).startsWith(secondRoot.getFileName().toString().substring(0, 8));
@@ -206,7 +179,7 @@ class InputBarValidationTest {
         AtomicBoolean notified = new AtomicBoolean(false);
 
         subject.addCommandCenterListener(e -> notified.set(true));
-        SwingUtilities.invokeAndWait(commandCenterButton::doClick);
+        runOnEdt(commandCenterButton::doClick);
 
         assertThat(notified).isTrue();
         assertThat(commandCenterButton.getToolTipText()).contains("Command center");
@@ -228,7 +201,7 @@ class InputBarValidationTest {
 
         subject.addClearChatListener(e -> notified.set(true));
         subject.setClearChatVisible(true);
-        SwingUtilities.invokeAndWait(clearChatButton::doClick);
+        runOnEdt(clearChatButton::doClick);
 
         assertThat(notified).isTrue();
         assertThat(subject.isClearChatVisible()).isTrue();
@@ -282,7 +255,7 @@ class InputBarValidationTest {
         JLabel statusLabel = readStatusLabel(subject);
 
         subject.startPreparing();
-        SwingUtilities.invokeAndWait(stopButton::doClick);
+        runOnEdt(stopButton::doClick);
 
         assertThat(stopInvoked).isFalse();
         assertThat(cancelInvoked).isTrue();
@@ -300,7 +273,7 @@ class InputBarValidationTest {
         JButton stopButton = readStopButton(subject);
 
         subject.startRecording();
-        SwingUtilities.invokeAndWait(stopButton::doClick);
+        runOnEdt(stopButton::doClick);
 
         assertThat(stopInvoked).isTrue();
         assertThat(cancelInvoked).isFalse();
@@ -308,7 +281,7 @@ class InputBarValidationTest {
 
         stopInvoked.set(false);
         subject.setTranscribing();
-        SwingUtilities.invokeAndWait(stopButton::doClick);
+        runOnEdt(stopButton::doClick);
 
         assertThat(stopInvoked).isFalse();
         assertThat(cancelInvoked).isTrue();
@@ -321,7 +294,7 @@ class InputBarValidationTest {
     void requestAgentModeEnabled_whenUnavailable_showsValidation() throws Exception {
         InputBar subject = new InputBar();
 
-        SwingUtilities.invokeAndWait(() -> subject.requestAgentModeEnabled(true));
+        runOnEdt(() -> subject.requestAgentModeEnabled(true));
 
         assertThat(subject.isAgentModeEnabled()).isFalse();
         assertThat(readValidationLabel(subject).getText()).isEqualTo("Agent Mode is not available for the selected model.");
@@ -332,7 +305,7 @@ class InputBarValidationTest {
     void requestWebSearchEnabled_whenUnavailable_showsValidation() throws Exception {
         InputBar subject = new InputBar();
 
-        SwingUtilities.invokeAndWait(() -> subject.requestWebSearchEnabled(true));
+        runOnEdt(() -> subject.requestWebSearchEnabled(true));
 
         assertThat(subject.isWebSearchEnabled()).isFalse();
         assertThat(readValidationLabel(subject).getText()).isEqualTo("Web Search is not available for the selected model.");
@@ -348,7 +321,7 @@ class InputBarValidationTest {
         subject.addWebSearchEnabledListener(notified::set);
         subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
 
-        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+        runOnEdt(webSearchButton::doClick);
 
         assertThat(subject.isWebSearchEnabled()).isTrue();
         assertThat(webSearchButton.isSelected()).isTrue();
@@ -356,7 +329,7 @@ class InputBarValidationTest {
         assertThat(webSearchButton.isOpaque()).isFalse();
         assertThat(notified.get()).isTrue();
 
-        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+        runOnEdt(webSearchButton::doClick);
 
         assertThat(subject.isWebSearchEnabled()).isFalse();
         assertThat(webSearchButton.isSelected()).isFalse();
@@ -377,7 +350,7 @@ class InputBarValidationTest {
 
         assertThat(subject.isWebSearchEnabled()).isTrue();
 
-        SwingUtilities.invokeAndWait(webSearchButton::doClick);
+        runOnEdt(webSearchButton::doClick);
 
         assertThat(subject.isWebSearchEnabled()).isFalse();
         assertThat(webSearchButton.isSelected()).isFalse();
@@ -386,12 +359,31 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Clearing persisted web search option removes the previous selection")
+    void setWebSearchOptionId_whenValueIsBlank_clearsSelection() throws Exception {
+        AtomicReference<String> selectedOption = new AtomicReference<>();
+
+        runOnEdt(() -> {
+            InputBar subject = new InputBar();
+            subject.setWebSearchOptions(List.of(
+                    new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
+                    new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
+            ), "native");
+            subject.setWebSearchOptionId("perplexity");
+            subject.setWebSearchOptionId(null);
+            selectedOption.set(subject.getWebSearchOptionId());
+        });
+
+        assertThat(selectedOption.get()).isEqualTo("native");
+    }
+
+    @Test
     @DisplayName("Persisted web search state is restored after options become available")
     void setWebSearchOptions_whenPersistedStateAppliedFirst_restoresEnabledToggle() throws Exception {
         AtomicReference<InputBar> subjectRef = new AtomicReference<>();
         AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
 
-        SwingUtilities.invokeAndWait(() -> {
+        runOnEdt(() -> {
             try {
                 InputBar subject = new InputBar();
                 subject.setWebSearchOptionId("perplexity");
@@ -410,7 +402,7 @@ class InputBarValidationTest {
         AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
         AtomicReference<String> webSearchOptionId = new AtomicReference<>();
         AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> {
+        runOnEdt(() -> {
             webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
             webSearchOptionId.set(subjectRef.get().getWebSearchOptionId());
             buttonSelected.set(buttonRef.get().isSelected());
@@ -427,7 +419,7 @@ class InputBarValidationTest {
         AtomicReference<InputBar> subjectRef = new AtomicReference<>();
         AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
 
-        SwingUtilities.invokeAndWait(() -> {
+        runOnEdt(() -> {
             try {
                 InputBar subject = new InputBar();
                 subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
@@ -442,7 +434,7 @@ class InputBarValidationTest {
 
         AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
         AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> {
+        runOnEdt(() -> {
             webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
             buttonSelected.set(buttonRef.get().isSelected());
         });
@@ -523,13 +515,6 @@ class InputBarValidationTest {
                 .extracting(menu -> menu.getPopupMenu().isLightWeightPopupEnabled())
                 .containsOnly(false);
         assertThat(readInputTextArea(subject).getComponentPopupMenu().isLightWeightPopupEnabled()).isFalse();
-    }
-
-    @SuppressWarnings("unchecked")
-    private Optional<?> invokeToComposerAttachment(InputBar inputBar, Path path) throws Exception {
-        Method method = InputBar.class.getDeclaredMethod("toComposerAttachment", Path.class);
-        method.setAccessible(true);
-        return (Optional<?>) method.invoke(inputBar, path);
     }
 
     @SuppressWarnings("unchecked")
@@ -640,6 +625,53 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("textArea");
         field.setAccessible(true);
         return (JTextArea) field.get(inputBar);
+    }
+
+    private static void runOnEdt(ThrowingAction action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+            return;
+        }
+        var failure = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                action.run();
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        });
+        if (failure.get() instanceof Exception e) {
+            throw e;
+        }
+        if (failure.get() instanceof Error e) {
+            throw e;
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
+    }
+
+    static final class EdtInvocationExtension implements InvocationInterceptor {
+        @Override
+        public void interceptTestMethod(
+                Invocation<Void> invocation,
+                ReflectiveInvocationContext<Method> invocationContext,
+                ExtensionContext extensionContext
+        ) throws Throwable {
+            var failure = new AtomicReference<Throwable>();
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    invocation.proceed();
+                } catch (Throwable t) {
+                    failure.set(t);
+                }
+            });
+            if (failure.get() != null) {
+                throw failure.get();
+            }
+        }
     }
 
     private static class SentinelListUi extends BasicListUI {

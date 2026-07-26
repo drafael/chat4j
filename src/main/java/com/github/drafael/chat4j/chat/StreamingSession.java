@@ -21,6 +21,7 @@ final class StreamingSession {
     final AtomicBoolean terminalCallbackStarted = new AtomicBoolean(false);
     final AtomicBoolean activeRequestRegistered = new AtomicBoolean(false);
     final AtomicReference<AutoCloseable> activeRequest = new AtomicReference<>();
+    final AtomicReference<Exception> requestCloseFailure = new AtomicReference<>();
     final StringBuilder response = new StringBuilder();
     final List<ContentPart> responseParts = synchronizedList(new ArrayList<>());
     final List<CitationRef> responseCitations = synchronizedList(new ArrayList<>());
@@ -75,8 +76,12 @@ final class StreamingSession {
         provider = null;
     }
 
+    AutoCloseable detachActiveRequest() {
+        return activeRequest.getAndSet(null);
+    }
+
     boolean cancelActiveRequest() {
-        AutoCloseable request = activeRequest.getAndSet(null);
+        AutoCloseable request = detachActiveRequest();
         if (request == null) {
             return false;
         }
@@ -85,13 +90,18 @@ final class StreamingSession {
         return true;
     }
 
-    private static void closeRequest(AutoCloseable request) {
+    Exception requestCloseFailure() {
+        return requestCloseFailure.get();
+    }
+
+    private void closeRequest(AutoCloseable request) {
         if (request == null) {
             return;
         }
         try {
             request.close();
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            requestCloseFailure.compareAndSet(null, e);
         }
     }
 }

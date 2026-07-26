@@ -104,7 +104,7 @@ class SettingsOpenFlowCoordinatorTest {
             }
 
             @Override
-            public void requestApplicationExit() {
+            public void requestApplicationExit(long deadlineNanos) {
             }
         };
     }

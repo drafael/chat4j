@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.sidebar;
 
 import com.formdev.flatlaf.ui.FlatLineBorder;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistencePrerequisiteIndeterminateException;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import java.awt.Component;
 import java.awt.Container;
@@ -10,13 +13,16 @@ import java.awt.Point;
 import java.awt.Rectangle;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,6 +36,7 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
+import javax.swing.Timer;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
@@ -38,6 +45,10 @@ import org.junit.jupiter.api.Test;
 
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class SidebarPanelTest {
 
@@ -47,7 +58,7 @@ class SidebarPanelTest {
         var repo = new DelayedConversationRepo(0, emptyMap());
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
 
         SidebarPanel subject = panelRef.get();
         assertThat(subject.getPreferredSize()).isEqualTo(new Dimension(300, 0));
@@ -64,7 +75,7 @@ class SidebarPanelTest {
         var panelRef = new AtomicReference<SidebarPanel>();
 
         long started = System.nanoTime();
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
         assertThat(elapsedMillis).isLessThan(325);
@@ -79,7 +90,7 @@ class SidebarPanelTest {
         var repo = new SequencedConversationRepo();
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Initial conversation"));
@@ -105,7 +116,7 @@ class SidebarPanelTest {
         var repo = new DelayedConversationRepo(0, grouped);
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Today chat"));
@@ -124,7 +135,7 @@ class SidebarPanelTest {
         var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Selected chat")));
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Selected chat"));
@@ -159,7 +170,7 @@ class SidebarPanelTest {
         var panelRef = new AtomicReference<SidebarPanel>();
         var selectedId = new AtomicReference<UUID>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Selected chat"));
 
@@ -187,7 +198,7 @@ class SidebarPanelTest {
         ));
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Alpha plan"));
@@ -219,7 +230,7 @@ class SidebarPanelTest {
         var repo = new DelayedConversationRepo(0, grouped);
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Favorite chat"));
@@ -251,7 +262,7 @@ class SidebarPanelTest {
         ));
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Favorite chat"));
@@ -271,7 +282,7 @@ class SidebarPanelTest {
         var settingsInvoked = new AtomicInteger();
 
         SwingUtilities.invokeAndWait(() -> {
-            SidebarPanel panel = new SidebarPanel(repo);
+            SidebarPanel panel = newSidebarPanel(repo);
             panel.setOnSettings(settingsInvoked::incrementAndGet);
             panelRef.set(panel);
         });
@@ -299,12 +310,17 @@ class SidebarPanelTest {
         UUID conversationId = UUID.randomUUID();
         var repo = new DeletableConversationRepo(grouped("Today", conversation(conversationId, "Delete me")));
         var panelRef = new AtomicReference<SidebarPanel>();
+        var persistenceCoordinator = new ConversationPersistenceCoordinator(repo);
         var newChatCalls = new AtomicInteger();
+        var requestedIds = new AtomicReference<List<UUID>>();
+        var settledIds = new AtomicReference<List<UUID>>();
         var deletedIds = new AtomicReference<List<UUID>>();
 
         SwingUtilities.invokeAndWait(() -> {
-            SidebarPanel panel = new SidebarPanel(repo);
+            SidebarPanel panel = new SidebarPanel(repo, persistenceCoordinator);
             panel.setOnNewChat(newChatCalls::incrementAndGet);
+            panel.setOnConversationsDeleteRequested(requestedIds::set);
+            panel.setOnConversationsDeleteSettled(settledIds::set);
             panel.setOnConversationsDeleted(deletedIds::set);
             panelRef.set(panel);
         });
@@ -316,9 +332,497 @@ class SidebarPanelTest {
                 new ConversationItem(conversationId, "Delete me", "OpenAI", "gpt-4.1", false, LocalDateTime.now())
         ));
 
+        awaitCondition(2, TimeUnit.SECONDS, () -> repo.deletedConversationIds.contains(conversationId));
+        awaitCondition(2, TimeUnit.SECONDS, () -> deletedIds.get() != null);
         assertThat(repo.deletedConversationIds).containsExactly(conversationId);
+        assertThat(requestedIds.get()).containsExactly(conversationId);
+        assertThat(settledIds.get()).containsExactly(conversationId);
         assertThat(deletedIds.get()).containsExactly(conversationId);
         assertThat(newChatCalls).hasValue(0);
+        persistenceCoordinator.close();
+    }
+
+    @Test
+    @DisplayName("Mutation completion does not update sidebar after its lifecycle ends")
+    void deleteConversation_whenLifecycleEnds_suppressesCompletionEffects() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Delete me")));
+        var mutation = new CompletableFuture<Void>();
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        when(persistenceCoordinator.submitDelete(List.of(conversationId))).thenReturn(mutation);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var deletedIds = new AtomicReference<List<UUID>>();
+
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo, persistenceCoordinator);
+            panel.setOnConversationsDeleted(deletedIds::set);
+            panelRef.set(panel);
+        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Delete me"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            invokeDeleteConversation(
+                    panelRef.get(),
+                    new ConversationItem(
+                            conversationId,
+                            "Delete me",
+                            "OpenAI",
+                            "gpt-4.1",
+                            false,
+                            LocalDateTime.now()
+                    )
+            );
+            panelRef.get().setLifecycleCurrent(() -> false);
+        });
+        mutation.complete(null);
+        SwingUtilities.invokeAndWait(() -> {});
+
+        assertThat(deletedIds.get()).isNull();
+    }
+
+    @Test
+    @DisplayName("Mutation completion is replayed when a temporarily removed sidebar is reattached")
+    void deleteConversation_whenTemporarilyRemoved_replaysCompletionAfterAddNotify() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Delete me")));
+        var mutation = new CompletableFuture<Void>();
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        when(persistenceCoordinator.submitDelete(List.of(conversationId))).thenReturn(mutation);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        var settledIds = new AtomicReference<List<UUID>>();
+        var deletedIds = new AtomicReference<List<UUID>>();
+
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo, persistenceCoordinator);
+            panel.setOnConversationsDeleteSettled(settledIds::set);
+            panel.setOnConversationsDeleted(deletedIds::set);
+            panelRef.set(panel);
+        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Delete me"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            invokeDeleteConversation(
+                    panelRef.get(),
+                    new ConversationItem(
+                            conversationId,
+                            "Delete me",
+                            "OpenAI",
+                            "gpt-4.1",
+                            false,
+                            LocalDateTime.now()
+                    )
+            );
+            panelRef.get().removeNotify();
+        });
+        mutation.complete(null);
+        SwingUtilities.invokeAndWait(() -> {});
+        assertThat(settledIds.get()).isNull();
+        assertThat(deletedIds.get()).isNull();
+
+        SwingUtilities.invokeAndWait(panelRef.get()::addNotify);
+
+        assertThat(settledIds.get()).containsExactly(conversationId);
+        assertThat(deletedIds.get()).containsExactly(conversationId);
+        SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+        SwingUtilities.invokeAndWait(() -> {});
+    }
+
+    @Test
+    @DisplayName("Reattaching the sidebar replaces refresh work invalidated during temporary removal")
+    void addNotify_whenRefreshWasInvalidated_reloadsConversationSnapshot() throws Exception {
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        var repo = new MutableConversationRepo(grouped("Today", conversation(firstId, "First")));
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(
+                repo,
+                mock(ConversationPersistenceCoordinator.class)
+        )));
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("First"));
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            repo.grouped = grouped("Today", conversation(secondId, "Second"));
+
+            SwingUtilities.invokeAndWait(panelRef.get()::addNotify);
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Second"));
+
+            assertThat(conversationTitles(panelRef.get())).contains("Second").doesNotContain("First");
+        } finally {
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("Indeterminate favorite mutation requests reconciliation for its own conversation")
+    void handleToggleFavorite_whenMutationIsIndeterminate_requestsTargetedReconciliation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Favorite me")));
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(
+                CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ))
+        );
+        var reconciledId = new AtomicReference<UUID>();
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo, persistenceCoordinator);
+            panel.setOnConversationPersistenceIndeterminate(reconciledId::set);
+            panelRef.set(panel);
+        });
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Favorite me"));
+
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(
+                    panelRef.get(),
+                    new ConversationItem(
+                            conversationId,
+                            "Favorite me",
+                            "OpenAI",
+                            "gpt-4.1",
+                            false,
+                            LocalDateTime.now()
+                    )
+            ));
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationId.equals(reconciledId.get()));
+
+            assertThat(reconciledId).hasValue(conversationId);
+        } finally {
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("A favorite deferred behind indeterminate persistence keeps its projection and requests reconciliation")
+    void handleToggleFavorite_whenPrerequisiteIsIndeterminate_keepsProjectionUntilReconciliation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Favorite me")));
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(
+                CompletableFuture.failedFuture(new ConversationPersistencePrerequisiteIndeterminateException(
+                        new SQLException("prior outcome unavailable")
+                ))
+        );
+        when(persistenceCoordinator.hasIndeterminateMutation(conversationId)).thenReturn(true);
+        var reconciledId = new AtomicReference<UUID>();
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> {
+            SidebarPanel panel = new SidebarPanel(repo, persistenceCoordinator);
+            panel.setOnConversationPersistenceIndeterminate(reconciledId::set);
+            panelRef.set(panel);
+        });
+        var conversation = new ConversationItem(
+                conversationId,
+                "Favorite me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Favorite me"));
+
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationId.equals(reconciledId.get()));
+
+            assertThat(pendingFavoriteValues(panelRef.get())).containsKey(conversationId);
+        } finally {
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("An older refresh cannot discard a favorite awaiting reconciliation")
+    void refresh_whenFavoriteReconciliationIsPending_preservesProjectionUntilSettlement() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new BlockingFavoriteRefreshRepo(conversationId);
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(
+                CompletableFuture.failedFuture(new ConversationPersistencePrerequisiteIndeterminateException(
+                        new SQLException("prior outcome unavailable")
+                ))
+        );
+        when(persistenceCoordinator.hasIndeterminateMutation(conversationId)).thenReturn(true);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+            SwingUtilities.invokeAndWait(panelRef.get()::refresh);
+            repo.awaitRefreshStarted();
+
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+            SwingUtilities.invokeAndWait(() -> {});
+            repo.releaseRefresh();
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Refreshed"));
+
+            assertThat(pendingFavoriteValues(panelRef.get())).containsKey(conversationId);
+            SwingUtilities.invokeAndWait(() -> panelRef.get().settlePendingFavoriteReconciliation(conversationId));
+            awaitCondition(2, TimeUnit.SECONDS, () -> !pendingFavoriteValues(panelRef.get()).containsKey(conversationId));
+        } finally {
+            repo.releaseRefresh();
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("Rapid favorite toggles preserve the latest desired state before refresh")
+    void handleToggleFavorite_whenClickedTwiceBeforeSettlement_submitsOppositeDesiredValues() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Toggle me")));
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        var favorite = new CompletableFuture<Void>();
+        var unfavorite = new CompletableFuture<Void>();
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(favorite);
+        when(persistenceCoordinator.submitFavorite(conversationId, false)).thenReturn(unfavorite);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+
+            SwingUtilities.invokeAndWait(() -> {
+                invokeToggleFavorite(panelRef.get(), conversation);
+                invokeToggleFavorite(panelRef.get(), conversation);
+            });
+
+            verify(persistenceCoordinator).submitFavorite(conversationId, true);
+            verify(persistenceCoordinator).submitFavorite(conversationId, false);
+            favorite.complete(null);
+            unfavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+        } finally {
+            favorite.complete(null);
+            unfavorite.complete(null);
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("A successful favorite remains projected until its refreshed snapshot arrives")
+    void handleToggleFavorite_whenSuccessRefreshIsPending_usesPersistedProjectionForNextToggle() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new BlockingFavoriteRefreshRepo(conversationId);
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        var favorite = new CompletableFuture<Void>();
+        var unfavorite = new CompletableFuture<Void>();
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(favorite);
+        when(persistenceCoordinator.submitFavorite(conversationId, false)).thenReturn(unfavorite);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+            favorite.complete(null);
+            repo.awaitRefreshStarted();
+            SwingUtilities.invokeAndWait(() -> {});
+
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+
+            verify(persistenceCoordinator).submitFavorite(conversationId, false);
+        } finally {
+            repo.releaseRefresh();
+            favorite.complete(null);
+            unfavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("Deleting a conversation removes its pending favorite projection")
+    void deleteConversation_whenFavoriteRefreshIsPending_clearsFavoriteProjection() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new BlockingFavoriteRefreshRepo(conversationId);
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        var favorite = new CompletableFuture<Void>();
+        var deletion = new CompletableFuture<Void>();
+        when(persistenceCoordinator.submitFavorite(conversationId, true)).thenReturn(favorite);
+        when(persistenceCoordinator.submitDelete(List.of(conversationId))).thenReturn(deletion);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+            favorite.complete(null);
+            repo.awaitRefreshStarted();
+            SwingUtilities.invokeAndWait(() -> invokeDeleteConversation(panelRef.get(), conversation));
+            deletion.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+
+            assertThat(pendingFavoriteValues(panelRef.get())).doesNotContainKey(conversationId);
+        } finally {
+            repo.releaseRefresh();
+            favorite.complete(null);
+            deletion.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("An older favorite completion cannot remove a newer equal-valued intent")
+    void handleToggleFavorite_whenDesiredValueRepeats_preservesLatestIntentIdentity() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Toggle me")));
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        var firstFavorite = new CompletableFuture<Void>();
+        var unfavorite = new CompletableFuture<Void>();
+        var latestFavorite = new CompletableFuture<Void>();
+        var latestUnfavorite = new CompletableFuture<Void>();
+        when(persistenceCoordinator.submitFavorite(conversationId, true))
+                .thenReturn(firstFavorite, latestFavorite);
+        when(persistenceCoordinator.submitFavorite(conversationId, false))
+                .thenReturn(unfavorite, latestUnfavorite);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+            SwingUtilities.invokeAndWait(() -> {
+                invokeToggleFavorite(panelRef.get(), conversation);
+                invokeToggleFavorite(panelRef.get(), conversation);
+                invokeToggleFavorite(panelRef.get(), conversation);
+            });
+            Object latestIntent = pendingFavoriteValues(panelRef.get()).get(conversationId);
+
+            firstFavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            assertThat(pendingFavoriteValues(panelRef.get()).get(conversationId)).isSameAs(latestIntent);
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+
+            verify(persistenceCoordinator, times(2)).submitFavorite(conversationId, true);
+            verify(persistenceCoordinator, times(2)).submitFavorite(conversationId, false);
+        } finally {
+            firstFavorite.complete(null);
+            unfavorite.complete(null);
+            latestFavorite.complete(null);
+            latestUnfavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("A stale favorite completion cannot recreate a projection cleared by deletion")
+    void handleToggleFavorite_whenProjectionWasRemoved_doesNotReinsertStaleIntent() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Toggle me")));
+        ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
+        var firstFavorite = new CompletableFuture<Void>();
+        var unfavorite = new CompletableFuture<Void>();
+        var latestFavorite = new CompletableFuture<Void>();
+        var postRemovalFavorite = new CompletableFuture<Void>();
+        when(persistenceCoordinator.submitFavorite(conversationId, true))
+                .thenReturn(firstFavorite, latestFavorite, postRemovalFavorite);
+        when(persistenceCoordinator.submitFavorite(conversationId, false)).thenReturn(unfavorite);
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo, persistenceCoordinator)));
+        var conversation = new ConversationItem(
+                conversationId,
+                "Toggle me",
+                "OpenAI",
+                "gpt-4.1",
+                false,
+                LocalDateTime.now()
+        );
+        try {
+            awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(panelRef.get()).contains("Toggle me"));
+            SwingUtilities.invokeAndWait(() -> {
+                invokeToggleFavorite(panelRef.get(), conversation);
+                invokeToggleFavorite(panelRef.get(), conversation);
+                invokeToggleFavorite(panelRef.get(), conversation);
+                panelRef.get().removeConversationProjections(List.of(conversationId));
+            });
+
+            firstFavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            assertThat(pendingFavoriteValues(panelRef.get())).doesNotContainKey(conversationId);
+            SwingUtilities.invokeAndWait(() -> invokeToggleFavorite(panelRef.get(), conversation));
+
+            verify(persistenceCoordinator, times(3)).submitFavorite(conversationId, true);
+            verify(persistenceCoordinator).submitFavorite(conversationId, false);
+        } finally {
+            firstFavorite.complete(null);
+            unfavorite.complete(null);
+            latestFavorite.complete(null);
+            postRemovalFavorite.complete(null);
+            SwingUtilities.invokeAndWait(() -> {});
+            SwingUtilities.invokeAndWait(panelRef.get()::removeNotify);
+            SwingUtilities.invokeAndWait(() -> {});
+        }
+    }
+
+    @Test
+    @DisplayName("Streaming updates while removed preserve state without restarting the animation timer")
+    void setConversationStreaming_whenRemoved_rearmsTimerOnlyAfterAddNotify() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(
+                new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Streaming")))
+        )));
+        SidebarPanel subject = panelRef.get();
+        Timer timer = readLoadingIconTimer(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Streaming"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            subject.removeNotify();
+            subject.setConversationStreaming(conversationId, true);
+        });
+        var timerRunning = new AtomicReference<Boolean>();
+        SwingUtilities.invokeAndWait(() -> timerRunning.set(timer.isRunning()));
+        assertThat(timerRunning).hasValue(false);
+
+        SwingUtilities.invokeAndWait(subject::addNotify);
+        SwingUtilities.invokeAndWait(() -> timerRunning.set(timer.isRunning()));
+        assertThat(timerRunning).hasValue(true);
+        SwingUtilities.invokeAndWait(subject::removeNotify);
+        SwingUtilities.invokeAndWait(() -> {});
     }
 
     @Test
@@ -340,7 +844,7 @@ class SidebarPanelTest {
         var repo = new MutableConversationRepo(grouped("Today", initialRecords.toArray(ConversationRepository.ConversationRecord[]::new)));
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Streaming LM Studio chat"));
 
@@ -369,6 +873,30 @@ class SidebarPanelTest {
     }
 
     @Test
+    @DisplayName("Selecting a conversation expands its collapsed group and restores selection")
+    void selectConversation_whenGroupIsCollapsed_expandsAndSelectsConversation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var repo = new DelayedConversationRepo(
+                0,
+                grouped("Today", conversation(conversationId, "Collapsed conversation"))
+        );
+        var panelRef = new AtomicReference<SidebarPanel>();
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
+        SidebarPanel subject = panelRef.get();
+        awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Collapsed conversation"));
+
+        SwingUtilities.invokeAndWait(() -> {
+            readCollapsedGroups(subject).add("Today");
+            subject.refresh();
+        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> !conversationTitles(subject).contains("Collapsed conversation"));
+        SwingUtilities.invokeAndWait(() -> subject.selectConversation(conversationId));
+
+        assertThat(selectedConversationId(subject)).isEqualTo(conversationId);
+        assertThat(conversationTitles(subject)).contains("Collapsed conversation");
+    }
+
+    @Test
     @DisplayName("Blocked conversation selection restores the displayed conversation selection")
     void selectionChanged_whenGuardBlocksSelection_restoresPreviousSelection() throws Exception {
         UUID firstId = UUID.randomUUID();
@@ -382,7 +910,7 @@ class SidebarPanelTest {
         var selectedCalls = new AtomicInteger();
 
         SwingUtilities.invokeAndWait(() -> {
-            SidebarPanel panel = new SidebarPanel(repo);
+            SidebarPanel panel = newSidebarPanel(repo);
             panel.setOnConversationSelected(id -> selectedCalls.incrementAndGet());
             panelRef.set(panel);
         });
@@ -391,7 +919,7 @@ class SidebarPanelTest {
 
         SwingUtilities.invokeAndWait(() -> {
             subject.selectConversation(firstId);
-            subject.setGuardedActionAllowed(() -> false);
+            subject.setGuardedConversationActionAllowed(id -> !secondId.equals(id));
             readConversationList(subject).setSelectedIndex(conversationIndex(subject, secondId));
         });
 
@@ -406,7 +934,7 @@ class SidebarPanelTest {
         var repo = new DelayedConversationRepo(0, grouped("Today", conversation(conversationId, "Streaming conversation")));
         var panelRef = new AtomicReference<SidebarPanel>();
 
-        SwingUtilities.invokeAndWait(() -> panelRef.set(new SidebarPanel(repo)));
+        SwingUtilities.invokeAndWait(() -> panelRef.set(newSidebarPanel(repo)));
         SidebarPanel subject = panelRef.get();
 
         awaitCondition(2, TimeUnit.SECONDS, () -> conversationTitles(subject).contains("Streaming conversation"));
@@ -505,6 +1033,21 @@ class SidebarPanelTest {
         return null;
     }
 
+    @SuppressWarnings("unchecked")
+    private Set<String> readCollapsedGroups(SidebarPanel panel) {
+        try {
+            Field field = SidebarPanel.class.getDeclaredField("collapsedGroups");
+            field.setAccessible(true);
+            return (Set<String>) field.get(panel);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static SidebarPanel newSidebarPanel(ConversationRepository repository) {
+        return new SidebarPanel(repository, mock(ConversationPersistenceCoordinator.class));
+    }
+
     private Icon readConversationIcon(SidebarPanel panel, UUID conversationId) throws Exception {
         var iconRef = new AtomicReference<Icon>();
         SwingUtilities.invokeAndWait(() -> {
@@ -547,10 +1090,28 @@ class SidebarPanelTest {
     }
 
     private void invokeDeleteConversation(SidebarPanel panel, ConversationItem conversation) {
+        invokeConversationAction(panel, "deleteConversation", conversation);
+    }
+
+    private void invokeToggleFavorite(SidebarPanel panel, ConversationItem conversation) {
+        invokeConversationAction(panel, "handleToggleFavorite", conversation);
+    }
+
+    private void invokeConversationAction(SidebarPanel panel, String methodName, ConversationItem conversation) {
         try {
-            Method method = SidebarPanel.class.getDeclaredMethod("deleteConversation", ConversationItem.class);
+            Method method = SidebarPanel.class.getDeclaredMethod(methodName, ConversationItem.class);
             method.setAccessible(true);
             method.invoke(panel, conversation);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Timer readLoadingIconTimer(SidebarPanel panel) {
+        try {
+            Field field = SidebarPanel.class.getDeclaredField("loadingIconTimer");
+            field.setAccessible(true);
+            return (Timer) field.get(panel);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -606,6 +1167,21 @@ class SidebarPanelTest {
         );
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<UUID, ?> pendingFavoriteValues(SidebarPanel panel) throws Exception {
+        var value = new AtomicReference<Map<UUID, ?>>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                Field field = SidebarPanel.class.getDeclaredField("pendingFavoriteValues");
+                field.setAccessible(true);
+                value.set(Map.copyOf((Map<UUID, ?>) field.get(panel)));
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        return value.get();
+    }
+
     private static String groupHeaderName(Object entry) throws Exception {
         Field field = entry.getClass().getDeclaredField("name");
         field.setAccessible(true);
@@ -647,6 +1223,37 @@ class SidebarPanelTest {
         }
     }
 
+    private static class BlockingFavoriteRefreshRepo extends ConversationRepository {
+        private final UUID conversationId;
+        private final AtomicInteger calls = new AtomicInteger();
+        private final CountDownLatch refreshStarted = new CountDownLatch(1);
+        private final CountDownLatch releaseRefresh = new CountDownLatch(1);
+
+        private BlockingFavoriteRefreshRepo(UUID conversationId) {
+            super(null);
+            this.conversationId = conversationId;
+        }
+
+        @Override
+        public Map<String, List<ConversationRepository.ConversationRecord>> findAllGroupedByDate() {
+            int call = calls.incrementAndGet();
+            if (call > 1) {
+                refreshStarted.countDown();
+                awaitLatch(releaseRefresh, 2, TimeUnit.SECONDS);
+            }
+            String title = call > 1 ? "Refreshed" : "Toggle me";
+            return grouped("Today", conversation(conversationId, title));
+        }
+
+        private void awaitRefreshStarted() {
+            awaitLatch(refreshStarted, 2, TimeUnit.SECONDS);
+        }
+
+        private void releaseRefresh() {
+            releaseRefresh.countDown();
+        }
+    }
+
     private static class MutableConversationRepo extends ConversationRepository {
 
         private Map<String, List<ConversationRepository.ConversationRecord>> grouped;
@@ -671,8 +1278,8 @@ class SidebarPanelTest {
         }
 
         @Override
-        public void deleteConversation(UUID id) {
-            deletedConversationIds.add(id);
+        public void deleteConversations(List<UUID> ids) {
+            deletedConversationIds.addAll(ids);
         }
     }
 

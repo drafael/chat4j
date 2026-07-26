@@ -7,7 +7,7 @@ import java.util.Locale;
 import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
 
-final class AttachmentSelectionPolicy {
+class AttachmentSelectionPolicy {
 
     private static final long MAX_ATTACHMENT_BYTES = 20L * 1024L * 1024L;
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of("exe", "app", "dmg", "pkg", "bat", "cmd", "command", "msi");

@@ -5,7 +5,6 @@ import lombok.NonNull;
 public class NewChatCoordinator {
 
     public void start(
-            @NonNull Runnable saveCurrentConversation,
             @NonNull Runnable clearCurrentConversationId,
             @NonNull Runnable clearActiveConversationId,
             @NonNull Runnable clearSidebarSelection,
@@ -14,7 +13,6 @@ public class NewChatCoordinator {
             @NonNull Runnable requestInputFocus
     ) {
 
-        saveCurrentConversation.run();
         clearCurrentConversationId.run();
         clearActiveConversationId.run();
         clearSidebarSelection.run();

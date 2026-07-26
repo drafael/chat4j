@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.persistence.conversation;
 
-import com.github.drafael.chat4j.provider.api.Message;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -32,8 +31,7 @@ public class ConversationLoadApplyDispatchCoordinator {
             @NonNull UUID conversationId,
             @NonNull List<ConversationRepository.MessageRecord> records,
             ConversationRepository.ConversationRecord conversation,
-            @NonNull Consumer<List<Message>> historyLoader,
-            @NonNull ConversationLoadApplyCoordinator.PersistedCountMarker persistedCountMarker,
+            @NonNull Consumer<List<ConversationRepository.MessageRecord>> historyLoader,
             @NonNull Consumer<String> selectedModelSetter,
             @NonNull Consumer<UUID> conversationSelector
     ) {
@@ -44,7 +42,6 @@ public class ConversationLoadApplyDispatchCoordinator {
         return applier.apply(
                 plan,
                 historyLoader,
-                persistedCountMarker,
                 selectedModelSetter,
                 conversationSelector
         );
@@ -65,8 +62,7 @@ public class ConversationLoadApplyDispatchCoordinator {
     interface Applier {
         boolean apply(
                 ConversationLoadResultPlanner.LoadedConversationPlan plan,
-                Consumer<List<Message>> historyLoader,
-                ConversationLoadApplyCoordinator.PersistedCountMarker persistedCountMarker,
+                Consumer<List<ConversationRepository.MessageRecord>> historyLoader,
                 Consumer<String> selectedModelSetter,
                 Consumer<UUID> conversationSelector
         );

@@ -1,10 +1,10 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -22,6 +22,19 @@ class StreamingSessionTest {
 
         assertThat(closed).isTrue();
         assertThat(subject.activeRequest).hasValue(null);
+    }
+
+    @Test
+    @DisplayName("A late request close failure remains available to permanent cleanup")
+    void registerActiveRequest_whenLateRequestCloseFails_retainsFailure() {
+        var subject = new StreamingSession(1L, null, mock(ProviderService.class));
+        subject.cancelled.set(true);
+
+        subject.registerActiveRequest(() -> {
+            throw new IOException("close failed");
+        });
+
+        assertThat(subject.requestCloseFailure()).hasMessage("close failed");
     }
 
     @Test

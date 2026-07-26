@@ -1,7 +1,10 @@
 package com.github.drafael.chat4j.persistence.db;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
+import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -10,6 +13,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Comparator;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -93,8 +97,20 @@ class DatabaseBootstrapTest {
         subject.init();
         var conversationRepo = new ConversationRepository(dataSource);
 
-        var conversationId = conversationRepo.createConversation("Hello", "OpenAI", "gpt-4o");
-        var conversation = conversationRepo.findById(conversationId);
+        UUID conversationId = UUID.randomUUID();
+        conversationRepo.createConversation(new ConversationRepository.CreateConversationCommand(
+                conversationId,
+                "Hello",
+                "OpenAI",
+                "gpt-4o",
+                ReasoningLevel.OFF,
+                false,
+                null,
+                false,
+                null,
+                new ConversationHistoryEntry(UUID.randomUUID(), 1, Message.user("hello"))
+        ));
+        var conversation = conversationRepo.loadConversation(conversationId).map(ConversationRepository.LoadedConversation::conversation);
 
         assertThat(conversation).isPresent();
         assertThat(conversation).get().extracting(ConversationRepository.ConversationRecord::title).isEqualTo("Hello");

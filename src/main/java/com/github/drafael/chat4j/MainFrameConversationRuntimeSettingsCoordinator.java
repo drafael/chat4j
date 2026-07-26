@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j;
 
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
@@ -7,6 +8,7 @@ import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import lombok.NonNull;
@@ -18,16 +20,19 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
 
     private static final int DEFAULT_WEB_BROWSE_TOP_N = 3;
 
-    private final ConversationRepository conversationRepo;
+    private final ConversationPersistenceCoordinator persistenceCoordinator;
     private final AgentModeSettings agentModeSettings;
     private final WebSearchSettings webSearchSettings;
+    private final Object webBrowsePersistenceLock = new Object();
+    private CompletableFuture<Void> webBrowsePersistence = CompletableFuture.completedFuture(null);
+    private boolean webBrowsePersistenceSealed;
 
     public MainFrameConversationRuntimeSettingsCoordinator(
-            @NonNull ConversationRepository conversationRepo,
+            @NonNull ConversationPersistenceCoordinator persistenceCoordinator,
             @NonNull AgentModeSettings agentModeSettings,
             @NonNull WebSearchSettings webSearchSettings
     ) {
-        this.conversationRepo = conversationRepo;
+        this.persistenceCoordinator = persistenceCoordinator;
         this.agentModeSettings = agentModeSettings;
         this.webSearchSettings = webSearchSettings;
     }
@@ -45,6 +50,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
         target.setAgentProjectRoot().accept(null);
         target.setAgentModeEnabled().accept(false);
         target.setReasoningLevel().accept(ReasoningLevel.OFF);
+        target.setWebSearchOptionId().accept(null);
         target.setWebSearchEnabled().accept(false);
     }
 
@@ -70,23 +76,33 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
             return;
         }
 
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateReasoningLevel(currentConversationId, reasoningLevel);
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, e);
-            }
-        });
+        persistenceCoordinator.submitReasoningLevel(currentConversationId, reasoningLevel)
+                .exceptionally(error -> {
+                    log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, error);
+                    return null;
+                });
     }
 
     public void persistWebBrowseTopN(int topN) {
-        Thread.startVirtualThread(() -> {
-            try {
-                webSearchSettings.persistAutoBrowseTopN(topN);
-            } catch (Exception e) {
-                log.debug("Failed to persist Web Search browse-top setting", e);
+        synchronized (webBrowsePersistenceLock) {
+            if (webBrowsePersistenceSealed) {
+                return;
             }
-        });
+            webBrowsePersistence = webBrowsePersistence.handle((ignored, error) -> null).thenRunAsync(() -> {
+                try {
+                    webSearchSettings.persistAutoBrowseTopN(topN);
+                } catch (Exception e) {
+                    log.debug("Failed to persist Web Search browse-top setting", e);
+                }
+            }, command -> Thread.ofVirtual().name("chat4j-web-browse-settings").start(command));
+        }
+    }
+
+    public CompletableFuture<Void> sealWebBrowsePersistence() {
+        synchronized (webBrowsePersistenceLock) {
+            webBrowsePersistenceSealed = true;
+            return webBrowsePersistence;
+        }
     }
 
     public void persistWebSearchSettings(UUID currentConversationId, boolean webSearchEnabled, String webSearchOptionId) {
@@ -94,13 +110,11 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
             return;
         }
 
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateWebSearchSettings(currentConversationId, webSearchEnabled, webSearchOptionId);
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, e);
-            }
-        });
+        persistenceCoordinator.submitWebSearchSettings(currentConversationId, webSearchEnabled, webSearchOptionId)
+                .exceptionally(error -> {
+                    log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, error);
+                    return null;
+                });
     }
 
     public void persistAgentSettings(UUID currentConversationId, boolean agentModeRequested, Path agentProjectRoot) {
@@ -108,13 +122,11 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
             return;
         }
 
-        Thread.startVirtualThread(() -> {
-            try {
-                conversationRepo.updateAgentSettings(currentConversationId, agentModeRequested, agentProjectRoot);
-            } catch (Exception e) {
-                log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, e);
-            }
-        });
+        persistenceCoordinator.submitAgentSettings(currentConversationId, agentModeRequested, agentProjectRoot)
+                .exceptionally(error -> {
+                    log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, error);
+                    return null;
+                });
     }
 
     private void applyLoadedConversationReasoningSettings(
@@ -134,9 +146,7 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
         boolean enabled = conversation != null && conversation.webSearchEnabled();
         String option = conversation == null ? null : conversation.webSearchOption();
 
-        if (StringUtils.isNotBlank(option)) {
-            target.setWebSearchOptionId().accept(option);
-        }
+        target.setWebSearchOptionId().accept(StringUtils.trimToNull(option));
         target.setWebSearchEnabled().accept(enabled);
     }
 

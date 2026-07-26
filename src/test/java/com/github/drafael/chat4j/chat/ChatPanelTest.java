@@ -1,6 +1,8 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.composer.AttachmentStager;
+import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
 import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
 import com.github.drafael.chat4j.chat.ui.JumpToLatestButton;
@@ -28,10 +30,14 @@ import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.persistence.StoragePaths;
+import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
+import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
@@ -72,17 +78,22 @@ import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
+import java.sql.SQLException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -95,6 +106,7 @@ import java.util.function.Consumer;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -147,16 +159,106 @@ class ChatPanelTest {
             subject.getInputBar().setWebSearchLockedEnabled(false);
             subject.getInputBar().setWebSearchOptions(emptyList(), null);
             subject.getInputBar().setWebSearchEnabled(false);
+            subject.setOnDurableUserMessageSubmitted(event ->
+                    CompletableFuture.completedFuture(event.conversationId())
+            );
+            subject.setOnDurableAssistantMessageCompleted(event -> CompletableFuture.completedFuture(null));
+            subject.setOnDurableHistoryMutation(event -> CompletableFuture.completedFuture(null));
         });
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (subject != null) {
+            callOnEdt(subject::cancelAllRequestsAsync).join();
+            runOnEdt(subject::disposeViewResources);
             runOnEdt(subject::removeNotify);
             runOnEdt(() -> {});
         }
         credentialMutationService.closeSecrets();
+    }
+
+    @Test
+    @DisplayName("Shutdown invalidates provider refreshes and rejects new refresh work")
+    void beginShutdown_whenProviderRefreshCouldArrive_invalidatesAndRejectsRefresh() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+        long historyRevision = (long) readField(subject, "historyRevision");
+        long openActionGeneration = ((AtomicLong) readField(subject, "openActionUiGeneration")).get();
+        long before = ((AtomicLong) readField(subject, "providerRefreshCounter")).get();
+        long readAloudBefore = ((AtomicLong) readField(subject, "readAloudUiGeneration")).get();
+        long speechToTextBefore = ((AtomicLong) readField(subject, "speechToTextUiGeneration")).get();
+        assertThat(callOnEdt(() -> subject.isOpenActionUiCurrent(
+                historyRevision,
+                conversationId,
+                openActionGeneration
+        ))).isTrue();
+
+        runOnEdt(subject::beginShutdown);
+        long afterShutdown = ((AtomicLong) readField(subject, "providerRefreshCounter")).get();
+        runOnEdt(subject::refreshProviders);
+
+        assertThat(afterShutdown).isGreaterThan(before);
+        assertThat(((AtomicLong) readField(subject, "providerRefreshCounter")).get()).isEqualTo(afterShutdown);
+        assertThat(((AtomicLong) readField(subject, "readAloudUiGeneration")).get()).isGreaterThan(readAloudBefore);
+        assertThat(((AtomicLong) readField(subject, "speechToTextUiGeneration")).get()).isGreaterThan(speechToTextBefore);
+        assertThat(callOnEdt(() -> subject.getInputBar().isEnabled())).isFalse();
+        assertThat(callOnEdt(() -> subject.isOpenActionUiCurrent(
+                historyRevision,
+                conversationId,
+                openActionGeneration
+        ))).isFalse();
+    }
+
+    @Test
+    @DisplayName("Diagram open errors do not expose unexpected filesystem details")
+    void diagramOpenError_whenFailureContainsPath_returnsSafeMessage() {
+        assertThat(subject.diagramOpenError(new IOException("/private/tmp/chat4j-mermaid-secret.html")))
+                .isEqualTo("Unable to open diagram.");
+        assertThat(subject.diagramOpenError(new IOException("Diagram is too large.")))
+                .isEqualTo("Diagram is too large.");
+    }
+
+    @Test
+    @DisplayName("File open work runs off the EDT without blocking Swing delivery")
+    void runOpenActionInBackground_whenOperationBlocks_keepsEdtResponsive() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var operationStarted = new CountDownLatch(1);
+        var releaseOperation = new CountDownLatch(1);
+        var operationCompleted = new CountDownLatch(1);
+        var operationRanOnEdt = new AtomicBoolean(true);
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+        long expectedHistoryRevision = (long) readField(subject, "historyRevision");
+
+        try {
+            runOnEdt(() -> subject.runOpenActionInBackground(
+                    expectedHistoryRevision,
+                    conversationId,
+                    "chat4j-open-action-test",
+                    "Test",
+                    () -> {
+                        operationRanOnEdt.set(SwingUtilities.isEventDispatchThread());
+                        operationStarted.countDown();
+                        try {
+                            awaitLatch(releaseOperation);
+                        } finally {
+                            operationCompleted.countDown();
+                        }
+                    },
+                    Exception::getMessage
+            ));
+            assertThat(operationStarted.await(2, TimeUnit.SECONDS)).isTrue();
+
+            var edtResponsive = new AtomicBoolean();
+            runOnEdt(() -> edtResponsive.set(true));
+
+            assertThat(edtResponsive).isTrue();
+            assertThat(operationRanOnEdt).isFalse();
+        } finally {
+            releaseOperation.countDown();
+            assertThat(operationCompleted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {});
+        }
     }
 
     @Test
@@ -1824,7 +1926,7 @@ class ChatPanelTest {
         var started = new CountDownLatch(1);
         var releasePreparation = new CountDownLatch(1);
 
-        subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+        runOnEdt(() -> subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
             started.countDown();
             while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
                 if (isCancelled.getAsBoolean()) {
@@ -1832,26 +1934,155 @@ class ChatPanelTest {
                 }
             }
             return Message.user(composerState.text());
-        });
+        }));
 
         setCurrentProvider(subject, immediateProvider("pong"));
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
-        invokeOnSend(subject);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("ping"));
+        try {
+            invokeOnSend(subject);
 
-        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
-
-        assertThat(subject.getInputBar().isEnabled()).isFalse();
-        assertThat(subject.getInputBar().isCancelGenerationVisible()).isTrue();
-        assertThat(subject.getHistory()).isEmpty();
-
-        releasePreparation.countDown();
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
             flushEdt();
-            return subject.getHistory().size() == 2 && subject.getInputBar().isEnabled();
+
+            assertThat(callOnEdt(() -> subject.getInputBar().isEnabled())).isFalse();
+            assertThat(callOnEdt(() -> subject.getInputBar().isCancelGenerationVisible())).isTrue();
+            assertThat(callOnEdt(subject::getHistory)).isEmpty();
+
+            releasePreparation.countDown();
+            awaitCondition(5, TimeUnit.SECONDS, () -> {
+                flushEdt();
+                return callOnEdt(() -> subject.getHistory().size() == 2 && subject.getInputBar().isEnabled());
+            });
+        } finally {
+            releasePreparation.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Abandoning an unsubmitted preparation keeps the draft and skips persistence")
+    void abandonVisibleUnsubmittedPreparation_whenPreparationIsBlocked_cancelsJob() throws Exception {
+        var started = new CountDownLatch(1);
+        var releasePreparation = new CountDownLatch(1);
+        var persistenceCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+                started.countDown();
+                while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
+                    if (isCancelled.getAsBoolean()) {
+                        throw new SendCancelledException();
+                    }
+                }
+                return Message.user(composerState.text());
+            });
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            readInputTextArea(subject.getInputBar()).setText("keep draft");
         });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(callOnEdt(subject::hasPendingConversationMutation)).isFalse();
+
+            runOnEdt(subject::abandonVisibleUnsubmittedPreparation);
+            releasePreparation.countDown();
+            flushEdt();
+
+            assertThat(persistenceCalls).hasValue(0);
+            assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText()))
+                    .isEqualTo("keep draft");
+            assertThat(callOnEdt(() -> ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty())).isTrue();
+        } finally {
+            releasePreparation.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Permanent cancellation waits for an interrupted preparation worker to stop")
+    void cancelAllRequestsAsync_whenPreparationWorkerIsStillRunning_waitsForWorker() throws Exception {
+        var started = new CountDownLatch(1);
+        var releasePreparation = new CountDownLatch(1);
+        runOnEdt(() -> subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+            started.countDown();
+            while (releasePreparation.getCount() > 0) {
+                try {
+                    releasePreparation.await(20, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ignored) {
+                }
+            }
+            return Message.user(composerState.text());
+        }));
+        setCurrentProvider(subject, immediateProvider("unused"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("pending"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+
+            CompletableFuture<Void> cancellation = callOnEdt(subject::cancelAllRequestsAsync);
+            assertThat(cancellation).isNotDone();
+            releasePreparation.countDown();
+
+            cancellation.join();
+        } finally {
+            releasePreparation.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Shutdown retains an interrupted preparation worker until permanent cancellation joins it")
+    void cancelAllRequestsAsync_afterBeginShutdown_waitsForPreparationWorker() throws Exception {
+        var started = new CountDownLatch(1);
+        var releasePreparation = new CountDownLatch(1);
+        runOnEdt(() -> subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+            started.countDown();
+            while (releasePreparation.getCount() > 0) {
+                try {
+                    releasePreparation.await(20, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ignored) {
+                }
+            }
+            return Message.user(composerState.text());
+        }));
+        setCurrentProvider(subject, immediateProvider("unused"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("pending"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(subject::beginShutdown);
+            CompletableFuture<Void> cancellation = callOnEdt(subject::cancelAllRequestsAsync);
+            assertThat(cancellation).isNotDone();
+            releasePreparation.countDown();
+
+            cancellation.join();
+        } finally {
+            releasePreparation.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Permanent cancellation reports provider request close failures")
+    void cancelAllRequestsAsync_whenRequestCloseFails_completesExceptionally() throws Exception {
+        var session = new StreamingSession(91L, UUID.randomUUID(), immediateProvider("unused"));
+        session.registerActiveRequest(() -> {
+            throw new IOException("close failed");
+        });
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions = (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+        });
+
+        CompletableFuture<Void> cancellation = callOnEdt(subject::cancelAllRequestsAsync);
+
+        assertThatThrownBy(cancellation::join).hasRootCauseMessage("close failed");
     }
 
     @Test
@@ -1889,6 +2120,72 @@ class ChatPanelTest {
 
         releasePreparation.countDown();
         flushEdt();
+    }
+
+    @Test
+    @DisplayName("Cancelling after durable submission adopts the saved user message without invoking the provider")
+    void cancelStreaming_whenUserPersistenceIsPending_adoptsSuccessWithoutProvider() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceStarted = new CountDownLatch(1);
+        var persistence = new CompletableFuture<UUID>();
+        var providerCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            readInputTextArea(subject.getInputBar()).setText("save without answer");
+        });
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::cancelStreamingAndMarkCancelled);
+        flushEdt();
+        assertThat(callOnEdt(() -> subject.getInputBar().isEnabled())).isFalse();
+        persistence.complete(conversationId);
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("save without answer");
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Canonical reconciliation after cancellation adopts the user message without reviving generation")
+    void resolveIndeterminateUserMessage_whenCancelledAfterSubmission_doesNotInvokeProvider() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceStarted = new CountDownLatch(1);
+        var persistence = new CompletableFuture<UUID>();
+        var providerCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            readInputTextArea(subject.getInputBar()).setText("reconciled without answer");
+        });
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::cancelStreamingAndMarkCancelled);
+        persistence.completeExceptionally(new ConversationPersistenceIndeterminateException(
+                new SQLException("read unavailable")
+        ));
+        flushEdt();
+
+        runOnEdt(() -> subject.resolveIndeterminateUserMessage(conversationId, true));
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("reconciled without answer");
     }
 
     @Test
@@ -2242,6 +2539,24 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Open-action errors from an earlier attachment stay stale after reattachment")
+    void isOpenActionUiCurrent_whenPanelIsReattached_rejectsEarlierGeneration() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+        long historyRevision = (long) readField(subject, "historyRevision");
+        long openActionGeneration = ((AtomicLong) readField(subject, "openActionUiGeneration")).get();
+
+        runOnEdt(subject::removeNotify);
+        runOnEdt(() -> setField(subject, "removed", false));
+
+        assertThat(callOnEdt(() -> subject.isOpenActionUiCurrent(
+                historyRevision,
+                conversationId,
+                openActionGeneration
+        ))).isFalse();
+    }
+
+    @Test
     @DisplayName("WebView pointer presses dismiss the model selector popup")
     void handleWebTranscriptAction_whenWebViewPointerPressed_hidesModelPopup() throws Exception {
         ModelSelectorPopup popup = mock(ModelSelectorPopup.class);
@@ -2405,10 +2720,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Regenerating recent assistant response uses stored message indexes")
     void regenerateRecentResponse_whenRecentBubbleIsAssistant_usesStoredMessageIndex() throws Exception {
-        runOnEdt(() -> subject.loadHistory(List.of(
-                Message.user("question"),
-                Message.assistant("old answer")
-        )));
+        runOnEdt(() -> loadPersistedHistory(Message.user("question"), Message.assistant("old answer")));
         setCurrentProvider(subject, immediateProvider("new answer"));
         flushEdt();
 
@@ -2434,11 +2746,11 @@ class ChatPanelTest {
                 Instant.now(),
                 new MessageMeta(emptyList(), emptyList(), false, "", "", "**Searched**\n- earlier search")
         );
-        runOnEdt(() -> subject.loadHistory(List.of(
+        runOnEdt(() -> loadPersistedHistory(
                 Message.user("first question"),
                 activityOnlyAssistant,
                 Message.user("second question")
-        )));
+        ));
         setCurrentProvider(subject, immediateProvider("second answer"));
         flushEdt();
 
@@ -2458,7 +2770,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Contentless successful regeneration does not retain an empty assistant response")
     void regenerateRecentResponse_whenProviderCompletesWithoutContent_removesAssistantPlaceholder() throws Exception {
-        runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), Message.assistant("old answer"))));
+        runOnEdt(() -> loadPersistedHistory(Message.user("question"), Message.assistant("old answer")));
         setCurrentProvider(subject, immediateProvider(""));
         flushEdt();
 
@@ -2474,7 +2786,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Contentless successful edited regeneration does not retain an empty assistant response")
     void saveEditedUserMessageAndRegenerate_whenProviderCompletesWithoutContent_removesAssistantPlaceholder() throws Exception {
-        runOnEdt(() -> subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer"))));
+        runOnEdt(() -> loadPersistedHistory(Message.user("old question"), Message.assistant("old answer")));
         setCurrentProvider(subject, immediateProvider(""));
         flushEdt();
         JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
@@ -2501,10 +2813,8 @@ class ChatPanelTest {
     @Test
     @DisplayName("Regeneration admission failure preserves the existing response")
     void regenerateRecentResponse_whenProviderAdmissionFails_keepsHistoryAndSkipsTruncation() throws Exception {
-        var truncations = new AtomicInteger();
         runOnEdt(() -> {
             subject.loadHistory(List.of(Message.user("question"), Message.assistant("old answer")));
-            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
         });
         installFailingProvider(subject);
         flushEdt();
@@ -2516,16 +2826,13 @@ class ChatPanelTest {
 
         assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("question", "old answer");
-        assertThat(truncations).hasValue(0);
     }
 
     @Test
     @DisplayName("Edited regeneration admission failure preserves the message and edit state")
     void saveEditedUserMessageAndRegenerate_whenProviderAdmissionFails_keepsHistoryAndDraft() throws Exception {
-        var truncations = new AtomicInteger();
         runOnEdt(() -> {
             subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer")));
-            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
         });
         installFailingProvider(subject);
         flushEdt();
@@ -2549,12 +2856,135 @@ class ChatPanelTest {
         assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("old question", "old answer");
         assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("updated question");
-        assertThat(truncations).hasValue(0);
     }
 
     @Test
-    @DisplayName("Removing the panel cancels provider admission for every active request")
-    void removeNotify_whenProviderAdmissionIsBlocked_cancelsActiveRequest() throws Exception {
+    @DisplayName("Delete admission cancels the targeted response without creating another write")
+    void cancelConversationsForDeletion_whenTargetIsStreaming_discardsPartialResponse() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistedEvent = new AtomicReference<ChatPanel.AssistantMessageEvent>();
+        var session = new StreamingSession(91L, conversationId, null);
+        session.response.append("partial answer");
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                persistedEvent.set(event);
+                return CompletableFuture.completedFuture(null);
+            });
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> activeSessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            activeSessions.put(session.sessionId, session);
+            subject.cancelConversationsForDeletion(List.of(conversationId));
+        });
+
+        assertThat(persistedEvent.get()).isNull();
+        assertThat(callOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> activeSessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            return activeSessions.containsKey(session.sessionId);
+        })).isFalse();
+        assertThat(callOnEdt(() -> readConversationBusy(subject))).isTrue();
+
+        runOnEdt(() -> subject.finishConversationDeletion(List.of(conversationId)));
+
+        assertThat(callOnEdt(() -> readConversationBusy(subject))).isFalse();
+    }
+
+    @Test
+    @DisplayName("Assistant persistence rejected after deletion does not recreate recovery state")
+    void persistAssistantMessageEvent_whenDeletionWins_discardsRejectedRecovery() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistence = new CompletableFuture<Void>();
+        var submitted = new CountDownLatch(1);
+        var entry = new ConversationHistoryEntry(UUID.randomUUID(), 2, Message.assistant("late answer"));
+        runOnEdt(() -> subject.setOnDurableAssistantMessageCompleted(event -> {
+            submitted.countDown();
+            return persistence;
+        }));
+        Method persistMethod = ChatPanel.class.getDeclaredMethod(
+                "persistAssistantMessageEvent",
+                UUID.class,
+                ConversationHistoryEntry.class
+        );
+        persistMethod.setAccessible(true);
+
+        runOnEdt(() -> persistMethod.invoke(subject, conversationId, entry));
+        assertThat(submitted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(() -> subject.discardConversations(List.of(conversationId)));
+        persistence.completeExceptionally(new IllegalStateException("deleted"));
+        flushEdt();
+
+        assertThat(callOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<UUID, List<ConversationHistoryEntry>> recoveries =
+                    (Map<UUID, List<ConversationHistoryEntry>>) readField(
+                            subject,
+                            "pendingCompletedAssistantRecoveries"
+                    );
+            return recoveries.containsKey(conversationId);
+        })).isFalse();
+    }
+
+    @Test
+    @DisplayName("Failed delete settlement re-enables the composer after preparation cancellation")
+    void finishConversationDeletion_whenPreparationWasCancelled_releasesDeletionBusyState() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.loadHistory(List.of(Message.user("question"), Message.assistant("answer")));
+        });
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+
+        try {
+            runOnEdt(subject::regenerateRecentResponse);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> subject.cancelConversationsForDeletion(List.of(conversationId)));
+            assertThat(readConversationBusy(subject)).isTrue();
+
+            runOnEdt(() -> subject.finishConversationDeletion(List.of(conversationId)));
+
+            assertThat(readConversationBusy(subject)).isFalse();
+        } finally {
+            releaseAdmission.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Durable user completion during temporary removal still continues the request")
+    void removeNotify_whenUserPersistenceCompletes_preservesCommittedContinuation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceStarted = new CountDownLatch(1);
+        var persistence = new CompletableFuture<UUID>();
+        var providerCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            readInputTextArea(subject.getInputBar()).setText("persist while detached");
+        });
+        setCurrentProvider(subject, providerReturning("answer", providerCalls));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::removeNotify);
+        persistence.complete(conversationId);
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerCalls.get() == 1);
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("persist while detached", "answer");
+    }
+
+    @Test
+    @DisplayName("Temporary panel removal does not cancel provider admission")
+    void removeNotify_whenProviderAdmissionIsBlocked_preservesActiveRequest() throws Exception {
         var admissionStarted = new CountDownLatch(1);
         var releaseAdmission = new CountDownLatch(1);
         runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), Message.assistant("answer"))));
@@ -2566,11 +2996,11 @@ class ChatPanelTest {
 
             runOnEdt(subject::removeNotify);
 
-            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
-                    ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
-                            && ((Map<?, ?>) readField(subject, "activeSessions")).isEmpty()));
+            assertThat(callOnEdt(() ->
+                    ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty())).isFalse();
         } finally {
             releaseAdmission.countDown();
+            callOnEdt(subject::cancelAllRequestsAsync).join();
         }
     }
 
@@ -2581,12 +3011,10 @@ class ChatPanelTest {
         UUID replacementConversationId = UUID.randomUUID();
         var admissionStarted = new CountDownLatch(1);
         var releaseAdmission = new CountDownLatch(1);
-        var truncations = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(originalConversationId);
             subject.setConversationIdSupplier(() -> originalConversationId);
             subject.loadHistory(List.of(Message.user("original question"), Message.assistant("original answer")));
-            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
         });
         installBlockingProvider(subject, admissionStarted, releaseAdmission);
         flushEdt();
@@ -2609,7 +3037,6 @@ class ChatPanelTest {
 
         assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("reloaded original question");
-        assertThat(truncations).hasValue(0);
     }
 
     @Test
@@ -2619,12 +3046,10 @@ class ChatPanelTest {
         UUID replacementConversationId = UUID.randomUUID();
         var admissionStarted = new CountDownLatch(1);
         var releaseAdmission = new CountDownLatch(1);
-        var truncations = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(originalConversationId);
             subject.setConversationIdSupplier(() -> originalConversationId);
             subject.loadHistory(List.of(Message.user("old question"), Message.assistant("old answer")));
-            subject.setOnHistoryTruncated(event -> truncations.incrementAndGet());
         });
         installBlockingProvider(subject, admissionStarted, releaseAdmission);
         flushEdt();
@@ -2658,38 +3083,822 @@ class ChatPanelTest {
 
         assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("reloaded original question");
-        assertThat(truncations).hasValue(0);
     }
 
     @Test
     @DisplayName("Edit user message save only updates history and preserves later assistant response")
     void editUserMessage_whenSaveOnly_updatesHistoryWithoutTruncating() throws Exception {
         var submitted = new AtomicInteger();
-        subject.setOnMessageSubmitted(submitted::incrementAndGet);
-        subject.loadHistory(List.of(
-                Message.user("old question"),
-                Message.assistant("old answer")
-        ));
+        runOnEdt(() -> {
+            subject.setActiveConversationId(UUID.randomUUID());
+            subject.setOnDurableHistoryMutation(event -> {
+                submitted.incrementAndGet();
+                return CompletableFuture.completedFuture(null);
+            });
+            subject.loadHistory(List.of(
+                    Message.user("old question"),
+                    Message.assistant("old answer")
+            ));
+        });
         flushEdt();
 
-        JButton editButton = findComponents(subject, JButton.class).stream()
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .filter(button -> "Edit message".equals(button.getToolTipText()))
                 .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(editButton::doClick);
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        assertThat(textArea.getText()).isEqualTo("old question");
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("old question");
 
-        SwingUtilities.invokeAndWait(() -> textArea.setText("updated question"));
-        JButton saveOnlyButton = findComponents(subject, JButton.class).stream()
+        runOnEdt(() -> textArea.setText("updated question"));
+        JButton saveOnlyButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .filter(button -> "Save only".equals(button.getText()))
                 .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(saveOnlyButton::doClick);
+                .orElseThrow());
+        runOnEdt(saveOnlyButton::doClick);
+        flushEdt();
 
-        assertThat(subject.getHistory()).extracting(Message::content)
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("updated question", "old answer");
         assertThat(submitted).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Retrying a failed durable user message reuses its stable identity")
+    void onSend_whenDurableUserMessageRetrySucceeds_reusesMessageIdentity() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceCalls = new AtomicInteger();
+        var firstPersistenceCalled = new CountDownLatch(1);
+        var providerInvoked = new CountDownLatch(1);
+        List<ChatPanel.UserMessageEvent> events = new ArrayList<>();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                events.add(event);
+                if (persistenceCalls.incrementAndGet() == 1) {
+                    firstPersistenceCalled.countDown();
+                    return CompletableFuture.failedFuture(new SQLException("forced failure"));
+                }
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+        });
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                providerInvoked.countDown();
+                onComplete.run();
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("retry me"));
+
+        invokeOnSend(subject);
+        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        UUID otherConversationId = UUID.randomUUID();
+        runOnEdt(() -> subject.setActiveConversationId(otherConversationId));
+        assertThat(callOnEdt(() -> textArea.getText())).isEmpty();
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+        assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("retry me");
+        invokeOnSend(subject);
+        assertThat(providerInvoked.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        assertThat(events).hasSize(2);
+        assertThat(events.get(1).messageId()).isEqualTo(events.getFirst().messageId());
+        assertThat(events.get(1).ordinal()).isEqualTo(events.getFirst().ordinal());
+        assertThat(events.get(1).message().timestamp()).isEqualTo(events.getFirst().message().timestamp());
+        assertThat(events.get(1).conversationId()).isEqualTo(events.getFirst().conversationId());
+    }
+
+    @Test
+    @DisplayName("Reopening a hidden failed send marks its restored draft as delivered")
+    void setActiveConversationId_whenHiddenDurableFailureIsRestored_marksFailureDelivered() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID otherConversationId = UUID.randomUUID();
+        var persistenceStarted = new CountDownLatch(1);
+        var persistence = new CompletableFuture<UUID>();
+        var delivered = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            subject.setOnDurableUserMessageFailureDelivered((ignoredConversation, ignoredMessage) ->
+                    delivered.incrementAndGet()
+            );
+            readInputTextArea(subject.getInputBar()).setText("park me");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(() -> subject.setActiveConversationId(otherConversationId));
+        persistence.completeExceptionally(new SQLException("forced failure"));
+        flushEdt();
+        assertThat(delivered).hasValue(0);
+
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEqualTo("park me");
+        assertThat(delivered).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("A draft from another conversation cannot silently replace a hidden failed send")
+    void onSend_whenHiddenFailureConflictsWithCurrentDraft_preservesBothIntents() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID otherConversationId = UUID.randomUUID();
+        var persistenceCalls = new AtomicInteger();
+        var firstPersistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalls.incrementAndGet();
+                firstPersistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new SQLException("forced failure"));
+            });
+            readInputTextArea(subject.getInputBar()).setText("failed message");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(otherConversationId);
+            readInputTextArea(subject.getInputBar()).setText("other draft");
+            subject.setActiveConversationId(conversationId);
+        });
+
+        invokeOnSend(subject);
+        flushEdt();
+
+        assertThat(persistenceCalls).hasValue(1);
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEqualTo("other draft");
+        assertThat(callOnEdt(() -> ((Map<?, ?>) readField(subject, "failedUserSends")))).hasSize(1);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("unsaved message");
+    }
+
+    @Test
+    @DisplayName("Attaching the initial blank chat does not query recovery with a null identity")
+    void addNotify_whenConversationIsNotAllocated_doesNotFail() throws Exception {
+        runOnEdt(() -> subject.setActiveConversationId(null));
+
+        runOnEdt(subject::addNotify);
+
+        assertThat(callOnEdt(() -> readField(subject, "activeConversationId"))).isNull();
+    }
+
+    @Test
+    @DisplayName("Reattaching after a durable failure marks the visible retry draft as delivered")
+    void addNotify_whenDurableFailureArrivedWhileRemoved_marksFailureDelivered() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceStarted = new CountDownLatch(1);
+        var persistence = new CompletableFuture<UUID>();
+        var delivered = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            subject.setOnDurableUserMessageFailureDelivered((ignoredConversation, ignoredMessage) ->
+                    delivered.incrementAndGet()
+            );
+            readInputTextArea(subject.getInputBar()).setText("retry after reattach");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::removeNotify);
+        persistence.completeExceptionally(new SQLException("forced failure"));
+        flushEdt();
+        assertThat(delivered).hasValue(0);
+
+        runOnEdt(subject::addNotify);
+
+        assertThat(delivered).hasValue(1);
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText()))
+                .isEqualTo("retry after reattach");
+    }
+
+    @Test
+    @DisplayName("Discarding a failed provisional send acknowledges its recovery intent")
+    void discardFailedProvisionalUserSend_whenDraftFailed_marksFailureDelivered() throws Exception {
+        var persistenceCalled = new CountDownLatch(1);
+        var delivered = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setConversationIdSupplier(() -> null);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new SQLException("forced failure"));
+            });
+            subject.setOnDurableUserMessageFailureDelivered((ignoredConversation, ignoredMessage) ->
+                    delivered.incrementAndGet()
+            );
+            readInputTextArea(subject.getInputBar()).setText("discard me");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(callOnEdt(subject::hasFailedProvisionalUserSend)).isTrue();
+
+        runOnEdt(subject::discardFailedProvisionalUserSend);
+
+        assertThat(callOnEdt(subject::hasFailedProvisionalUserSend)).isFalse();
+        assertThat(delivered).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Shutdown discards staged attachments for a delivered failed send")
+    void beginShutdown_whenFailedSendWasDelivered_discardsStagedAttachments() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("shutdown-failed-send"));
+        var attachmentStager = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("draft.txt");
+        Files.writeString(source, "draft");
+        AttachmentRef attachment = attachmentStager.stage(new ComposerAttachment(source, "text/plain", 5L, false));
+        Path stagedPath = Path.of(attachment.storagePath());
+        setField(subject, "attachmentStager", attachmentStager);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) ->
+                    new Message(
+                            Role.USER,
+                            List.of(new TextPart(composerState.text()), new FilePart(attachment)),
+                            Instant.now()
+                    )
+            );
+            subject.setOnDurableUserMessageSubmitted(event ->
+                    CompletableFuture.failedFuture(new SQLException("forced failure"))
+            );
+            subject.setOnDurableUserMessageFailureDelivered((ignoredConversation, ignoredMessage) -> {});
+            readInputTextArea(subject.getInputBar()).setText("failed attachment");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
+            Map<?, ?> failures = (Map<?, ?>) readField(subject, "failedUserSends");
+            if (failures.size() != 1) {
+                return false;
+            }
+            Object failure = failures.values().iterator().next();
+            Field acknowledged = failure.getClass().getDeclaredField("recoveryAcknowledged");
+            acknowledged.setAccessible(true);
+            return acknowledged.getBoolean(failure);
+        }));
+        assertThat(callOnEdt(() -> readField(subject, "attachmentStager"))).isSameAs(attachmentStager);
+        runOnEdt(subject::beginShutdown);
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> !Files.exists(stagedPath));
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "failedUserSends"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Shutdown discards generated attachments from an unpersisted stream")
+    void beginShutdown_whenStreamHasGeneratedAttachment_discardsFile() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("shutdown-generated-stream"));
+        var attachmentStager = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("generated.png");
+        Files.writeString(source, "generated");
+        AttachmentRef attachment = attachmentStager.stage(new ComposerAttachment(source, "image/png", 9L, true));
+        Path stagedPath = Path.of(attachment.storagePath());
+        var session = new StreamingSession(93L, UUID.randomUUID(), immediateProvider("unused"));
+        session.responseParts.add(new GeneratedImagePart(attachment, null, null, "generated"));
+        setField(subject, "attachmentStager", attachmentStager);
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+            subject.beginShutdown();
+        });
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> !Files.exists(stagedPath));
+        assertThat(session.responseParts).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Permanent cancellation waits for generated attachment discard")
+    void cancelAllRequestsAsync_whenGeneratedDiscardIsRunning_waitsForDeletion() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("tracked-generated-discard"));
+        var delegate = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("tracked-generated.png");
+        Files.writeString(source, "generated");
+        AttachmentRef attachment = delegate.stage(new ComposerAttachment(source, "image/png", 9L, true));
+        Path stagedPath = Path.of(attachment.storagePath());
+        var discardStarted = new CountDownLatch(1);
+        var releaseDiscard = new CountDownLatch(1);
+        var blockingStager = new AttachmentStager(storagePaths) {
+            @Override
+            public void discard(AttachmentRef attachmentRef) {
+                discardStarted.countDown();
+                try {
+                    releaseDiscard.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                delegate.discard(attachmentRef);
+            }
+        };
+        var session = new StreamingSession(96L, UUID.randomUUID(), immediateProvider("unused"));
+        session.responseParts.add(new GeneratedImagePart(attachment, null, null, "generated"));
+        setField(subject, "attachmentStager", blockingStager);
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+            subject.beginShutdown();
+        });
+
+        assertThat(discardStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture<Void> cancellation = callOnEdt(subject::cancelAllRequestsAsync);
+        assertThat(cancellation).isNotDone();
+        releaseDiscard.countDown();
+        cancellation.join();
+
+        assertThat(stagedPath).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("Shutdown retains generated attachments after assistant persistence takes ownership")
+    void beginShutdown_whenAssistantPersistenceWasSubmitted_retainsGeneratedFile() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("persisted-generated-stream"));
+        var attachmentStager = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("persisted-generated.png");
+        Files.writeString(source, "generated");
+        AttachmentRef attachment = attachmentStager.stage(new ComposerAttachment(source, "image/png", 9L, true));
+        Path stagedPath = Path.of(attachment.storagePath());
+        var session = new StreamingSession(95L, UUID.randomUUID(), immediateProvider("unused"));
+        session.responseParts.add(new GeneratedImagePart(attachment, null, null, "generated"));
+        session.persisted.set(true);
+        setField(subject, "attachmentStager", attachmentStager);
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+            subject.beginShutdown();
+        });
+
+        assertThat(stagedPath).exists();
+        assertThat(session.responseParts).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("A generated attachment arriving after shutdown is discarded")
+    void handleAssistantPart_whenShutdownWinsBeforeCallback_discardsGeneratedFile() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("late-generated-stream"));
+        var attachmentStager = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("late-generated.png");
+        Files.writeString(source, "generated");
+        AttachmentRef attachment = attachmentStager.stage(new ComposerAttachment(source, "image/png", 9L, true));
+        Path stagedPath = Path.of(attachment.storagePath());
+        var session = new StreamingSession(94L, UUID.randomUUID(), immediateProvider("unused"));
+        setField(subject, "attachmentStager", attachmentStager);
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions =
+                    (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+            subject.beginShutdown();
+        });
+        Method callback = ChatPanel.class.getDeclaredMethod(
+                "handleAssistantPart",
+                StreamingSession.class,
+                com.github.drafael.chat4j.provider.api.content.ContentPart.class
+        );
+        callback.setAccessible(true);
+
+        runOnEdt(() -> callback.invoke(
+                subject,
+                session,
+                new GeneratedImagePart(attachment, null, null, "generated")
+        ));
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> !Files.exists(stagedPath));
+        assertThat(session.responseParts).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Indeterminate user persistence stays blocked until confirmed failure is delivered")
+    void onSend_whenUserPersistenceIsIndeterminate_defersFailureDelivery() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceCalled = new CountDownLatch(1);
+        var delivered = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ));
+            });
+            subject.setOnDurableUserMessageFailureDelivered((ignoredConversation, ignoredMessage) ->
+                    delivered.incrementAndGet()
+            );
+            readInputTextArea(subject.getInputBar()).setText("retry after check");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        assertThat(delivered).hasValue(0);
+        assertThat(callOnEdt(() -> readField(subject, "activeConversationId"))).isEqualTo(conversationId);
+
+        runOnEdt(() -> {
+            subject.setConversationPersistenceBlocked(conversationId, true);
+            subject.resolveIndeterminateUserMessage(conversationId, false);
+        });
+
+        assertThat(delivered).hasValue(1);
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText()))
+                .isEqualTo("retry after check");
+    }
+
+    @Test
+    @DisplayName("Editing a confirmed-absent provisional draft allocates a replacement conversation")
+    void onSend_whenConfirmedAbsentProvisionalDraftIsEdited_createsNewConversationIdentity() throws Exception {
+        var events = new ArrayList<ChatPanel.UserMessageEvent>();
+        var firstPersistenceCalled = new CountDownLatch(1);
+        var secondPersistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setConversationIdSupplier(() -> null);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                events.add(event);
+                if (events.size() == 1) {
+                    firstPersistenceCalled.countDown();
+                    return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                            new SQLException("read unavailable")
+                    ));
+                }
+                secondPersistenceCalled.countDown();
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            readInputTextArea(subject.getInputBar()).setText("original draft");
+        });
+        setCurrentProvider(subject, immediateProvider(""));
+
+        invokeOnSend(subject);
+        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        UUID absentConversationId = events.getFirst().conversationId();
+        runOnEdt(() -> subject.resolveIndeterminateUserMessage(absentConversationId, false));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("replacement draft"));
+
+        invokeOnSend(subject);
+        assertThat(secondPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+
+        assertThat(events).hasSize(2);
+        assertThat(events.get(1).createsConversation()).isTrue();
+        assertThat(events.get(1).conversationId()).isNotEqualTo(absentConversationId);
+    }
+
+    @Test
+    @DisplayName("Canonical indeterminate user persistence resumes one provider continuation")
+    void resolveIndeterminateUserMessage_whenWriteCommitted_startsProviderOnce() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceCalls = new AtomicInteger();
+        var providerCalls = new AtomicInteger();
+        var persistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalls.incrementAndGet();
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ));
+            });
+            readInputTextArea(subject.getInputBar()).setText("committed message");
+        });
+        setCurrentProvider(subject, providerReturning("answer", providerCalls));
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        runOnEdt(() -> {
+            subject.setConversationPersistenceBlocked(conversationId, true);
+            subject.resolveIndeterminateUserMessage(conversationId, true);
+        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerCalls.get() == 1);
+        flushEdt();
+
+        assertThat(persistenceCalls).hasValue(1);
+        assertThat(providerCalls).hasValue(1);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("committed message", "answer");
+    }
+
+    @Test
+    @DisplayName("Durable save-only edit keeps the original history until persistence succeeds")
+    void editUserMessage_whenDurableSaveIsPending_commitsUiAfterPersistence() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID userMessageId = UUID.randomUUID();
+        Message userMessage = Message.user("old question");
+        Message assistantMessage = Message.assistant("old answer");
+        var persistence = new CompletableFuture<Void>();
+        var mutation = new AtomicReference<ChatPanel.HistoryMutationEvent>();
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(userMessageId, 1, userMessage),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, assistantMessage)
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutation.set(event);
+                return persistence;
+            });
+        });
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("updated question"));
+        JButton saveOnlyButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+
+        runOnEdt(saveOnlyButton::doClick);
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("old question", "old answer");
+        assertThat(callOnEdt(subject::hasPendingConversationMutation)).isTrue();
+        assertThat(mutation.get().type()).isEqualTo(ChatPanel.HistoryMutationType.EDIT);
+        assertThat(mutation.get().retainedEntry().messageId()).isEqualTo(userMessageId);
+        assertThat(mutation.get().retainedEntry().ordinal()).isEqualTo(1);
+
+        persistence.complete(null);
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("updated question", "old answer");
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Reattaching after an edit failure delivers the retained editor recovery")
+    void addNotify_whenEditFailureArrivedWhileRemoved_marksHistoryFailureDelivered() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistence = new CompletableFuture<Void>();
+        var delivered = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("old question"))
+            ));
+            subject.setOnDurableHistoryMutation(event -> persistence);
+            subject.setOnDurableHistoryMutationFailureDelivered(event -> delivered.incrementAndGet());
+        });
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("updated question"));
+        JButton saveOnlyButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(saveOnlyButton::doClick);
+        runOnEdt(subject::removeNotify);
+
+        persistence.completeExceptionally(new SQLException("forced failure"));
+        flushEdt();
+        assertThat(delivered).hasValue(0);
+
+        runOnEdt(subject::addNotify);
+
+        assertThat(delivered).hasValue(1);
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isTrue();
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText()))
+                .isEqualTo("updated question");
+    }
+
+    @Test
+    @DisplayName("Canonical indeterminate edit applies its original continuation without a retry")
+    void editUserMessage_whenPersistenceIsIndeterminateAndCanonical_appliesEditOnce() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        Message userMessage = Message.user("old question");
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, userMessage)
+            ));
+            subject.setOnDurableHistoryMutation(event -> CompletableFuture.failedFuture(
+                    new ConversationPersistenceIndeterminateException(new SQLException("read unavailable"))
+            ));
+        });
+        JButton editButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Edit message".equals(button.getToolTipText()))
+                .findFirst()
+                .orElseThrow());
+        runOnEdt(editButton::doClick);
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("updated question"));
+        JButton saveOnlyButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .filter(button -> "Save only".equals(button.getText()))
+                .findFirst()
+                .orElseThrow());
+
+        runOnEdt(saveOnlyButton::doClick);
+        flushEdt();
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("old question");
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isTrue();
+
+        runOnEdt(() -> subject.resolveIndeterminateHistoryMutation(conversationId, true));
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("updated question");
+        assertThat(callOnEdt(subject::isEditingUserMessage)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Canonical indeterminate regeneration invokes the provider exactly once")
+    void regenerateRecentResponse_whenPersistenceIsIndeterminateAndCanonical_continuesProviderOnce() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID userMessageId = UUID.randomUUID();
+        var mutationCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(userMessageId, 1, Message.user("question")),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("old answer"))
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutationCalled.countDown();
+                return CompletableFuture.failedFuture(
+                        new ConversationPersistenceIndeterminateException(new SQLException("read unavailable"))
+                );
+            });
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("new answer", providerCalls));
+        flushEdt();
+
+        runOnEdt(subject::regenerateRecentResponse);
+        assertThat(mutationCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(providerCalls).hasValue(0);
+
+        runOnEdt(() -> subject.resolveIndeterminateHistoryMutation(conversationId, true));
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerCalls.get() == 1);
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(1);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "new answer");
+    }
+
+    @Test
+    @DisplayName("Durable regeneration persists truncation before invoking the provider")
+    void regenerateRecentResponse_whenDurableTruncationIsPending_waitsBeforeProviderInvocation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID userMessageId = UUID.randomUUID();
+        Message userMessage = Message.user("question");
+        Message assistantMessage = Message.assistant("old answer");
+        var persistence = new CompletableFuture<Void>();
+        var mutation = new AtomicReference<ChatPanel.HistoryMutationEvent>();
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(userMessageId, 1, userMessage),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, assistantMessage)
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutation.set(event);
+                return persistence;
+            });
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("new answer", providerCalls));
+        flushEdt();
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> mutation.get() != null);
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "old answer");
+        assertThat(mutation.get().type()).isEqualTo(ChatPanel.HistoryMutationType.TRUNCATE);
+        assertThat(mutation.get().retainedEntry().messageId()).isEqualTo(userMessageId);
+
+        persistence.complete(null);
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerCalls.get() == 1);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                subject.getHistory().size() == 2
+                        && "new answer".equals(subject.getHistory().getLast().content())));
+    }
+
+    @Test
+    @DisplayName("Cancelling after durable regeneration submission applies committed truncation without invoking the provider")
+    void regenerateRecentResponse_whenCancelledAfterSubmission_appliesCommittedTruncationOnly() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistence = new CompletableFuture<Void>();
+        var mutationCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("old answer"))
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutationCalled.countDown();
+                return persistence;
+            });
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        runOnEdt(subject::regenerateRecentResponse);
+        assertThat(mutationCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::cancelStreamingAndMarkCancelled);
+        persistence.complete(null);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(subject::getHistory).size() == 1);
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("question");
+        assertThat(callOnEdt(() -> subject.getInputBar().isEnabled())).isTrue();
+    }
+
+    @Test
+    @DisplayName("Canonical regeneration reconciliation after cancellation applies truncation without invoking the provider")
+    void resolveIndeterminateHistoryMutation_whenRegenerationWasCancelled_appliesCanonicalTruncationOnly() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var mutationCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("old answer"))
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutationCalled.countDown();
+                return CompletableFuture.failedFuture(
+                        new ConversationPersistenceIndeterminateException(new SQLException("read unavailable"))
+                );
+            });
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        runOnEdt(subject::regenerateRecentResponse);
+        assertThat(mutationCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        assertThat(callOnEdt(subject::hasPendingConversationMutation)).isTrue();
+        runOnEdt(subject::abandonVisibleUnsubmittedPreparation);
+        assertThat(callOnEdt(subject::hasPendingConversationMutation)).isTrue();
+        runOnEdt(subject::cancelStreamingAndMarkCancelled);
+        runOnEdt(() -> subject.resolveIndeterminateHistoryMutation(conversationId, true));
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("question");
+    }
+
+    @Test
+    @DisplayName("Regeneration without durable persistence leaves history unchanged and does not invoke the provider")
+    void regenerateRecentResponse_whenPersistenceIsNotConfigured_failsClosed() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        runOnEdt(() -> {
+            subject.setOnDurableHistoryMutation(null);
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("old answer"))
+            ));
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getInputBar().isEnabled()));
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "old answer");
     }
 
     @Test
@@ -2751,13 +3960,100 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Shutdown suppresses provider continuation after a pending durable user write settles")
+    void beginShutdown_whenUserPersistenceIsPending_suppressesProviderAndLateUiMutation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistence = new CompletableFuture<UUID>();
+        var persistenceStarted = new CountDownLatch(1);
+        var providerCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            readInputTextArea(subject.getInputBar()).setText("pending");
+        });
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::beginShutdown);
+        persistence.complete(conversationId);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).isEmpty();
+        assertThat(callOnEdt(() -> readInputTextArea(subject.getInputBar()).getText())).isEqualTo("pending");
+    }
+
+    @Test
+    @DisplayName("Terminal provider completion submits assistant persistence before queued shutdown")
+    void onSend_whenTerminalCallbackPrecedesQueuedShutdown_submitsAssistantBeforeEdtDelivery() throws Exception {
+        var providerStarted = new CountDownLatch(1);
+        var releaseProvider = new CountDownLatch(1);
+        var assistantPersisted = new CountDownLatch(1);
+        var edtBlocked = new CountDownLatch(1);
+        var releaseEdt = new CountDownLatch(1);
+        runOnEdt(() -> subject.setOnDurableAssistantMessageCompleted(event -> {
+            assistantPersisted.countDown();
+            return CompletableFuture.completedFuture(null);
+        }));
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                providerStarted.countDown();
+                awaitLatch(releaseProvider);
+                onToken.accept("durable answer");
+                onComplete.run();
+            }
+        });
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
+
+        invokeOnSend(subject);
+        assertThat(providerStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeLater(() -> {
+            edtBlocked.countDown();
+            awaitLatch(releaseEdt);
+        });
+        assertThat(edtBlocked.await(2, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeLater(subject::beginShutdown);
+
+        try {
+            releaseProvider.countDown();
+            assertThat(assistantPersisted.await(2, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            releaseEdt.countDown();
+        }
+        flushEdt();
+    }
+
+    @Test
     @DisplayName("Completing a stream triggers save callback for both user and assistant messages")
     void onSend_whenStreamCompletes_notifiesMessageSubmittedForAssistantResponse() throws Exception {
         var callbackCount = new AtomicInteger();
         var callbacks = new CountDownLatch(2);
-        subject.setOnMessageSubmitted(() -> {
+        subject.setOnDurableUserMessageSubmitted(event -> {
             callbackCount.incrementAndGet();
             callbacks.countDown();
+            return CompletableFuture.completedFuture(event.conversationId());
+        });
+        subject.setOnDurableAssistantMessageCompleted(event -> {
+            callbackCount.incrementAndGet();
+            callbacks.countDown();
+            return CompletableFuture.completedFuture(null);
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -3275,16 +4571,16 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("compare java and ts enums"));
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("compare java and ts enums"));
         invokeOnSend(subject);
 
         awaitCondition(2, TimeUnit.SECONDS, () -> {
             flushEdt();
-            return subject.getHistory().size() == 2;
+            return callOnEdt(() -> subject.getHistory().size() == 2);
         });
 
-        Message assistant = subject.getHistory().get(1);
+        Message assistant = callOnEdt(() -> subject.getHistory().get(1));
         assertThat(assistant.content()).contains("Java enums are classes");
         assertThat(assistant.meta().assistantThinking()).contains("compare enum features");
 
@@ -3297,21 +4593,13 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Assistant persistence listener failure falls back to message-submitted callback")
-    void onSend_whenAssistantPersistenceListenerFails_triggersMessageSubmittedFallback() throws Exception {
-        var callbackCount = new AtomicInteger();
-        var callbacks = new CountDownLatch(2);
-        subject.setOnMessageSubmitted(() -> {
-            callbackCount.incrementAndGet();
-            callbacks.countDown();
-        });
-
-        subject.setOnAssistantMessageCompleted(event -> {
-            if (event.message().role() == Role.ASSISTANT) {
-                throw new IllegalStateException("boom");
-            }
-            return true;
-        });
+    @DisplayName("Assistant persistence failure leaves the completed response visible")
+    void onSend_whenAssistantPersistenceListenerFails_keepsCompletedResponseVisible() throws Exception {
+        var persistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> subject.setOnDurableAssistantMessageCompleted(event -> {
+            persistenceCalled.countDown();
+            return CompletableFuture.failedFuture(new IllegalStateException("boom"));
+        }));
 
         setCurrentProvider(subject, immediateProvider("pong"));
 
@@ -3319,12 +4607,11 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
         flushEdt();
-        assertThat(callbackCount.get()).isEqualTo(2);
-        assertThat(subject.getHistory()).hasSize(2);
-        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
-        assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
+        assertThat(callOnEdt(subject::getHistory)).hasSize(2);
+        assertThat(callOnEdt(() -> subject.getHistory().get(1).role())).isEqualTo(Role.ASSISTANT);
+        assertThat(callOnEdt(() -> subject.getHistory().get(1).content())).isEqualTo("pong");
     }
 
     @Test
@@ -3332,14 +4619,15 @@ class ChatPanelTest {
     void onSend_whenUnsavedConversationGetsPersisted_streamRemainsVisibleAndPersistsAssistantMessage() throws Exception {
         var currentConversationId = new AtomicReference<UUID>();
 
-        subject.setActiveConversationId(null);
-        subject.setConversationIdSupplier(currentConversationId::get);
-        subject.setOnMessageSubmitted(() -> {
-            if (currentConversationId.get() == null && !subject.getHistory().isEmpty()) {
-                UUID persistedConversationId = UUID.randomUUID();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(null);
+            subject.setConversationIdSupplier(currentConversationId::get);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                UUID persistedConversationId = event.conversationId();
                 currentConversationId.set(persistedConversationId);
                 subject.setActiveConversationId(persistedConversationId);
-            }
+                return CompletableFuture.completedFuture(persistedConversationId);
+            });
         });
 
         setCurrentProvider(subject, immediateProvider("pong"));
@@ -3350,17 +4638,17 @@ class ChatPanelTest {
 
         awaitCondition(2, TimeUnit.SECONDS, () -> {
             flushEdt();
-            List<Message> history = subject.getHistory();
+            List<Message> history = callOnEdt(subject::getHistory);
             return history.size() == 2
                     && history.get(1).role() == Role.ASSISTANT
                     && "pong".equals(history.get(1).content());
         });
 
-        assertThat(subject.getHistory()).hasSize(2);
-        assertThat(subject.getHistory().get(0).content()).isEqualTo("ping");
-        assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
-        assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
+        assertThat(callOnEdt(subject::getHistory)).hasSize(2);
+        assertThat(callOnEdt(() -> subject.getHistory().get(0).content())).isEqualTo("ping");
+        assertThat(callOnEdt(() -> subject.getHistory().get(1).content())).isEqualTo("pong");
+        assertThat(callOnEdt(() -> subject.getInputBar().isEnabled())).isTrue();
+        assertThat(callOnEdt(() -> subject.getInputBar().isCancelGenerationVisible())).isFalse();
     }
 
     @Test
@@ -3370,27 +4658,35 @@ class ChatPanelTest {
         var visibleConversationId = UUID.randomUUID();
         var preparationStarted = new CountDownLatch(1);
         var releasePreparation = new CountDownLatch(1);
-        var persistedEvents = new ArrayList<ChatPanel.AssistantMessageEvent>();
+        var persistedMessages = new ArrayList<Message>();
         var completion = new CountDownLatch(2);
 
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
-        subject.setOnAssistantMessageCompleted(event -> {
-            synchronized (persistedEvents) {
-                persistedEvents.add(event);
-            }
-            completion.countDown();
-            return true;
-        });
-
-        subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
-            preparationStarted.countDown();
-            while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
-                if (isCancelled.getAsBoolean()) {
-                    throw new IllegalStateException("Cancelled");
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                synchronized (persistedMessages) {
+                    persistedMessages.add(event.message());
                 }
-            }
-            return Message.user(composerState.text());
+                completion.countDown();
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                synchronized (persistedMessages) {
+                    persistedMessages.add(event.message());
+                }
+                completion.countDown();
+                return CompletableFuture.completedFuture(null);
+            });
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+                preparationStarted.countDown();
+                while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
+                    if (isCancelled.getAsBoolean()) {
+                        throw new IllegalStateException("Cancelled");
+                    }
+                }
+                return Message.user(composerState.text());
+            });
         });
 
         setCurrentProvider(subject, immediateProvider("pong"));
@@ -3412,36 +4708,187 @@ class ChatPanelTest {
         assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
         flushEdt();
 
-        synchronized (persistedEvents) {
-            assertThat(persistedEvents).hasSize(2);
-            assertThat(persistedEvents).allSatisfy(event ->
-                    assertThat(event.conversationId()).isEqualTo(originalConversationId));
-            assertThat(persistedEvents.stream().map(event -> event.message().role())).containsExactlyInAnyOrder(Role.USER, Role.ASSISTANT);
+        synchronized (persistedMessages) {
+            assertThat(persistedMessages).hasSize(2);
+            assertThat(persistedMessages).extracting(Message::role)
+                    .containsExactlyInAnyOrder(Role.USER, Role.ASSISTANT);
         }
 
-        assertThat(subject.getHistory()).hasSize(1);
-        assertThat(subject.getHistory().getFirst().content()).isEqualTo("visible conversation");
+        assertThat(callOnEdt(subject::getHistory)).hasSize(1);
+        assertThat(callOnEdt(() -> subject.getHistory().getFirst().content())).isEqualTo("visible conversation");
     }
 
     @Test
-    @DisplayName("Loading conversation history recovers pending assistant for the loaded conversation")
-    void loadConversationHistory_whenPendingAssistantExists_recoversForLoadedConversation() throws Exception {
+    @DisplayName("Loading stable conversation records recovers pending assistant for the conversation")
+    void loadConversationHistoryEntries_whenPendingAssistantExists_recoversForLoadedConversation() throws Exception {
         UUID loadedConversationId = UUID.randomUUID();
         UUID otherConversationId = UUID.randomUUID();
         Message recoveredAssistant = Message.assistant("sonar result");
-        @SuppressWarnings("unchecked")
-        Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
-        pendingRecoveries.put(loadedConversationId, recoveredAssistant);
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
+        queuePendingAssistantRecovery(
+                subject,
+                loadedConversationId,
+                new ConversationHistoryEntry(UUID.randomUUID(), 2, recoveredAssistant)
+        );
 
         SwingUtilities.invokeAndWait(() -> {
             subject.setActiveConversationId(otherConversationId);
-            subject.loadConversationHistory(loadedConversationId, List.of(Message.user("question")));
+            subject.loadConversationHistoryEntries(loadedConversationId, List.of(
+                    new ConversationRepository.MessageRecord(
+                            UUID.randomUUID(),
+                            1,
+                            Message.user("question")
+                    )
+            ));
         });
 
-        assertThat(subject.getHistory()).extracting(Message::content)
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("question", "sonar result");
-        assertThat(readField(subject, "activeConversationId")).isEqualTo(loadedConversationId);
-        assertThat(pendingRecoveries).doesNotContainKey(loadedConversationId);
+        assertThat(callOnEdt(() -> readField(subject, "activeConversationId"))).isEqualTo(loadedConversationId);
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(loadedConversationId))).isTrue();
+    }
+
+    @Test
+    @DisplayName("A conflicting stored assistant identity does not discard the pending canonical recovery")
+    void loadConversationHistoryEntries_whenStoredAssistantConflictsWithRecovery_keepsRecoveryVisible() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        UUID assistantId = UUID.randomUUID();
+        var recovery = new ConversationHistoryEntry(assistantId, 2, Message.assistant("recovered answer"));
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
+        queuePendingAssistantRecovery(subject, conversationId, recovery);
+
+        runOnEdt(() -> subject.loadConversationHistoryEntries(conversationId, List.of(
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                new ConversationRepository.MessageRecord(assistantId, 3, Message.assistant("conflicting answer"))
+        )));
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "recovered answer");
+        assertThat(pendingAssistantRecoveryEntries(subject, conversationId)).containsExactly(recovery);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("has not been saved");
+    }
+
+    @Test
+    @DisplayName("Canonical assistant recoveries are pruned while missing recoveries remain pending")
+    void loadConversationHistoryEntries_whenOnlySomeRecoveriesAreCanonical_retainsOnlyMissingEntries() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var canonical = new ConversationHistoryEntry(UUID.randomUUID(), 2, Message.assistant("saved answer"));
+        var missing = new ConversationHistoryEntry(UUID.randomUUID(), 3, Message.assistant("unsaved answer"));
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
+        queuePendingAssistantRecovery(subject, conversationId, canonical);
+        queuePendingAssistantRecovery(subject, conversationId, missing);
+
+        runOnEdt(() -> subject.loadConversationHistoryEntries(conversationId, List.of(
+                new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                new ConversationRepository.MessageRecord(
+                        canonical.messageId(),
+                        canonical.ordinal(),
+                        canonical.message()
+                )
+        )));
+
+        assertThat(pendingAssistantRecoveryEntries(subject, conversationId)).containsExactly(missing);
+    }
+
+    @Test
+    @DisplayName("Record-based history recovery advances past every stable assistant ordinal")
+    void loadConversationHistoryEntries_whenRecoveriesHaveIdenticalContent_advancesOrdinal() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        Message repeated = Message.assistant("same answer");
+        var userRecord = new ConversationRepository.MessageRecord(
+                UUID.randomUUID(),
+                1,
+                Message.user("question")
+        );
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
+        queuePendingAssistantRecovery(
+                subject,
+                conversationId,
+                new ConversationHistoryEntry(UUID.randomUUID(), 2, repeated)
+        );
+        queuePendingAssistantRecovery(
+                subject,
+                conversationId,
+                new ConversationHistoryEntry(UUID.randomUUID(), 3, repeated)
+        );
+
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(conversationId, List.of(userRecord))
+        );
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "same answer");
+        assertThat(callOnEdt(() -> (int) readField(subject, "nextMessageOrdinal"))).isEqualTo(4);
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(conversationId))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Reconciliation preserves an equivalent assistant recovery queued after its snapshot")
+    void reconcilePendingAssistantRecoveries_whenEquivalentRecoveryIsRequeued_preservesLatestAcceptance() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var entry = new ConversationHistoryEntry(UUID.randomUUID(), 2, Message.assistant("answer"));
+        queuePendingAssistantRecovery(subject, conversationId, entry);
+        Set<UUID> pendingIds = new AbstractSet<>() {
+            @Override
+            public Iterator<UUID> iterator() {
+                return List.<UUID>of().iterator();
+            }
+
+            @Override
+            public int size() {
+                return 0;
+            }
+
+            @Override
+            public boolean contains(Object candidate) {
+                try {
+                    queuePendingAssistantRecovery(subject, conversationId, entry);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+                return false;
+            }
+        };
+
+        runOnEdt(() -> subject.reconcilePendingAssistantRecoveries(conversationId, pendingIds));
+
+        assertThat(pendingAssistantRecoveryEntries(subject, conversationId)).containsExactly(entry);
+    }
+
+    @Test
+    @DisplayName("Failed visible assistant persistence remains available across repeated reopen attempts")
+    void persistAssistantResponse_whenVisiblePersistenceFails_retainsOverlayRecovery() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setOnDurableAssistantMessageCompleted(event ->
+                    CompletableFuture.failedFuture(new SQLException("still unavailable"))
+            );
+        });
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        session.response.append("visible unsaved answer");
+
+        invokePersistAssistantResponse(subject, session, null);
+        flushEdt();
+
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(conversationId))).isTrue();
+        var userRecord = new ConversationRepository.MessageRecord(
+                UUID.randomUUID(),
+                1,
+                Message.user("question")
+        );
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(conversationId, List.of(userRecord))
+        );
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(conversationId, List.of(userRecord))
+        );
+
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("question", "visible unsaved answer");
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(conversationId))).isTrue();
     }
 
     @Test
@@ -3450,30 +4897,65 @@ class ChatPanelTest {
         UUID originalConversationId = UUID.randomUUID();
         UUID visibleConversationId = UUID.randomUUID();
         AtomicInteger persistCalls = new AtomicInteger();
-        subject.setActiveConversationId(visibleConversationId);
-        subject.setOnAssistantMessageCompleted(event -> {
-            persistCalls.incrementAndGet();
-            return false;
+        runOnEdt(() -> {
+            subject.setActiveConversationId(visibleConversationId);
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                persistCalls.incrementAndGet();
+                return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
+            });
         });
         StreamingSession session = new StreamingSession(1L, originalConversationId, null);
         session.response.append("background sonar result");
 
         invokePersistAssistantResponse(subject, session, null);
 
-        @SuppressWarnings("unchecked")
-        Map<UUID, Message> pendingRecoveries = (Map<UUID, Message>) readField(subject, "pendingCompletedAssistantRecoveries");
+        Map<UUID, ?> pendingRecoveries = callOnEdt(() -> pendingAssistantRecoveryMap(subject));
         assertThat(persistCalls).hasValue(1);
-        assertThat(pendingRecoveries).containsKey(originalConversationId);
-        assertThat(subject.getHistory()).isEmpty();
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(originalConversationId))).isTrue();
+        assertThat(callOnEdt(subject::getHistory)).isEmpty();
 
         SwingUtilities.invokeAndWait(() -> {
             subject.setActiveConversationId(originalConversationId);
-            subject.loadConversationHistory(originalConversationId, List.of(Message.user("question")));
+            subject.loadConversationHistoryEntries(originalConversationId, List.of(
+                    new ConversationRepository.MessageRecord(
+                            UUID.randomUUID(),
+                            1,
+                            Message.user("question")
+                    )
+            ));
         });
 
-        assertThat(subject.getHistory()).extracting(Message::content)
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .containsExactly("question", "background sonar result");
-        assertThat(pendingRecoveries).doesNotContainKey(originalConversationId);
+        assertThat(callOnEdt(() -> pendingRecoveries.containsKey(originalConversationId))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Assistant persistence failure while removed is surfaced after reattachment")
+    void addNotify_whenAssistantPersistenceFailedWhileRemoved_showsUnsavedMessage() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistence = new CompletableFuture<Void>();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setOnDurableAssistantMessageCompleted(event -> persistence);
+        });
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        session.response.append("unsaved answer");
+        try {
+            invokePersistAssistantResponse(subject, session, null);
+            runOnEdt(subject::removeNotify);
+            persistence.completeExceptionally(new SQLException("unavailable"));
+            flushEdt();
+
+            runOnEdt(subject::addNotify);
+
+            assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                    .contains("assistant response could not be saved");
+        } finally {
+            persistence.complete(null);
+            runOnEdt(subject::removeNotify);
+            flushEdt();
+        }
     }
 
     @Test
@@ -3613,11 +5095,11 @@ class ChatPanelTest {
 
         subject.setActiveConversationId(originalConversationId);
         subject.setConversationIdSupplier(() -> originalConversationId);
-        subject.setOnAssistantMessageCompleted(event -> {
+        subject.setOnDurableAssistantMessageCompleted(event -> {
             if (event.message().role() == Role.ASSISTANT) {
                 persistedAssistant.countDown();
             }
-            return true;
+            return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -3657,19 +5139,25 @@ class ChatPanelTest {
         assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
         flushEdt();
 
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(originalConversationId);
-            subject.loadHistory(List.of(Message.user("ping")));
-        });
+        var originalUserRecord = new ConversationRepository.MessageRecord(
+                UUID.randomUUID(),
+                1,
+                Message.user("ping")
+        );
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
+        );
 
         assertThat(subject.getHistory()).hasSize(2);
         assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
         assertThat(subject.getHistory().get(1).content()).isEqualTo("saved answer");
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(List.of(Message.user("ping"))));
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
+        );
 
-        assertThat(subject.getHistory()).hasSize(1);
-        assertThat(subject.getHistory().getFirst().content()).isEqualTo("ping");
+        assertThat(subject.getHistory()).extracting(Message::content)
+                .containsExactly("ping", "saved answer");
     }
 
     @Test
@@ -3684,11 +5172,11 @@ class ChatPanelTest {
 
         subject.setActiveConversationId(originalConversationId);
         subject.setConversationIdSupplier(() -> originalConversationId);
-        subject.setOnAssistantMessageCompleted(event -> {
+        subject.setOnDurableAssistantMessageCompleted(event -> {
             if (event.message().role() == Role.ASSISTANT) {
                 persistedAssistant.countDown();
             }
-            return true;
+            return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -3732,10 +5220,15 @@ class ChatPanelTest {
         assertThat(cancellationObserved.get()).isFalse();
         assertThat(subject.getHistory()).extracting(Message::content).containsExactly("other chat");
 
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(originalConversationId);
-            subject.loadHistory(List.of(Message.user("ping")));
-        });
+        SwingUtilities.invokeAndWait(() ->
+                subject.loadConversationHistoryEntries(originalConversationId, List.of(
+                        new ConversationRepository.MessageRecord(
+                                UUID.randomUUID(),
+                                1,
+                                Message.user("ping")
+                        )
+                ))
+        );
 
         assertThat(subject.getHistory()).extracting(Message::content)
                 .containsExactly("ping", "background answer");
@@ -3808,6 +5301,33 @@ class ChatPanelTest {
                 onComplete.run();
             }
 
+        };
+    }
+
+    private static ProviderService providerReturning(String responseText, AtomicInteger calls) {
+        ProviderService delegate = immediateProvider(responseText);
+        return new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                calls.incrementAndGet();
+                delegate.streamCompletion(
+                        history,
+                        reasoningLevel,
+                        onToken,
+                        onThinkingToken,
+                        onComplete,
+                        onError,
+                        isCancelled
+                );
+            }
         };
     }
 
@@ -3890,6 +5410,12 @@ class ChatPanelTest {
             updated.put(providerName, replacement);
             setField(chatPanel, "providerMap", Map.copyOf(updated));
         });
+    }
+
+    private static boolean readConversationBusy(ChatPanel chatPanel) throws Exception {
+        Field field = InputBar.class.getDeclaredField("conversationBusy");
+        field.setAccessible(true);
+        return field.getBoolean(chatPanel.getInputBar());
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
@@ -4120,7 +5646,7 @@ class ChatPanelTest {
                 SendJob.class
         );
         method.setAccessible(true);
-        method.invoke(chatPanel, session, sendJob);
+        runOnEdt(() -> method.invoke(chatPanel, session, sendJob));
     }
 
     private static SpeechToTextService.Callbacks invokeSpeechToTextCallbacks(
@@ -4196,6 +5722,44 @@ class ChatPanelTest {
         return (List<ConversationAttachment>) method.invoke(chatPanel, component);
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<UUID, ?> pendingAssistantRecoveryMap(ChatPanel chatPanel) throws Exception {
+        return (Map<UUID, ?>) readField(chatPanel, "pendingCompletedAssistantRecoveries");
+    }
+
+    private static void queuePendingAssistantRecovery(
+            ChatPanel chatPanel,
+            UUID conversationId,
+            ConversationHistoryEntry entry
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "queuePendingAssistantRecovery",
+                UUID.class,
+                ConversationHistoryEntry.class
+        );
+        method.setAccessible(true);
+        runOnEdt(() -> method.invoke(chatPanel, conversationId, entry));
+    }
+
+    private static List<ConversationHistoryEntry> pendingAssistantRecoveryEntries(
+            ChatPanel chatPanel,
+            UUID conversationId
+    ) throws Exception {
+        return callOnEdt(() -> {
+            Object value = pendingAssistantRecoveryMap(chatPanel).get(conversationId);
+            if (!(value instanceof List<?> recoveries)) {
+                return List.of();
+            }
+            List<ConversationHistoryEntry> entries = new ArrayList<>();
+            for (Object recovery : recoveries) {
+                Field field = recovery.getClass().getDeclaredField("entry");
+                field.setAccessible(true);
+                entries.add((ConversationHistoryEntry) field.get(recovery));
+            }
+            return List.copyOf(entries);
+        });
+    }
+
     private static RenderMode readBubbleRenderMode(MessageBubble bubble) throws Exception {
         Field field = MessageBubble.class.getDeclaredField("renderMode");
         field.setAccessible(true);
@@ -4206,6 +5770,18 @@ class ChatPanelTest {
         Field field = InputBar.class.getDeclaredField("textArea");
         field.setAccessible(true);
         return (JTextArea) field.get(inputBar);
+    }
+
+    private void loadPersistedHistory(Message... messages) {
+        var ordinal = new AtomicInteger();
+        List<ConversationRepository.MessageRecord> records = List.of(messages).stream()
+                .map(message -> new ConversationRepository.MessageRecord(
+                        UUID.randomUUID(),
+                        ordinal.incrementAndGet(),
+                        message
+                ))
+                .toList();
+        subject.loadConversationHistoryEntries(UUID.randomUUID(), records);
     }
 
     private static void invokeOnSend(ChatPanel chatPanel) throws Exception {
@@ -4224,6 +5800,15 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             // flush pending UI tasks
         });
+    }
+
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 
     private static void notifyPopupWillBecomeVisible(JPopupMenu popup) {

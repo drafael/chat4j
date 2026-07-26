@@ -2,7 +2,6 @@ package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadResultPlanner;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.conversation.PersistedMessageCounter;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
@@ -84,10 +83,7 @@ public class MainFrameDependenciesFactory {
                 context.settingsRepo(),
                 context.menuPopupVisibleRunner()
         );
-        var conversationWiring = conversationWiringFactory.create(
-                context.conversationRepo(),
-                context.persistedMessageCounter()
-        );
+        var conversationWiring = conversationWiringFactory.create(context.conversationRepo());
 
         return new MainFrameDependencies(
                 providerMenuWiring,
@@ -119,8 +115,7 @@ public class MainFrameDependenciesFactory {
             @NonNull FontMenuSelectionApplyCoordinator fontMenuSelectionApplyCoordinator,
             @NonNull ThemeMenuSelectionSynchronizer themeMenuSelectionSynchronizer,
             @NonNull ThemeMenuSelectionApplyCoordinator themeMenuSelectionApplyCoordinator,
-            @NonNull MenuPopupVisibleRunner menuPopupVisibleRunner,
-            @NonNull PersistedMessageCounter persistedMessageCounter
+            @NonNull MenuPopupVisibleRunner menuPopupVisibleRunner
     ) {
     }
 

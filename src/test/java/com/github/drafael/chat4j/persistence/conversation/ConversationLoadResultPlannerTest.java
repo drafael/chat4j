@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.persistence.conversation;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +25,7 @@ class ConversationLoadResultPlannerTest {
     }
 
     @Test
-    @DisplayName("Plan loaded includes messages and selected model without render mode")
+    @DisplayName("Plan loaded retains stable records and selected model without render mode")
     void planLoaded_whenCurrentRequest_returnsApplyPlan() {
         var subject = new ConversationLoadResultPlanner(requestId -> requestId == 7L);
         UUID conversationId = UUID.randomUUID();
@@ -34,7 +35,7 @@ class ConversationLoadResultPlannerTest {
                 7L,
                 conversationId,
                 conversationId,
-                List.of(new ConversationRepository.MessageRecord(UUID.randomUUID(), message, LocalDateTime.now())),
+                List.of(new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, message)),
                 new ConversationRepository.ConversationRecord(
                         conversationId,
                         "demo",
@@ -50,8 +51,8 @@ class ConversationLoadResultPlannerTest {
         );
 
         assertThat(plan.ignore()).isFalse();
-        assertThat(plan.messages()).containsExactly(message);
-        assertThat(plan.persistedCount()).isEqualTo(1);
+        assertThat(plan.records()).extracting(ConversationRepository.MessageRecord::message)
+                .containsExactly(message);
         assertThat(plan.selectedModelKey()).isEqualTo(ModelSelectionCodec.format("OpenAI", "gpt-4o"));
     }
 }

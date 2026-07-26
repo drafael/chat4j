@@ -12,7 +12,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,7 +40,7 @@ class ConversationMessageJsonCodecTest {
         );
 
         String json = subject.serializeParts(message.parts());
-        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), message.content(), json, "{}", LocalDateTime.now());
+        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), message.content(), json, "{}", Instant.now());
 
         assertThat(restored.parts()).hasSize(2);
         assertThat(restored.parts().get(0)).isEqualTo(new TextPart("Here it is:"));
@@ -65,7 +64,7 @@ class ConversationMessageJsonCodecTest {
         var meta = new MessageMeta(List.of("skill"), List.of("notice"), false, "", "thinking", "web", List.of(), List.of(citation));
 
         String metaJson = subject.serializeMeta(meta);
-        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), "Answer [1]", "", metaJson, LocalDateTime.now());
+        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), "Answer [1]", "", metaJson, Instant.now());
 
         assertThat(restored.meta().citations()).containsExactly(citation);
     }
@@ -90,7 +89,7 @@ class ConversationMessageJsonCodecTest {
                 }
                 """;
 
-        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), "Answer", "", metaJson, LocalDateTime.now());
+        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), "Answer", "", metaJson, Instant.now());
 
         assertThat(restored.meta().citations()).isEmpty();
     }

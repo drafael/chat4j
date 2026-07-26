@@ -36,8 +36,8 @@ import static java.util.Collections.emptyList;
 
 public class SettingsDialog extends JDialog {
 
-    private static final int SIDEBAR_WIDTH = 230;
     private static final long APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS = 2_000;
+    private static final int SIDEBAR_WIDTH = 230;
 
     private JPanel titleBarSpacer;
     private JPanel actionBar;
@@ -301,23 +301,29 @@ public class SettingsDialog extends JDialog {
         startSaveBeforeDispose();
     }
 
-    void requestApplicationExit() {
+    private void requestApplicationExit() {
+        requestApplicationExit(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS));
+    }
+
+    void requestApplicationExit(long deadlineNanos) {
         if (!SwingUtilities.isEventDispatchThread()) {
-            SwingUtilities.invokeLater(this::requestApplicationExit);
+            SwingUtilities.invokeLater(() -> requestApplicationExit(deadlineNanos));
             return;
         }
         if (permanentlyClosed) {
             return;
         }
-        if (!exitAfterSave) {
-            applicationExitDeadlineNanos = System.nanoTime()
-                    + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS);
+        boolean newExitAttempt = !exitAfterSave;
+        if (newExitAttempt) {
+            applicationExitDeadlineNanos = deadlineNanos;
         }
         exitAfterSave = true;
         if (!savingBeforeDispose) {
             startSaveBeforeDispose();
         }
-        scheduleApplicationExitTimeout(closeAttempt, applicationExitDeadlineNanos);
+        if (newExitAttempt) {
+            scheduleApplicationExitTimeout(closeAttempt, applicationExitDeadlineNanos);
+        }
     }
 
     private void startSaveBeforeDispose() {
@@ -332,7 +338,7 @@ public class SettingsDialog extends JDialog {
 
     private void scheduleApplicationExitTimeout(long attempt, long deadlineNanos) {
         long remainingNanos = Math.max(0, deadlineNanos - System.nanoTime());
-        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS).execute(() ->
+        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS, Runnable::run).execute(() ->
                 SwingUtilities.invokeLater(() -> finishApplicationExitAfterTimeout(attempt)));
     }
 

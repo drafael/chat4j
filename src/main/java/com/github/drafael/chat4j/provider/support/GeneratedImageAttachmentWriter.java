@@ -41,22 +41,31 @@ public class GeneratedImageAttachmentWriter {
         UUID id = UUID.randomUUID();
         String resolvedMimeType = StringUtils.defaultIfBlank(mimeType, "image/png");
         String displayName = generatedImageFileName(id, resolvedMimeType);
-        Path targetPath = targetPath(displayName);
-        Files.copy(new ByteArrayInputStream(bytes), targetPath, StandardCopyOption.REPLACE_EXISTING);
-        return new AttachmentRef(
-                id,
-                targetPath.toString(),
-                displayName,
-                resolvedMimeType,
-                Files.size(targetPath),
-                sha256Hex(targetPath)
-        );
+        Path targetPath = targetPath(id);
+        try {
+            Files.copy(new ByteArrayInputStream(bytes), targetPath, StandardCopyOption.REPLACE_EXISTING);
+            return new AttachmentRef(
+                    id,
+                    targetPath.toString(),
+                    displayName,
+                    resolvedMimeType,
+                    Files.size(targetPath),
+                    sha256Hex(targetPath)
+            );
+        } catch (IOException | RuntimeException e) {
+            try {
+                Files.deleteIfExists(targetPath);
+            } catch (IOException cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+            }
+            throw e;
+        }
     }
 
-    private Path targetPath(String displayName) throws IOException {
+    private Path targetPath(UUID id) throws IOException {
         Path targetDirectory = attachmentsDirectory();
         Files.createDirectories(targetDirectory);
-        return targetDirectory.resolve(sanitizeFileName(displayName));
+        return targetDirectory.resolve(id.toString());
     }
 
     private String generatedImageFileName(UUID id, String mimeType) {
@@ -80,16 +89,6 @@ public class GeneratedImageAttachmentWriter {
             case "image/gif" -> "gif";
             default -> "png";
         };
-    }
-
-    private String sanitizeFileName(String fileName) {
-        if (StringUtils.isBlank(fileName)) {
-            return "generated-image";
-        }
-
-        return fileName
-                .replaceAll("[^a-zA-Z0-9._-]", "_")
-                .replaceAll("_+", "_");
     }
 
     private String sha256Hex(Path path) throws IOException {

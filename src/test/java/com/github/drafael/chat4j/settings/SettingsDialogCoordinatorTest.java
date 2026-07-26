@@ -77,9 +77,10 @@ class SettingsDialogCoordinatorTest {
 
         subject.open(() -> createDialog(createdDialogs), () -> {
         });
-        subject.requestApplicationExit(fallbackCalls::incrementAndGet);
+        subject.requestApplicationExit(123L, fallbackCalls::incrementAndGet);
 
         assertThat(createdDialogs.getFirst().applicationExitCalls).hasValue(1);
+        assertThat(createdDialogs.getFirst().applicationExitDeadlineNanos).isEqualTo(123L);
         assertThat(fallbackCalls).hasValue(0);
     }
 
@@ -93,7 +94,7 @@ class SettingsDialogCoordinatorTest {
         subject.open(() -> createDialog(createdDialogs), () -> {
         });
         createdDialogs.getFirst().displayable = false;
-        subject.requestApplicationExit(fallbackCalls::incrementAndGet);
+        subject.requestApplicationExit(123L, fallbackCalls::incrementAndGet);
 
         assertThat(createdDialogs.getFirst().applicationExitCalls).hasValue(0);
         assertThat(fallbackCalls).hasValue(1);
@@ -135,6 +136,7 @@ class SettingsDialogCoordinatorTest {
         private final AtomicReference<Runnable> onClosed = new AtomicReference<>();
         private boolean displayable = true;
         private boolean visible;
+        private long applicationExitDeadlineNanos;
 
         @Override
         public boolean isDisplayable() {
@@ -168,7 +170,8 @@ class SettingsDialogCoordinatorTest {
         }
 
         @Override
-        public void requestApplicationExit() {
+        public void requestApplicationExit(long deadlineNanos) {
+            applicationExitDeadlineNanos = deadlineNanos;
             applicationExitCalls.incrementAndGet();
         }
 

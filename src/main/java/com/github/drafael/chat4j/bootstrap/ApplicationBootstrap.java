@@ -165,6 +165,11 @@ public final class ApplicationBootstrap {
                 storagePaths.attachmentsDirectory(),
                 sqlDialect
         );
+        try {
+            conversationRepository.cleanupUnreferencedManagedAttachmentFiles();
+        } catch (Exception e) {
+            log.warn("Failed to clean orphaned managed attachments during startup", e);
+        }
         return new StorageServices(
                 conversationRepository,
                 settingsRepository,
@@ -337,7 +342,7 @@ public final class ApplicationBootstrap {
             } catch (RuntimeException | Error e) {
                 if (frame != null) {
                     try {
-                        frame.dispose();
+                        frame.disposeAfterStartupFailure();
                     } catch (Throwable cleanupFailure) {
                         e.addSuppressed(cleanupFailure);
                         log.warn(
@@ -487,7 +492,8 @@ public final class ApplicationBootstrap {
                 "Startup stage failed: {} ({}ms): {}",
                 stageName,
                 elapsedMillis(stageStartedAtNanos),
-                ExceptionUtils.getMessage(throwable)
+                ExceptionUtils.getMessage(throwable),
+                throwable
         );
     }
 

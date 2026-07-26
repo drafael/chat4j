@@ -37,10 +37,10 @@ public class SettingsDialogCoordinator {
         dialog.setVisible(true);
     }
 
-    public void requestApplicationExit(@NonNull Runnable whenNoDialog) {
+    public void requestApplicationExit(long deadlineNanos, @NonNull Runnable whenNoDialog) {
         DialogHandle dialog = tracker.get();
         if (dialog != null && dialog.isDisplayable()) {
-            dialog.requestApplicationExit();
+            dialog.requestApplicationExit(deadlineNanos);
             return;
         }
         if (dialog != null && tracker.get() == dialog) {
@@ -95,8 +95,8 @@ public class SettingsDialogCoordinator {
                 }
 
                 @Override
-                public void requestApplicationExit() {
-                    dialog.requestApplicationExit();
+                public void requestApplicationExit(long deadlineNanos) {
+                    dialog.requestApplicationExit(deadlineNanos);
                 }
             };
         }
@@ -113,6 +113,6 @@ public class SettingsDialogCoordinator {
 
         void onClosed(Runnable callback);
 
-        void requestApplicationExit();
+        void requestApplicationExit(long deadlineNanos);
     }
 }

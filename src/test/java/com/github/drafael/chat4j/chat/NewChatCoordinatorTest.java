@@ -11,13 +11,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class NewChatCoordinatorTest {
 
     @Test
-    @DisplayName("Start saves current conversation and clears chat state without changing render mode")
+    @DisplayName("Start clears chat state without changing render mode")
     void start_whenCalled_runsStepsInOrder() {
         var subject = new NewChatCoordinator();
         var calls = new ArrayList<String>();
 
         subject.start(
-                () -> calls.add("save"),
                 () -> calls.add("clear-current"),
                 () -> calls.add("clear-active"),
                 () -> calls.add("clear-selection"),
@@ -27,7 +26,6 @@ class NewChatCoordinatorTest {
         );
 
         assertThat(calls).containsExactly(
-                "save",
                 "clear-current",
                 "clear-active",
                 "clear-selection",
@@ -42,8 +40,8 @@ class NewChatCoordinatorTest {
     void start_whenRequiredArgumentMissing_throwsException() {
         var subject = new NewChatCoordinator();
 
-        assertThatThrownBy(() -> subject.start(null, () -> {}, () -> {}, () -> {}, () -> {}, () -> {}, () -> {}))
+        assertThatThrownBy(() -> subject.start(null, () -> {}, () -> {}, () -> {}, () -> {}, () -> {}))
                 .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("saveCurrentConversation");
+                .hasMessageContaining("clearCurrentConversationId");
     }
 }

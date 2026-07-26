@@ -6,6 +6,9 @@ import com.formdev.flatlaf.icons.FlatSearchIcon;
 import com.formdev.flatlaf.icons.FlatTreeCollapsedIcon;
 import com.formdev.flatlaf.icons.FlatTreeExpandedIcon;
 import com.formdev.flatlaf.ui.FlatLineBorder;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
+import com.github.drafael.chat4j.persistence.conversation.ConversationPersistencePrerequisiteIndeterminateException;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.ConversationRecord;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.util.Fonts;
@@ -33,6 +36,8 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,11 +47,14 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 import java.util.stream.IntStream;
 import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
@@ -75,12 +83,15 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.ListSelectionEvent;
+import lombok.NonNull;
 import lombok.Setter;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
+import static java.util.stream.Collectors.toMap;
 
 public class SidebarPanel extends JPanel {
 
@@ -136,8 +147,10 @@ public class SidebarPanel extends JPanel {
     private final JScrollPane conversationScrollPane;
     private final JTextField filterField;
     private final ConversationRepository conversationRepo;
+    private final ConversationPersistenceCoordinator mutationCoordinator;
     private final Set<String> collapsedGroups = new HashSet<>();
     private final Set<UUID> streamingConversationIds = new HashSet<>();
+    private final Map<UUID, PendingFavoriteValue> pendingFavoriteValues = new HashMap<>();
 
     private int loadingIconFrame;
 
@@ -146,6 +159,12 @@ public class SidebarPanel extends JPanel {
 
     private Consumer<UUID> onConversationSelected;
     @Setter
+    private Consumer<UUID> onConversationPersistenceIndeterminate;
+    @Setter
+    private Consumer<List<UUID>> onConversationsDeleteRequested;
+    @Setter
+    private Consumer<List<UUID>> onConversationsDeleteSettled;
+    @Setter
     private Consumer<List<UUID>> onConversationsDeleted;
     @Setter
     private Runnable onNewChat;
@@ -153,6 +172,12 @@ public class SidebarPanel extends JPanel {
     private Runnable onSettings;
     @Setter
     private BooleanSupplier guardedActionAllowed = () -> true;
+    @Setter
+    private Predicate<UUID> guardedConversationActionAllowed = ignored -> true;
+    @Setter
+    private BooleanSupplier lifecycleCurrent = () -> true;
+    private boolean removed;
+    private final List<Runnable> pendingMutationCompletions = new ArrayList<>();
     private boolean suppressSelection;
     private int hoveredIndex = -1;
     private final AtomicLong refreshRequestCounter = new AtomicLong();
@@ -161,8 +186,12 @@ public class SidebarPanel extends JPanel {
     private boolean initialSelectionNotificationSent;
     private Map<String, List<ConversationRecord>> lastGroupedConversations = emptyMap();
 
-    public SidebarPanel(ConversationRepository conversationRepo) {
-        this.conversationRepo = Objects.requireNonNull(conversationRepo);
+    public SidebarPanel(
+            @NonNull ConversationRepository conversationRepo,
+            @NonNull ConversationPersistenceCoordinator mutationCoordinator
+    ) {
+        this.conversationRepo = conversationRepo;
+        this.mutationCoordinator = mutationCoordinator;
 
         configurePanel();
         conversationList = createConversationList();
@@ -186,7 +215,28 @@ public class SidebarPanel extends JPanel {
     }
 
     @Override
+    public void addNotify() {
+        boolean reattached = removed;
+        removed = false;
+        super.addNotify();
+        if (!lifecycleCurrent.getAsBoolean()) {
+            pendingMutationCompletions.clear();
+            return;
+        }
+        List<Runnable> completions = List.copyOf(pendingMutationCompletions);
+        pendingMutationCompletions.clear();
+        completions.forEach(Runnable::run);
+        updateLoadingAnimationState();
+        if (reattached) {
+            refresh();
+            updateLoadingAnimationState();
+        }
+    }
+
+    @Override
     public void removeNotify() {
+        removed = true;
+        refreshRequestCounter.incrementAndGet();
         loadingIconTimer.stop();
         super.removeNotify();
     }
@@ -232,6 +282,19 @@ public class SidebarPanel extends JPanel {
         withSelectionSuppressed(conversationList::clearSelection);
     }
 
+    public void settlePendingFavoriteReconciliation(UUID conversationId) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> settlePendingFavoriteReconciliation(conversationId));
+            return;
+        }
+        PendingFavoriteValue pendingValue = pendingFavoriteValues.get(conversationId);
+        if (pendingValue == null || !pendingValue.awaitingReconciliation()) {
+            return;
+        }
+        pendingValue.markReconciliationSettled();
+        refresh();
+    }
+
     public void setConversationStreaming(UUID conversationId, boolean streaming) {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(() -> setConversationStreaming(conversationId, streaming));
@@ -249,7 +312,9 @@ public class SidebarPanel extends JPanel {
         }
 
         updateLoadingAnimationState();
-        repaintConversation(conversationId);
+        if (uiCurrent()) {
+            repaintConversation(conversationId);
+        }
     }
 
     public void setOnConversationSelected(Consumer<UUID> handler) {
@@ -427,7 +492,7 @@ public class SidebarPanel extends JPanel {
         }
 
         selectedConversationId().ifPresent(id -> {
-            if (!guardedActionAllowed.getAsBoolean()) {
+            if (!conversationActionAllowed(id)) {
                 restoreNotifiedSelection();
                 return;
             }
@@ -496,7 +561,7 @@ public class SidebarPanel extends JPanel {
         return conversationItemAt(index)
             .map(conversation -> switch (resolveHoverIcon(event)) {
                 case TRASH -> "Delete, Shift+Delete to skip confirmation";
-                case STAR -> conversation.isFavorite() ? "Remove from favorites" : "Add to favorites";
+                case STAR -> favoriteValue(conversation) ? "Remove from favorites" : "Add to favorites";
                 case NONE -> null;
             })
             .orElse(null);
@@ -643,7 +708,7 @@ public class SidebarPanel extends JPanel {
         paintHoverBackground(graphics, bounds, layout.backgroundLeft(), rightEdge);
 
         Icon trashIcon = trashIcon();
-        Icon starIcon = hoveredConversation.get().isFavorite() ? starFilledIcon() : starIcon();
+        Icon starIcon = favoriteValue(hoveredConversation.get()) ? starFilledIcon() : starIcon();
         if (trashIcon != null) {
             trashIcon.paintIcon(this, graphics, layout.trashX(), iconY);
         }
@@ -684,7 +749,7 @@ public class SidebarPanel extends JPanel {
     }
 
     private void handleDelete(ConversationItem conversation, boolean skipConfirmation) {
-        if (!guardedActionAllowed.getAsBoolean()) {
+        if (!conversationActionAllowed(conversation.id())) {
             return;
         }
         if (skipConfirmation) {
@@ -699,61 +764,127 @@ public class SidebarPanel extends JPanel {
     }
 
     private void deleteConversation(ConversationItem conversation) {
-        runRepositoryAction(DELETE_CONVERSATION_ERROR, CONVERSATIONS_TITLE, () -> {
-            conversationRepo.deleteConversation(conversation.id());
-            refresh();
-            notifyConversationsDeleted(List.of(conversation.id()));
-        });
+        List<UUID> ids = List.of(conversation.id());
+        if (!conversationActionsAllowed(ids)) {
+            return;
+        }
+        notifyConversationsDeleteRequested(ids);
+        runMutation(
+                mutationCoordinator.submitDelete(ids),
+                DELETE_CONVERSATION_ERROR,
+                () -> completeSuccessfulDeletion(ids),
+                () -> notifyConversationsDeleteSettled(ids)
+        );
     }
 
     private void handleDeleteGroup(String groupName) {
         if (!guardedActionAllowed.getAsBoolean()) {
             return;
         }
-        int confirmation = showThemedConfirmDialog(
-                "Delete all chats in \"%s\"?".formatted(groupName), "Confirm");
-        if (confirmation != JOptionPane.YES_OPTION) {
+        List<ConversationRepository.ConversationRecord> groupRecords = lastGroupedConversations.get(groupName);
+        List<UUID> ids = ObjectUtils.isEmpty(groupRecords)
+                ? emptyList()
+                : groupRecords.stream().map(ConversationRepository.ConversationRecord::id).distinct().toList();
+        if (!ids.stream().allMatch(guardedConversationActionAllowed) || ids.isEmpty()) {
             return;
         }
 
-        runRepositoryAction(DELETE_GROUP_ERROR, CONVERSATIONS_TITLE, () -> {
-            Map<String, List<ConversationRepository.ConversationRecord>> grouped = conversationRepo.findAllGroupedByDate();
-            List<ConversationRepository.ConversationRecord> groupRecords = grouped.get(groupName);
-            if (ObjectUtils.isNotEmpty(groupRecords)) {
-                List<UUID> ids = groupRecords.stream().map(ConversationRepository.ConversationRecord::id).toList();
-                conversationRepo.deleteConversations(ids);
-                refresh();
-                notifyConversationsDeleted(ids);
-            }
-        });
+        int confirmation = showThemedConfirmDialog(
+                "Delete all chats in \"%s\"?".formatted(groupName), "Confirm");
+        if (confirmation != JOptionPane.YES_OPTION || !conversationActionsAllowed(ids)) {
+            return;
+        }
+        notifyConversationsDeleteRequested(ids);
+        runMutation(
+                mutationCoordinator.submitDelete(ids),
+                DELETE_GROUP_ERROR,
+                () -> completeSuccessfulDeletion(ids),
+                () -> notifyConversationsDeleteSettled(ids)
+        );
     }
 
     private void handleDeleteAll() {
         if (!guardedActionAllowed.getAsBoolean()) {
             return;
         }
-        int confirmation = showThemedConfirmDialog("Delete all chats?", "Confirm");
-        if (confirmation != JOptionPane.YES_OPTION) {
+        List<UUID> ids = lastGroupedConversations.values().stream()
+                .flatMap(List::stream)
+                .map(ConversationRecord::id)
+                .distinct()
+                .toList();
+        if (!ids.stream().allMatch(guardedConversationActionAllowed) || ids.isEmpty()) {
             return;
         }
 
-        runRepositoryAction(DELETE_ALL_ERROR, CONVERSATIONS_TITLE, () -> {
-            List<UUID> ids = conversationRepo.findAllGroupedByDate().values().stream()
-                    .flatMap(List::stream)
-                    .map(ConversationRecord::id)
-                    .distinct()
-                    .toList();
-            conversationRepo.deleteAllConversations();
-            refresh();
-            notifyConversationsDeleted(ids);
-        });
+        int confirmation = showThemedConfirmDialog("Delete all chats?", "Confirm");
+        if (confirmation != JOptionPane.YES_OPTION || !conversationActionsAllowed(ids)) {
+            return;
+        }
+        notifyConversationsDeleteRequested(ids);
+        runMutation(
+                mutationCoordinator.submitDelete(ids),
+                DELETE_ALL_ERROR,
+                () -> completeSuccessfulDeletion(ids),
+                () -> notifyConversationsDeleteSettled(ids)
+        );
     }
 
     private void handleToggleFavorite(ConversationItem conversation) {
-        runRepositoryAction(FAVORITES_ERROR, CONVERSATIONS_TITLE, () -> {
-            conversationRepo.toggleFavorite(conversation.id());
-            refresh();
-        });
+        if (!conversationActionAllowed(conversation.id())) {
+            return;
+        }
+        UUID conversationId = conversation.id();
+        boolean currentFavorite = favoriteValue(conversation);
+        var acceptedValue = new PendingFavoriteValue(!currentFavorite);
+        pendingFavoriteValues.put(conversationId, acceptedValue);
+        conversationList.repaint();
+        runMutation(
+                conversationId,
+                mutationCoordinator.submitFavorite(conversationId, acceptedValue.desired()),
+                FAVORITES_ERROR,
+                () -> {
+                    if (acceptedValue.projectionOwnedAtSettlement()) {
+                        acceptedValue.markPersisted();
+                        pendingFavoriteValues.putIfAbsent(conversationId, acceptedValue);
+                    }
+                    refresh();
+                },
+                () -> {
+                    if (mutationCoordinator.hasIndeterminateMutation(conversationId)) {
+                        acceptedValue.markAwaitingReconciliation();
+                        acceptedValue.markProjectionOwnedAtSettlement(
+                                pendingFavoriteValues.get(conversationId) == acceptedValue
+                        );
+                    } else {
+                        acceptedValue.markProjectionOwnedAtSettlement(
+                                pendingFavoriteValues.remove(conversationId, acceptedValue)
+                        );
+                    }
+                    conversationList.repaint();
+                }
+        );
+    }
+
+    private void completeSuccessfulDeletion(List<UUID> ids) {
+        removeConversationProjections(ids);
+        refresh();
+        notifyConversationsDeleted(ids);
+    }
+
+    public void removeConversationProjections(@NonNull List<UUID> conversationIds) {
+        conversationIds.forEach(pendingFavoriteValues::remove);
+    }
+
+    private void notifyConversationsDeleteRequested(List<UUID> ids) {
+        if (onConversationsDeleteRequested != null) {
+            onConversationsDeleteRequested.accept(ids);
+        }
+    }
+
+    private void notifyConversationsDeleteSettled(List<UUID> ids) {
+        if (onConversationsDeleteSettled != null) {
+            onConversationsDeleteSettled.accept(ids);
+        }
     }
 
     private void notifyConversationsDeleted(List<UUID> ids) {
@@ -765,22 +896,25 @@ public class SidebarPanel extends JPanel {
     }
 
     private void renameConversation(ConversationItem conversation, String newTitle) {
-        if (!guardedActionAllowed.getAsBoolean()) {
+        if (!conversationActionAllowed(conversation.id())) {
             return;
         }
-        runRepositoryAction(RENAME_CONVERSATION_ERROR, CONVERSATIONS_TITLE, () -> {
-            conversationRepo.updateTitle(conversation.id(), newTitle);
-            refresh();
-        });
+        runMutation(
+                conversation.id(),
+                mutationCoordinator.submitRename(conversation.id(), newTitle),
+                RENAME_CONVERSATION_ERROR,
+                this::refresh
+        );
     }
 
     private void applyRefreshResult(long refreshRequestId, Map<String, List<ConversationRecord>> grouped) {
-        if (refreshRequestId != refreshRequestCounter.get()) {
+        if (!uiCurrent() || refreshRequestId != refreshRequestCounter.get()) {
             return;
         }
 
         UUID selectedConversationId = selectionIdToRestore();
 
+        removeAppliedFavoriteValues(grouped);
         lastGroupedConversations = grouped;
         withSelectionSuppressed(() -> {
             int restoreIndex = rebuildConversationList(filteredConversations(grouped), selectedConversationId);
@@ -850,13 +984,10 @@ public class SidebarPanel extends JPanel {
     }
 
     private void applyRefreshFailure(long refreshRequestId, Exception e) {
-        if (refreshRequestId != refreshRequestCounter.get()) {
+        if (!uiCurrent() || refreshRequestId != refreshRequestCounter.get()) {
             return;
         }
 
-        lastGroupedConversations = emptyMap();
-        listModel.clear();
-        hoveredIndex = -1;
         showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
     }
 
@@ -932,7 +1063,7 @@ public class SidebarPanel extends JPanel {
     }
 
     private JMenuItem createFavoriteMenuItem(ConversationItem conversation) {
-        var favoriteMenuItem = new JMenuItem(conversation.isFavorite() ? "Unfavorite" : "Favorite");
+        var favoriteMenuItem = new JMenuItem(favoriteValue(conversation) ? "Unfavorite" : "Favorite");
         favoriteMenuItem.addActionListener(event -> handleToggleFavorite(conversation));
         return favoriteMenuItem;
     }
@@ -1069,19 +1200,20 @@ public class SidebarPanel extends JPanel {
     }
 
     private void expandGroupContaining(UUID id) {
-        try {
-            Optional<String> groupName = conversationRepo.findAllGroupedByDate()
-                .entrySet().stream()
-                .filter(entry -> entry.getValue().stream()
-                    .anyMatch(record -> record.id().equals(id)))
-                .map(Map.Entry::getKey)
-                .findFirst();
+        Optional<String> groupName = lastGroupedConversations.entrySet().stream()
+            .filter(entry -> entry.getValue().stream().anyMatch(record -> record.id().equals(id)))
+            .map(Map.Entry::getKey)
+            .findFirst();
 
-            if (groupName.isPresent() && collapsedGroups.remove(groupName.get())) {
-                refresh();
-            }
-        } catch (Exception e) {
-            showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
+        if (groupName.isPresent() && collapsedGroups.remove(groupName.get())) {
+            withSelectionSuppressed(() -> {
+                int restoreIndex = rebuildConversationList(
+                        filteredConversations(lastGroupedConversations),
+                        pendingSelectionConversationId
+                );
+                restoreSelection(restoreIndex);
+                applyPendingSelection();
+            });
         }
     }
 
@@ -1162,7 +1294,7 @@ public class SidebarPanel extends JPanel {
     }
 
     private void updateLoadingAnimationState() {
-        if (streamingConversationIds.isEmpty()) {
+        if (removed || !lifecycleCurrent.getAsBoolean() || streamingConversationIds.isEmpty()) {
             loadingIconTimer.stop();
             return;
         }
@@ -1172,12 +1304,66 @@ public class SidebarPanel extends JPanel {
         }
     }
 
-    private void runRepositoryAction(String errorMessage, String title, RepositoryAction action) {
-        try {
-            action.run();
-        } catch (Exception e) {
-            showOperationError(errorMessage, title, e, JOptionPane.WARNING_MESSAGE);
-        }
+    private boolean uiCurrent() {
+        return !removed && lifecycleCurrent.getAsBoolean();
+    }
+
+    private void runMutation(
+            UUID conversationId,
+            CompletionStage<Void> mutation,
+            String errorMessage,
+            Runnable successAction
+    ) {
+        runMutation(conversationId, mutation, errorMessage, successAction, () -> {});
+    }
+
+    private void runMutation(
+            CompletionStage<Void> mutation,
+            String errorMessage,
+            Runnable successAction,
+            Runnable settlementAction
+    ) {
+        runMutation(null, mutation, errorMessage, successAction, settlementAction);
+    }
+
+    private void runMutation(
+            UUID conversationId,
+            CompletionStage<Void> mutation,
+            String errorMessage,
+            Runnable successAction,
+            Runnable settlementAction
+    ) {
+        mutation.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+            if (!lifecycleCurrent.getAsBoolean()) {
+                return;
+            }
+            Runnable completion = () -> {
+                settlementAction.run();
+                if (error == null) {
+                    successAction.run();
+                    return;
+                }
+                Throwable cause = error instanceof CompletionException && error.getCause() != null
+                        ? error.getCause()
+                        : error;
+                if (cause instanceof ConversationPersistenceIndeterminateException
+                        || cause instanceof ConversationPersistencePrerequisiteIndeterminateException
+                ) {
+                    if (conversationId != null && onConversationPersistenceIndeterminate != null) {
+                        onConversationPersistenceIndeterminate.accept(conversationId);
+                    }
+                    return;
+                }
+                Exception exception = cause instanceof Exception e ? e : new RuntimeException(cause);
+                showOperationError(errorMessage, CONVERSATIONS_TITLE, exception, JOptionPane.WARNING_MESSAGE);
+                refresh();
+            };
+            if (removed) {
+                pendingMutationCompletions.add(completion);
+            } else {
+                completion.run();
+            }
+        }));
     }
 
     private void showOperationError(String message, String title, Exception exception, int messageType) {
@@ -1470,11 +1656,6 @@ public class SidebarPanel extends JPanel {
         }
     }
 
-    @FunctionalInterface
-    private interface RepositoryAction {
-        void run() throws Exception;
-    }
-
     private static final class LoadingIcon implements Icon {
 
         private static final int SEGMENT_COUNT = 10;
@@ -1563,6 +1744,77 @@ public class SidebarPanel extends JPanel {
         @Override
         public int getIconHeight() {
             return SIZE;
+        }
+    }
+
+    private boolean conversationActionAllowed(UUID conversationId) {
+        return guardedActionAllowed.getAsBoolean() && guardedConversationActionAllowed.test(conversationId);
+    }
+
+    private boolean conversationActionsAllowed(List<UUID> conversationIds) {
+        return guardedActionAllowed.getAsBoolean()
+                && conversationIds.stream().allMatch(guardedConversationActionAllowed);
+    }
+
+    private boolean favoriteValue(ConversationItem conversation) {
+        PendingFavoriteValue pendingValue = pendingFavoriteValues.get(conversation.id());
+        return pendingValue == null ? conversation.isFavorite() : pendingValue.desired();
+    }
+
+    private void removeAppliedFavoriteValues(Map<String, List<ConversationRecord>> grouped) {
+        Map<UUID, Boolean> favoriteValues = grouped.values().stream()
+                .flatMap(List::stream)
+                .collect(toMap(ConversationRecord::id, ConversationRecord::isFavorite, (first, ignored) -> first));
+        pendingFavoriteValues.entrySet().removeIf(entry -> entry.getValue().reconciliationSettled()
+                || (entry.getValue().persisted()
+                && Objects.equals(favoriteValues.get(entry.getKey()), entry.getValue().desired())));
+    }
+
+    private static final class PendingFavoriteValue {
+        private final boolean desired;
+        private boolean persisted;
+        private boolean projectionOwnedAtSettlement;
+        private boolean awaitingReconciliation;
+        private boolean reconciliationSettled;
+
+        private PendingFavoriteValue(boolean desired) {
+            this.desired = desired;
+        }
+
+        private boolean desired() {
+            return desired;
+        }
+
+        private boolean persisted() {
+            return persisted;
+        }
+
+        private void markPersisted() {
+            persisted = true;
+        }
+
+        private boolean projectionOwnedAtSettlement() {
+            return projectionOwnedAtSettlement;
+        }
+
+        private void markProjectionOwnedAtSettlement(boolean projectionOwnedAtSettlement) {
+            this.projectionOwnedAtSettlement = projectionOwnedAtSettlement;
+        }
+
+        private boolean awaitingReconciliation() {
+            return awaitingReconciliation;
+        }
+
+        private void markAwaitingReconciliation() {
+            awaitingReconciliation = true;
+        }
+
+        private boolean reconciliationSettled() {
+            return reconciliationSettled;
+        }
+
+        private void markReconciliationSettled() {
+            reconciliationSettled = true;
         }
     }
 
