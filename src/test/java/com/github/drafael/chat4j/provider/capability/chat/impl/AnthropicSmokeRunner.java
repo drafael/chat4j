@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
@@ -42,7 +44,7 @@ final class AnthropicSmokeRunner {
     };
 
     private final SmokeConfig config;
-    private final AnthropicChatCompletionClient chatClient = new AnthropicChatCompletionClient();
+    private final AnthropicChatCompletionClient chatClient = new AnthropicChatCompletionClient(ProviderAttachmentTestSupport.authority());
     private final AnthropicModelCatalogClient modelCatalogClient = new AnthropicModelCatalogClient();
 
     AnthropicSmokeRunner(SmokeConfig config) {
@@ -296,7 +298,12 @@ final class AnthropicSmokeRunner {
     }
 
     private ProviderRuntime runtime(String model) {
-        AnthropicModule module = new AnthropicModule("Anthropic", API_KEY_ENV, config.baseUrl());
+        AnthropicModule module = new AnthropicModule(
+                "Anthropic",
+                API_KEY_ENV,
+                config.baseUrl(),
+                ProviderAttachmentTestSupport.authority()
+        );
         return new ProviderRuntime(
                 module.descriptor(),
                 API_KEY_ENV,

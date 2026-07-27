@@ -13,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -24,6 +25,53 @@ class ProviderServiceAgentAdapterTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    @DisplayName("Cancelled compatibility turns skip workspace activity and provider work")
+    void executeTurn_whenAlreadyCancelled_skipsWorkspaceAndProvider() {
+        var providerCalled = new AtomicBoolean();
+        ProviderService providerService = new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                providerCalled.set(true);
+            }
+        };
+        var subject = new ProviderServiceAgentAdapter(providerService);
+        List<AgentToolActivity> toolActivities = new ArrayList<>();
+
+        AgentTurnResult result = subject.executeTurn(
+                new AgentRunRequest(
+                        List.of(Message.user("Describe project")),
+                        ReasoningLevel.OFF,
+                        tempDir,
+                        emptyList(),
+                        () -> true
+                ),
+                new AgentRunCallbacks(
+                        ignored -> {
+                        },
+                        ignored -> {
+                        },
+                        toolActivities::add,
+                        () -> {
+                        },
+                        ignored -> {
+                        }
+                )
+        );
+
+        assertThat(result.completed()).isFalse();
+        assertThat(providerCalled).isFalse();
+        assertThat(toolActivities).isEmpty();
+    }
 
     @Test
     @DisplayName("Provider service adapter applies agent project root as execution directory context")

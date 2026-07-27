@@ -50,7 +50,7 @@ public final class SystemWebView {
     private boolean pendingDocumentScrollToBottom;
     private Path currentDocumentPath;
     @Getter
-    private boolean disposed;
+    private volatile boolean disposed;
     @Setter
     private ConversationActionListener actionListener;
 
@@ -65,12 +65,18 @@ public final class SystemWebView {
             applyPendingDocumentUrl();
         });
         webView.addJavascriptCallback("chat4jOpenExternalLink", raw -> {
+            if (disposed) {
+                return;
+            }
             String link = TranscriptCallbackPayloads.callbackArg(raw);
             if (StringUtils.isNotBlank(link)) {
                 ExternalLinkSupport.openExternalLink(link);
             }
         });
         webView.addJavascriptCallback("chat4jTranscriptAction", raw -> {
+            if (disposed) {
+                return;
+            }
             TranscriptAction action = TranscriptCallbackPayloads.transcriptAction(raw);
             if (actionListener != null && action != null) {
                 actionListener.handle(action.action(), action.messageIndex(), action.text());
@@ -159,12 +165,11 @@ public final class SystemWebView {
                 return;
             }
             String document = TranscriptRenderSupport.withSnapshotFonts(snapshot, () -> renderDocument(scrollToBottom, snapshot));
-            SwingUtilities.invokeLater(() -> {
-                if (disposed || requestId != renderRequestCounter.get()) {
-                    return;
-                }
-                applyDocumentUrl(requestId, toDocumentUrl(document), scrollToBottom);
-            });
+            if (disposed || requestId != renderRequestCounter.get()) {
+                return;
+            }
+            DocumentUrl documentUrl = toDocumentUrl(document);
+            SwingUtilities.invokeLater(() -> applyDocumentUrl(requestId, documentUrl, scrollToBottom));
         });
     }
 
@@ -174,6 +179,7 @@ public final class SystemWebView {
 
     public void dispose() {
         disposed = true;
+        actionListener = null;
         renderRequestCounter.incrementAndGet();
         renderExecutor.shutdownNow();
         deletePendingDocumentUrl();
@@ -293,10 +299,6 @@ public final class SystemWebView {
         webView.eval(script);
     }
 
-    private String renderEntriesHtml(TranscriptRenderSnapshot snapshot) {
-        return transcriptDocumentRenderer.renderEntriesHtml(snapshot);
-    }
-
     private String renderEntriesHtml(TranscriptRenderSnapshot snapshot, long requestId) {
         return transcriptDocumentRenderer.renderEntriesHtml(
                 snapshot,
@@ -306,12 +308,19 @@ public final class SystemWebView {
 
 
     private DocumentUrl toDocumentUrl(String html) {
+        Path document = null;
         try {
-            Path document = Files.createTempFile("chat4j-transcript-", ".html");
-            Files.writeString(document, html, StandardCharsets.UTF_8);
+            document = Files.createTempFile("chat4j-transcript-", ".html");
             document.toFile().deleteOnExit();
+            Files.writeString(document, html, StandardCharsets.UTF_8);
             return new DocumentUrl(document.toUri().toString(), document);
         } catch (Exception e) {
+            if (document != null) {
+                try {
+                    Files.deleteIfExists(document);
+                } catch (Exception ignored) {
+                }
+            }
             String encoded = Base64.getEncoder().encodeToString(html.getBytes(StandardCharsets.UTF_8));
             return new DocumentUrl("data:text/html;charset=UTF-8;base64,%s".formatted(encoded), null);
         }

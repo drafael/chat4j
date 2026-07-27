@@ -9,6 +9,8 @@ import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.AgentSystemPromptContext;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.ExecutionDirectoryContext;
 import com.github.drafael.chat4j.provider.support.ProcessCommandSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
@@ -29,7 +31,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -41,26 +42,16 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private static final int INITIALIZE_REQUEST_ID = 1;
     private static final int THREAD_START_REQUEST_ID = 2;
     private static final int TURN_START_REQUEST_ID = 3;
-    private static final AtomicReference<DiagnosticsSnapshot> LAST_DIAGNOSTICS =
-            new AtomicReference<>(DiagnosticsSnapshot.empty());
 
     private final Map<String, String> subprocessEnvironment;
+    private final ProviderAttachmentSupport attachmentSupport;
 
-    public CodexCliChatCompletionClient(@NonNull Map<String, String> subprocessEnvironment) {
-        this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
-    }
-
-    public record DiagnosticsSnapshot(String transport,
-                                      boolean sawStreamingDelta,
-                                      boolean fallbackUsed,
-                                      String lastFailureReason,
-                                      String lastAppServerError,
-                                      long updatedAtEpochMs
+    public CodexCliChatCompletionClient(
+            @NonNull Map<String, String> subprocessEnvironment,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
-
-        private static DiagnosticsSnapshot empty() {
-            return new DiagnosticsSnapshot("none", false, false, null, null, 0L);
-        }
+        this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+        this.attachmentSupport = attachmentSupport;
     }
 
     @Override
@@ -73,41 +64,48 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                                  Consumer<AutoCloseable> registerActiveStream,
                                  Runnable clearActiveStream
     ) throws Exception {
-        updateDiagnostics("pending", false, false, null, null);
-
+        AttachmentProjectionPlan projectionPlan = AttachmentProjectionPlan.create(
+                history,
+                attachmentSupport,
+                AttachmentProjectionPlan.textOnly(),
+                isCancelled
+        );
+        if (shouldStop(isCancelled)) {
+            return;
+        }
+        String prompt = buildPrompt(projectionPlan);
         AtomicBoolean emittedOutput = new AtomicBoolean(false);
-        AtomicBoolean sawStreamingDelta = new AtomicBoolean(false);
 
         try {
             streamViaAppServer(
                     runtime,
-                    history,
+                    prompt,
                     onToken,
                     isCancelled,
                     registerActiveStream,
                     clearActiveStream,
-                    emittedOutput,
-                    sawStreamingDelta
+                    emittedOutput
             );
-            updateDiagnostics("app-server", sawStreamingDelta.get(), false, null, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             if (shouldStop(isCancelled)) {
-                updateDiagnostics("cancelled", sawStreamingDelta.get(), false, null, null);
                 return;
             }
 
             String appServerFailure = firstLine(e.getMessage());
             if (emittedOutput.get()) {
-                updateDiagnostics("app-server", sawStreamingDelta.get(), false, appServerFailure, appServerFailure);
                 throw e;
             }
 
             try {
-                streamViaExec(runtime, history, onToken, isCancelled, registerActiveStream, clearActiveStream);
-                updateDiagnostics("exec-fallback", false, true, null, appServerFailure);
+                streamViaExec(runtime, prompt, onToken, isCancelled, registerActiveStream, clearActiveStream);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw ex;
             } catch (Exception ex) {
                 String fallbackFailure = firstLine(ex.getMessage());
-                updateDiagnostics("exec-fallback-failed", false, true, fallbackFailure, appServerFailure);
                 throw new IllegalStateException(
                         "codex app-server failed: %s | codex exec fallback failed: %s"
                                 .formatted(appServerFailure, fallbackFailure),
@@ -118,13 +116,12 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     }
 
     private void streamViaAppServer(ProviderRuntime runtime,
-                                    List<Message> history,
+                                    String prompt,
                                     Consumer<String> onToken,
                                     BooleanSupplier isCancelled,
                                     Consumer<AutoCloseable> registerActiveStream,
                                     Runnable clearActiveStream,
-                                    AtomicBoolean emittedOutput,
-                                    AtomicBoolean sawStreamingDelta
+                                    AtomicBoolean emittedOutput
     ) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder("codex", "app-server", "--listen", "stdio://");
         processBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
@@ -132,42 +129,59 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         ProcessCommandSupport.applyEnvironment(processBuilder, subprocessEnvironment);
 
         Process process = processBuilder.start();
-        registerActiveStream.accept(process::destroyForcibly);
+        try {
+            registerActiveStream.accept(process::destroyForcibly);
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
+            ) {
+                sendJson(writer, initializeRequest());
+                sendJson(writer, initializedNotification());
+                sendJson(writer, threadStartRequest(runtime.selectedModel()));
 
-        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
-             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))
-        ) {
+                String threadId = awaitThreadId(reader, process, isCancelled);
+                if (StringUtils.isBlank(threadId)) {
+                    return;
+                }
 
-            sendJson(writer, initializeRequest());
-            sendJson(writer, initializedNotification());
-            sendJson(writer, threadStartRequest(runtime.selectedModel()));
-
-            String threadId = awaitThreadId(reader, process, isCancelled);
-            if (StringUtils.isBlank(threadId)) {
-                return;
+                sendJson(writer, turnStartRequest(threadId, prompt));
+                awaitTurnCompletion(reader, process, onToken, isCancelled, emittedOutput);
             }
-
-            sendJson(writer, turnStartRequest(threadId, buildPrompt(history)));
-            awaitTurnCompletion(reader, process, onToken, isCancelled, emittedOutput, sawStreamingDelta);
         } finally {
-            clearActiveStream.run();
-            if (process.isAlive()) {
-                process.destroyForcibly();
-                process.waitFor(2, TimeUnit.SECONDS);
+            try {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    process.waitFor(2, TimeUnit.SECONDS);
+                }
+            } finally {
+                clearActiveStream.run();
             }
         }
     }
 
     private void streamViaExec(ProviderRuntime runtime,
-                               List<Message> history,
+                               String prompt,
                                Consumer<String> onToken,
                                BooleanSupplier isCancelled,
                                Consumer<AutoCloseable> registerActiveStream,
                                Runnable clearActiveStream
     ) throws Exception {
         Path outputFile = Files.createTempFile("chat4j-codex-output", ".txt");
-        String prompt = buildPrompt(history);
+        try {
+            executeExec(runtime, prompt, outputFile, onToken, isCancelled, registerActiveStream, clearActiveStream);
+        } finally {
+            Files.deleteIfExists(outputFile);
+        }
+    }
 
+    private void executeExec(
+            ProviderRuntime runtime,
+            String prompt,
+            Path outputFile,
+            Consumer<String> onToken,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
         ProcessBuilder processBuilder = new ProcessBuilder(
                 "codex",
                 "exec",
@@ -177,19 +191,19 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 runtime.selectedModel(),
                 "-o",
                 outputFile.toString(),
-                prompt
+                "-"
         );
         processBuilder.redirectErrorStream(true);
         applyExecutionDirectory(processBuilder);
         ProcessCommandSupport.applyEnvironment(processBuilder, subprocessEnvironment);
 
         Process process = processBuilder.start();
-        process.getOutputStream().close();
-        registerActiveStream.accept(process::destroyForcibly);
-
         try {
+            registerActiveStream.accept(process::destroyForcibly);
             CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> readAll(process));
-
+            try (var input = process.getOutputStream()) {
+                input.write(prompt.getBytes(StandardCharsets.UTF_8));
+            }
             while (process.isAlive()) {
                 if (shouldStop(isCancelled)) {
                     process.destroyForcibly();
@@ -198,22 +212,31 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 Thread.sleep(100);
             }
 
-            int exitCode = process.exitValue();
+            if (shouldStop(isCancelled)) {
+                return;
+            }
             String commandOutput = outputFuture.join();
+            if (shouldStop(isCancelled)) {
+                return;
+            }
+            int exitCode = process.exitValue();
             if (exitCode != 0) {
                 throw new IllegalStateException("codex exec failed (exit %d): %s".formatted(exitCode, firstLine(commandOutput)));
             }
 
-            String responseText = Files.exists(outputFile)
-                    ? Files.readString(outputFile, StandardCharsets.UTF_8).trim()
-                    : "";
-
-            if (!responseText.isBlank()) {
+            String responseText = Files.readString(outputFile, StandardCharsets.UTF_8).trim();
+            if (!responseText.isBlank() && !shouldStop(isCancelled)) {
                 onToken.accept(responseText);
             }
         } finally {
-            clearActiveStream.run();
-            Files.deleteIfExists(outputFile);
+            try {
+                if (process.isAlive()) {
+                    process.destroyForcibly();
+                    process.waitFor(2, TimeUnit.SECONDS);
+                }
+            } finally {
+                clearActiveStream.run();
+            }
         }
     }
 
@@ -250,8 +273,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                                      Process process,
                                      Consumer<String> onToken,
                                      BooleanSupplier isCancelled,
-                                     AtomicBoolean emittedOutput,
-                                     AtomicBoolean sawStreamingDelta
+                                     AtomicBoolean emittedOutput
     ) throws Exception {
         while (true) {
             JsonNode message = nextMessage(reader, process, isCancelled);
@@ -268,9 +290,11 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             if ("item/agentMessage/delta".equals(method)) {
                 String delta = message.path("params").path("delta").asText("");
                 if (!delta.isEmpty()) {
-                    onToken.accept(delta);
+                    if (shouldStop(isCancelled)) {
+                        return;
+                    }
                     emittedOutput.set(true);
-                    sawStreamingDelta.set(true);
+                    onToken.accept(delta);
                 }
                 continue;
             }
@@ -281,8 +305,11 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 if (("agentMessage".equals(type) || "agent_message".equals(type)) && !emittedOutput.get()) {
                     String text = item.path("text").asText("");
                     if (!text.isBlank()) {
-                        onToken.accept(text);
+                        if (shouldStop(isCancelled)) {
+                            return;
+                        }
                         emittedOutput.set(true);
+                        onToken.accept(text);
                     }
                 }
                 continue;
@@ -396,24 +423,8 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         writer.flush();
     }
 
-    private void updateDiagnostics(String transport,
-                                   boolean sawStreamingDelta,
-                                   boolean fallbackUsed,
-                                   String lastFailureReason,
-                                   String lastAppServerError
-    ) {
-        LAST_DIAGNOSTICS.set(new DiagnosticsSnapshot(
-                transport,
-                sawStreamingDelta,
-                fallbackUsed,
-                lastFailureReason,
-                lastAppServerError,
-                System.currentTimeMillis()
-        ));
-    }
-
-    private String buildPrompt(List<Message> history) {
-        String transcript = history.stream()
+    private String buildPrompt(AttachmentProjectionPlan projectionPlan) {
+        String transcript = projectionPlan.messages().stream()
                 .map(message -> "%s:\n%s".formatted(roleLabel(message.role()), messageText(message)))
                 .reduce("%s\n\n%s"::formatted)
                 .orElse("");
@@ -429,8 +440,12 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 .formatted(transcript);
     }
 
-    private String messageText(Message message) {
-        return message.parts().isEmpty() ? message.content() : ProviderAttachmentSupport.textProjection(message.parts());
+    private String messageText(ProjectedMessage message) {
+        return message.parts().stream()
+                .map(AttachmentProjectionPlan::textFallback)
+                .filter(StringUtils::isNotBlank)
+                .reduce("%s\n%s"::formatted)
+                .orElse("");
     }
 
     private String roleLabel(Role role) {

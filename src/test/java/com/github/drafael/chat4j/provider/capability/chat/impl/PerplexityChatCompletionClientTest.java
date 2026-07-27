@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -13,15 +15,150 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PerplexityChatCompletionClientTest {
+
+    @Test
+    @DisplayName("Logical cancellation cancels the HTTP future without interrupting the worker")
+    void waitForResponse_whenLogicallyCancelled_cancelsFutureWithoutInterruptingThread() throws Exception {
+        var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
+        var future = new CompletableFuture<HttpResponse<String>>();
+        Method waitForResponse = PerplexityChatCompletionClient.class.getDeclaredMethod(
+                "waitForResponse",
+                CompletableFuture.class,
+                BooleanSupplier.class
+        );
+        waitForResponse.setAccessible(true);
+
+        assertThatThrownBy(() -> waitForResponse.invoke(subject, future, (BooleanSupplier) () -> true))
+                .hasRootCauseInstanceOf(InterruptedException.class);
+
+        assertThat(future).isCancelled();
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+    }
+
+    @Test
+    @DisplayName("A real interrupt cancels the HTTP future and preserves interrupt status")
+    void waitForResponse_whenThreadIsInterrupted_cancelsFutureAndPreservesInterrupt() throws Exception {
+        var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
+        var future = new CompletableFuture<HttpResponse<String>>();
+        Method waitForResponse = PerplexityChatCompletionClient.class.getDeclaredMethod(
+                "waitForResponse",
+                CompletableFuture.class,
+                BooleanSupplier.class
+        );
+        waitForResponse.setAccessible(true);
+
+        try {
+            Thread.currentThread().interrupt();
+            assertThatThrownBy(() -> waitForResponse.invoke(subject, future, (BooleanSupplier) () -> false))
+                    .hasRootCauseInstanceOf(InterruptedException.class);
+            assertThat(future).isCancelled();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    @DisplayName("Cancellation after a completed deep-research response suppresses callbacks")
+    void streamCompletion_whenDeepResearchCompletesAsCancellationArrives_emitsNothing() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/async/sonar", exchange -> {
+            byte[] body = """
+                    {
+                      "id": "async-123",
+                      "completed_at": 456,
+                      "status": "COMPLETED",
+                      "response": {
+                        "choices": [{"message": {"content": "late answer"}}],
+                        "search_results": [{"title": "Source", "url": "https://example.test/source"}]
+                      }
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
+            var cancelled = new AtomicBoolean();
+            StringBuilder output = new StringBuilder();
+            List<CitationRef> citations = new CopyOnWriteArrayList<>();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort()), "sonar-deep-research"),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    output::append,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    citations::add,
+                    cancelled::get,
+                    ignored -> {
+                    },
+                    () -> cancelled.set(true)
+            );
+
+            assertThat(output).isEmpty();
+            assertThat(citations).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Unrecognized Perplexity errors do not expose raw response content")
+    void streamCompletion_whenErrorResponseIsUnrecognized_usesStatusOnlyError() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = "private echoed prompt\n\u001b[31msecret".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(500, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
+
+            assertThatThrownBy(() -> subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            )).isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Perplexity chat failed: HTTP 500")
+                    .hasMessageNotContaining("private echoed prompt")
+                    .hasMessageNotContaining("secret");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Perplexity chat client de-duplicates sources by normalized URL")
@@ -46,7 +183,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
 
             subject.streamCompletion(
@@ -90,7 +227,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
 
             subject.streamCompletion(
@@ -109,6 +246,49 @@ class PerplexityChatCompletionClientTest {
 
             assertThat(output.toString()).contains("answer [1](<https://example.test/source_(one)>) next [1](<https://example.test/source_(one)>)");
             assertThat(output.toString().split("https://example.test/source_\\(one\\)", -1)).hasSize(4);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Overflowing Perplexity citation markers remain literal")
+    void streamCompletion_whenCitationMarkerExceedsIntegerRange_preservesMarker() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            byte[] body = """
+                    {
+                      "choices": [{"message": {"content": "answer [999999999999999999999] and [1]"}}],
+                      "search_results": [{"title": "One", "url": "https://example.test/source"}]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
+            StringBuilder output = new StringBuilder();
+
+            subject.streamCompletion(
+                    runtime("http://127.0.0.1:%d".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    output::append,
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(output).asString()
+                    .contains("answer [999999999999999999999] and [1](<https://example.test/source>)");
         } finally {
             server.stop(0);
         }
@@ -140,7 +320,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
             List<CitationRef> citations = new CopyOnWriteArrayList<>();
 
@@ -205,7 +385,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
 
             subject.streamCompletion(
@@ -251,7 +431,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
             List<CitationRef> citations = new CopyOnWriteArrayList<>();
 
@@ -304,7 +484,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
             StringBuilder thinking = new StringBuilder();
 
@@ -347,7 +527,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
             StringBuilder thinking = new StringBuilder();
 
@@ -414,7 +594,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
             List<CitationRef> citations = new CopyOnWriteArrayList<>();
 
@@ -470,7 +650,7 @@ class PerplexityChatCompletionClientTest {
         server.start();
 
         try {
-            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient();
+            PerplexityChatCompletionClient subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
             StringBuilder output = new StringBuilder();
 
             subject.streamCompletion(

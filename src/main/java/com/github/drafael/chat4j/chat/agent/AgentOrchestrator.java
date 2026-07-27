@@ -10,6 +10,7 @@ import org.apache.commons.lang3.Validate;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static java.lang.Math.min;
@@ -27,10 +28,6 @@ public final class AgentOrchestrator {
     public AgentOrchestrator(@NonNull AgentProviderAdapterFactory adapterFactory, @NonNull LocalToolRuntime toolRuntime) {
         this.adapterFactory = adapterFactory;
         this.toolRuntime = toolRuntime;
-    }
-
-    public static AgentOrchestrator createDefault() {
-        return new AgentOrchestrator(new AgentProviderAdapterFactory(), new LocalToolRuntime());
     }
 
     public void streamCompletion(
@@ -63,11 +60,14 @@ public final class AgentOrchestrator {
         int repeatedToolBatchCount = 0;
 
         for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
-            if (request.isCancelled().getAsBoolean()) {
+            if (shouldStop(request)) {
                 return;
             }
 
             AgentTurnResult turnResult = adapter.executeTurn(request.withToolResults(toolResults), callbacks);
+            if (shouldStop(request)) {
+                return;
+            }
             List<ToolInvocationRequest> toolInvocations = turnResult.toolInvocations();
 
             if (toolInvocations.isEmpty()) {
@@ -91,20 +91,33 @@ public final class AgentOrchestrator {
                         modelId,
                         repeatedToolBatchCount,
                         summarizeToolInvocations(toolInvocations));
-                emitSkippedToolActivities(toolInvocations, callbacks, "Loop guard skipped repeated read-only tool call");
+                emitSkippedToolActivities(
+                        toolInvocations,
+                        callbacks,
+                        request,
+                        "Loop guard skipped repeated read-only tool call"
+                );
+                if (shouldStop(request)) {
+                    return;
+                }
                 toolResults = loopGuardResults(toolInvocations, repeatedToolBatchCount);
             } else {
                 toolResults = toolInvocations.stream()
+                        .takeWhile(ignored -> !shouldStop(request))
                         .map(toolInvocation -> executeToolInvocation(toolInvocation, projectRoot, request, callbacks))
+                        .flatMap(Optional::stream)
                         .toList();
             }
         }
 
-        if (request.isCancelled().getAsBoolean()) {
+        if (shouldStop(request)) {
             return;
         }
 
         AgentTurnResult finalTurnResult = adapter.executeTurn(request.withToolResults(toolResults), callbacks);
+        if (shouldStop(request)) {
+            return;
+        }
         if (finalTurnResult.toolInvocations().isEmpty()) {
             if (finalTurnResult.completed()) {
                 callbacks.onComplete().run();
@@ -128,11 +141,17 @@ public final class AgentOrchestrator {
             emitSkippedToolActivities(
                     finalTurnResult.toolInvocations(),
                     callbacks,
+                    request,
                     "Loop guard stopped repeated read-only tool calls"
             );
+            if (shouldStop(request)) {
+                return;
+            }
             callbacks.onToken().accept("\n\n[Agent notice: Repeated read-only tool calls were stopped to avoid a loop. "
                     + "Proceeding with the best available context.]\n");
-            callbacks.onComplete().run();
+            if (!shouldStop(request)) {
+                callbacks.onComplete().run();
+            }
             return;
         }
 
@@ -145,29 +164,43 @@ public final class AgentOrchestrator {
                         toolSummary
                 );
         log.warn(message);
-        callbacks.onError().accept(new IllegalStateException(message));
+        if (!shouldStop(request)) {
+            callbacks.onError().accept(new IllegalStateException(message));
+        }
     }
 
-    private ToolInvocationResult executeToolInvocation(
+    private Optional<ToolInvocationResult> executeToolInvocation(
             ToolInvocationRequest toolInvocation,
             Path projectRoot,
             AgentRunRequest request,
             AgentRunCallbacks callbacks
     ) {
+        if (shouldStop(request)) {
+            return Optional.empty();
+        }
         callbacks.onToolActivity().accept(AgentToolActivityFormatter.started(toolInvocation));
         ToolInvocationResult result = toolRuntime.execute(toolInvocation, projectRoot, request.isCancelled());
+        if (shouldStop(request)) {
+            return Optional.empty();
+        }
         callbacks.onToolActivity().accept(AgentToolActivityFormatter.completed(toolInvocation, result));
-        return result;
+        return Optional.of(result);
     }
 
     private void emitSkippedToolActivities(
             List<ToolInvocationRequest> toolInvocations,
             AgentRunCallbacks callbacks,
+            AgentRunRequest request,
             String message
     ) {
         toolInvocations.stream()
+                .takeWhile(ignored -> !shouldStop(request))
                 .map(toolInvocation -> AgentToolActivityFormatter.skipped(toolInvocation, message))
                 .forEach(callbacks.onToolActivity());
+    }
+
+    private boolean shouldStop(AgentRunRequest request) {
+        return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
     private String toolBatchSignature(List<ToolInvocationRequest> toolInvocations) {

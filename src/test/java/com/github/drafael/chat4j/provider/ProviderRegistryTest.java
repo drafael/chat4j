@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry.ProviderRuntimeConfig;
@@ -109,12 +111,14 @@ class ProviderRegistryTest {
     private ProviderRegistry registry(String prefix) {
         ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("%scredentials".formatted(prefix))));
         CredentialResolver credentialResolver = new CredentialResolver(vault, emptyMap(), emptyMap());
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         return new ProviderRegistry(
                 new CopilotAuthResolver(tempDir.resolve("%scopilot-home".formatted(prefix)), emptyMap(), HttpClient.newHttpClient()),
                 new CodexAuthResolver(tempDir.resolve("%scodex-home".formatted(prefix)), emptyMap(), HttpClient.newHttpClient()),
                 new CopilotModelMetadataStore(tempDir.resolve("%smetadata".formatted(prefix))),
                 credentialResolver,
-                emptyMap()
+                emptyMap(),
+                attachmentAuthority
         );
     }
 

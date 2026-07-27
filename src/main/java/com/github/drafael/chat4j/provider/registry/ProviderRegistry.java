@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
@@ -64,7 +65,8 @@ public class ProviderRegistry {
             @NonNull CodexAuthResolver codexAuthResolver,
             @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
             @NonNull CredentialResolver credentialResolver,
-            @NonNull Map<String, String> subprocessEnvironment
+            @NonNull Map<String, String> subprocessEnvironment,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
         this(
                 new ProviderCatalog(
@@ -72,7 +74,8 @@ public class ProviderRegistry {
                         codexAuthResolver,
                         copilotModelMetadataStore,
                         credentialResolver,
-                        subprocessEnvironment
+                        subprocessEnvironment,
+                        attachmentSupport
                 ),
                 new ProviderRuntimePolicy(copilotAuthResolver, codexAuthResolver, credentialResolver)
         );

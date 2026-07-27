@@ -9,7 +9,7 @@ import org.apache.commons.lang3.StringUtils;
 
 class AttachmentSelectionPolicy {
 
-    private static final long MAX_ATTACHMENT_BYTES = 20L * 1024L * 1024L;
+    static final long MAX_ATTACHMENT_BYTES = 20L * 1024L * 1024L;
     private static final Set<String> BLOCKED_EXTENSIONS = Set.of("exe", "app", "dmg", "pkg", "bat", "cmd", "command", "msi");
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
             "txt", "md", "markdown", "rst", "adoc", "rtf", "pdf", "csv", "tsv",

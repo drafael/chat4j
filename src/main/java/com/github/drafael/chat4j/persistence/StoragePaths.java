@@ -2,7 +2,7 @@ package com.github.drafael.chat4j.persistence;
 
 import java.nio.file.Path;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
+import org.apache.commons.lang3.SystemUtils;
 
 public final class StoragePaths {
 
@@ -25,23 +25,29 @@ public final class StoragePaths {
 
     public static StoragePaths defaultPaths() {
         return defaultPaths(
-                System.getProperty("os.name"),
+                SystemUtils.IS_OS_WINDOWS,
                 System.getProperty("user.home"),
                 System.getenv("XDG_CONFIG_HOME"),
                 System.getenv(WINDOWS_APPDATA_ENV)
         );
     }
 
-    static StoragePaths defaultPaths(String osName, String userHome, String xdgConfigHome, String windowsAppData) {
-        if (Strings.CI.contains(osName, "win")) {
+    static StoragePaths defaultPaths(
+            boolean windows,
+            String userHome,
+            String xdgConfigHome,
+            String windowsAppData
+    ) {
+        if (windows) {
             Path windowsConfigHome = StringUtils.isNotBlank(windowsAppData)
                     ? Path.of(windowsAppData)
-                    : Path.of(userHome, "AppData", "Roaming");
+                    : requiredHomePath(userHome, "AppData", "Roaming");
             return new StoragePaths(windowsConfigHome);
         }
-        return StringUtils.isNotBlank(xdgConfigHome)
-            ? new StoragePaths(Path.of(xdgConfigHome))
-            : new StoragePaths(Path.of(userHome, ".config"));
+        Path configHome = StringUtils.isNotBlank(xdgConfigHome)
+                ? Path.of(xdgConfigHome)
+                : requiredHomePath(userHome, ".config");
+        return new StoragePaths(configHome);
     }
 
     public Path appConfigDirectory() {
@@ -90,6 +96,13 @@ public final class StoragePaths {
 
     public Path attachmentsDirectory() {
         return appConfigDirectory().resolve("attachments");
+    }
+
+    private static Path requiredHomePath(String userHome, String... children) {
+        if (StringUtils.isBlank(userHome)) {
+            throw new IllegalStateException("No durable configuration home is available");
+        }
+        return Path.of(userHome, children);
     }
 
     public Path jcefBundleDirectory() {

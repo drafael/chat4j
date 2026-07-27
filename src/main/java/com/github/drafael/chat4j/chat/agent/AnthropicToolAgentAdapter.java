@@ -3,24 +3,29 @@ package com.github.drafael.chat4j.chat.agent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.chat.render.BoundedUtf8;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.joining;
 
 final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
@@ -40,44 +45,89 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
     private final String apiKey;
     private final String systemPromptAppend;
     private final AuthMode authMode;
+    private final ProviderAttachmentSupport attachmentSupport;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
     private List<Map<String, Object>> pendingToolUses = emptyList();
 
-    AnthropicToolAgentAdapter(String modelId, String baseUrl, String apiKey) {
-        this(modelId, baseUrl, apiKey, "");
+    AnthropicToolAgentAdapter(
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            @NonNull ProviderAttachmentSupport attachmentSupport
+    ) {
+        this(modelId, baseUrl, apiKey, "", AuthMode.ANTHROPIC_API_KEY, attachmentSupport);
     }
 
-    AnthropicToolAgentAdapter(String modelId, String baseUrl, String apiKey, String systemPromptAppend) {
-        this(modelId, baseUrl, apiKey, systemPromptAppend, AuthMode.ANTHROPIC_API_KEY);
+    AnthropicToolAgentAdapter(
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            String systemPromptAppend,
+            @NonNull ProviderAttachmentSupport attachmentSupport
+    ) {
+        this(modelId, baseUrl, apiKey, systemPromptAppend, AuthMode.ANTHROPIC_API_KEY, attachmentSupport);
     }
 
-    static AnthropicToolAgentAdapter forCopilot(String modelId, String baseUrl, String apiKey, String systemPromptAppend) {
-        return new AnthropicToolAgentAdapter(modelId, baseUrl, apiKey, systemPromptAppend, AuthMode.COPILOT_BEARER);
+    static AnthropicToolAgentAdapter forCopilot(
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            String systemPromptAppend,
+            @NonNull ProviderAttachmentSupport attachmentSupport
+    ) {
+        return new AnthropicToolAgentAdapter(
+                modelId,
+                baseUrl,
+                apiKey,
+                systemPromptAppend,
+                AuthMode.COPILOT_BEARER,
+                attachmentSupport
+        );
     }
 
-    private AnthropicToolAgentAdapter(String modelId, String baseUrl, String apiKey, String systemPromptAppend, AuthMode authMode) {
+    private AnthropicToolAgentAdapter(
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            String systemPromptAppend,
+            AuthMode authMode,
+            ProviderAttachmentSupport attachmentSupport
+    ) {
         this.modelId = StringUtils.defaultString(modelId);
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.apiKey = apiKey;
         this.systemPromptAppend = StringUtils.defaultString(systemPromptAppend);
         this.authMode = authMode;
+        this.attachmentSupport = attachmentSupport;
     }
 
     @Override
     public AgentTurnResult executeTurn(AgentRunRequest request, AgentRunCallbacks callbacks) {
         try {
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             if (!request.toolResults().isEmpty() && !pendingToolUses.isEmpty()) {
                 appendToolExchange(request.toolResults());
             }
 
+            AttachmentProjectionPlan projectionPlan = AttachmentProjectionPlan.create(
+                    request.history(),
+                    attachmentSupport,
+                    AttachmentProjectionPlan.metadataOnly(),
+                    request.isCancelled()
+            );
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("model", modelId);
             payload.put("max_tokens", 4096);
-            payload.put("messages", buildMessages(request.history()));
+            payload.put("messages", buildMessages(projectionPlan));
             payload.put("tools", toolDefinitions());
             payload.put("tool_choice", Map.of("type", "auto"));
 
-            String systemPrompt = resolveSystemPrompt(request.history());
+            String systemPrompt = resolveSystemPrompt(projectionPlan);
             payload.put("system", mergeSystemPrompt(systemPrompt, request));
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
@@ -89,24 +139,36 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
             applyAuthHeaders(requestBuilder);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
+            AgentHttpSupport.Response response = AgentHttpSupport.send(
+                    HTTP_CLIENT,
                     requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+                    request.isCancelled()
             );
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("Anthropic tool turn failed (%d): %s"
-                        .formatted(response.statusCode(), response.body()));
+                throw new IllegalStateException("Anthropic tool turn failed (%d): %s".formatted(
+                        response.statusCode(),
+                        BoundedUtf8.presentation(response.body(), 512, 2_048)
+                ));
             }
 
             JsonNode root = JSON.readTree(response.body());
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             JsonNode contentNode = root.path("content");
             String assistantText = extractAssistantText(contentNode);
-            if (StringUtils.isNotBlank(assistantText)) {
+            if (StringUtils.isNotBlank(assistantText) && !shouldStop(request)) {
                 callbacks.onToken().accept(assistantText);
             }
 
             List<ToolInvocationRequest> toolInvocations = extractToolInvocations(contentNode);
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             if (!toolInvocations.isEmpty()) {
                 pendingToolUses = toPendingToolUses(contentNode);
                 return AgentTurnResult.continueWithTools(toolInvocations);
@@ -114,10 +176,21 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
 
             pendingToolUses = emptyList();
             return AgentTurnResult.complete();
+        } catch (CancellationException e) {
+            return new AgentTurnResult(false, emptyList());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new AgentTurnResult(false, emptyList());
         } catch (Exception e) {
-            callbacks.onError().accept(e);
+            if (!shouldStop(request)) {
+                callbacks.onError().accept(e);
+            }
             return new AgentTurnResult(false, emptyList());
         }
+    }
+
+    private boolean shouldStop(AgentRunRequest request) {
+        return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
     private void applyAuthHeaders(HttpRequest.Builder requestBuilder) {
@@ -134,12 +207,13 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         requestBuilder.header("x-api-key", apiKey);
     }
 
-    private String resolveSystemPrompt(List<Message> history) {
-        return history.stream()
+    private String resolveSystemPrompt(AttachmentProjectionPlan projectionPlan) {
+        return projectionPlan.messages().stream()
                 .filter(message -> message.role() == Role.SYSTEM)
-                .map(Message::content)
-                .findFirst()
-                .orElse("");
+                .flatMap(message -> message.parts().stream())
+                .map(AttachmentProjectionPlan::textFallback)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n"));
     }
 
     private String mergeSystemPrompt(String userSystemPrompt, AgentRunRequest request) {
@@ -151,8 +225,8 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         return "%s\n\n%s".formatted(basePrompt, userSystemPrompt.trim());
     }
 
-    private List<Map<String, Object>> buildMessages(List<Message> history) {
-        List<Map<String, Object>> base = history.stream()
+    private List<Map<String, Object>> buildMessages(AttachmentProjectionPlan projectionPlan) {
+        List<Map<String, Object>> base = projectionPlan.messages().stream()
                 .filter(message -> message.role() != Role.SYSTEM)
                 .map(this::toAnthropicMessage)
                 .toList();
@@ -162,12 +236,17 @@ final class AnthropicToolAgentAdapter implements AgentProviderAdapter {
         return combined;
     }
 
-    private Map<String, Object> toAnthropicMessage(Message message) {
+    private Map<String, Object> toAnthropicMessage(ProjectedMessage message) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("role", message.role() == Role.ASSISTANT ? "assistant" : "user");
-        payload.put("content", List.of(Map.of("type", "text", "text", StringUtils.defaultString(message.content()))));
+        String content = message.parts().stream()
+                .map(AttachmentProjectionPlan::textFallback)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n"));
+        payload.put("content", List.of(Map.of("type", "text", "text", content)));
         return payload;
     }
+
 
     private void appendToolExchange(List<ToolInvocationResult> toolResults) {
         Map<String, Object> assistantMessage = new LinkedHashMap<>();

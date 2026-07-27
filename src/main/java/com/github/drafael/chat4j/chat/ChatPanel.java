@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.chat;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
+import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
 import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
 import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
@@ -38,6 +40,7 @@ import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEnt
 import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -61,6 +64,7 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
@@ -186,7 +190,7 @@ public class ChatPanel extends JPanel {
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
     private final ProviderRegistry providerRegistry;
-    private final AttachmentStager attachmentStager = new AttachmentStager();
+    private final AttachmentStager attachmentStager;
     private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
     private final WebSearchCoordinator webSearchCoordinator;
     private final ChatMessageViewFactory messageViewFactory;
@@ -198,6 +202,7 @@ public class ChatPanel extends JPanel {
     private final CodexAuthResolver codexAuthResolver;
     private final CopilotAuthResolver copilotAuthResolver;
     private final CredentialResolver credentialResolver;
+    private final AgentOrchestrator configuredAgentOrchestrator;
     private volatile AgentOrchestrator agentOrchestrator;
     private volatile String agentSystemPromptAppend = "";
     private final List<ChatMessageView> assistantBubbles = new ArrayList<>();
@@ -358,7 +363,9 @@ public class ChatPanel extends JPanel {
             @NonNull ProviderRegistry providerRegistry,
             @NonNull CopilotAuthResolver copilotAuthResolver,
             @NonNull CodexAuthResolver codexAuthResolver,
-            @NonNull CredentialResolver credentialResolver
+            @NonNull CredentialResolver credentialResolver,
+            @NonNull StoragePaths storagePaths,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
@@ -366,6 +373,7 @@ public class ChatPanel extends JPanel {
         this.copilotAuthResolver = copilotAuthResolver;
         this.codexAuthResolver = codexAuthResolver;
         this.credentialResolver = credentialResolver;
+        this.attachmentStager = new AttachmentStager(storagePaths);
         this.webSearchCoordinator = new WebSearchCoordinator(
                 List.of(new PerplexityWebSearchProvider(credentialResolver))
         );
@@ -381,7 +389,11 @@ public class ChatPanel extends JPanel {
         if (this.jcefBrowserView != null) {
             this.jcefBrowserView.setActionListener(this::handleWebTranscriptAction);
         }
-        this.agentOrchestrator = AgentOrchestrator.createDefault();
+        this.configuredAgentOrchestrator = new AgentOrchestrator(
+                new AgentProviderAdapterFactory(attachmentSupport),
+                new LocalToolRuntime()
+        );
+        this.agentOrchestrator = configuredAgentOrchestrator;
         setLayout(new BorderLayout());
 
         modelSelectorBtn = new ModelSelectorButton();
@@ -1525,7 +1537,7 @@ public class ChatPanel extends JPanel {
                 session.provider.streamCompletion(
                         effectiveHistory,
                         sendJob.reasoningLevel,
-                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob, requestHistory), sendJob.webSearchOptionId),
+                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob), sendJob.webSearchOptionId),
                         callbacks.onToken(),
                         callbacks.onThinkingToken(),
                         callbacks.onPart(),
@@ -1656,7 +1668,7 @@ public class ChatPanel extends JPanel {
         }
 
         if (!Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
-            if (nativeWebSearchEnabled(sendJob, requestHistory)) {
+            if (nativeWebSearchEnabled(sendJob)) {
                 recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
             }
             return requestHistory;
@@ -1669,7 +1681,7 @@ public class ChatPanel extends JPanel {
                     query,
                     Math.max(1, sendJob.webBrowseTopN),
                     isCancelled,
-                    new ModelWebQueryPlanner(sendJob.provider, requestHistory)
+                    new ModelWebQueryPlanner(sessionScopedProvider(session), requestHistory)
             );
         } catch (Exception e) {
             ensureNotCancelled(isCancelled);
@@ -1690,19 +1702,11 @@ public class ChatPanel extends JPanel {
         return withWebContextMessage(requestHistory, context);
     }
 
-    private boolean nativeWebSearchEnabled(SendJob sendJob, List<Message> requestHistory) {
+    private boolean nativeWebSearchEnabled(SendJob sendJob) {
         if (!sendJob.webSearchEnabled || !Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)) {
             return false;
         }
-        if (!nativeWebSearchSupported(sendJob)) {
-            return false;
-        }
-        if (!Strings.CS.equals(sendJob.providerName, "OpenAI") && !Strings.CS.equals(sendJob.providerName, "xAI")) {
-            return true;
-        }
-        return requestHistory.stream()
-                .flatMap(message -> message.parts().stream())
-                .allMatch(part -> part instanceof TextPart);
+        return nativeWebSearchSupported(sendJob);
     }
 
     private boolean nativeWebSearchSupported(SendJob sendJob) {
@@ -3856,6 +3860,9 @@ public class ChatPanel extends JPanel {
 
     private void handleWebTranscriptAction(String action, int messageIndex, String text) {
         SwingUtilities.invokeLater(() -> {
+            if (removed || shutdownInProgress) {
+                return;
+            }
             if (Strings.CS.equals(action, WEBVIEW_POINTER_DOWN_ACTION)) {
                 hideModelPopup();
                 return;
@@ -4016,9 +4023,8 @@ public class ChatPanel extends JPanel {
                 message,
                 "Diagram is too large.",
                 "Unsupported diagram type.",
-                "Diagram SVG is missing.",
-                "Diagram SVG is too large.",
-                "Diagram SVG contains unsupported active content.",
+                "Diagram source is missing.",
+                "Diagram source is too large.",
                 "Opening diagrams is not supported on this system.",
                 "Unable to open diagram."
         ) ? message : "Unable to open diagram.";
@@ -5046,7 +5052,7 @@ public class ChatPanel extends JPanel {
     }
 
     void setAgentOrchestratorForTests(AgentOrchestrator agentOrchestrator) {
-        this.agentOrchestrator = agentOrchestrator == null ? AgentOrchestrator.createDefault() : agentOrchestrator;
+        this.agentOrchestrator = agentOrchestrator == null ? configuredAgentOrchestrator : agentOrchestrator;
     }
 
     public void setAgentSystemPromptAppend(String agentSystemPromptAppend) {

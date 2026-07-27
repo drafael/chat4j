@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.7.56</version>
+    <version>26.7.57</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -25,6 +25,7 @@
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.22.2</jsoup.version>
         <pdfbox.version>3.0.8</pdfbox.version>
+        <twelvemonkeys.version>3.13.0</twelvemonkeys.version>
         <jlayer.version>1.0.1</jlayer.version>
         <swingwebview.version>1.0.11</swingwebview.version>
         <jna.version>5.19.1</jna.version>
@@ -156,6 +157,11 @@
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>${pdfbox.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.twelvemonkeys.imageio</groupId>
+            <artifactId>imageio-webp</artifactId>
+            <version>${twelvemonkeys.version}</version>
         </dependency>
         <dependency>
             <groupId>javazoom</groupId>
@@ -367,6 +373,26 @@
                         <argument>--enable-preview</argument>
                     </arguments>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>verify-isolated-shaded-runtime</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${maven.test.skip}</skip>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>--enable-preview</argument>
+                                <argument>-cp</argument>
+                                <argument>${project.build.testOutputDirectory}</argument>
+                                <argument>com.github.drafael.chat4j.verification.ShadedArtifactVerifier</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

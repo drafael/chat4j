@@ -5,36 +5,49 @@ import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
-import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.GeneratedImageAttachmentWriter;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class GoogleAiGenerateContentClientTest {
 
@@ -47,9 +60,51 @@ class GoogleAiGenerateContentClientTest {
     }
 
     @Test
+    @DisplayName("An interrupted worker does not start a Google native request")
+    void streamCompletion_whenWorkerIsInterrupted_doesNotStartHttpRequest() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        var authority = ProviderAttachmentTestSupport.authority();
+        var subject = new GoogleAiGenerateContentClient(
+                failingFallbackClient(),
+                httpClient,
+                authority,
+                mock(GeneratedImageAttachmentWriter.class)
+        );
+
+        Thread.currentThread().interrupt();
+        try {
+            subject.streamCompletion(
+                    runtime("http://localhost/v1beta/openai"),
+                    List.of(Message.user("Draw a cat")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+        } finally {
+            Thread.interrupted();
+        }
+
+        verifyNoInteractions(httpClient);
+    }
+
+    @Test
     @DisplayName("Google native response emits text and generated image parts")
-    void streamCompletion_whenGoogleReturnsTextAndInlineImage_emitsTextAndGeneratedImagePart() throws Exception {
-        byte[] imageBytes = "fake-image".getBytes(StandardCharsets.UTF_8);
+    void streamCompletion_whenGoogleReturnsTextAndInlineImage_emitsTextAndGeneratedImagePart(
+            @TempDir Path tempDir
+    ) throws Exception {
+        byte[] imageBytes = pngBytes();
         String responseBody = """
                 {
                   "candidates": [{
@@ -57,7 +112,7 @@ class GoogleAiGenerateContentClientTest {
                       "parts": [
                         {"thought": true, "text": "Planning the image."},
                         {"text": "Here it is"},
-                        {"inlineData": {"mimeType": "image/jpeg", "data": "%s"}}
+                        {"inlineData": {"mimeType": "image/png", "data": "%s"}}
                       ]
                     }
                   }]
@@ -74,10 +129,15 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var attachment = new AttachmentRef(UUID.randomUUID(), "/tmp/generated.jpg", "generated.jpg", "image/jpeg", imageBytes.length, "sha");
-            GeneratedImageAttachmentWriter imageWriter = mock(GeneratedImageAttachmentWriter.class);
-            when(imageWriter.write(any(byte[].class), eq("image/jpeg"))).thenReturn(attachment);
-            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(), HttpClient.newHttpClient(), imageWriter);
+            Path attachmentRoot = Files.createDirectories(tempDir.resolve("attachments"));
+            var attachmentAuthority = new ProviderAttachmentSupport(attachmentRoot);
+            var imageWriter = new GeneratedImageAttachmentWriter(attachmentAuthority);
+            var subject = new GoogleAiGenerateContentClient(
+                    new OpenAiChatCompletionClient(attachmentAuthority),
+                    HttpClient.newHttpClient(),
+                    attachmentAuthority,
+                    imageWriter
+            );
             List<String> tokens = new ArrayList<>();
             List<String> thinkingTokens = new ArrayList<>();
             List<GeneratedImagePart> images = new ArrayList<>();
@@ -103,11 +163,204 @@ class GoogleAiGenerateContentClientTest {
 
             assertThat(thinkingTokens).containsExactly("Planning the image.");
             assertThat(tokens).containsExactly("Here it is");
-            assertThat(images).containsExactly(new GeneratedImagePart(attachment, null, null, "Generated image"));
+            assertThat(images).singleElement().satisfies(image -> {
+                assertThat(image.width()).isEqualTo(1);
+                assertThat(image.height()).isEqualTo(1);
+                assertThat(image.altText()).isEqualTo("Generated image");
+                Path storedImage = Path.of(image.attachmentRef().storagePath());
+                assertThat(storedImage).startsWith(attachmentRoot).isRegularFile();
+            });
             assertThat(requestBody.get()).contains("\"responseModalities\":[\"TEXT\",\"IMAGE\"]");
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Generated images are discarded when the caller has no part receiver")
+    void streamCompletion_whenNoPartCallbackExists_discardsGeneratedImage(@TempDir Path tempDir) throws Exception {
+        String responseBody = """
+                {
+                  "candidates": [{
+                    "content": {"parts": [
+                      {"inlineData": {"mimeType": "image/png", "data": "%s"}}
+                    ]}
+                  }]
+                }
+                """.formatted(Base64.getEncoder().encodeToString(pngBytes()));
+        HttpServer server = responseServer(responseBody, 200);
+        Path attachmentRoot = Files.createDirectories(tempDir.resolve("attachments"));
+        var attachmentAuthority = new ProviderAttachmentSupport(attachmentRoot);
+        var subject = new GoogleAiGenerateContentClient(
+                new OpenAiChatCompletionClient(attachmentAuthority),
+                HttpClient.newHttpClient(),
+                attachmentAuthority,
+                new GeneratedImageAttachmentWriter(attachmentAuthority)
+        );
+        try {
+            subject.streamCompletion(
+                    runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("Draw a cat")),
+                    ReasoningLevel.OFF,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    stream -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            try (var paths = Files.walk(attachmentRoot)) {
+                assertThat(paths.filter(Files::isRegularFile)).isEmpty();
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Generated image ownership transfers before an application callback can fail")
+    void emitValidatedParts_whenCallbackStoresThenThrows_keepsDeliveredImage(@TempDir Path tempDir) throws Exception {
+        Path attachmentRoot = Files.createDirectories(tempDir.resolve("attachments"));
+        var attachmentAuthority = new ProviderAttachmentSupport(attachmentRoot);
+        var imageWriter = new GeneratedImageAttachmentWriter(attachmentAuthority);
+        var subject = new GoogleAiGenerateContentClient(
+                new OpenAiChatCompletionClient(attachmentAuthority),
+                HttpClient.newHttpClient(),
+                attachmentAuthority,
+                imageWriter
+        );
+        AttachmentRef ref = imageWriter.write(pngBytes(), "image/png");
+        var part = new GeneratedImagePart(ref, 1, 1, "Generated image");
+        Class<?> emissionType = Class.forName("%s$GoogleAiEmission".formatted(
+                GoogleAiGenerateContentClient.class.getName()
+        ));
+        Method partFactory = emissionType.getDeclaredMethod("part", ContentPart.class);
+        partFactory.setAccessible(true);
+        Object emission = partFactory.invoke(null, part);
+        Method emit = GoogleAiGenerateContentClient.class.getDeclaredMethod(
+                "emitValidatedParts",
+                List.class,
+                Consumer.class,
+                Consumer.class,
+                Consumer.class,
+                BooleanSupplier.class
+        );
+        emit.setAccessible(true);
+        AtomicReference<ContentPart> delivered = new AtomicReference<>();
+
+        assertThatThrownBy(() -> emit.invoke(
+                subject,
+                List.of(emission),
+                (Consumer<String>) ignored -> {
+                },
+                (Consumer<String>) ignored -> {
+                },
+                (Consumer<ContentPart>) value -> {
+                    delivered.set(value);
+                    throw new IllegalStateException("callback failed");
+                },
+                (BooleanSupplier) () -> false
+        )).hasRootCauseMessage("callback failed");
+
+        assertThat(delivered).hasValue(part);
+        assertThat(Path.of(ref.storagePath())).startsWith(attachmentRoot).isRegularFile();
+    }
+
+    @Test
+    @DisplayName("Unsupported inline response data emits a fixed warning in part order")
+    void streamCompletion_whenGoogleReturnsUnsupportedInlineData_emitsOrderedFixedWarning() throws Exception {
+        String responseBody = """
+                {
+                  "candidates": [{
+                    "content": {"parts": [
+                      {"text": "before"},
+                      {"inlineData": {"mimeType": "audio/wav", "data": "private-payload"}},
+                      {"text": "after"}
+                    ]}
+                  }]
+                }
+                """;
+        HttpServer server = responseServer(responseBody, 200);
+        try {
+            var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+            var subject = new GoogleAiGenerateContentClient(
+                    new OpenAiChatCompletionClient(attachmentAuthority),
+                    HttpClient.newHttpClient(),
+                    attachmentAuthority,
+                    mock(GeneratedImageAttachmentWriter.class)
+            );
+            List<String> tokens = new ArrayList<>();
+
+            subject.streamCompletion(
+                    runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("Generate mixed output")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    tokens::add,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(tokens).containsExactly(
+                    "before",
+                    "[Google AI returned unsupported inline data.]",
+                    "after"
+            ).noneMatch(token -> token.contains("audio/wav") || token.contains("private-payload"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Malformed and unrecognized Google errors never return raw response bodies")
+    void errorMessage_whenBodyIsMalformedOrUnrecognized_returnsFixedDiagnostic() throws Exception {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        var subject = new GoogleAiGenerateContentClient(
+                new OpenAiChatCompletionClient(attachmentAuthority),
+                HttpClient.newHttpClient(),
+                attachmentAuthority,
+                mock(GeneratedImageAttachmentWriter.class)
+        );
+        Method method = GoogleAiGenerateContentClient.class.getDeclaredMethod("errorMessage", String.class);
+        method.setAccessible(true);
+
+        assertThat(method.invoke(subject, "not-json private-inline-data"))
+                .isEqualTo("unparseable error response");
+        assertThat(method.invoke(subject, "{\"inlineData\":{\"data\":\"private-inline-data\"}}"))
+                .isEqualTo("unrecognized error response");
+        assertThat(method.invoke(subject, "{\"error\":{\"message\":\"safe message\\u0000\"}}"))
+                .isEqualTo("safe message");
+    }
+
+    @Test
+    @DisplayName("Generated image MIME declarations must be strict canonical values")
+    void canonicalGeneratedImageMime_whenCaseOrWhitespaceDiffers_rejectsDeclaration() throws Exception {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        var subject = new GoogleAiGenerateContentClient(
+                new OpenAiChatCompletionClient(attachmentAuthority),
+                HttpClient.newHttpClient(),
+                attachmentAuthority,
+                mock(GeneratedImageAttachmentWriter.class)
+        );
+        Method method = GoogleAiGenerateContentClient.class.getDeclaredMethod(
+                "canonicalGeneratedImageMime",
+                String.class
+        );
+        method.setAccessible(true);
+
+        assertThat(method.invoke(subject, "image/png")).isEqualTo(Optional.of("image/png"));
+        assertThat((Optional<?>) method.invoke(subject, " IMAGE/PNG ")).isEmpty();
     }
 
     @Test
@@ -140,7 +393,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(), HttpClient.newHttpClient(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(ProviderAttachmentTestSupport.authority()), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
             List<String> tokens = new ArrayList<>();
             List<CitationRef> citations = new ArrayList<>();
 
@@ -180,9 +433,9 @@ class GoogleAiGenerateContentClientTest {
     }
 
     @Test
-    @DisplayName("Google native web search falls back when Gemini returns only thinking content")
-    void streamCompletion_whenGoogleWebSearchReturnsNoAnswerContent_fallsBackWithoutNativeWebSearch() throws Exception {
-        String responseBody = """
+    @DisplayName("Google native web search retries the same projection when Gemini returns only thinking content")
+    void streamCompletion_whenGoogleWebSearchReturnsNoAnswerContent_reusesProjectionWithoutWebSearch() throws Exception {
+        String emptySearchResponse = """
                 {
                   "candidates": [{
                     "finishReason": "STOP",
@@ -191,10 +444,38 @@ class GoogleAiGenerateContentClientTest {
                   "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 4, "thoughtsTokenCount": 4, "totalTokenCount": 20}
                 }
                 """;
-        AtomicReference<String> requestBody = new AtomicReference<>("");
+        String retryResponse = """
+                {"candidates":[{"content":{"parts":[{"text":"Fallback answer"}]}}]}
+                """;
+        var authority = ProviderAttachmentTestSupport.authority();
+        Path attachmentFile = ProviderAttachmentTestSupport.managedRoot(authority)
+                .resolve(UUID.randomUUID().toString());
+        Files.writeString(attachmentFile, "attachment contents");
+        var attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                attachmentFile.toString(),
+                "notes.txt",
+                "text/plain",
+                Files.size(attachmentFile),
+                "sha"
+        );
+        Message message = new Message(
+                Role.USER,
+                List.of(new TextPart("Search Google"), new FilePart(attachment)),
+                Instant.now()
+        );
+        List<String> requestBodies = new ArrayList<>();
+        AtomicInteger requests = new AtomicInteger();
+        AtomicInteger registrations = new AtomicInteger();
+        AtomicInteger clears = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/v1beta/models/gemini-3.5-flash:generateContent", exchange -> {
-            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            int requestIndex = requests.getAndIncrement();
+            if (requestIndex == 0) {
+                Files.delete(attachmentFile);
+            }
+            String responseBody = requestIndex == 0 ? emptySearchResponse : retryResponse;
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, bytes.length);
             exchange.getResponseBody().write(bytes);
@@ -202,14 +483,18 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            AtomicReference<WebSearchRequestOptions> fallbackOptions = new AtomicReference<>();
-            var subject = new GoogleAiGenerateContentClient(fallbackClient(fallbackOptions), HttpClient.newHttpClient(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(
+                    failingFallbackClient(),
+                    HttpClient.newHttpClient(),
+                    authority,
+                    mock(GeneratedImageAttachmentWriter.class)
+            );
             List<String> tokens = new ArrayList<>();
             List<String> thinkingTokens = new ArrayList<>();
 
             subject.streamCompletion(
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-3.5-flash"),
-                    List.of(Message.user("Search Google")),
+                    List.of(message),
                     ReasoningLevel.OFF,
                     new WebSearchRequestOptions(true, "native"),
                     tokens::add,
@@ -219,25 +504,29 @@ class GoogleAiGenerateContentClientTest {
                     citation -> {
                     },
                     () -> false,
-                    stream -> {
-                    },
-                    () -> {
-                    }
+                    stream -> registrations.incrementAndGet(),
+                    clears::incrementAndGet
             );
 
             assertThat(tokens).containsExactly("Fallback answer");
             assertThat(thinkingTokens).isEmpty();
-            assertThat(fallbackOptions.get().enabled()).isFalse();
-            assertThat(requestBody.get()).contains("\"google_search\":{}");
+            assertThat(requestBodies).hasSize(2);
+            assertThat(registrations).hasValue(2);
+            assertThat(clears).hasValue(2);
+            assertThat(requestBodies.getFirst())
+                    .contains("\"google_search\":{}", "attachment contents");
+            assertThat(requestBodies.getLast())
+                    .contains("attachment contents")
+                    .doesNotContain("\"google_search\":{}");
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    @DisplayName("Google native web search falls back when Gemini filters generated content for recitation")
-    void streamCompletion_whenGoogleWebSearchResponseIsRecitationFiltered_fallsBackWithoutNativeWebSearch() throws Exception {
-        String responseBody = """
+    @DisplayName("Google native web search retries without search when Gemini filters content for recitation")
+    void streamCompletion_whenGoogleWebSearchResponseIsRecitationFiltered_retriesWithoutWebSearch() throws Exception {
+        String recitationResponse = """
                 {
                   "candidates": [{
                     "finishReason": "RECITATION",
@@ -246,8 +535,13 @@ class GoogleAiGenerateContentClientTest {
                   "usageMetadata": {"promptTokenCount": 143, "candidatesTokenCount": 0, "thoughtsTokenCount": 1517, "totalTokenCount": 1660}
                 }
                 """;
+        String retryResponse = """
+                {"candidates":[{"content":{"parts":[{"text":"Fallback answer"}]}}]}
+                """;
+        AtomicInteger requests = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/v1beta/models/gemini-3.1-pro-preview:generateContent", exchange -> {
+            String responseBody = requests.getAndIncrement() == 0 ? recitationResponse : retryResponse;
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, bytes.length);
             exchange.getResponseBody().write(bytes);
@@ -255,8 +549,12 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            AtomicReference<WebSearchRequestOptions> fallbackOptions = new AtomicReference<>();
-            var subject = new GoogleAiGenerateContentClient(fallbackClient(fallbackOptions), HttpClient.newHttpClient(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(
+                    failingFallbackClient(),
+                    HttpClient.newHttpClient(),
+                    ProviderAttachmentTestSupport.authority(),
+                    mock(GeneratedImageAttachmentWriter.class)
+            );
             List<String> tokens = new ArrayList<>();
 
             subject.streamCompletion(
@@ -279,7 +577,7 @@ class GoogleAiGenerateContentClientTest {
             );
 
             assertThat(tokens).containsExactly("Fallback answer");
-            assertThat(fallbackOptions.get().enabled()).isFalse();
+            assertThat(requests).hasValue(2);
         } finally {
             server.stop(0);
         }
@@ -302,7 +600,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
 
             assertThatThrownBy(() -> subject.streamCompletion(
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-2.5-flash"),
@@ -351,7 +649,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
             List<String> thinkingTokens = new ArrayList<>();
 
             assertThatThrownBy(() -> subject.streamCompletion(
@@ -378,42 +676,6 @@ class GoogleAiGenerateContentClientTest {
         }
     }
 
-    private ChatCompletionClient fallbackClient(AtomicReference<WebSearchRequestOptions> fallbackOptions) {
-        return new ChatCompletionClient() {
-            @Override
-            public void streamCompletion(
-                    ProviderRuntime runtime,
-                    List<Message> history,
-                    ReasoningLevel reasoningLevel,
-                    Consumer<String> onToken,
-                    Consumer<String> onThinkingToken,
-                    BooleanSupplier isCancelled,
-                    Consumer<AutoCloseable> registerActiveStream,
-                    Runnable clearActiveStream
-            ) {
-                throw new AssertionError("Expected web-search-aware fallback overload");
-            }
-
-            @Override
-            public void streamCompletion(
-                    ProviderRuntime runtime,
-                    List<Message> history,
-                    ReasoningLevel reasoningLevel,
-                    WebSearchRequestOptions webSearchOptions,
-                    Consumer<String> onToken,
-                    Consumer<String> onThinkingToken,
-                    Consumer<ContentPart> onPart,
-                    Consumer<CitationRef> onCitation,
-                    BooleanSupplier isCancelled,
-                    Consumer<AutoCloseable> registerActiveStream,
-                    Runnable clearActiveStream
-            ) {
-                fallbackOptions.set(webSearchOptions);
-                onToken.accept("Fallback answer");
-            }
-        };
-    }
-
     private ChatCompletionClient failingFallbackClient() {
         return new ChatCompletionClient() {
             @Override
@@ -430,6 +692,25 @@ class GoogleAiGenerateContentClientTest {
                 throw new AssertionError("Fallback should not be called");
             }
         };
+    }
+
+    private static HttpServer responseServer(String responseBody, int statusCode) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1beta/models/gemini-3-pro-image-preview:generateContent", exchange -> {
+            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(statusCode, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private static byte[] pngBytes() throws Exception {
+        var image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        var output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
     }
 
     private ProviderRuntime runtime(String baseUrl) {

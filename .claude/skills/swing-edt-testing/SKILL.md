@@ -70,6 +70,15 @@ Use this skill for every Java Swing/UI test change in this project. The goal is 
   - work queued after release.
 - If direct off-EDT lifecycle mutation is unavoidable to model a stale queued callback, keep it isolated to that test and do not copy that pattern elsewhere.
 
+## Native WebView regressions
+
+- GraalJS tests, source-string assertions, and fake WebView peers do not prove WKWebView, WebView2, WebKitGTK, or JCEF behavior.
+- Reproduce a native-only failure in the packaged application before changing callback transport, document lifetime, or SVG/CSS handling. Record the backend, action, callback size/outcome, and visible result without logging private content.
+- Keep JavaScript-to-Java callbacks small. Send source, identifiers, and bounded metadata; do not send rendered SVG, complete HTML, or other multi-megabyte DOM serialization when Java can recreate the output from bundled assets.
+- Prefer restoring the last known-good renderer and making one transport fix over layering CSS overrides, sanitizer policies, acknowledgement protocols, or storage frameworks.
+- Unit-test payload construction/parsing and Java-side output generation, then require one packaged native smoke check for the exact reported backend. Do not describe a native regression as fixed solely because JVM tests pass.
+- After two unverified iterations on the same native symptom, stop patching, return to the last known-good implementation, and re-establish the failure boundary.
+
 ## Production-code expectations for async UI callbacks
 
 When reviewing or changing Swing production code that queues callbacks from background work:

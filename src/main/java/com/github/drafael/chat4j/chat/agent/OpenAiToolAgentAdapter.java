@@ -2,8 +2,12 @@ package com.github.drafael.chat4j.chat.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.provider.api.Message;
+import com.github.drafael.chat4j.chat.render.BoundedUtf8;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import lombok.NonNull;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -11,7 +15,6 @@ import org.apache.commons.lang3.Strings;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -19,8 +22,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 import static java.util.Collections.emptyList;
+import static java.util.stream.Collectors.joining;
 
 final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
@@ -31,7 +36,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             "This command is not sandboxed and can access files outside the project root",
             "with the Chat4J app user's permissions."
     );
-    private static final int DEFAULT_REQUEST_TIMEOUT_SECONDS = 60;
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -41,67 +46,98 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private final String baseUrl;
     private final String apiKey;
     private final String systemPromptAppend;
+    private final ProviderAttachmentSupport attachmentSupport;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
     private List<Map<String, Object>> pendingToolCalls = emptyList();
     private String pendingReasoningContent = "";
 
-    OpenAiToolAgentAdapter(String providerName, String modelId, String baseUrl, String apiKey) {
-        this(providerName, modelId, baseUrl, apiKey, "");
+    OpenAiToolAgentAdapter(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            @NonNull ProviderAttachmentSupport attachmentSupport
+    ) {
+        this(providerName, modelId, baseUrl, apiKey, "", attachmentSupport);
     }
 
-    OpenAiToolAgentAdapter(String providerName, String modelId, String baseUrl, String apiKey, String systemPromptAppend) {
+    OpenAiToolAgentAdapter(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            String systemPromptAppend,
+            @NonNull ProviderAttachmentSupport attachmentSupport
+    ) {
         this.providerName = StringUtils.defaultString(providerName);
         this.modelId = StringUtils.defaultString(modelId);
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.apiKey = apiKey;
         this.systemPromptAppend = StringUtils.defaultString(systemPromptAppend);
+        this.attachmentSupport = attachmentSupport;
     }
 
     @Override
     public AgentTurnResult executeTurn(AgentRunRequest request, AgentRunCallbacks callbacks) {
         try {
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             if (!request.toolResults().isEmpty() && !pendingToolCalls.isEmpty()) {
                 appendToolExchange(request.toolResults());
             }
 
+            List<Map<String, Object>> messages = buildMessages(request);
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("model", modelId);
-            payload.put("messages", buildMessages(request));
+            payload.put("messages", messages);
             payload.put("tools", toolDefinitions());
             payload.put("tool_choice", "auto");
             payload.put("stream", false);
 
-            Duration requestTimeout = resolveRequestTimeout(providerName, baseUrl);
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(chatCompletionsEndpoint(baseUrl)))
-                    .timeout(requestTimeout)
+                    .timeout(REQUEST_TIMEOUT)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(payload), StandardCharsets.UTF_8));
             applyAuthHeaders(requestBuilder);
 
-            HttpResponse<String> response = HTTP_CLIENT.send(
+            AgentHttpSupport.Response response = AgentHttpSupport.send(
+                    HTTP_CLIENT,
                     requestBuilder.build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+                    request.isCancelled()
             );
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException(buildHttpErrorMessage(response.statusCode(), response.body()));
             }
 
             JsonNode root = JSON.readTree(response.body());
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             JsonNode messageNode = root.path("choices").path(0).path("message");
 
             String assistantText = extractAssistantText(messageNode);
-            if (StringUtils.isNotBlank(assistantText)) {
+            if (StringUtils.isNotBlank(assistantText) && !shouldStop(request)) {
                 callbacks.onToken().accept(assistantText);
             }
 
             String reasoningContent = extractReasoningContent(messageNode);
-            if (StringUtils.isNotBlank(reasoningContent)) {
+            if (StringUtils.isNotBlank(reasoningContent) && !shouldStop(request)) {
                 callbacks.onThinkingToken().accept(reasoningContent);
             }
 
             List<ToolInvocationRequest> toolInvocations = extractToolInvocations(messageNode.path("tool_calls"));
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             if (!toolInvocations.isEmpty()) {
                 pendingToolCalls = toPendingToolCalls(messageNode.path("tool_calls"));
                 pendingReasoningContent = reasoningContent;
@@ -111,13 +147,26 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             pendingToolCalls = emptyList();
             pendingReasoningContent = "";
             return AgentTurnResult.complete();
+        } catch (CancellationException e) {
+            return new AgentTurnResult(false, emptyList());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new AgentTurnResult(false, emptyList());
         } catch (HttpTimeoutException e) {
-            callbacks.onError().accept(new IllegalStateException(buildTimeoutMessage(), e));
+            if (!shouldStop(request)) {
+                callbacks.onError().accept(new IllegalStateException(buildTimeoutMessage(), e));
+            }
             return new AgentTurnResult(false, emptyList());
         } catch (Exception e) {
-            callbacks.onError().accept(e);
+            if (!shouldStop(request)) {
+                callbacks.onError().accept(e);
+            }
             return new AgentTurnResult(false, emptyList());
         }
+    }
+
+    private boolean shouldStop(AgentRunRequest request) {
+        return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
     private void appendToolExchange(List<ToolInvocationResult> toolResults) {
@@ -149,7 +198,13 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         List<Map<String, Object>> combined = new ArrayList<>();
         combined.add(systemPromptMessage(request));
 
-        List<Map<String, Object>> messages = request.history().stream()
+        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                request.history(),
+                attachmentSupport,
+                AttachmentProjectionPlan.metadataOnly(),
+                request.isCancelled()
+        );
+        List<Map<String, Object>> messages = plan.messages().stream()
                 .map(this::toChatMessage)
                 .toList();
 
@@ -165,10 +220,13 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         return message;
     }
 
-    private Map<String, Object> toChatMessage(Message message) {
+    private Map<String, Object> toChatMessage(ProjectedMessage message) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("role", toChatRole(message.role()));
-        payload.put("content", StringUtils.defaultString(message.content()));
+        payload.put("content", message.parts().stream()
+                .map(AttachmentProjectionPlan::textFallback)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n")));
         return payload;
     }
 
@@ -254,12 +312,8 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         return serialized;
     }
 
-    static Duration resolveRequestTimeout(String providerName, String normalizedBaseUrl) {
-        return Duration.ofSeconds(DEFAULT_REQUEST_TIMEOUT_SECONDS);
-    }
-
     private String buildTimeoutMessage() {
-        int timeoutSeconds = (int) resolveRequestTimeout(providerName, baseUrl).toSeconds();
+        int timeoutSeconds = (int) REQUEST_TIMEOUT.toSeconds();
         return "%s tool turn timed out after %d seconds for model %s."
                 .formatted(
                         StringUtils.defaultIfBlank(providerName, "OpenAI-compatible provider"),
@@ -331,7 +385,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
 
         String flattened = message.replace('\n', ' ').replace('\r', ' ').trim();
-        return flattened.replaceAll("\\s{2,}", " ");
+        return BoundedUtf8.presentation(flattened.replaceAll("\\s{2,}", " "), 512, 2_048);
     }
 
     private List<Map<String, Object>> toolDefinitions() {

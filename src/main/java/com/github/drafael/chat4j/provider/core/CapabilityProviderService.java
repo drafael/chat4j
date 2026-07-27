@@ -61,7 +61,7 @@ public class CapabilityProviderService implements ProviderService {
                 this::registerActiveStream,
                 this::clearActiveStream
             );
-            if (!isCancelled.getAsBoolean()) {
+            if (!shouldStop(isCancelled)) {
                 onComplete.run();
             }
         } catch (Exception e) {
@@ -117,8 +117,7 @@ public class CapabilityProviderService implements ProviderService {
                 webSearchOptions,
                 onToken,
                 onThinkingToken,
-                part -> {
-                },
+                null,
                 onComplete,
                 onError,
                 isCancelled,
@@ -181,15 +180,14 @@ public class CapabilityProviderService implements ProviderService {
                 webSearchOptions == null ? WebSearchRequestOptions.disabled() : webSearchOptions,
                 onToken,
                 onThinkingToken,
-                onPart == null ? part -> {
-                } : onPart,
+                onPart,
                 onCitation == null ? citation -> {
                 } : onCitation,
                 isCancelled,
                 registerActiveStream,
                 clearActiveStream
             );
-            if (!isCancelled.getAsBoolean()) {
+            if (!shouldStop(isCancelled)) {
                 onComplete.run();
             }
         } catch (Exception e) {

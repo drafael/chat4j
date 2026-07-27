@@ -16,6 +16,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
@@ -33,7 +34,8 @@ final class ProviderCatalog {
             @NonNull CodexAuthResolver codexAuthResolver,
             @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
             @NonNull CredentialResolver credentialResolver,
-            @NonNull Map<String, String> subprocessEnvironment
+            @NonNull Map<String, String> subprocessEnvironment,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
         this.copilotModelMetadataStore = copilotModelMetadataStore;
         providerFacade = new ProviderFacade(
@@ -43,14 +45,20 @@ final class ProviderCatalog {
                 copilotModelMetadataStore
         );
         List<ProviderModule> modules = List.of(
-                new AnthropicModule("Anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+                new AnthropicModule(
+                        "Anthropic",
+                        "ANTHROPIC_API_KEY",
+                        "https://api.anthropic.com",
+                        attachmentSupport
+                ),
                 new OpenAiCompatibleModule(
                         "Google AI",
                         AuthType.ENV_VAR,
                         GOOGLE_AI_ENV_VARS,
                         null,
                         "https://generativelanguage.googleapis.com/v1beta/openai",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI Codex",
@@ -61,7 +69,8 @@ final class ProviderCatalog {
                         copilotModelMetadataStore,
                         List.of(),
                         ProviderCapabilities.chatAndModels(),
-                        subprocessEnvironment
+                        subprocessEnvironment,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "GitHub Copilot",
@@ -69,7 +78,8 @@ final class ProviderCatalog {
                         null,
                         null,
                         "https://api.githubcopilot.com",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "OpenAI",
@@ -77,7 +87,8 @@ final class ProviderCatalog {
                         "OPENAI_API_KEY",
                         null,
                         "https://api.openai.com/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "Perplexity",
@@ -87,7 +98,8 @@ final class ProviderCatalog {
                         "https://api.perplexity.ai",
                         copilotModelMetadataStore,
                         PerplexityModelIds.SONAR_MODELS,
-                        ProviderCapabilities.chatModelsAndNativeWebSearch()
+                        ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "OpenRouter",
@@ -95,7 +107,8 @@ final class ProviderCatalog {
                         "OPENROUTER_API_KEY",
                         null,
                         "https://openrouter.ai/api/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "Groq",
@@ -103,7 +116,8 @@ final class ProviderCatalog {
                         "GROQ_API_KEY",
                         null,
                         "https://api.groq.com/openai/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "DeepSeek",
@@ -111,7 +125,8 @@ final class ProviderCatalog {
                         "DEEPSEEK_API_KEY",
                         null,
                         "https://api.deepseek.com",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "Mistral",
@@ -119,7 +134,8 @@ final class ProviderCatalog {
                         "MISTRAL_API_KEY",
                         null,
                         "https://api.mistral.ai/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "xAI",
@@ -127,7 +143,8 @@ final class ProviderCatalog {
                         "XAI_API_KEY",
                         null,
                         "https://api.x.ai/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "LM Studio",
@@ -135,7 +152,8 @@ final class ProviderCatalog {
                         null,
                         "lmstudio",
                         "http://localhost:1234/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
                         "Ollama",
@@ -143,7 +161,8 @@ final class ProviderCatalog {
                         null,
                         "ollama",
                         "http://localhost:11434/v1",
-                        copilotModelMetadataStore
+                        copilotModelMetadataStore,
+                        attachmentSupport
                 )
         );
         providers = modules.stream()

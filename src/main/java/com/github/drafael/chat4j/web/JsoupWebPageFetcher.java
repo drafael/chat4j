@@ -105,40 +105,63 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
     }
 
     private FetchResponse fetch(FetchTarget target, BooleanSupplier isCancelled) throws Exception {
-        try (Socket socket = openSocket(target)) {
-            socket.setSoTimeout((int) Duration.ofSeconds(12).toMillis());
+        Socket rawSocket = new Socket();
+        Thread cancellationWatcher = closeSocketOnCancellation(rawSocket, isCancelled);
+        try (rawSocket; Socket socket = openSocket(rawSocket, target)) {
             writeRequest(socket.getOutputStream(), target);
 
             BufferedInputStream input = new BufferedInputStream(socket.getInputStream());
-            String headerText = readHeaders(input);
+            String headerText = readHeaders(input, isCancelled);
             int statusCode = statusCode(headerText);
             Map<String, String> headers = headers(headerText);
-            String body = readBody(input, headers);
-            if (shouldStop(isCancelled)) {
-                Thread.currentThread().interrupt();
-                throw new InterruptedException("Web page fetch cancelled");
-            }
+            String body = readBody(input, headers, isCancelled);
+            ensureNotCancelled(isCancelled);
             return new FetchResponse(statusCode, headers.getOrDefault("location", ""), body);
+        } finally {
+            cancellationWatcher.interrupt();
         }
     }
 
-    private Socket openSocket(FetchTarget target) throws Exception {
-        Socket socket = new Socket();
-        socket.connect(new InetSocketAddress(target.address(), target.port()), (int) Duration.ofSeconds(12).toMillis());
+    private Socket openSocket(Socket socket, FetchTarget target) throws Exception {
+        int timeoutMillis = (int) Duration.ofSeconds(12).toMillis();
+        socket.connect(new InetSocketAddress(target.address(), target.port()), timeoutMillis);
+        socket.setSoTimeout(timeoutMillis);
         if (!target.secure()) {
             return socket;
         }
 
         SSLSocketFactory sslSocketFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
         SSLSocket sslSocket = (SSLSocket) sslSocketFactory.createSocket(socket, target.host(), target.port(), true);
-        var sslParameters = sslSocket.getSSLParameters();
-        sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        if (!isIpLiteral(target.host())) {
-            sslParameters.setServerNames(List.of(new SNIHostName(target.host())));
+        try {
+            sslSocket.setSoTimeout(timeoutMillis);
+            var sslParameters = sslSocket.getSSLParameters();
+            sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
+            if (!isIpLiteral(target.host())) {
+                sslParameters.setServerNames(List.of(new SNIHostName(target.host())));
+            }
+            sslSocket.setSSLParameters(sslParameters);
+            sslSocket.startHandshake();
+            return sslSocket;
+        } catch (Exception e) {
+            sslSocket.close();
+            throw e;
         }
-        sslSocket.setSSLParameters(sslParameters);
-        sslSocket.startHandshake();
-        return sslSocket;
+    }
+
+    private Thread closeSocketOnCancellation(Socket socket, BooleanSupplier isCancelled) {
+        Thread owner = Thread.currentThread();
+        return Thread.ofVirtual().name("chat4j-web-fetch-cancel").start(() -> {
+            try {
+                while (!owner.isInterrupted() && (isCancelled == null || !isCancelled.getAsBoolean())) {
+                    Thread.sleep(50);
+                }
+                socket.close();
+            } catch (InterruptedException ignored) {
+                // The fetch completed before cancellation.
+            } catch (IOException ignored) {
+                // Closing an already-completed socket is harmless.
+            }
+        });
     }
 
     private void writeRequest(OutputStream output, FetchTarget target) throws IOException {
@@ -151,13 +174,18 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
         output.flush();
     }
 
-    private String readHeaders(BufferedInputStream input) throws IOException {
+    private String readHeaders(BufferedInputStream input, BooleanSupplier isCancelled) throws Exception {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         int previous3 = -1;
         int previous2 = -1;
         int previous1 = -1;
         int current;
-        while ((current = input.read()) != -1) {
+        while (true) {
+            ensureNotCancelled(isCancelled);
+            current = input.read();
+            if (current == -1) {
+                break;
+            }
             buffer.write(current);
             if (buffer.size() > MAX_HEADER_SIZE_BYTES) {
                 throw new IOException("HTTP headers are too large");
@@ -172,17 +200,21 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
         return buffer.toString(StandardCharsets.ISO_8859_1);
     }
 
-    private String readBody(BufferedInputStream input, Map<String, String> headers) throws IOException {
+    private String readBody(
+            BufferedInputStream input,
+            Map<String, String> headers,
+            BooleanSupplier isCancelled
+    ) throws Exception {
         byte[] body = Strings.CI.contains(headers.get("transfer-encoding"), "chunked")
-                ? readChunkedBody(input)
-                : readFixedOrUntilClose(input, headers);
+                ? readChunkedBody(input, isCancelled)
+                : readFixedOrUntilClose(input, headers, isCancelled);
         return new String(body, charset(headers));
     }
 
-    private byte[] readChunkedBody(BufferedInputStream input) throws IOException {
+    private byte[] readChunkedBody(BufferedInputStream input, BooleanSupplier isCancelled) throws Exception {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         while (true) {
-            String line = readAsciiLine(input);
+            String line = readAsciiLine(input, isCancelled);
             int chunkSize = Integer.parseInt(StringUtils.substringBefore(line, ";").trim(), 16);
             if (chunkSize == 0) {
                 break;
@@ -193,26 +225,41 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
             }
 
             int bytesToRead = Math.min(chunkSize, remainingCapacity);
-            readUpToLimit(input, body, bytesToRead);
+            readUpToLimit(input, body, bytesToRead, isCancelled);
             if (chunkSize > bytesToRead) {
                 return body.toByteArray();
             }
-            readAsciiLine(input);
+            readAsciiLine(input, isCancelled);
         }
         return body.toByteArray();
     }
 
-    private byte[] readFixedOrUntilClose(BufferedInputStream input, Map<String, String> headers) throws IOException {
+    private byte[] readFixedOrUntilClose(
+            BufferedInputStream input,
+            Map<String, String> headers,
+            BooleanSupplier isCancelled
+    ) throws Exception {
         int contentLength = parseContentLength(headers.get("content-length"));
         ByteArrayOutputStream body = new ByteArrayOutputStream();
-        readUpToLimit(input, body, contentLength >= 0 ? contentLength : MAX_BODY_SIZE_BYTES);
+        readUpToLimit(
+                input,
+                body,
+                contentLength >= 0 ? contentLength : MAX_BODY_SIZE_BYTES,
+                isCancelled
+        );
         return body.toByteArray();
     }
 
-    private void readUpToLimit(BufferedInputStream input, ByteArrayOutputStream output, int requestedBytes) throws IOException {
+    private void readUpToLimit(
+            BufferedInputStream input,
+            ByteArrayOutputStream output,
+            int requestedBytes,
+            BooleanSupplier isCancelled
+    ) throws Exception {
         byte[] buffer = new byte[8192];
         int remaining = Math.min(requestedBytes, MAX_BODY_SIZE_BYTES - output.size());
         while (remaining > 0) {
+            ensureNotCancelled(isCancelled);
             int read = input.read(buffer, 0, Math.min(buffer.length, remaining));
             if (read < 0) {
                 return;
@@ -222,11 +269,12 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
         }
     }
 
-    private String readAsciiLine(BufferedInputStream input) throws IOException {
+    private String readAsciiLine(BufferedInputStream input, BooleanSupplier isCancelled) throws Exception {
         ByteArrayOutputStream line = new ByteArrayOutputStream();
-        int current;
-        while ((current = input.read()) != -1) {
-            if (current == '\n') {
+        while (true) {
+            ensureNotCancelled(isCancelled);
+            int current = input.read();
+            if (current == -1 || current == '\n') {
                 break;
             }
             if (current != '\r') {
@@ -334,6 +382,12 @@ public class JsoupWebPageFetcher implements WebPageFetcher {
 
     private boolean isIpLiteral(String host) {
         return Strings.CS.contains(host, ":") || host.matches("\\d+\\.\\d+\\.\\d+\\.\\d+");
+    }
+
+    private void ensureNotCancelled(BooleanSupplier isCancelled) throws InterruptedException {
+        if (shouldStop(isCancelled)) {
+            throw new InterruptedException("Web page fetch cancelled");
+        }
     }
 
     private boolean shouldStop(BooleanSupplier isCancelled) {

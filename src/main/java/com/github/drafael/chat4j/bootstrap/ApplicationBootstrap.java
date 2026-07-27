@@ -26,6 +26,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettings;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,7 @@ import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.lang.reflect.InvocationTargetException;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -160,6 +162,11 @@ public final class ApplicationBootstrap {
             throw new IllegalStateException(message, e);
         }
 
+        try {
+            Files.createDirectories(storagePaths.attachmentsDirectory());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to initialize managed attachment storage.", e);
+        }
         ConversationRepository conversationRepository = new ConversationRepository(
                 dataSource,
                 storagePaths.attachmentsDirectory(),
@@ -204,12 +211,14 @@ public final class ApplicationBootstrap {
             copilotModelMetadataStore.prime();
             CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver();
             CodexAuthResolver codexAuthResolver = new CodexAuthResolver();
+            ProviderAttachmentSupport attachmentSupport = createAttachmentSupport(storage.storagePaths());
             ProviderRegistry providerRegistry = new ProviderRegistry(
                     copilotAuthResolver,
                     codexAuthResolver,
                     copilotModelMetadataStore,
                     credentialResolver,
-                    subprocessEnvironment
+                    subprocessEnvironment,
+                    attachmentSupport
             );
 
             storage.providerModelCacheService().primeFromDisk(
@@ -233,11 +242,21 @@ public final class ApplicationBootstrap {
                     copilotModelMetadataStore,
                     credentialResolver,
                     credentialMutationService,
-                    subprocessEnvironment
+                    subprocessEnvironment,
+                    attachmentSupport
             );
         } catch (RuntimeException | Error e) {
             closeSecretsAfterFailure(credentialMutationService, e);
             throw e;
+        }
+    }
+
+    private static ProviderAttachmentSupport createAttachmentSupport(StoragePaths storagePaths) {
+        try {
+            Files.createDirectories(storagePaths.attachmentsDirectory());
+            return new ProviderAttachmentSupport(storagePaths.attachmentsDirectory());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to initialize managed attachment storage.", e);
         }
     }
 
@@ -336,7 +355,8 @@ public final class ApplicationBootstrap {
                     services.copilotModelMetadataStore(),
                     services.credentialResolver(),
                     services.credentialMutationService(),
-                    services.subprocessEnvironment()
+                    services.subprocessEnvironment(),
+                    services.attachmentSupport()
                 );
                 frame.setVisible(true);
             } catch (RuntimeException | Error e) {

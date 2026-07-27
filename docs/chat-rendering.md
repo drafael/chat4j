@@ -44,7 +44,7 @@ Data flow:
 1. `ChatPanel` creates and maintains Swing `ChatMessageView` instances as the source model.
 2. In `jeditor-pane` mode, those views are displayed directly.
 3. In `system` or `jcef` mode, `ChatPanel` mirrors the source views into one full-conversation browser component.
-4. Full-conversation browser views are disposed from `ChatPanel.removeNotify()`.
+4. Temporary Swing removal preserves browser views so they can be reattached; `MainFrame` permanently disposes them through `ChatPanel.disposeViewResources()` during window cleanup.
 
 The full-conversation design avoids per-message native browser churn and the clipping/scrolling problems seen with native components inside Swing scroll panes.
 
@@ -144,7 +144,7 @@ Rendering rules:
 
 Normal chat requests include a lightweight system hint that advertises renderable fence formats to the selected model. The hint distinguishes general diagrams from chemistry: models are told to use `mermaid` only for flow/process-style diagrams and to use `smiles` for generated molecule drawings. MOL/SDF rendering remains available for exact user-supplied V2000 source blocks, but normal model guidance avoids advertising MOL/SDF as generated output because models frequently fabricate invalid coordinate files from names, formulas, or descriptions.
 
-Rendered Mermaid diagrams can be opened outside Chat4J from the hover button or the `Open Diagram` context-menu item. Chat4J serializes the rendered SVG, validates it in `DiagramHtmlExporter`, writes a temporary standalone HTML wrapper with a strict CSP, and opens it through Desktop integration. The exporter rejects scripts, event-handler attributes, oversized payloads, and external `href`/`src` references; internal fragment references such as `#id` are allowed.
+Rendered Mermaid diagrams can be opened outside Chat4J from the hover button or the `Open Diagram` context-menu item. The browser callback sends the bounded Mermaid source candidate that rendered, the title, and normalized theme colors. `DiagramHtmlExporter` writes a temporary standalone HTML page with a strict CSP and rerenders that escaped source locally with the bundled Mermaid runtime in strict mode before opening it through Desktop integration.
 
 Implementation:
 

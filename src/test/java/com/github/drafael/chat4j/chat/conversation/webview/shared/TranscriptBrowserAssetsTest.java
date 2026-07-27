@@ -128,6 +128,23 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
+    @DisplayName("Inline scripts shield parser-sensitive HTML literals")
+    void safeScriptContent_whenSourceContainsHtmlLiterals_escapesParserBoundaries() {
+        String safe = TranscriptResources.safeScriptContent(
+                "var value = '<HTML><head></head><body>x</BODY></HTML><!-->';</SCRIPT>"
+        );
+
+        assertThat(safe)
+                .contains("\\x3CHTML>")
+                .contains("\\x3Chead>")
+                .contains("\\x3C/BODY>")
+                .contains("\\x3C!-->")
+                .contains("<\\/script>")
+                .doesNotContain("<HTML>")
+                .doesNotContain("<body>");
+    }
+
+    @Test
     @DisplayName("Bundled math and diagram bridge contains renderers and failure fallbacks")
     void mathBridgeScript_whenRendered_containsBundledRenderersActionsAndFallbacks() {
         String script = normalizeNewlines(TranscriptBrowserAssets.mathBridgeScript());
@@ -146,10 +163,14 @@ class TranscriptBrowserAssetsTest {
                 .contains("chat4jRenderDiagrams")
                 .contains("chat4jRenderEnhancements")
                 .contains("open-diagram-html")
-                .contains("XMLSerializer")
+                .contains("data-chat4j-diagram-source")
+                .doesNotContain("new XMLSerializer()")
                 .contains("chat4j-mermaid-display")
                 .contains("diagram-open-button")
                 .contains("window.chat4jDispatchTranscriptAction('open-diagram-html', -1, payload)")
+                .contains("pageBackground: colors.background")
+                .contains("sourceBackground: colors.secondarySurface")
+                .contains("themeVariables: mermaidTheme(colors).themeVariables")
                 .contains("window.chat4jOpenMermaidDiagram = openMermaidDiagram")
                 .contains("Open diagram")
                 .contains("table.insertRow(0)")
@@ -159,6 +180,7 @@ class TranscriptBrowserAssetsTest {
                 .contains("normalizeMermaidEscapedLineBreaks(source)")
                 .contains("repairMermaidSource(renderableSource)")
                 .contains("renderSource(repaired, '-repaired')")
+                .contains("installMermaidOpenButton(target, rendered.source)")
                 .contains("mermaidErrorSvg(svg)")
                 .contains("friendlyDiagramError")
                 .contains("Mermaid syntax error — source shown below")
@@ -433,6 +455,42 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
+    @DisplayName("Open Diagram payload carries the rendered source candidate without serializing SVG")
+    void diagramRenderScript_whenOpenPayloadIsBuilt_containsOnlySourceAndThemeMetadata() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.eval("js", """
+                    var window = {
+                        getComputedStyle: function() {
+                            return {
+                                getPropertyValue: function() { return '#ffffff'; },
+                                backgroundColor: '#ffffff',
+                                color: '#111111'
+                            };
+                        }
+                    };
+                    var document = { body: {} };
+                    var container = {
+                        querySelector: function() { throw new Error('SVG must not be queried'); },
+                        getAttribute: function(name) {
+                            var values = {
+                                'data-chat4j-diagram-title': 'Diagram',
+                                'data-chat4j-diagram-source': 'flowchart TD\\nA-->B'
+                            };
+                            return values[name] || '';
+                        }
+                    };
+                    """);
+            Value payloadBuilder = exposedDiagramFunction(context, "mermaidPayload", "__chat4jMermaidPayload");
+
+            Value payload = context.eval("js", "JSON.parse(window.__chat4jMermaidPayload(container))");
+
+            assertThat(payloadBuilder.canExecute()).isTrue();
+            assertThat(payload.getMember("source").asString()).isEqualTo("flowchart TD\nA-->B");
+            assertThat(payload.hasMember("svg")).isFalse();
+        }
+    }
+
+    @Test
     @DisplayName("Extracted diagram JavaScript normalizes escaped Mermaid label line breaks")
     void diagramRenderScript_whenMermaidLabelsContainEscapedNewlines_normalizesLabelBreaksOnly() {
         try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
@@ -465,16 +523,26 @@ class TranscriptBrowserAssetsTest {
     }
 
     private static Value mermaidEscapedLineBreakNormalizer(Context context) {
+        context.eval("js", "var window = {};");
+        return exposedDiagramFunction(
+                context,
+                "normalizeMermaidEscapedLineBreaks",
+                "__chat4jNormalizeMermaidEscapedLineBreaks"
+        );
+    }
+
+    private static Value exposedDiagramFunction(Context context, String functionName, String exposedName) {
         String script = TranscriptBrowserAssets.diagramRenderScript();
         int end = script.lastIndexOf("})();");
         assertThat(end).isGreaterThan(0);
-        String testableScript = "%s\nwindow.__chat4jNormalizeMermaidEscapedLineBreaks = normalizeMermaidEscapedLineBreaks;\n%s"
-                .formatted(script.substring(0, end), script.substring(end));
-        context.eval("js", "var window = {};");
+        String testableScript = "%s\nwindow.%s = %s;\n%s".formatted(
+                script.substring(0, end),
+                exposedName,
+                functionName,
+                script.substring(end)
+        );
         context.eval("js", testableScript);
-        return context.getBindings("js")
-                .getMember("window")
-                .getMember("__chat4jNormalizeMermaidEscapedLineBreaks");
+        return context.getBindings("js").getMember("window").getMember(exposedName);
     }
 
     private static String normalizeMermaidEscapedLineBreaks(Value normalizer, String source) {

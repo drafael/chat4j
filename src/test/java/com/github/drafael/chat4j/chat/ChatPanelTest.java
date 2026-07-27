@@ -43,6 +43,7 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCache;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
@@ -123,6 +124,8 @@ class ChatPanelTest {
     private CodexAuthResolver codexAuthResolver;
     private CredentialResolver credentialResolver;
     private CredentialMutationService credentialMutationService;
+    private StoragePaths storagePaths;
+    private ProviderAttachmentSupport attachmentSupport;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -141,12 +144,16 @@ class ChatPanelTest {
         );
         credentialResolver = new CredentialResolver(tokenVault, emptyMap(), emptyMap());
         credentialMutationService = new CredentialMutationService(tokenVault, credentialResolver);
+        storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("chat-panel"));
+        Path attachmentRoot = Files.createDirectories(storagePaths.attachmentsDirectory());
+        attachmentSupport = new ProviderAttachmentSupport(attachmentRoot);
         providerRegistry = new ProviderRegistry(
                 copilotAuthResolver,
                 codexAuthResolver,
                 new CopilotModelMetadataStore(tempDir.resolve("provider-metadata")),
                 credentialResolver,
-                emptyMap()
+                emptyMap(),
+                attachmentSupport
         );
         providerRegistry.applyRuntimeConfig(Map.of(
                 "GitHub Copilot", new ProviderRegistry.ProviderRuntimeConfig(false, null),
@@ -350,8 +357,8 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("xAI native web search activity is disabled for non-text attachments")
-    void nativeWebSearchEnabled_whenXaiRequestContainsAttachment_returnsFalse() throws Exception {
+    @DisplayName("xAI native web search remains enabled when attachments degrade through projection")
+    void nativeWebSearchEnabled_whenXaiRequestContainsAttachment_returnsTrue() throws Exception {
         List<Message> history = List.of(new Message(
                 Role.USER,
                 List.of(
@@ -378,9 +385,9 @@ class ChatPanelTest {
                 ""
         );
 
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
 
-        assertThat(enabled).isFalse();
+        assertThat(enabled).isTrue();
     }
 
     @Test
@@ -405,7 +412,7 @@ class ChatPanelTest {
                 ""
         );
 
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
 
         assertThat(enabled).isFalse();
     }
@@ -433,7 +440,7 @@ class ChatPanelTest {
                 ""
         );
 
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob, history);
+        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
 
         assertThat(enabled).isTrue();
     }
@@ -1495,7 +1502,7 @@ class ChatPanelTest {
         subject.getInputBar().setAgentProjectRoot(projectRoot);
         subject.getInputBar().setAgentModeEnabled(true);
 
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -1550,7 +1557,7 @@ class ChatPanelTest {
             subject.getInputBar().setAgentModeAvailable(true);
             subject.getInputBar().setAgentProjectRoot(projectRoot);
             subject.getInputBar().setAgentModeEnabled(true);
-            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
                 @Override
                 public AgentProviderAdapter create(
                         String providerName,
@@ -1671,7 +1678,7 @@ class ChatPanelTest {
         subject.getInputBar().setAgentProjectRoot(projectRoot);
         subject.getInputBar().setAgentModeEnabled(true);
 
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -1786,7 +1793,7 @@ class ChatPanelTest {
         subject.getInputBar().setAgentModeEnabled(true);
         subject.setAgentSystemPromptAppend("Always include key project files.");
 
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory() {
+        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -5573,7 +5580,9 @@ class ChatPanelTest {
                 providerRegistry,
                 copilotAuthResolver,
                 codexAuthResolver,
-                credentialResolver
+                credentialResolver,
+                storagePaths,
+                attachmentSupport
         );
     }
 
@@ -5658,10 +5667,10 @@ class ChatPanelTest {
         return (SpeechToTextService.Callbacks) method.invoke(chatPanel, uiGeneration);
     }
 
-    private static boolean invokeNativeWebSearchEnabled(ChatPanel chatPanel, SendJob sendJob, List<Message> requestHistory) throws Exception {
-        Method method = ChatPanel.class.getDeclaredMethod("nativeWebSearchEnabled", SendJob.class, List.class);
+    private static boolean invokeNativeWebSearchEnabled(ChatPanel chatPanel, SendJob sendJob) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("nativeWebSearchEnabled", SendJob.class);
         method.setAccessible(true);
-        return (boolean) method.invoke(chatPanel, sendJob, requestHistory);
+        return (boolean) method.invoke(chatPanel, sendJob);
     }
 
     private static String invokeAppendCitationSourcesIfNeeded(
@@ -5902,7 +5911,9 @@ class ChatPanelTest {
                 providerRegistry,
                 copilotAuthResolver,
                 codexAuthResolver,
-                credentialResolver
+                credentialResolver,
+                storagePaths,
+                attachmentSupport
         )));
         return panelRef.get();
     }

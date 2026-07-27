@@ -2,14 +2,18 @@ package com.github.drafael.chat4j.provider.capability.chat.impl;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
-import com.github.drafael.chat4j.provider.api.content.ImagePart;
-import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.NativeImage;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.PlainText;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedPart;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
@@ -29,31 +33,33 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageParam;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
+import com.openai.models.responses.EasyInputMessage;
 import com.openai.models.responses.ResponseCreateParams;
+import com.openai.models.responses.ResponseInputContent;
+import com.openai.models.responses.ResponseInputImage;
+import com.openai.models.responses.ResponseInputItem;
+import com.openai.models.responses.ResponseInputText;
 import com.openai.models.responses.ResponseOutputTextAnnotationAddedEvent;
 import com.openai.models.responses.ResponseReasoningSummaryTextDeltaEvent;
 import com.openai.models.responses.ResponseReasoningTextDeltaEvent;
 import com.openai.models.responses.ResponseStreamEvent;
 import com.openai.models.responses.ResponseTextDeltaEvent;
 import com.openai.models.responses.WebSearchTool;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
 
 @Slf4j
@@ -63,9 +69,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private static final String CHAT_COMPLETIONS_ENDPOINT = "/chat/completions";
     private static final String RESPONSES_ENDPOINT = "/responses";
     private static final Map<CopilotModelKey, CopilotEndpointMode> COPILOT_ENDPOINT_BY_MODEL = new ConcurrentHashMap<>();
-    private static final AtomicReference<String> LAST_COPILOT_MODEL_ID = new AtomicReference<>(null);
-    private static final AtomicReference<String> LAST_COPILOT_ENDPOINT = new AtomicReference<>(null);
-    private static final AtomicLong LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS = new AtomicLong(0L);
+
+    private final ProviderAttachmentSupport attachmentSupport;
+
+    public OpenAiChatCompletionClient(@NonNull ProviderAttachmentSupport attachmentSupport) {
+        this.attachmentSupport = attachmentSupport;
+    }
 
     @Override
     public void streamCompletion(
@@ -136,37 +145,39 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     ) throws Exception {
         Consumer<CitationRef> safeOnCitation = noOpIfNull(onCitation);
         ReasoningLevel normalizedReasoningLevel = normalizeReasoningLevel(reasoningLevel);
+        AttachmentProjectionPlan projectionPlan = AttachmentProjectionPlan.create(
+                history,
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(supportsNativeImages(runtime)),
+                isCancelled
+        );
+        if (shouldStop(isCancelled)) {
+            return;
+        }
+
         OpenAIOkHttpClient.Builder builder = OpenAIOkHttpClient.builder()
                 .apiKey(runtime.apiKey())
                 .baseUrl(runtime.baseUrl());
-
         if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
             CopilotRequestHeaders.asMap().forEach(builder::putHeader);
         }
 
         OpenAIClient client = builder.build();
-        if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
-            streamCopilotCompletion(runtime, history, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
-            return;
-        }
-
-        if (shouldUseResponsesNativeWebSearch(runtime, webSearchOptions)) {
-            if (supportsFlattenedResponsesInput(history)) {
-                streamWithResponses(runtime, history, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+        try {
+            if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
+                streamCopilotCompletion(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
             }
-            log.info("Skipping {} native Responses web search for model {} because the request contains non-text attachments",
-                    runtime.descriptor().name(),
-                    runtime.selectedModel());
+
+            if (shouldUseResponsesNativeWebSearch(runtime, webSearchOptions)) {
+                streamWithResponses(runtime, projectionPlan, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+                return;
+            }
+
+            streamWithChatCompletions(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+        } finally {
+            client.close();
         }
-
-        streamWithChatCompletions(runtime, history, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
-    }
-
-    private boolean supportsFlattenedResponsesInput(List<Message> history) {
-        return history.stream()
-                .flatMap(message -> message.parts().stream())
-                .allMatch(part -> part instanceof TextPart);
     }
 
     private boolean shouldUseResponsesNativeWebSearch(ProviderRuntime runtime, WebSearchRequestOptions webSearchOptions) {
@@ -193,7 +204,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private void streamCopilotCompletion(
             ProviderRuntime runtime,
-            List<Message> history,
+            AttachmentProjectionPlan projectionPlan,
             OpenAIClient client,
             ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
@@ -209,8 +220,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
         if (mode == CopilotEndpointMode.RESPONSES) {
             try {
-                streamWithResponses(runtime, history, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
-                updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
+                streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
             } catch (Exception e) {
                 if (!isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
@@ -222,15 +232,13 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         CHAT_COMPLETIONS_ENDPOINT,
                         ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
                 COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
-                streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
-                updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
+                streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
             }
         }
 
         try {
-            streamWithChatCompletions(runtime, history, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
-            updateCopilotDiagnostics(modelId, CHAT_COMPLETIONS_ENDPOINT);
+            streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
         } catch (Exception e) {
             if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
                 throw e;
@@ -241,14 +249,13 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     RESPONSES_ENDPOINT,
                     ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
             COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
-            streamWithResponses(runtime, history, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
-            updateCopilotDiagnostics(modelId, RESPONSES_ENDPOINT);
+            streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
         }
     }
 
     private void streamWithChatCompletions(
             ProviderRuntime runtime,
-            List<Message> history,
+            AttachmentProjectionPlan projectionPlan,
             OpenAIClient client,
             ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
@@ -258,8 +265,8 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        List<ChatCompletionMessageParam> messages = history.stream()
-                .map(message -> toParam(message, runtime))
+        List<ChatCompletionMessageParam> messages = projectionPlan.messages().stream()
+                .map(this::toParam)
                 .toList();
         CitationAccumulator citationAccumulator = new CitationAccumulator();
 
@@ -271,21 +278,27 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     .messages(messages);
             applyChatCompletionsThinkingHints(paramsBuilder, runtime, attemptLevel);
             ChatCompletionCreateParams params = paramsBuilder.build();
+            if (shouldStop(isCancelled)) {
+                return;
+            }
 
             try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
                 registerActiveStream.accept(stream);
                 Iterator<ChatCompletionChunk> iterator = stream.stream().iterator();
-                while (iterator.hasNext()) {
+                while (!shouldStop(isCancelled) && iterator.hasNext()) {
+                    ChatCompletionChunk chunk = iterator.next();
                     if (shouldStop(isCancelled)) {
                         return;
                     }
-                    ChatCompletionChunk chunk = iterator.next();
-                    emitChatCompletionsCitations(chunk, citationAccumulator, onCitation);
+                    emitChatCompletionsCitations(chunk, citationAccumulator, onCitation, isCancelled);
                     for (ChatCompletionChunk.Choice choice : chunk.choices()) {
                         if (shouldStop(isCancelled)) {
                             return;
                         }
                         choice.delta().content().ifPresent(onToken);
+                        if (shouldStop(isCancelled)) {
+                            return;
+                        }
                         if (attemptLevel.enabled()) {
                             emitChatCompletionsThinkingDelta(choice, onThinkingToken);
                         }
@@ -293,6 +306,9 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 }
                 return;
             } catch (Exception e) {
+                if (shouldStop(isCancelled)) {
+                    return;
+                }
                 if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
@@ -310,7 +326,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
     private void streamWithResponses(
             ProviderRuntime runtime,
-            List<Message> history,
+            AttachmentProjectionPlan projectionPlan,
             OpenAIClient client,
             ReasoningLevel reasoningLevel,
             boolean webSearchEnabled,
@@ -321,7 +337,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        String input = StringUtils.defaultIfBlank(toResponsesInput(history), "Continue.");
+        List<ResponseInputItem> input = toResponsesInput(projectionPlan);
         CitationAccumulator citationAccumulator = new CitationAccumulator();
 
         List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
@@ -329,29 +345,37 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             ReasoningLevel attemptLevel = attempts.get(attemptIndex);
             ResponseCreateParams.Builder paramsBuilder = ResponseCreateParams.builder()
                     .model(runtime.selectedModel())
-                    .input(input);
+                    .inputOfResponse(input);
             applyResponsesReasoningHints(paramsBuilder, attemptLevel);
             if (webSearchEnabled) {
                 paramsBuilder.addTool(WebSearchTool.builder().build());
             }
             ResponseCreateParams params = paramsBuilder.build();
+            if (shouldStop(isCancelled)) {
+                return;
+            }
 
             try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {
                 registerActiveStream.accept(stream);
                 boolean emittedReasoningSummary = false;
                 Iterator<ResponseStreamEvent> iterator = stream.stream().iterator();
-                while (iterator.hasNext()) {
+                while (!shouldStop(isCancelled) && iterator.hasNext()) {
+                    ResponseStreamEvent event = iterator.next();
                     if (shouldStop(isCancelled)) {
                         return;
                     }
-
-                    ResponseStreamEvent event = iterator.next();
                     event.outputTextAnnotationAdded()
                             .ifPresent(annotation -> emitResponseAnnotationCitation(annotation, citationAccumulator, onCitation));
+                    if (shouldStop(isCancelled)) {
+                        return;
+                    }
                     event.outputTextDelta()
                             .map(ResponseTextDeltaEvent::delta)
                             .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
                             .ifPresent(onToken);
+                    if (shouldStop(isCancelled)) {
+                        return;
+                    }
 
                     if (attemptLevel.enabled()) {
                         String reasoningSummaryDelta = event.reasoningSummaryTextDelta()
@@ -363,7 +387,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                             onThinkingToken.accept(reasoningSummaryDelta);
                         }
 
-                        if (!emittedReasoningSummary) {
+                        if (!emittedReasoningSummary && !shouldStop(isCancelled)) {
                             event.reasoningTextDelta()
                                     .map(ResponseReasoningTextDeltaEvent::delta)
                                     .filter(Objects::nonNull)
@@ -371,12 +395,15 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         }
                     }
 
-                    if (event.error().isPresent()) {
+                    if (!shouldStop(isCancelled) && event.error().isPresent()) {
                         throw new IllegalStateException(event.error().get().message());
                     }
                 }
                 return;
             } catch (Exception e) {
+                if (shouldStop(isCancelled)) {
+                    return;
+                }
                 if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
@@ -406,21 +433,31 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private void emitChatCompletionsCitations(
             ChatCompletionChunk chunk,
             CitationAccumulator citationAccumulator,
-            Consumer<CitationRef> onCitation
+            Consumer<CitationRef> onCitation,
+            BooleanSupplier isCancelled
     ) {
         OpenAiCompatibleCitationMapper.fromAdditionalProperties(chunk._additionalProperties()).stream()
                 .map(citationAccumulator::addNew)
                 .flatMap(Optional::stream)
+                .takeWhile(ignored -> !shouldStop(isCancelled))
                 .forEach(onCitation);
+        if (shouldStop(isCancelled)) {
+            return;
+        }
         chunk.choices().stream()
                 .flatMap(choice -> OpenAiCompatibleCitationMapper.fromAdditionalProperties(choice._additionalProperties()).stream())
                 .map(citationAccumulator::addNew)
                 .flatMap(Optional::stream)
+                .takeWhile(ignored -> !shouldStop(isCancelled))
                 .forEach(onCitation);
+        if (shouldStop(isCancelled)) {
+            return;
+        }
         chunk.choices().stream()
                 .flatMap(choice -> OpenAiCompatibleCitationMapper.fromAdditionalProperties(choice.delta()._additionalProperties()).stream())
                 .map(citationAccumulator::addNew)
                 .flatMap(Optional::stream)
+                .takeWhile(ignored -> !shouldStop(isCancelled))
                 .forEach(onCitation);
     }
 
@@ -576,29 +613,48 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private String toResponsesInput(List<Message> history) {
-        return history.stream()
-                .map(this::toResponsesInputLine)
-                .filter(StringUtils::isNotBlank)
-                .collect(joining("\n\n"));
+    private List<ResponseInputItem> toResponsesInput(AttachmentProjectionPlan projectionPlan) {
+        List<ResponseInputItem> input = projectionPlan.messages().stream()
+                .map(this::toResponseInputItem)
+                .toList();
+        return input.isEmpty()
+                ? List.of(toResponseInputItem(new ProjectedMessage(Role.USER, List.of(new PlainText("Continue.")))))
+                : input;
     }
 
-    private String toResponsesInputLine(Message message) {
-        String content = StringUtils.trimToEmpty(toResponsesMessageContent(message));
-        return content.isBlank() ? "" : "%s: %s".formatted(responseRoleLabel(message), content);
+    private ResponseInputItem toResponseInputItem(ProjectedMessage message) {
+        List<ResponseInputContent> content = message.parts().stream()
+                .map(this::toResponseInputContent)
+                .flatMap(Optional::stream)
+                .toList();
+        EasyInputMessage easyMessage = EasyInputMessage.builder()
+                .role(toResponseRole(message.role()))
+                .contentOfResponseInputMessageContentList(content)
+                .build();
+        return ResponseInputItem.ofEasyInputMessage(easyMessage);
     }
 
-    private String toResponsesMessageContent(Message message) {
-        return message.parts().isEmpty()
-            ? message.content()
-            : ProviderAttachmentSupport.textProjection(message.parts());
+    private Optional<ResponseInputContent> toResponseInputContent(ProjectedPart part) {
+        if (part instanceof NativeImage image) {
+            ResponseInputImage inputImage = ResponseInputImage.builder()
+                    .detail(ResponseInputImage.Detail.AUTO)
+                    .imageUrl(dataUrl(image))
+                    .build();
+            return Optional.of(ResponseInputContent.ofInputImage(inputImage));
+        }
+        String text = AttachmentProjectionPlan.textFallback(part);
+        if (StringUtils.isBlank(text)) {
+            return Optional.empty();
+        }
+        ResponseInputText inputText = ResponseInputText.builder().text(text).build();
+        return Optional.of(ResponseInputContent.ofInputText(inputText));
     }
 
-    private String responseRoleLabel(Message message) {
-        return switch (message.role()) {
-            case USER -> "User";
-            case ASSISTANT -> "Assistant";
-            case SYSTEM -> "System";
+    private EasyInputMessage.Role toResponseRole(Role role) {
+        return switch (role) {
+            case USER -> EasyInputMessage.Role.USER;
+            case ASSISTANT -> EasyInputMessage.Role.ASSISTANT;
+            case SYSTEM -> EasyInputMessage.Role.SYSTEM;
         };
     }
 
@@ -648,27 +704,6 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         return CopilotEndpointMode.CHAT_COMPLETIONS;
     }
 
-    private void updateCopilotDiagnostics(String modelId, String endpoint) {
-        LAST_COPILOT_MODEL_ID.set(StringUtils.trimToNull(modelId));
-        LAST_COPILOT_ENDPOINT.set(StringUtils.trimToNull(endpoint));
-        LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS.set(System.currentTimeMillis());
-    }
-
-    public static CopilotEndpointDiagnosticsSnapshot diagnosticsSnapshot() {
-        return new CopilotEndpointDiagnosticsSnapshot(
-                LAST_COPILOT_MODEL_ID.get(),
-                LAST_COPILOT_ENDPOINT.get(),
-                LAST_COPILOT_ENDPOINT_UPDATE_EPOCH_MS.get()
-        );
-    }
-
-    public record CopilotEndpointDiagnosticsSnapshot(
-            String modelId,
-            String endpoint,
-            long updatedAtEpochMs
-    ) {
-    }
-
     private enum CopilotEndpointMode {
         CHAT_COMPLETIONS,
         RESPONSES
@@ -677,76 +712,58 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private record CopilotModelKey(String baseUrl, String modelId) {
     }
 
-    private ChatCompletionMessageParam toParam(Message msg, ProviderRuntime runtime) {
-        return switch (msg.role()) {
-            case USER -> ChatCompletionMessageParam.ofUser(toUserMessage(msg, runtime));
+    private ChatCompletionMessageParam toParam(ProjectedMessage message) {
+        return switch (message.role()) {
+            case USER -> ChatCompletionMessageParam.ofUser(toUserMessage(message));
             case ASSISTANT -> ChatCompletionMessageParam.ofAssistant(
                     ChatCompletionAssistantMessageParam.builder()
-                            .content(msg.content())
+                            .content(projectedText(message))
                             .build());
             case SYSTEM -> ChatCompletionMessageParam.ofSystem(
                     ChatCompletionSystemMessageParam.builder()
-                            .content(msg.content())
+                            .content(projectedText(message))
                             .build());
         };
     }
 
-    private ChatCompletionUserMessageParam toUserMessage(Message message, ProviderRuntime runtime) {
-        List<ChatCompletionContentPart> parts = mapUserParts(message, runtime);
-        if (parts.isEmpty()) {
+    private ChatCompletionUserMessageParam toUserMessage(ProjectedMessage message) {
+        boolean containsNativeImage = message.parts().stream().anyMatch(NativeImage.class::isInstance);
+        if (!containsNativeImage) {
             return ChatCompletionUserMessageParam.builder()
-                    .content(message.parts().isEmpty() ? message.content() : ProviderAttachmentSupport.textProjection(message.parts()))
+                    .content(projectedText(message))
                     .build();
         }
-
+        List<ChatCompletionContentPart> parts = message.parts().stream()
+                .map(this::toChatContentPart)
+                .flatMap(Optional::stream)
+                .toList();
         return ChatCompletionUserMessageParam.builder()
                 .contentOfArrayOfContentParts(parts)
                 .build();
     }
 
-    private List<ChatCompletionContentPart> mapUserParts(Message message, ProviderRuntime runtime) {
-        if (!supportsNativeImages(runtime) || message.parts().isEmpty()) {
-            return emptyList();
+    private Optional<ChatCompletionContentPart> toChatContentPart(ProjectedPart part) {
+        if (part instanceof NativeImage image) {
+            ChatCompletionContentPartImage.ImageUrl imageUrl = ChatCompletionContentPartImage.ImageUrl.builder()
+                    .url(dataUrl(image))
+                    .build();
+            return Optional.of(ChatCompletionContentPart.ofImageUrl(
+                    ChatCompletionContentPartImage.builder().imageUrl(imageUrl).build()
+            ));
         }
-
-        List<ChatCompletionContentPart> parts = new ArrayList<>();
-        message.parts().stream()
-                .map(part -> mapPart(part, runtime))
-                .flatMap(List::stream)
-                .forEach(parts::add);
-
-        return parts;
+        String text = AttachmentProjectionPlan.textFallback(part);
+        return StringUtils.isBlank(text) ? Optional.empty() : Optional.of(toTextPart(text));
     }
 
-    private List<ChatCompletionContentPart> mapPart(ContentPart part, ProviderRuntime runtime) {
-        if (part instanceof TextPart textPart && !textPart.text().isBlank()) {
-            return List.of(toTextPart(textPart.text()));
-        }
-
-        if (part instanceof ImagePart imagePart && supportsNativeImages(runtime)) {
-            return imageToPart(imagePart)
-                    .map(List::of)
-                    .orElseGet(() -> List.of(toTextPart(ProviderAttachmentSupport.textProjection(imagePart))));
-        }
-
-        return List.of(toTextPart(ProviderAttachmentSupport.textProjection(part)));
+    private String dataUrl(NativeImage image) {
+        return "data:%s;base64,%s".formatted(image.mediaType(), image.base64Data());
     }
 
-    private Optional<ChatCompletionContentPart> imageToPart(ImagePart imagePart) {
-        return ProviderAttachmentSupport.loadEncodedImage(imagePart)
-                .map(encodedImage -> {
-                    String dataUrl = "data:%s;base64,%s".formatted(encodedImage.mediaType(), encodedImage.base64Data());
-
-                    ChatCompletionContentPartImage.ImageUrl imageUrl = ChatCompletionContentPartImage.ImageUrl.builder()
-                            .url(dataUrl)
-                            .build();
-
-                    return ChatCompletionContentPart.ofImageUrl(
-                            ChatCompletionContentPartImage.builder()
-                                    .imageUrl(imageUrl)
-                                    .build()
-                    );
-                });
+    private String projectedText(ProjectedMessage message) {
+        return message.parts().stream()
+                .map(AttachmentProjectionPlan::textFallback)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining("\n"));
     }
 
     private ChatCompletionContentPart toTextPart(String text) {

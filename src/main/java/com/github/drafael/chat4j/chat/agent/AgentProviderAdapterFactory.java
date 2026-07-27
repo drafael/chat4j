@@ -1,12 +1,19 @@
 package com.github.drafael.chat4j.chat.agent;
 
 import com.github.drafael.chat4j.provider.api.ProviderService;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.Validate;
 
 public class AgentProviderAdapterFactory {
+
+    private final ProviderAttachmentSupport attachmentSupport;
+
+    public AgentProviderAdapterFactory(@NonNull ProviderAttachmentSupport attachmentSupport) {
+        this.attachmentSupport = attachmentSupport;
+    }
 
     public AgentProviderAdapter create(
             String providerName,
@@ -19,7 +26,13 @@ public class AgentProviderAdapterFactory {
         Validate.notBlank(providerName, "providerName should not be blank");
 
         if (supportsAnthropicToolAdapter(providerName, modelId, baseUrl)) {
-            return new AnthropicToolAgentAdapter(modelId, baseUrl, apiKey, agentSystemPromptAppend);
+            return new AnthropicToolAgentAdapter(
+                    modelId,
+                    baseUrl,
+                    apiKey,
+                    agentSystemPromptAppend,
+                    attachmentSupport
+            );
         }
 
         AgentProviderAdapter providerServiceAdapter = new ProviderServiceAgentAdapter(providerService, agentSystemPromptAppend);
@@ -33,7 +46,8 @@ public class AgentProviderAdapterFactory {
                     modelId,
                     baseUrl,
                     apiKey,
-                    agentSystemPromptAppend
+                    agentSystemPromptAppend,
+                    attachmentSupport
             );
             return new OpenAiCompatibleFallbackAgentAdapter(providerName, copilotAnthropicToolAdapter, providerServiceAdapter);
         }
@@ -44,7 +58,8 @@ public class AgentProviderAdapterFactory {
                     modelId,
                     baseUrl,
                     apiKey,
-                    agentSystemPromptAppend
+                    agentSystemPromptAppend,
+                    attachmentSupport
             );
             if (shouldUseProviderFallbackWrapper(providerName)) {
                 return new OpenAiCompatibleFallbackAgentAdapter(providerName, openAiToolAdapter, providerServiceAdapter);

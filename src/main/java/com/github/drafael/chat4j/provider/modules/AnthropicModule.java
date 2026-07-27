@@ -9,21 +9,24 @@ import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.AnthropicModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import lombok.NonNull;
 
 import static java.util.Collections.emptyList;
 
 public class AnthropicModule implements ProviderModule {
 
     private final ProviderDescriptor descriptor;
-    private final ChatCompletionClient chatCompletionClient = new AnthropicChatCompletionClient();
+    private final ChatCompletionClient chatCompletionClient;
     private final ModelCatalogClient modelCatalogClient = new AnthropicModelCatalogClient();
 
     public AnthropicModule(
-        String providerName,
-        String credentialEnvVar,
-        String defaultBaseUrl
+            String providerName,
+            String credentialEnvVar,
+            String defaultBaseUrl,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
-        this.descriptor = new ProviderDescriptor(
+        descriptor = new ProviderDescriptor(
             providerName,
             AuthType.ENV_VAR,
             credentialEnvVar,
@@ -33,6 +36,7 @@ public class AnthropicModule implements ProviderModule {
             ProviderCapabilities.chatModelsImagesAndFiles(),
             BaseUrlNormalizer::normalizeAnthropicBaseUrl
         );
+        chatCompletionClient = new AnthropicChatCompletionClient(attachmentSupport);
     }
 
     @Override

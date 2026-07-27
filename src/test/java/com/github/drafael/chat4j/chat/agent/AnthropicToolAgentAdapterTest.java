@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.sun.net.httpserver.HttpServer;
@@ -62,7 +64,8 @@ class AnthropicToolAgentAdapterTest {
             AnthropicToolAgentAdapter subject = new AnthropicToolAgentAdapter(
                     "claude-sonnet-4-20250514",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "test-key"
+                    "test-key",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             AgentTurnResult firstTurn = subject.executeTurn(
@@ -130,7 +133,8 @@ class AnthropicToolAgentAdapterTest {
             AnthropicToolAgentAdapter subject = new AnthropicToolAgentAdapter(
                     "claude-sonnet-4-20250514",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "test-key"
+                    "test-key",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             List<String> tokens = new ArrayList<>();
@@ -194,7 +198,8 @@ class AnthropicToolAgentAdapterTest {
                     "claude-haiku-4.5",
                     "http://127.0.0.1:%d".formatted(port),
                     "test-token",
-                    ""
+                    "",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             AgentTurnResult result = subject.executeTurn(

@@ -141,6 +141,111 @@ class CapabilityProviderServiceTest {
     }
 
     @Test
+    @DisplayName("Streaming without a part receiver preserves the missing receiver for the client")
+    void streamCompletion_whenPartReceiverIsAbsent_forwardsNullReceiver() {
+        var invoked = new AtomicBoolean();
+        var observedPartReceiver = new AtomicReference<Consumer<ContentPart>>();
+        ChatCompletionClient recordingClient = new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+            }
+
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                invoked.set(true);
+                observedPartReceiver.set(onPart);
+            }
+        };
+        var subject = new CapabilityProviderService(runtime(), recordingClient);
+
+        subject.streamCompletion(
+                List.of(Message.user("hello")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> {
+                },
+                error -> {
+                },
+                () -> false,
+                stream -> {
+                },
+                () -> {
+                }
+        );
+
+        assertThat(invoked).isTrue();
+        assertThat(observedPartReceiver).hasNullValue();
+    }
+
+    @Test
+    @DisplayName("Worker interruption suppresses the completion callback")
+    void streamCompletion_whenClientInterruptsWorker_doesNotComplete() {
+        ChatCompletionClient interruptingClient = new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        var subject = new CapabilityProviderService(runtime(), interruptingClient);
+        var completed = new AtomicBoolean();
+
+        boolean interrupted;
+        try {
+            subject.streamCompletion(
+                    List.of(Message.user("hello")),
+                    ReasoningLevel.OFF,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> completed.set(true),
+                    error -> {
+                    },
+                    () -> false
+            );
+        } finally {
+            interrupted = Thread.interrupted();
+        }
+
+        assertThat(interrupted).isTrue();
+        assertThat(completed).isFalse();
+    }
+
+    @Test
     @DisplayName("Citation-aware streaming forwards citations and completion callbacks")
     void streamCompletion_whenClientEmitsCitation_forwardsCitationAndCompletes() {
         AtomicReference<List<Message>> observedHistory = new AtomicReference<>();

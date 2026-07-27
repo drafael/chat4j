@@ -3,9 +3,45 @@ package com.github.drafael.chat4j.web;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.net.Socket;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class JsoupWebPageFetcherTest {
+
+    @Test
+    @DisplayName("Logical cancellation closes an in-flight page fetch socket")
+    void closeSocketOnCancellation_whenLogicallyCancelled_closesSocket() throws Exception {
+        var closed = new CountDownLatch(1);
+        Socket socket = new Socket() {
+            @Override
+            public synchronized void close() throws IOException {
+                super.close();
+                closed.countDown();
+            }
+        };
+        var subject = new JsoupWebPageFetcher();
+        Method method = JsoupWebPageFetcher.class.getDeclaredMethod(
+                "closeSocketOnCancellation",
+                Socket.class,
+                BooleanSupplier.class
+        );
+        method.setAccessible(true);
+
+        Thread watcher = (Thread) method.invoke(subject, socket, (BooleanSupplier) () -> true);
+        try {
+            assertThat(closed.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(socket.isClosed()).isTrue();
+        } finally {
+            watcher.interrupt();
+            socket.close();
+        }
+    }
 
     @Test
     @DisplayName("JSoup page fetcher extracts article text from fetched HTML")

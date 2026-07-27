@@ -14,6 +14,9 @@ public final class TranscriptResources {
 
     private static final Pattern CSS_FONT_URL_PATTERN = Pattern.compile("url\\((['\\\"]?)(fonts/([^)'\\\"?]+))\\1\\)");
     private static final Pattern TEMPLATE_TOKEN_PATTERN = Pattern.compile("\\{\\{[a-z0-9-]+}}");
+    private static final Pattern SCRIPT_END_PATTERN = Pattern.compile("(?i)</script");
+    private static final Pattern SCRIPT_HTML_TAG_PATTERN = Pattern.compile("(?i)<(?=/?(?:html|head|body)(?:\\s|>))");
+    private static final Pattern SCRIPT_HTML_COMMENT_PATTERN = Pattern.compile("<!--");
 
     private TranscriptResources() {
     }
@@ -50,7 +53,10 @@ public final class TranscriptResources {
     }
 
     public static String safeScriptContent(String script) {
-        return StringUtils.defaultString(script).replace("</script", "<\\/script");
+        String content = StringUtils.defaultString(script);
+        content = SCRIPT_END_PATTERN.matcher(content).replaceAll(Matcher.quoteReplacement("<\\/script"));
+        content = SCRIPT_HTML_TAG_PATTERN.matcher(content).replaceAll(Matcher.quoteReplacement("\\x3C"));
+        return SCRIPT_HTML_COMMENT_PATTERN.matcher(content).replaceAll(Matcher.quoteReplacement("\\x3C!--"));
     }
 
     public static String inlineStylesheetFonts(String css) {

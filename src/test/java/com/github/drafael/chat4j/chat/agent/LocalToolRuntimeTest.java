@@ -84,6 +84,31 @@ class LocalToolRuntimeTest {
     }
 
     @Test
+    @DisplayName("A real worker interruption stops tool execution without clearing interrupt status")
+    void execute_whenWorkerIsInterrupted_preservesInterruptAndReturnsFailure() throws Exception {
+        try (FileSystem fs = Jimfs.newFileSystem(Configuration.unix())) {
+            Path projectRoot = fs.getPath("/workspace");
+            Files.createDirectories(projectRoot);
+            Files.writeString(projectRoot.resolve("note.txt"), "hello", StandardCharsets.UTF_8);
+
+            Thread.currentThread().interrupt();
+            try {
+                ToolInvocationResult result = subject.execute(
+                        new ToolInvocationRequest("1", "read", "{\"path\":\"note.txt\"}"),
+                        projectRoot,
+                        () -> false
+                );
+
+                assertThat(result.success()).isFalse();
+                assertThat(result.error()).contains("cancelled");
+                assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Write and edit tools update content inside project root")
     void execute_whenWriteAndEditToolsInvoked_updatesFileContent() throws Exception {
         try (FileSystem fs = Jimfs.newFileSystem(Configuration.unix())) {

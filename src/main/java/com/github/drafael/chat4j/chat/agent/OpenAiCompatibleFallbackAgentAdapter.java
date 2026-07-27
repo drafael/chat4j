@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import static java.util.Collections.emptyList;
+
 @Slf4j
 final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter {
 
@@ -51,21 +53,29 @@ final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter
         );
 
         AgentTurnResult primaryResult = openAiToolAdapter.executeTurn(request, interceptedCallbacks);
+        if (shouldStop(request)) {
+            return new AgentTurnResult(false, emptyList());
+        }
         Exception error = primaryError.get();
         if (shouldFallback(error, emittedContent.get(), primaryResult, request, bufferedTokens)) {
             log.warn("Falling back to provider chat adapter after OpenAI-compatible tool failure for {}", providerName);
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
             emitFallbackNotice(callbacks);
-            return providerServiceAdapter.executeTurn(request, callbacks);
+            return shouldStop(request)
+                    ? new AgentTurnResult(false, emptyList())
+                    : providerServiceAdapter.executeTurn(request, callbacks);
         }
 
-        flushBufferedChunks(bufferedThinking, callbacks.onThinkingToken());
-        flushBufferedChunks(bufferedTokens, callbacks.onToken());
+        flushBufferedChunks(bufferedThinking, callbacks.onThinkingToken(), request);
+        flushBufferedChunks(bufferedTokens, callbacks.onToken(), request);
 
-        if (error != null) {
+        if (error != null && !shouldStop(request)) {
             callbacks.onError().accept(error);
         }
 
-        return primaryResult;
+        return shouldStop(request) ? new AgentTurnResult(false, emptyList()) : primaryResult;
     }
 
     private void emitFallbackNotice(AgentRunCallbacks callbacks) {
@@ -77,10 +87,19 @@ final class OpenAiCompatibleFallbackAgentAdapter implements AgentProviderAdapter
         callbacks.onToken().accept(FALLBACK_NOTICE_TEMPLATE.formatted(providerName));
     }
 
-    private void flushBufferedChunks(List<String> chunks, Consumer<String> emitter) {
+    private void flushBufferedChunks(
+            List<String> chunks,
+            Consumer<String> emitter,
+            AgentRunRequest request
+    ) {
         chunks.stream()
                 .filter(StringUtils::isNotEmpty)
+                .takeWhile(ignored -> !shouldStop(request))
                 .forEach(emitter);
+    }
+
+    private boolean shouldStop(AgentRunRequest request) {
+        return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
     private boolean shouldFallback(

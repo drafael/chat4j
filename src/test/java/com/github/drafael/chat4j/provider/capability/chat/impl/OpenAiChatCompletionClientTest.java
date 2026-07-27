@@ -12,11 +12,18 @@ import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import com.openai.models.ReasoningEffort;
+import com.openai.models.responses.EasyInputMessage;
+import com.openai.models.responses.ResponseInputItem;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -28,23 +35,64 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiChatCompletionClientTest {
 
-    private final OpenAiChatCompletionClient subject = new OpenAiChatCompletionClient();
+    private final ProviderAttachmentSupport attachmentSupport = ProviderAttachmentTestSupport.authority();
+    private final OpenAiChatCompletionClient subject = new OpenAiChatCompletionClient(attachmentSupport);
 
     @Test
-    @DisplayName("Responses input line includes text projections from message parts")
-    void toResponsesInputLine_whenMessageContainsParts_includesProjectedContent() throws Exception {
+    @DisplayName("Responses input uses structured ordered message content instead of flattened role-prefixed text")
+    void toResponsesInput_whenMessageContainsParts_preservesRoleAndOrderedStructuredContent() throws Exception {
+        Path storedImage = ProviderAttachmentTestSupport.managedRoot(attachmentSupport)
+                .resolve(UUID.randomUUID().toString());
+        Files.write(storedImage, new byte[]{1, 2, 3});
+        storedImage.toFile().deleteOnExit();
         List<ContentPart> parts = List.of(
                 new TextPart("Describe this screenshot"),
-                new ImagePart(new AttachmentRef(UUID.randomUUID(), "img.png", "img.png", "image/png", 42L, "sha"), 512, 320)
+                new ImagePart(
+                        new AttachmentRef(UUID.randomUUID(), storedImage.toString(), "img.png", "image/png", 3L, "sha"),
+                        512,
+                        320
+                )
         );
         Message message = new Message(Role.USER, parts, Instant.now());
+        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                List.of(message),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(true),
+                () -> false
+        );
 
-        String line = invokeToResponsesInputLine(message);
+        List<ResponseInputItem> input = invokeToResponsesInput(plan);
 
-        assertThat(line)
-                .contains("User:")
-                .contains("Describe this screenshot")
-                .contains("[Image attached:");
+        assertThat(input).hasSize(1);
+        var easyMessage = input.getFirst().asEasyInputMessage();
+        assertThat(easyMessage.role().known()).isEqualTo(EasyInputMessage.Role.Known.USER);
+        assertThat(easyMessage.content().asResponseInputMessageContentList())
+                .satisfiesExactly(
+                        content -> assertThat(content.asInputText().text()).isEqualTo("Describe this screenshot"),
+                        content -> assertThat(content.asInputImage().imageUrl())
+                                .contains("data:image/png;base64,AQID")
+                );
+    }
+
+    @Test
+    @DisplayName("Responses input supplies a structured fallback when projected history is empty")
+    void toResponsesInput_whenHistoryIsEmpty_returnsContinueMessage() throws Exception {
+        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                emptyList(),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(true),
+                () -> false
+        );
+
+        List<ResponseInputItem> input = invokeToResponsesInput(plan);
+
+        assertThat(input).singleElement().satisfies(item -> {
+            var message = item.asEasyInputMessage();
+            assertThat(message.role().known()).isEqualTo(EasyInputMessage.Role.Known.USER);
+            assertThat(message.content().asResponseInputMessageContentList())
+                    .singleElement()
+                    .satisfies(content -> assertThat(content.asInputText().text()).isEqualTo("Continue."));
+        });
     }
 
     @Test
@@ -99,18 +147,6 @@ class OpenAiChatCompletionClientTest {
         Object preferredMode = invokePreferredCopilotEndpointMode(runtime);
 
         assertThat(preferredMode).hasToString("CHAT_COMPLETIONS");
-    }
-
-    @Test
-    @DisplayName("Diagnostics snapshot exposes last Copilot model and endpoint")
-    void diagnosticsSnapshot_whenUpdated_returnsLatestValues() throws Exception {
-        invokeUpdateCopilotDiagnostics("gpt-5.4-mini", "/responses");
-
-        OpenAiChatCompletionClient.CopilotEndpointDiagnosticsSnapshot snapshot = OpenAiChatCompletionClient.diagnosticsSnapshot();
-
-        assertThat(snapshot.modelId()).isEqualTo("gpt-5.4-mini");
-        assertThat(snapshot.endpoint()).isEqualTo("/responses");
-        assertThat(snapshot.updatedAtEpochMs()).isPositive();
     }
 
     @Test
@@ -178,10 +214,14 @@ class OpenAiChatCompletionClientTest {
         assertThat(shouldEmit).isFalse();
     }
 
-    private String invokeToResponsesInputLine(Message message) throws Exception {
-        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("toResponsesInputLine", Message.class);
+    @SuppressWarnings("unchecked")
+    private List<ResponseInputItem> invokeToResponsesInput(AttachmentProjectionPlan plan) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "toResponsesInput",
+                AttachmentProjectionPlan.class
+        );
         method.setAccessible(true);
-        return (String) method.invoke(subject, message);
+        return (List<ResponseInputItem>) method.invoke(subject, plan);
     }
 
     private boolean invokeIsUnsupportedApiForEndpoint(Exception exception, String endpoint) throws Exception {
@@ -270,11 +310,5 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("preferredCopilotEndpointMode", ProviderRuntime.class);
         method.setAccessible(true);
         return method.invoke(subject, runtime);
-    }
-
-    private void invokeUpdateCopilotDiagnostics(String modelId, String endpoint) throws Exception {
-        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("updateCopilotDiagnostics", String.class, String.class);
-        method.setAccessible(true);
-        method.invoke(subject, modelId, endpoint);
     }
 }

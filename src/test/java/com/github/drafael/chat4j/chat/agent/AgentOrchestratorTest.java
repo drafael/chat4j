@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -26,7 +28,7 @@ class AgentOrchestratorTest {
     @Test
     @DisplayName("Agent orchestrator rejects runs when project root is missing")
     void streamCompletion_whenProjectRootIsMissing_throwsIllegalStateException() {
-        var subject = AgentOrchestrator.createDefault();
+        var subject = new AgentOrchestrator(new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()), new LocalToolRuntime());
         var provider = immediateProvider();
         var request = new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, null, emptyList(), () -> false);
 
@@ -83,7 +85,7 @@ class AgentOrchestratorTest {
                 }
         );
 
-        var subject = AgentOrchestrator.createDefault();
+        var subject = new AgentOrchestrator(new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()), new LocalToolRuntime());
         subject.streamCompletion(
                 "Custom Provider",
                 "",
@@ -109,7 +111,7 @@ class AgentOrchestratorTest {
         AtomicInteger turns = new AtomicInteger(0);
         AtomicReference<List<ToolInvocationResult>> secondTurnResults = new AtomicReference<>();
 
-        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory() {
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -174,6 +176,139 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    @DisplayName("A worker interruption after an adapter callback suppresses completion")
+    void streamCompletion_whenWorkerIsInterrupted_stopsCallbacks() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-interrupt");
+        var completed = new AtomicBoolean();
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
+            @Override
+            public AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    callbacks.onToken().accept("partial");
+                    Thread.currentThread().interrupt();
+                    return AgentTurnResult.complete();
+                };
+            }
+        };
+        var subject = new AgentOrchestrator(adapterFactory, new LocalToolRuntime());
+        var request = new AgentRunRequest(
+                List.of(Message.user("inspect workspace")),
+                ReasoningLevel.OFF,
+                projectRoot,
+                emptyList(),
+                () -> false
+        );
+
+        boolean interrupted;
+        try {
+            subject.streamCompletion(
+                    "Mistral",
+                    "devstral-latest",
+                    "https://api.mistral.ai/v1",
+                    "test-key",
+                    "",
+                    immediateProvider(),
+                    request,
+                    new AgentRunCallbacks(
+                            ignored -> {
+                            },
+                            ignored -> {
+                            },
+                            ignored -> {
+                            },
+                            () -> completed.set(true),
+                            error -> {
+                            }
+                    )
+            );
+        } finally {
+            interrupted = Thread.interrupted();
+        }
+
+        assertThat(interrupted).isTrue();
+        assertThat(completed).isFalse();
+    }
+
+    @Test
+    @DisplayName("Cancellation during a tool stops the remaining batch and late completion activity")
+    void streamCompletion_whenCancelledDuringToolBatch_stopsRemainingTools() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-cancel-batch");
+        Files.writeString(projectRoot.resolve("first.txt"), "first", StandardCharsets.UTF_8);
+        Files.writeString(projectRoot.resolve("second.txt"), "second", StandardCharsets.UTF_8);
+        var cancelled = new AtomicBoolean();
+        var turns = new AtomicInteger();
+        List<AgentToolActivity> activities = new ArrayList<>();
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
+            @Override
+            public AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    turns.incrementAndGet();
+                    return AgentTurnResult.continueWithTools(List.of(
+                            new ToolInvocationRequest("1", "read", "{\"path\":\"first.txt\"}"),
+                            new ToolInvocationRequest("2", "read", "{\"path\":\"second.txt\"}")
+                    ));
+                };
+            }
+        };
+        var subject = new AgentOrchestrator(adapterFactory, new LocalToolRuntime());
+        var request = new AgentRunRequest(
+                List.of(Message.user("read files")),
+                ReasoningLevel.OFF,
+                projectRoot,
+                emptyList(),
+                cancelled::get
+        );
+
+        subject.streamCompletion(
+                "OpenAI",
+                "gpt-5-mini",
+                "https://api.openai.com/v1",
+                "test-key",
+                "",
+                immediateProvider(),
+                request,
+                new AgentRunCallbacks(
+                        ignored -> {
+                        },
+                        ignored -> {
+                        },
+                        activity -> {
+                            activities.add(activity);
+                            if (activity.status() == AgentToolActivity.Status.STARTED) {
+                                cancelled.set(true);
+                            }
+                        },
+                        () -> {
+                        },
+                        error -> {
+                        }
+                )
+        );
+
+        assertThat(turns).hasValue(1);
+        assertThat(activities)
+                .extracting(AgentToolActivity::status)
+                .containsExactly(AgentToolActivity.Status.STARTED);
+        assertThat(activities)
+                .extracting(AgentToolActivity::toolName)
+                .containsExactly("read");
+    }
+
+    @Test
     @DisplayName("Agent orchestrator allows one final completion turn after max tool rounds")
     void streamCompletion_whenToolRoundsHitLimit_allowsFinalCompletionTurn() throws Exception {
         Path projectRoot = Files.createTempDirectory("chat4j-agent-max-rounds-final");
@@ -184,7 +319,7 @@ class AgentOrchestratorTest {
         AtomicReference<Exception> error = new AtomicReference<>();
         AtomicReference<List<ToolInvocationResult>> finalTurnResults = new AtomicReference<>();
 
-        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory() {
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -246,7 +381,7 @@ class AgentOrchestratorTest {
         AtomicReference<Exception> error = new AtomicReference<>();
         AtomicBoolean completed = new AtomicBoolean(false);
 
-        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory() {
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -305,7 +440,7 @@ class AgentOrchestratorTest {
         AtomicReference<Exception> error = new AtomicReference<>();
         List<AgentToolActivity> toolActivities = new ArrayList<>();
 
-        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory() {
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -361,6 +496,75 @@ class AgentOrchestratorTest {
         assertThat(toolActivities)
                 .extracting(AgentToolActivity::status)
                 .contains(AgentToolActivity.Status.SKIPPED);
+    }
+
+    @Test
+    @DisplayName("Cancellation during loop-guard activity suppresses remaining callbacks")
+    void streamCompletion_whenCancelledDuringLoopGuard_stopsCallbacks() throws Exception {
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-loop-guard-cancel");
+        var cancelled = new AtomicBoolean();
+        var turns = new AtomicInteger();
+        List<AgentToolActivity> activities = new ArrayList<>();
+        List<String> tokens = new ArrayList<>();
+        var completed = new AtomicBoolean();
+        AgentProviderAdapterFactory adapterFactory = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority()) {
+            @Override
+            public AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    turns.incrementAndGet();
+                    return AgentTurnResult.continueWithTools(List.of(
+                            new ToolInvocationRequest("1", "ls", "{\"path\":\".\"}"),
+                            new ToolInvocationRequest("2", "find", "{\"path\":\".\",\"pattern\":\"*.java\"}")
+                    ));
+                };
+            }
+        };
+        var subject = new AgentOrchestrator(adapterFactory, new LocalToolRuntime());
+        var request = new AgentRunRequest(
+                List.of(Message.user("inspect workspace")),
+                ReasoningLevel.OFF,
+                projectRoot,
+                emptyList(),
+                cancelled::get
+        );
+
+        subject.streamCompletion(
+                "Mistral",
+                "devstral-latest",
+                "https://api.mistral.ai/v1",
+                "test-key",
+                "",
+                immediateProvider(),
+                request,
+                new AgentRunCallbacks(
+                        tokens::add,
+                        ignored -> {
+                        },
+                        activity -> {
+                            activities.add(activity);
+                            if (activity.status() == AgentToolActivity.Status.SKIPPED) {
+                                cancelled.set(true);
+                            }
+                        },
+                        () -> completed.set(true),
+                        error -> {
+                        }
+                )
+        );
+
+        assertThat(turns).hasValue(3);
+        assertThat(activities.stream()
+                .filter(activity -> activity.status() == AgentToolActivity.Status.SKIPPED))
+                .hasSize(1);
+        assertThat(tokens).isEmpty();
+        assertThat(completed).isFalse();
     }
 
     private ProviderService immediateProvider() {

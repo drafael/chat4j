@@ -127,6 +127,44 @@ class OpenAiCompatibleFallbackAgentAdapterTest {
     }
 
     @Test
+    @DisplayName("Cancellation after a primary response suppresses buffered callbacks and fallback work")
+    void executeTurn_whenPrimaryCancelsAfterBuffering_stopsWithoutCallbacks() {
+        var cancelled = new AtomicBoolean();
+        var fallbackInvoked = new AtomicBoolean();
+        AgentProviderAdapter primary = (request, callbacks) -> {
+            callbacks.onToken().accept("buffered");
+            cancelled.set(true);
+            return AgentTurnResult.complete();
+        };
+        AgentProviderAdapter fallback = (request, callbacks) -> {
+            fallbackInvoked.set(true);
+            return AgentTurnResult.complete();
+        };
+        var subject = new OpenAiCompatibleFallbackAgentAdapter("Google AI", primary, fallback);
+        List<String> tokens = new ArrayList<>();
+        var errorForwarded = new AtomicBoolean();
+
+        AgentTurnResult result = subject.executeTurn(
+                new AgentRunRequest(
+                        List.of(Message.user("ping")),
+                        ReasoningLevel.OFF,
+                        Path.of("."),
+                        emptyList(),
+                        cancelled::get
+                ),
+                new AgentRunCallbacks(tokens::add, ignored -> {
+                }, () -> {
+                }, ignored -> errorForwarded.set(true))
+        );
+
+        assertThat(result.completed()).isFalse();
+        assertThat(result.toolInvocations()).isEmpty();
+        assertThat(tokens).isEmpty();
+        assertThat(fallbackInvoked).isFalse();
+        assertThat(errorForwarded).isFalse();
+    }
+
+    @Test
     @DisplayName("Does not fall back when primary adapter already emitted content")
     void executeTurn_whenPrimaryEmitsContent_doesNotFallback() {
         AtomicBoolean fallbackInvoked = new AtomicBoolean(false);

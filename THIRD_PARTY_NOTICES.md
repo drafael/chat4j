@@ -111,7 +111,7 @@ Chromium, Microsoft Edge, and Safari are trademarks of their respective owners. 
 
 WebKit is open source software with portions licensed under LGPL and BSD licenses. The WebKit name and logo may be protected as trademarks. Chat4J uses the icon only to identify the Linux System WebView backend, which is WebKitGTK, and does not imply endorsement by Apple, WebKit, or the WebKitGTK project.
 
-## GraalJS Community / GraalVM Polyglot 24.2.1
+## GraalJS Community / GraalVM Polyglot 25.1.3
 
 - Project: https://www.graalvm.org/javascript/
 - Maven coordinates:
@@ -121,6 +121,21 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 - Notable transitive license: `org.graalvm.shadowed:icu4j` declares the Unicode/ICU License
 
 Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.
+
+## TwelveMonkeys ImageIO WebP 3.13.0
+
+- Project: https://github.com/haraldk/TwelveMonkeys
+- Maven coordinates: `com.twelvemonkeys.imageio:imageio-webp`
+- License: BSD 3-Clause
+- Copyright: TwelveMonkeys contributors
+
+Chat4J uses the ImageIO service provider to inspect and decode bounded WebP image attachments. The shaded application merges ImageIO service registrations through Maven Shade's `ServicesResourceTransformer`.
+
+The TwelveMonkeys BSD 3-Clause terms are included at:
+
+```text
+src/main/resources/licenses/TwelveMonkeys-BSD-3-Clause-3.13.0.txt
+```
 
 ## whisper-jni / whisper.cpp runtime 0.5.5
 

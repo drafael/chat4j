@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -20,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentProviderAdapterFactoryTest {
 
-    private final AgentProviderAdapterFactory subject = new AgentProviderAdapterFactory();
+    private final AgentProviderAdapterFactory subject = new AgentProviderAdapterFactory(ProviderAttachmentTestSupport.authority());
 
     @Test
     @DisplayName("Codex provider falls back to provider service adapter when OAuth bearer token is missing")

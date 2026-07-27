@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.modules;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import java.nio.file.Path;
@@ -17,13 +19,15 @@ class OpenAiCompatibleModuleTest {
     @Test
     @DisplayName("Google AI does not declare global image capability and relies on per-model detection")
     void descriptor_whenGoogleAiProvider_returnsNoStaticImageCapability() {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new OpenAiCompatibleModule(
                 "Google AI",
                 AuthType.ENV_VAR,
                 "GEMINI_API_KEY",
                 null,
                 "https://generativelanguage.googleapis.com/v1beta/openai",
-                new CopilotModelMetadataStore(tempDir.resolve("google-ai-metadata"))
+                new CopilotModelMetadataStore(tempDir.resolve("google-ai-metadata")),
+                attachmentAuthority
         );
 
         assertThat(subject.descriptor().capabilities().supportsImageInput()).isFalse();
@@ -32,13 +36,15 @@ class OpenAiCompatibleModuleTest {
     @Test
     @DisplayName("OpenAI keeps global image capability for broad multimodal model coverage")
     void descriptor_whenOpenAiProvider_returnsStaticImageCapability() {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new OpenAiCompatibleModule(
                 "OpenAI",
                 AuthType.ENV_VAR,
                 "OPENAI_API_KEY",
                 null,
                 "https://api.openai.com/v1",
-                new CopilotModelMetadataStore(tempDir.resolve("openai-metadata"))
+                new CopilotModelMetadataStore(tempDir.resolve("openai-metadata")),
+                attachmentAuthority
         );
 
         assertThat(subject.descriptor().capabilities().supportsImageInput()).isTrue();

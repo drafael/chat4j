@@ -1,22 +1,88 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
+import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
+import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiToolAgentAdapterTest {
+
+    @Test
+    @DisplayName("Direct agent projection uses bounded metadata labels without paths or generated alt text")
+    void toChatMessage_whenHistoryContainsGeneratedImage_usesSafeMetadataLabel() throws Exception {
+        var attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                "/private/attachment/uuid",
+                "folder\\safe.png",
+                "image/png",
+                100L,
+                "sha"
+        );
+        Message message = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("result"), new GeneratedImagePart(
+                        attachment,
+                        null,
+                        null,
+                        "secret".repeat(100_000)
+                )),
+                Instant.now()
+        );
+        List<String> requestBodies = new ArrayList<>();
+        HttpServer server = createChatCompletionsServer(
+                List.of("{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"),
+                requestBodies,
+                List.of(200)
+        );
+        try {
+            var subject = new OpenAiToolAgentAdapter(
+                    "OpenAI",
+                    "gpt-5",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "key",
+                    ProviderAttachmentTestSupport.authority()
+            );
+
+            subject.executeTurn(
+                    new AgentRunRequest(
+                            List.of(message),
+                            ReasoningLevel.OFF,
+                            java.nio.file.Path.of("."),
+                            emptyList(),
+                            () -> false
+                    ),
+                    new AgentRunCallbacks(token -> {
+                    }, thinking -> {
+                    }, () -> {
+                    }, error -> {
+                    })
+            );
+
+            assertThat(requestBodies).singleElement().asString()
+                    .contains("result\\n[Generated image: safe.png]")
+                    .doesNotContain("/private/attachment/uuid", "secretsecret");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Adapter parses tool calls and includes tool results on next turn")
@@ -62,7 +128,8 @@ class OpenAiToolAgentAdapterTest {
                     "OpenAI",
                     "gpt-5-mini",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "test-key"
+                    "test-key",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             AgentTurnResult firstTurn = subject.executeTurn(
@@ -150,7 +217,8 @@ class OpenAiToolAgentAdapterTest {
                     "DeepSeek",
                     "deepseek-v4-pro",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "test-key"
+                    "test-key",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             List<String> thinkingTokens = new ArrayList<>();
@@ -213,7 +281,8 @@ class OpenAiToolAgentAdapterTest {
                     "OpenAI",
                     "gpt-5-mini",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "test-key"
+                    "test-key",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             List<String> tokens = new ArrayList<>();
@@ -259,7 +328,8 @@ class OpenAiToolAgentAdapterTest {
                     "gpt-5-mini",
                     "http://127.0.0.1:%d/v1".formatted(port),
                     "test-key",
-                    "Always mention build files."
+                    "Always mention build files.",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             subject.executeTurn(
@@ -277,18 +347,6 @@ class OpenAiToolAgentAdapterTest {
         } finally {
             server.stop(0);
         }
-    }
-
-    @Test
-    @DisplayName("Tool request timeout is consistent across local and remote providers")
-    void resolveRequestTimeout_whenAnyProvider_usesDefaultTimeout() {
-        Duration lmStudioTimeout = OpenAiToolAgentAdapter.resolveRequestTimeout("LM Studio", "http://127.0.0.1:1234/v1");
-        Duration localhostTimeout = OpenAiToolAgentAdapter.resolveRequestTimeout("Custom", "http://localhost:8080/v1");
-        Duration remoteTimeout = OpenAiToolAgentAdapter.resolveRequestTimeout("OpenAI", "https://api.openai.com/v1");
-
-        assertThat(lmStudioTimeout).isEqualTo(Duration.ofSeconds(60));
-        assertThat(localhostTimeout).isEqualTo(Duration.ofSeconds(60));
-        assertThat(remoteTimeout).isEqualTo(Duration.ofSeconds(60));
     }
 
     @Test
@@ -312,7 +370,8 @@ class OpenAiToolAgentAdapterTest {
                     "OpenAI Codex",
                     "gpt-5.5",
                     "http://127.0.0.1:%d/v1".formatted(port),
-                    "token"
+                    "token",
+                    ProviderAttachmentTestSupport.authority()
             );
 
             List<String> errors = new ArrayList<>();

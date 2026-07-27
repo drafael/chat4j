@@ -59,6 +59,7 @@ import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshCoordinator;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ModelMenuDirtyRefreshTriggerCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildApplyCoordinator;
 import com.github.drafael.chat4j.provider.support.ModelMenuStructureRebuildCoordinator;
@@ -242,6 +243,8 @@ public class MainFrame extends JFrame {
     private final CredentialResolver credentialResolver;
     private final CredentialMutationService credentialMutationService;
     private final Map<String, String> subprocessEnvironment;
+    private final StoragePaths storagePaths;
+    private final ProviderAttachmentSupport attachmentSupport;
     private final Path sttModelsDirectory;
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
@@ -417,11 +420,13 @@ public class MainFrame extends JFrame {
             @NonNull CopilotModelMetadataStore copilotModelMetadataStore,
             @NonNull CredentialResolver credentialResolver,
             @NonNull CredentialMutationService credentialMutationService,
-            @NonNull Map<String, String> subprocessEnvironment
+            @NonNull Map<String, String> subprocessEnvironment,
+            @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
         this.settingsRepo = settingsRepo;
+        this.storagePaths = storagePaths;
         this.sttModelsDirectory = storagePaths.sttModelsDirectory();
         this.sttTempDirectory = storagePaths.sttTempDirectory();
         this.sttCatalogStore = new SpeechToTextCatalogStore(catalogSnapshots);
@@ -442,6 +447,7 @@ public class MainFrame extends JFrame {
         this.credentialResolver = credentialResolver;
         this.credentialMutationService = credentialMutationService;
         this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+        this.attachmentSupport = attachmentSupport;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
                 conversationRepo,
                 settingsRepo,
@@ -715,7 +721,9 @@ public class MainFrame extends JFrame {
                 providerRegistry,
                 copilotAuthResolver,
                 codexAuthResolver,
-                credentialResolver
+                credentialResolver,
+                storagePaths,
+                attachmentSupport
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);

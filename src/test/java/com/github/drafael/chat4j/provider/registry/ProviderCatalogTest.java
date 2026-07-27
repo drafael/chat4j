@@ -2,12 +2,15 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.AuthType;
+import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import com.sun.net.httpserver.HttpServer;
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
@@ -116,6 +119,7 @@ class ProviderCatalogTest {
             }
         };
         var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("generation-race-metadata"));
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new ProviderCatalog(
                 copilotAuthResolver,
                 new CodexAuthResolver(
@@ -129,7 +133,8 @@ class ProviderCatalogTest {
                         emptyMap(),
                         emptyMap()
                 ),
-                emptyMap()
+                emptyMap(),
+                attachmentAuthority
         );
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
@@ -241,11 +246,56 @@ class ProviderCatalogTest {
         }
     }
 
+    @Test
+    @DisplayName("Every provider request path shares the configured attachment authority")
+    void constructor_whenCatalogIsBuilt_wiresSameAttachmentAuthorityToEveryClient() throws Exception {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        ProviderCatalog catalog = newCatalog(emptyMap(), attachmentAuthority);
+
+        assertThat(catalog.allProviders())
+                .extracting(ProviderDefinition::name)
+                .containsExactly(
+                        "Anthropic",
+                        "Google AI",
+                        "OpenAI Codex",
+                        "GitHub Copilot",
+                        "OpenAI",
+                        "Perplexity",
+                        "OpenRouter",
+                        "Groq",
+                        "DeepSeek",
+                        "Mistral",
+                        "xAI",
+                        "LM Studio",
+                        "Ollama"
+                );
+        for (ProviderDefinition provider : catalog.allProviders()) {
+            Object client = provider.module().chatCompletionClient();
+            assertThat(readField(client, "attachmentSupport")).isSameAs(attachmentAuthority);
+            if (client instanceof GoogleAiGenerateContentClient) {
+                Object fallback = readField(client, "fallbackClient");
+                assertThat(readField(fallback, "attachmentSupport")).isSameAs(attachmentAuthority);
+                Object writer = readField(client, "generatedImageAttachmentWriter");
+                assertThat(readField(writer, "attachmentSupport")).isSameAs(attachmentAuthority);
+            }
+        }
+    }
+
     private ProviderCatalog newCatalog() {
         return newCatalog(emptyMap());
     }
 
     private ProviderCatalog newCatalog(Map<String, String> processEnvironment) {
+        return newCatalog(
+                processEnvironment,
+                ProviderAttachmentTestSupport.authority()
+        );
+    }
+
+    private ProviderCatalog newCatalog(
+            Map<String, String> processEnvironment,
+            ProviderAttachmentSupport attachmentAuthority
+    ) {
         ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials")));
         CredentialResolver credentialResolver = new CredentialResolver(vault, processEnvironment, emptyMap());
         return new ProviderCatalog(
@@ -253,7 +303,14 @@ class ProviderCatalogTest {
                 new CodexAuthResolver(tempDir.resolve("codex-home"), emptyMap(), HttpClient.newHttpClient()),
                 new CopilotModelMetadataStore(tempDir.resolve("metadata")),
                 credentialResolver,
-                emptyMap()
+                emptyMap(),
+                attachmentAuthority
         );
+    }
+
+    private static Object readField(Object target, String fieldName) throws Exception {
+        var field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(target);
     }
 }

@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
 import static java.util.Collections.emptyList;
@@ -57,14 +58,25 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
 
     @Override
     public AgentTurnResult executeTurn(AgentRunRequest request, AgentRunCallbacks callbacks) {
+        if (shouldStop(request)) {
+            return new AgentTurnResult(false, emptyList());
+        }
         AtomicBoolean completed = new AtomicBoolean(false);
         AtomicBoolean failed = new AtomicBoolean(false);
+        List<Message> augmentedHistory = augmentHistoryWithWorkspaceSnapshot(
+                request.history(),
+                request.projectRoot(),
+                request.isCancelled()
+        );
+        if (shouldStop(request)) {
+            return new AgentTurnResult(false, emptyList());
+        }
         emitLocalToolsUnavailableActivity(request, callbacks);
 
         try (ExecutionDirectoryContext.Scope ignored = ExecutionDirectoryContext.open(request.projectRoot());
              AgentSystemPromptContext.Scope promptScope = AgentSystemPromptContext.open(agentSystemPromptAppend)) {
             providerService.streamCompletion(
-                    augmentHistoryWithWorkspaceSnapshot(request.history(), request.projectRoot()),
+                    augmentedHistory,
                     request.reasoningLevel(),
                     WebSearchRequestOptions.disabled(),
                     callbacks.onToken(),
@@ -116,13 +128,17 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
                 : normalizedRoot.getFileName().toString();
     }
 
-    private List<Message> augmentHistoryWithWorkspaceSnapshot(List<Message> history, Path rootFolder) {
-        if (rootFolder == null || !Files.isDirectory(rootFolder)) {
+    private List<Message> augmentHistoryWithWorkspaceSnapshot(
+            List<Message> history,
+            Path rootFolder,
+            BooleanSupplier isCancelled
+    ) {
+        if (rootFolder == null || !Files.isDirectory(rootFolder) || shouldStop(isCancelled)) {
             return history;
         }
 
-        String snapshot = buildWorkspaceSnapshot(rootFolder);
-        if (StringUtils.isBlank(snapshot)) {
+        String snapshot = buildWorkspaceSnapshot(rootFolder, isCancelled);
+        if (StringUtils.isBlank(snapshot) || shouldStop(isCancelled)) {
             return history;
         }
 
@@ -132,13 +148,16 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
         return List.copyOf(augmented);
     }
 
-    private String buildWorkspaceSnapshot(Path rootFolder) {
+    private String buildWorkspaceSnapshot(Path rootFolder, BooleanSupplier isCancelled) {
         Path normalizedRoot = rootFolder.toAbsolutePath().normalize();
         StringBuilder snapshot = new StringBuilder();
         snapshot.append("Agent Mode workspace snapshot from selected folder. Use this context when local tool-calling is unavailable.\n");
         snapshot.append("Selected agent root: ").append(normalizedRoot).append("\n\n");
 
-        List<String> topLevelEntries = listTopLevelEntries(normalizedRoot);
+        List<String> topLevelEntries = listTopLevelEntries(normalizedRoot, isCancelled);
+        if (shouldStop(isCancelled)) {
+            return "";
+        }
         snapshot.append("Top-level entries:\n");
         if (topLevelEntries.isEmpty()) {
             snapshot.append("- (no visible entries)\n");
@@ -146,20 +165,26 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
             topLevelEntries.forEach(entry -> snapshot.append("- ").append(entry).append("\n"));
         }
 
-        List<Path> sampleFiles = collectSampleReadableFiles(normalizedRoot);
+        List<Path> sampleFiles = collectSampleReadableFiles(normalizedRoot, isCancelled);
+        if (shouldStop(isCancelled)) {
+            return "";
+        }
         if (sampleFiles.isEmpty()) {
             snapshot.append("\nNo readable text samples detected quickly; folder may contain mostly binary files or unsupported formats.\n");
             return snapshot.toString();
         }
 
         snapshot.append("\nReadable file excerpts (truncated):\n");
-        sampleFiles.forEach(path -> appendExcerpt(snapshot, normalizedRoot, path));
-        return snapshot.toString();
+        sampleFiles.stream()
+                .takeWhile(ignored -> !shouldStop(isCancelled))
+                .forEach(path -> appendExcerpt(snapshot, normalizedRoot, path));
+        return shouldStop(isCancelled) ? "" : snapshot.toString();
     }
 
-    private List<String> listTopLevelEntries(Path rootFolder) {
+    private List<String> listTopLevelEntries(Path rootFolder, BooleanSupplier isCancelled) {
         try (Stream<Path> paths = Files.list(rootFolder)) {
             return paths
+                    .takeWhile(ignored -> !shouldStop(isCancelled))
                     .sorted(Comparator.comparing(path -> path.getFileName().toString().toLowerCase()))
                     .limit(MAX_TOP_LEVEL_ENTRIES)
                     .map(path -> {
@@ -172,9 +197,10 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
         }
     }
 
-    private List<Path> collectSampleReadableFiles(Path rootFolder) {
+    private List<Path> collectSampleReadableFiles(Path rootFolder, BooleanSupplier isCancelled) {
         try (Stream<Path> paths = Files.walk(rootFolder, SAMPLE_WALK_DEPTH)) {
             return paths
+                    .takeWhile(ignored -> !shouldStop(isCancelled))
                     .filter(Files::isRegularFile)
                     .limit(MAX_SCANNED_FILES)
                     .filter(this::isReadableSampleCandidate)
@@ -243,5 +269,14 @@ final class ProviderServiceAgentAdapter implements AgentProviderAdapter {
         } catch (Exception ignored) {
             // ignore unreadable files
         }
+    }
+
+    private boolean shouldStop(AgentRunRequest request) {
+        return shouldStop(request.isCancelled());
+    }
+
+    private boolean shouldStop(BooleanSupplier isCancelled) {
+        return Thread.currentThread().isInterrupted()
+                || isCancelled != null && isCancelled.getAsBoolean();
     }
 }

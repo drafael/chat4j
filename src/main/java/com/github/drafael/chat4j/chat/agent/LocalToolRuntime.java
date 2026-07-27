@@ -86,6 +86,9 @@ public final class LocalToolRuntime {
             };
 
             return ToolInvocationResult.success(request, limitOutput(output));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ToolInvocationResult.failure(request, "Tool execution interrupted");
         } catch (Exception e) {
             return ToolInvocationResult.failure(request, e.getMessage());
         }
@@ -388,6 +391,9 @@ public final class LocalToolRuntime {
                         min(remainingNanos, TimeUnit.MILLISECONDS.toNanos(100)),
                         TimeUnit.NANOSECONDS
                 );
+            } catch (InterruptedException e) {
+                destroyProcess(startedProcess);
+                throw e;
             } catch (TimeoutException ignored) {
                 // Poll again so cancellation can stop the running process promptly.
             }
@@ -395,7 +401,8 @@ public final class LocalToolRuntime {
     }
 
     private void ensureNotCancelledProcess(StartedProcess startedProcess, BooleanSupplier isCancelled) {
-        if (isCancelled != null && isCancelled.getAsBoolean()) {
+        if (Thread.currentThread().isInterrupted()
+                || isCancelled != null && isCancelled.getAsBoolean()) {
             destroyProcess(startedProcess);
             throw new IllegalStateException("Tool execution cancelled");
         }
@@ -705,7 +712,8 @@ public final class LocalToolRuntime {
     }
 
     private void ensureNotCancelled(BooleanSupplier isCancelled) {
-        if (isCancelled != null && isCancelled.getAsBoolean()) {
+        if (Thread.currentThread().isInterrupted()
+                || isCancelled != null && isCancelled.getAsBoolean()) {
             throw new IllegalStateException("Tool execution cancelled");
         }
     }

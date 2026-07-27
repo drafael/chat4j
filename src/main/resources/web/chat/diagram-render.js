@@ -161,18 +161,20 @@
         }
     }
     function mermaidPayload(container) {
-        var svg = container ? container.querySelector('svg') : null;
-        if (!svg || typeof XMLSerializer === 'undefined') {
+        if (!container) {
             return null;
         }
+        var colors = mermaidColors();
         return JSON.stringify({
             type: 'mermaid',
             title: container.getAttribute('data-chat4j-diagram-title') || 'Mermaid Diagram',
             source: container.getAttribute('data-chat4j-diagram-source') || '',
-            svg: new XMLSerializer().serializeToString(svg),
-            background: computedStyleValue(container, 'background-color', bodyBackground('transparent')),
-            color: computedStyleValue(container, 'color', bodyColor('currentColor')),
-            borderColor: computedStyleValue(container, 'border-color', computedStyleValue(container, 'color', bodyColor('currentColor')))
+            pageBackground: colors.background,
+            sourceBackground: colors.secondarySurface,
+            background: colors.diagramBackground,
+            color: colors.text,
+            borderColor: colors.border,
+            themeVariables: mermaidTheme(colors).themeVariables
         });
     }
     function openMermaidDiagram(container) {
@@ -269,8 +271,8 @@
             quadrantTitleFill: colors.text
         };
     }
-    function mermaidTheme() {
-        var colors = mermaidColors();
+    function mermaidTheme(colors) {
+        colors = colors || mermaidColors();
         var text = colors.text;
         var background = colors.background;
         var diagramBackground = colors.diagramBackground;
@@ -587,8 +589,13 @@
             markError(table, message || 'Mermaid render failed');
         }
         function renderSource(candidate, suffix) {
+            if (String(candidate || '').length > MERMAID_MAX_CHARS) {
+                return Promise.reject(new Error('Mermaid diagram is too large'));
+            }
             return Promise.resolve(window.mermaid.parse(candidate)).then(function() {
                 return Promise.resolve(window.mermaid.render(id + suffix, candidate));
+            }).then(function(result) {
+                return { result: result, source: candidate };
             });
         }
         try {
@@ -598,12 +605,13 @@
                     throw originalError;
                 }
                 return renderSource(repaired, '-repaired');
-            }).then(function(result) {
+            }).then(function(rendered) {
                 if (completed) {
                     return;
                 }
                 completed = true;
                 window.clearTimeout(timeoutId);
+                var result = rendered ? rendered.result : null;
                 var svg = result && result.svg ? result.svg : '';
                 if (!svg || mermaidErrorSvg(svg)) {
                     markError(table, 'Mermaid render failed');
@@ -617,7 +625,7 @@
                     return;
                 }
                 appendMermaidThemeStyle(renderedSvg);
-                installMermaidOpenButton(target, renderableSource);
+                installMermaidOpenButton(target, rendered.source);
                 replaceSource(table, target);
                 applyReadableNodeLabelTheme(renderedSvg);
                 applyMindmapLabelTheme(renderedSvg);

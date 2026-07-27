@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.modules;
 
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -10,7 +12,8 @@ class AnthropicModuleTest {
     private static final AnthropicModule subject = new AnthropicModule(
             "Anthropic",
             "ANTHROPIC_API_KEY",
-            "https://api.anthropic.com"
+            "https://api.anthropic.com",
+            ProviderAttachmentTestSupport.authority()
     );
 
     @Test

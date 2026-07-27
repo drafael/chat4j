@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.Map;
 
 /**
@@ -30,7 +31,8 @@ public record AppServices(
     CopilotModelMetadataStore copilotModelMetadataStore,
     CredentialResolver credentialResolver,
     CredentialMutationService credentialMutationService,
-    Map<String, String> subprocessEnvironment
+    Map<String, String> subprocessEnvironment,
+    ProviderAttachmentSupport attachmentSupport
 ) {
     public AppServices {
         subprocessEnvironment = Map.copyOf(subprocessEnvironment);
