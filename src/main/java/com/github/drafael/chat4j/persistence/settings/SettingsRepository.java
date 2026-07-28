@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.persistence.StoragePaths;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -38,8 +39,12 @@ public class SettingsRepository {
     }
 
     public SettingsRepository(@NonNull Path settingsFile) {
-        this.settingsFile = settingsFile;
-        this.settingsFileIdentity = CacheRootHandle.canonicalPath(settingsFile);
+        this.settingsFile = settingsFile.toAbsolutePath().normalize();
+        Validate.isTrue(
+                this.settingsFile.getParent() != null && this.settingsFile.getFileName() != null,
+                "settingsFile should identify a file"
+        );
+        this.settingsFileIdentity = CacheRootHandle.canonicalPath(this.settingsFile);
         this.lock = PATH_LOCKS.computeIfAbsent(settingsFileIdentity, ignored -> new Object());
     }
 
@@ -246,13 +251,9 @@ public class SettingsRepository {
     private void storeProperties(Properties properties) {
         Path parent = settingsFile.getParent();
         try {
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
+            Files.createDirectories(parent);
 
-            Path tempFile = parent == null
-                    ? Files.createTempFile("chat4j-settings", ".tmp")
-                    : Files.createTempFile(parent, settingsFile.getFileName().toString(), ".tmp");
+            Path tempFile = Files.createTempFile(parent, settingsFile.getFileName().toString(), ".tmp");
             try {
                 try (OutputStream output = Files.newOutputStream(tempFile)) {
                     properties.store(output, "Chat4J settings");
@@ -274,7 +275,7 @@ public class SettingsRepository {
     private void moveAtomicallyOrReplace(Path tempFile) throws IOException {
         try {
             Files.move(tempFile, settingsFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
+        } catch (AtomicMoveNotSupportedException e) {
             Files.move(tempFile, settingsFile, StandardCopyOption.REPLACE_EXISTING);
         }
     }

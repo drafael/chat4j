@@ -113,6 +113,10 @@ public final class StoragePaths {
         return appConfigDirectory().resolve("chat4j.properties");
     }
 
+    public Path promptsFile() {
+        return appConfigDirectory().resolve("prompts.json");
+    }
+
     public Path secretsDirectory() {
         return appConfigDirectory().resolve("secrets");
     }

@@ -4,6 +4,7 @@ import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
@@ -65,6 +66,7 @@ public class SettingsDialog extends JDialog {
     public SettingsDialog(
             @NonNull Frame owner,
             @NonNull SettingsRepository settingsRepo,
+            @NonNull PromptCatalogRepo promptCatalogRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull LongConsumer exitAction,
             @NonNull Path sttModelsDirectory,
@@ -94,7 +96,7 @@ public class SettingsDialog extends JDialog {
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
 
-        add(createSettingsShell(settingsRepo, chatWebViewRuntimeStatus), BorderLayout.CENTER);
+        add(createSettingsShell(settingsRepo, promptCatalogRepo, chatWebViewRuntimeStatus), BorderLayout.CENTER);
         add(createActionBar(), BorderLayout.SOUTH);
 
         lafChangeListener = event -> {
@@ -136,8 +138,12 @@ public class SettingsDialog extends JDialog {
         add(titleBarSpacer, BorderLayout.NORTH);
     }
 
-    private JComponent createSettingsShell(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
-        sections = createSections(settingsRepo, chatWebViewRuntimeStatus);
+    private JComponent createSettingsShell(
+            SettingsRepository settingsRepo,
+            PromptCatalogRepo promptCatalogRepo,
+            WebViewRuntimeStatus chatWebViewRuntimeStatus
+    ) {
+        sections = createSections(settingsRepo, promptCatalogRepo, chatWebViewRuntimeStatus);
 
         DefaultListModel<SettingsSection> sectionModel = new DefaultListModel<>();
         sections.forEach(sectionModel::addElement);
@@ -193,7 +199,11 @@ public class SettingsDialog extends JDialog {
         return splitPane;
     }
 
-    private List<SettingsSection> createSections(SettingsRepository settingsRepo, WebViewRuntimeStatus chatWebViewRuntimeStatus) {
+    private List<SettingsSection> createSections(
+            SettingsRepository settingsRepo,
+            PromptCatalogRepo promptCatalogRepo,
+            WebViewRuntimeStatus chatWebViewRuntimeStatus
+    ) {
         ApiTokenFieldRegistry tokenFieldRegistry = new ApiTokenFieldRegistry();
         return List.of(
                 new SettingsSection(
@@ -241,7 +251,7 @@ public class SettingsDialog extends JDialog {
                         tokenFieldRegistry,
                         credentialChangeListener
                 )),
-                new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(settingsRepo))
+                new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(promptCatalogRepo))
         );
     }
 

@@ -1,6 +1,11 @@
 package com.github.drafael.chat4j.persistence.settings;
 
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
+import com.google.common.jimfs.Configuration;
+import com.google.common.jimfs.Jimfs;
+import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -11,9 +16,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
 
+import static java.nio.file.StandardCopyOption.ATOMIC_MOVE;
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.mockStatic;
 
 class SettingsRepositoryTest {
 
@@ -71,6 +83,45 @@ class SettingsRepositoryTest {
         subject.primeFromSettings();
 
         assertThat(subject.isFavorite("Anthropic", "claude-sonnet-4-6")).isTrue();
+    }
+
+    @Test
+    @DisplayName("A parentless relative settings path publishes through its working directory")
+    void put_whenSettingsPathHasNoParent_usesWorkingDirectory() throws Exception {
+        Configuration configuration = Configuration.unix().toBuilder().setWorkingDirectory("/work").build();
+        try (FileSystem fileSystem = Jimfs.newFileSystem(configuration)) {
+            var subject = new SettingsRepository(fileSystem.getPath("chat4j.properties"));
+
+            subject.put("chat4j.ui.theme.name", "GitHub");
+
+            assertThat(subject.get("chat4j.ui.theme.name")).contains("GitHub");
+            try (var files = Files.list(fileSystem.getPath("/work"))) {
+                assertThat(files.map(Path::getFileName).map(Path::toString))
+                        .containsExactly("chat4j.properties");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("An ordinary atomic move failure preserves the previous settings file")
+    void put_whenAtomicMoveFailsForOtherReason_doesNotRetryNonAtomically() {
+        Path settingsFile = tempDir.resolve("chat4j.properties");
+        var subject = new SettingsRepository(settingsFile);
+        subject.put("chat4j.ui.theme.name", "GitHub");
+        try (MockedStatic<Files> files = mockStatic(Files.class, CALLS_REAL_METHODS)) {
+            files.when(() -> Files.move(
+                    any(Path.class),
+                    eq(settingsFile),
+                    eq(REPLACE_EXISTING),
+                    eq(ATOMIC_MOVE)
+            )).thenThrow(new IOException("forced move failure"));
+
+            assertThatThrownBy(() -> subject.put("chat4j.ui.theme.name", "Dracula"))
+                    .isInstanceOf(SettingsStorageException.class)
+                    .hasMessageContaining("Failed to persist settings file");
+        }
+
+        assertThat(subject.get("chat4j.ui.theme.name")).contains("GitHub");
     }
 
     @Test

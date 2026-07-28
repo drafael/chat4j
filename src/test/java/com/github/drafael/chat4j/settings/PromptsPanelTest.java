@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.prompts.BuiltInPromptCatalog;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
@@ -32,7 +31,7 @@ class PromptsPanelTest {
     @Test
     @DisplayName("Unchanged prompt panel does not persist a built-in snapshot")
     void savePendingChangesAsync_whenPanelIsUnchanged_doesNotWritePromptCatalog() throws Exception {
-        var repo = new RecordingPromptCatalogRepo(settingsRepo());
+        var repo = new RecordingPromptCatalogRepo(promptsFile());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
         try {
             awaitPromptLoad(subject);
@@ -50,7 +49,7 @@ class PromptsPanelTest {
     @Test
     @DisplayName("Dirty prompt edits are captured on the EDT and saved asynchronously")
     void savePendingChangesAsync_whenPromptEdited_persistsSnapshot() throws Exception {
-        var repo = new RecordingPromptCatalogRepo(settingsRepo());
+        var repo = new RecordingPromptCatalogRepo(promptsFile());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
         try {
             awaitPromptLoad(subject);
@@ -71,7 +70,7 @@ class PromptsPanelTest {
     @Test
     @DisplayName("A failed prompt save remains dirty and succeeds on retry")
     void savePendingChangesAsync_whenSaveFails_retriesCurrentSnapshot() throws Exception {
-        var repo = new RetryingPromptCatalogRepo(settingsRepo());
+        var repo = new RetryingPromptCatalogRepo(promptsFile());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
         try {
             awaitPromptLoad(subject);
@@ -93,26 +92,25 @@ class PromptsPanelTest {
     @Test
     @DisplayName("An older prompt save cannot clear a newer edit")
     void savePendingChangesAsync_whenEditChangesDuringSave_persistsNewerRevisionNext() throws Exception {
-        var repo = new BlockingSavePromptCatalogRepo(settingsRepo(), BuiltInPromptCatalog.prompts());
+        var repo = new BlockingSavePromptCatalogRepo(promptsFile(), BuiltInPromptCatalog.prompts());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
-        try {
+        try (var cleanup = new BlockingSaveCleanup(repo, subject)) {
             awaitPromptLoad(subject);
             JTextField titleField = callOnEdt(
                     () -> findComponentByName(subject, "promptTitleField", JTextField.class)
             );
             runOnEdt(() -> titleField.setText("First edit"));
             CompletableFuture<Boolean> firstSave = callOnEdt(subject::savePendingChangesAsync);
+            cleanup.expect(firstSave);
             assertThat(repo.saveStarted.await(5, TimeUnit.SECONDS)).isTrue();
             runOnEdt(() -> titleField.setText("Second edit"));
 
             repo.releaseSave.countDown();
             assertThat(firstSave.get(5, TimeUnit.SECONDS)).isTrue();
-            assertThat(callOnEdt(subject::savePendingChangesAsync).get(5, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<Boolean> secondSave = callOnEdt(subject::savePendingChangesAsync);
+            cleanup.expect(secondSave);
+            assertThat(secondSave.get(5, TimeUnit.SECONDS)).isTrue();
             assertThat(repo.savedSnapshots.getLast().getFirst().title()).isEqualTo("Second edit");
-        } finally {
-            repo.releaseSave.countDown();
-            runOnEdt(subject::disposePanel);
-            flushEdt();
         }
     }
 
@@ -126,9 +124,9 @@ class PromptsPanelTest {
                 PromptTemplate.DEFAULT_MODEL,
                 List.of()
         ));
-        var repo = new BlockingSavePromptCatalogRepo(settingsRepo(), customPrompts);
+        var repo = new BlockingSavePromptCatalogRepo(promptsFile(), customPrompts);
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo, () -> true));
-        try {
+        try (var cleanup = new BlockingSaveCleanup(repo, subject)) {
             awaitPromptLoad(subject);
             JButton resetButton = callOnEdt(
                     () -> findComponentByName(subject, "resetPromptsButton", JButton.class)
@@ -137,25 +135,24 @@ class PromptsPanelTest {
                     () -> findComponentByName(subject, "promptTitleField", JTextField.class)
             );
             runOnEdt(resetButton::doClick);
+            cleanup.expectUnobservedSave();
             assertThat(repo.saveStarted.await(5, TimeUnit.SECONDS)).isTrue();
             runOnEdt(() -> titleField.setText("Edited built-in"));
 
             repo.releaseSave.countDown();
-            assertThat(callOnEdt(subject::savePendingChangesAsync).get(5, TimeUnit.SECONDS)).isTrue();
+            CompletableFuture<Boolean> latestSave = callOnEdt(subject::savePendingChangesAsync);
+            cleanup.expect(latestSave);
+            assertThat(latestSave.get(5, TimeUnit.SECONDS)).isTrue();
             assertThat(repo.savedSnapshots.getLast().getFirst().title()).isEqualTo("Edited built-in");
-        } finally {
-            repo.releaseSave.countDown();
-            runOnEdt(subject::disposePanel);
-            flushEdt();
         }
     }
 
     @Test
     @DisplayName("Prompt catalog loading does not block the event dispatch thread")
     void constructor_whenPromptLoadBlocks_keepsEdtResponsive() throws Exception {
-        var repo = new BlockingPromptCatalogRepo(settingsRepo());
+        var repo = new BlockingPromptCatalogRepo(promptsFile());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
-        try {
+        try (var ignored = new BlockingLoadCleanup(repo, subject)) {
             assertThat(repo.started.await(5, TimeUnit.SECONDS)).isTrue();
             AtomicBoolean sentinelRan = new AtomicBoolean();
             runOnEdt(() -> sentinelRan.set(true));
@@ -166,35 +163,27 @@ class PromptsPanelTest {
             assertThat(repo.finished.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(repo.failure.get()).isNull();
             awaitPromptLoad(subject);
-        } finally {
-            repo.release.countDown();
-            runOnEdt(subject::disposePanel);
-            flushEdt();
         }
     }
 
     @Test
     @DisplayName("A prompt load completion cannot update a permanently disposed panel")
     void disposePanel_whenPromptLoadCompletesLater_suppressesUiCompletion() throws Exception {
-        var repo = new BlockingPromptCatalogRepo(settingsRepo());
+        var repo = new BlockingPromptCatalogRepo(promptsFile());
         PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
-        assertThat(repo.started.await(5, TimeUnit.SECONDS)).isTrue();
-        try {
+        try (var ignored = new BlockingLoadCleanup(repo, subject)) {
+            assertThat(repo.started.await(5, TimeUnit.SECONDS)).isTrue();
             runOnEdt(subject::disposePanel);
             repo.release.countDown();
             assertThat(repo.finished.await(5, TimeUnit.SECONDS)).isTrue();
             flushEdt();
 
             assertThat(callOnEdt(() -> subject.getComponent(0).isEnabled())).isFalse();
-        } finally {
-            repo.release.countDown();
-            runOnEdt(subject::disposePanel);
-            flushEdt();
         }
     }
 
-    private SettingsRepository settingsRepo() {
-        return new SettingsRepository(tempDir.resolve("settings.properties"));
+    private Path promptsFile() {
+        return tempDir.resolve("prompts.json");
     }
 
     private void awaitPromptLoad(PromptsPanel subject) throws Exception {
@@ -267,6 +256,9 @@ class PromptsPanelTest {
         if (error.get() instanceof Error e) {
             throw e;
         }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
         return value.get();
     }
 
@@ -274,8 +266,8 @@ class PromptsPanelTest {
         private volatile boolean saved;
         protected volatile List<PromptTemplate> savedPrompts;
 
-        private RecordingPromptCatalogRepo(SettingsRepository settingsRepo) {
-            super(settingsRepo);
+        private RecordingPromptCatalogRepo(Path promptsFile) {
+            super(promptsFile);
         }
 
         @Override
@@ -293,8 +285,8 @@ class PromptsPanelTest {
     private static final class RetryingPromptCatalogRepo extends RecordingPromptCatalogRepo {
         private volatile boolean failSaves = true;
 
-        private RetryingPromptCatalogRepo(SettingsRepository settingsRepo) {
-            super(settingsRepo);
+        private RetryingPromptCatalogRepo(Path promptsFile) {
+            super(promptsFile);
         }
 
         @Override
@@ -309,14 +301,16 @@ class PromptsPanelTest {
     private static final class BlockingSavePromptCatalogRepo extends PromptCatalogRepo {
         private final CountDownLatch saveStarted = new CountDownLatch(1);
         private final CountDownLatch releaseSave = new CountDownLatch(1);
+        private final CountDownLatch saveFinished = new CountDownLatch(1);
+        private final AtomicReference<Thread> worker = new AtomicReference<>();
         private final List<List<PromptTemplate>> savedSnapshots = new ArrayList<>();
         private final List<PromptTemplate> loadedPrompts;
 
         private BlockingSavePromptCatalogRepo(
-                SettingsRepository settingsRepo,
+                Path promptsFile,
                 List<PromptTemplate> loadedPrompts
         ) {
-            super(settingsRepo);
+            super(promptsFile);
             this.loadedPrompts = loadedPrompts;
         }
 
@@ -327,31 +321,140 @@ class PromptsPanelTest {
 
         @Override
         public void save(List<PromptTemplate> prompts) {
+            worker.set(Thread.currentThread());
             saveStarted.countDown();
             try {
                 if (!releaseSave.await(5, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("Timed out waiting to release prompt save");
                 }
+                savedSnapshots.add(List.copyOf(prompts));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("interrupted", e);
+            } finally {
+                saveFinished.countDown();
             }
-            savedSnapshots.add(List.copyOf(prompts));
         }
+    }
+
+    private final class BlockingLoadCleanup implements AutoCloseable {
+        private final BlockingPromptCatalogRepo repo;
+        private final PromptsPanel subject;
+
+        private BlockingLoadCleanup(BlockingPromptCatalogRepo repo, PromptsPanel subject) {
+            this.repo = repo;
+            this.subject = subject;
+        }
+
+        @Override
+        public void close() throws Exception {
+            repo.release.countDown();
+            Throwable failure = null;
+            failure = captureCleanupFailure(failure, () -> runOnEdt(subject::disposePanel));
+            failure = captureCleanupFailure(failure, () ->
+                    assertThat(repo.finished.await(5, TimeUnit.SECONDS)).isTrue());
+            failure = captureCleanupFailure(failure, () -> {
+                Thread worker = repo.worker.get();
+                assertThat(worker).isNotNull();
+                worker.join(TimeUnit.SECONDS.toMillis(5));
+                assertThat(worker.isAlive()).isFalse();
+            });
+            failure = captureCleanupFailure(failure, PromptsPanelTest.this::flushEdt);
+            throwCleanupFailure(failure);
+        }
+    }
+
+    private final class BlockingSaveCleanup implements AutoCloseable {
+        private final BlockingSavePromptCatalogRepo repo;
+        private final PromptsPanel subject;
+        private CompletableFuture<Boolean> latestSave;
+        private boolean saveExpected;
+
+        private BlockingSaveCleanup(BlockingSavePromptCatalogRepo repo, PromptsPanel subject) {
+            this.repo = repo;
+            this.subject = subject;
+        }
+
+        private void expect(CompletableFuture<Boolean> save) {
+            latestSave = save;
+            saveExpected = true;
+        }
+
+        private void expectUnobservedSave() {
+            saveExpected = true;
+        }
+
+        @Override
+        public void close() throws Exception {
+            repo.releaseSave.countDown();
+            Throwable failure = null;
+            if (saveExpected) {
+                failure = captureCleanupFailure(failure, () ->
+                        assertThat(repo.saveStarted.await(5, TimeUnit.SECONDS)).isTrue());
+                failure = captureCleanupFailure(failure, () -> {
+                    if (latestSave != null) {
+                        latestSave.get(5, TimeUnit.SECONDS);
+                    } else {
+                        assertThat(repo.saveFinished.await(5, TimeUnit.SECONDS)).isTrue();
+                    }
+                });
+            }
+            failure = captureCleanupFailure(failure, () -> runOnEdt(subject::disposePanel));
+            failure = captureCleanupFailure(failure, () -> {
+                Thread worker = repo.worker.get();
+                if (worker != null) {
+                    worker.join(TimeUnit.SECONDS.toMillis(5));
+                    assertThat(worker.isAlive()).isFalse();
+                }
+            });
+            failure = captureCleanupFailure(failure, PromptsPanelTest.this::flushEdt);
+            throwCleanupFailure(failure);
+        }
+    }
+
+    private Throwable captureCleanupFailure(Throwable failure, ThrowingAction action) {
+        try {
+            action.run();
+        } catch (Throwable t) {
+            if (failure == null) {
+                return t;
+            }
+            failure.addSuppressed(t);
+        }
+        return failure;
+    }
+
+    private void throwCleanupFailure(Throwable failure) throws Exception {
+        if (failure instanceof Exception e) {
+            throw e;
+        }
+        if (failure instanceof Error e) {
+            throw e;
+        }
+        if (failure != null) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
     }
 
     private static final class BlockingPromptCatalogRepo extends PromptCatalogRepo {
         private final CountDownLatch started = new CountDownLatch(1);
         private final CountDownLatch release = new CountDownLatch(1);
         private final CountDownLatch finished = new CountDownLatch(1);
+        private final AtomicReference<Thread> worker = new AtomicReference<>();
         private final AtomicReference<Throwable> failure = new AtomicReference<>();
 
-        private BlockingPromptCatalogRepo(SettingsRepository settingsRepo) {
-            super(settingsRepo);
+        private BlockingPromptCatalogRepo(Path promptsFile) {
+            super(promptsFile);
         }
 
         @Override
         public List<PromptTemplate> load() {
+            worker.set(Thread.currentThread());
             started.countDown();
             try {
                 if (!release.await(5, TimeUnit.SECONDS)) {

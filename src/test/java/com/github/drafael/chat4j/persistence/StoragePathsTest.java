@@ -57,6 +57,14 @@ class StoragePathsTest {
     }
 
     @Test
+    @DisplayName("Prompt catalog path is rooted under the application config directory")
+    void promptsFile_whenResolved_usesApplicationConfigDirectory() {
+        var subject = StoragePaths.defaultPaths(false, "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.promptsFile()).isEqualTo(Path.of("/tmp/xdg", "chat4j", "prompts.json"));
+    }
+
+    @Test
     @DisplayName("Runtime and legacy cache paths are separate under the application config directory")
     void cacheDirectories_whenResolved_useCanonicalAndLegacyLocations() {
         var subject = StoragePaths.defaultPaths(false, "/home/me", "/tmp/xdg", null);

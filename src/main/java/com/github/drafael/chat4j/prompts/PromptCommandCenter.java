@@ -20,13 +20,10 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-
-import static java.util.Collections.emptyList;
 
 public class PromptCommandCenter extends JDialog {
 
@@ -48,10 +45,13 @@ public class PromptCommandCenter extends JDialog {
     };
     private final DefaultListModel<CommandCenterItem> model = new DefaultListModel<>();
     private final JList<CommandCenterItem> promptList = new JList<>(model);
+    private final JLabel loadStatus = new JLabel(" ");
     private final AWTEventListener outsideClickListener;
-    private List<PromptTemplate> prompts = new ArrayList<>();
+    private List<PromptTemplate> prompts = BuiltInPromptCatalog.prompts();
     private Component triggerComponent;
+    private long loadRequest;
     private boolean outsideClickListenerInstalled;
+    private boolean disposed;
 
     public PromptCommandCenter(
             @NonNull Window owner,
@@ -72,6 +72,7 @@ public class PromptCommandCenter extends JDialog {
         setLayout(new BorderLayout());
         add(createSearchPanel(), BorderLayout.NORTH);
         add(createListPane(), BorderLayout.CENTER);
+        add(createStatusBar(), BorderLayout.SOUTH);
         getRootPane().setBorder(BorderFactory.createLineBorder(resolveBorderColor(), 1));
         outsideClickListener = createOutsideClickListener();
         installActions();
@@ -84,31 +85,44 @@ public class PromptCommandCenter extends JDialog {
     }
 
     public void openNear(@NonNull Component relativeTo) {
+        if (disposed) {
+            return;
+        }
+        long request = ++loadRequest;
         triggerComponent = relativeTo;
         SwingUtilities.updateComponentTreeUI(this);
         getRootPane().setBorder(BorderFactory.createLineBorder(resolveBorderColor(), 1));
         searchField.setText("");
-        prompts = emptyList();
+        setLoadStatus("Loading prompts…", false);
         filterPrompts();
         positionNear(relativeTo);
         installOutsideClickListener();
         setVisible(true);
         SwingUtilities.invokeLater(() -> {
+            if (disposed || request != loadRequest || !isVisible()) {
+                return;
+            }
             toFront();
             requestFocus();
             searchField.requestFocusInWindow();
             searchField.selectAll();
         });
-        loadPromptsAsync();
+        loadPromptsAsync(request);
     }
 
     public void hidePopup() {
+        loadRequest++;
         setVisible(false);
         uninstallOutsideClickListener();
     }
 
     @Override
     public void dispose() {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        loadRequest++;
         uninstallOutsideClickListener();
         super.dispose();
     }
@@ -134,6 +148,12 @@ public class PromptCommandCenter extends JDialog {
         panel.add(searchField, BorderLayout.CENTER);
 
         return panel;
+    }
+
+    private JComponent createStatusBar() {
+        loadStatus.setBorder(new EmptyBorder(4, 12, 6, 12));
+        loadStatus.setForeground(UIManager.getColor("Label.disabledForeground"));
+        return loadStatus;
     }
 
     private JComponent createListPane() {
@@ -231,17 +251,44 @@ public class PromptCommandCenter extends JDialog {
         promptList.ensureIndexIsVisible(next);
     }
 
-    private void loadPromptsAsync() {
-        Thread.startVirtualThread(() -> {
-            List<PromptTemplate> loadedPrompts = promptCatalogRepo.load();
-            SwingUtilities.invokeLater(() -> {
-                if (!isVisible()) {
-                    return;
-                }
-                prompts = loadedPrompts;
-                filterPrompts();
-            });
+    private void loadPromptsAsync(long request) {
+        Thread.ofVirtual().name("prompt-command-center-load").start(() -> {
+            PromptCatalogRepo.PromptCatalogLoadResult result;
+            try {
+                result = promptCatalogRepo.loadResult();
+            } catch (RuntimeException | LinkageError e) {
+                result = new PromptCatalogRepo.PromptCatalogLoadResult(BuiltInPromptCatalog.prompts(), true);
+            }
+            PromptCatalogRepo.PromptCatalogLoadResult completedResult = result;
+            SwingUtilities.invokeLater(() -> finishPromptLoad(request, completedResult));
         });
+    }
+
+    private void finishPromptLoad(long request, PromptCatalogRepo.PromptCatalogLoadResult result) {
+        if (disposed || request != loadRequest || !isVisible()) {
+            return;
+        }
+        if (result.failed()) {
+            setLoadStatus("Could not refresh prompts", true);
+            return;
+        }
+        prompts = result.prompts();
+        setLoadStatus(" ", false);
+        filterPrompts();
+    }
+
+    private void setLoadStatus(String message, boolean error) {
+        loadStatus.setText(message);
+        loadStatus.setForeground(error ? errorForeground() : UIManager.getColor("Label.disabledForeground"));
+    }
+
+    private Color errorForeground() {
+        return ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.error.foreground"),
+                UIManager.getColor("Component.error.focusedBorderColor"),
+                UIManager.getColor("Actions.Red"),
+                UIManager.getColor("Label.foreground")
+        );
     }
 
     private void filterPrompts() {

@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.prompts.BuiltInPromptCatalog;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptVariable;
@@ -49,11 +49,7 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
     private Thread loadThread;
     private boolean disposed;
 
-    public PromptsPanel(@NonNull SettingsRepository settingsRepo) {
-        this(new PromptCatalogRepo(settingsRepo));
-    }
-
-    PromptsPanel(@NonNull PromptCatalogRepo promptCatalogRepo) {
+    public PromptsPanel(@NonNull PromptCatalogRepo promptCatalogRepo) {
         this(promptCatalogRepo, null);
     }
 
@@ -442,7 +438,7 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
         if (!confirmResetToBuiltIns()) {
             return;
         }
-        List<PromptTemplate> builtIns = com.github.drafael.chat4j.prompts.BuiltInPromptCatalog.prompts();
+        List<PromptTemplate> builtIns = BuiltInPromptCatalog.prompts();
         replacePromptList(builtIns);
         dirty = true;
         revision++;

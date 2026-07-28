@@ -45,6 +45,7 @@ import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
+import com.github.drafael.chat4j.prompts.BuiltInPromptCatalog;
 import com.github.drafael.chat4j.prompts.CommandCenterAction;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.prompts.PromptCommandCenter;
@@ -234,6 +235,7 @@ public class MainFrame extends JFrame {
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
     private final PromptVariablesDialog promptVariablesDialog = new PromptVariablesDialog();
     private PromptCommandCenter promptCommandCenter;
+    private long promptQuickActionsRequest;
     private final ProviderModelCacheService modelCacheService;
     private final ModelFavoritesService modelFavoritesService;
     private final ProviderRegistry providerRegistry;
@@ -437,7 +439,7 @@ public class MainFrame extends JFrame {
         ) {
             PopupMenuSupport.preferHeavyweightPopups();
         }
-        this.promptCatalogRepo = new PromptCatalogRepo(settingsRepo);
+        this.promptCatalogRepo = new PromptCatalogRepo(storagePaths.promptsFile());
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
         this.providerRegistry = providerRegistry;
@@ -618,6 +620,7 @@ public class MainFrame extends JFrame {
         this.speechToTextService = createdSpeechToTextService;
         try {
             chatPanel = createConfiguredChatPanel();
+            refreshPromptQuickActionsAsync();
             providerRegistry.setAuthStatusRefreshListener(this::onProviderAuthStatusRefreshed);
             voskModelManagementService.addListener(snapshot -> SwingUtilities.invokeLater(() -> {
                 if (!shutdownState.shutdownInProgress() && !chatPanel.isSpeechToTextActive()) {
@@ -734,7 +737,7 @@ public class MainFrame extends JFrame {
                 conversationPersistenceCoordinator::markUserMessageFailureDelivered
         );
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
-        panel.setPromptQuickActions(promptQuickActions());
+        panel.setPromptQuickActions(promptQuickActions(BuiltInPromptCatalog.prompts()));
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
         panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
         panel.getInputBar().addWebSearchEnabledListener(this::onWebSearchEnabledChanged);
@@ -1338,6 +1341,7 @@ public class MainFrame extends JFrame {
             chatPanel.beginShutdown();
             conversationLoadCoordinator.invalidatePendingLoads();
         }
+        invalidatePromptUi();
         disposeNativeWindow();
     }
 
@@ -1380,6 +1384,7 @@ public class MainFrame extends JFrame {
             return;
         }
         shutdownState.setShutdownInProgress(true);
+        invalidatePromptUi();
         List<CompletableFuture<Void>> admissionBranches = List.of(
                 cleanupAction(chatPanel::beginShutdown),
                 cleanupAction(conversationLoadCoordinator::invalidatePendingLoads)
@@ -1462,6 +1467,14 @@ public class MainFrame extends JFrame {
             }
         });
         return result;
+    }
+
+    private void invalidatePromptUi() {
+        promptQuickActionsRequest++;
+        if (promptCommandCenter != null) {
+            promptCommandCenter.dispose();
+            promptCommandCenter = null;
+        }
     }
 
     private CompletableFuture<Void> disposeSpeechServicesAsync() {
@@ -1862,8 +1875,8 @@ public class MainFrame extends JFrame {
         );
     }
 
-    private List<ChatPanel.PromptQuickAction> promptQuickActions() {
-        return promptCatalogRepo.load().stream()
+    private List<ChatPanel.PromptQuickAction> promptQuickActions(List<PromptTemplate> prompts) {
+        return prompts.stream()
                 .limit(EMPTY_STATE_PROMPT_ACTION_LIMIT)
                 .map(promptTemplate -> new ChatPanel.PromptQuickAction(
                         promptTemplate.title(),
@@ -1872,7 +1885,33 @@ public class MainFrame extends JFrame {
                 .toList();
     }
 
+    private void refreshPromptQuickActionsAsync() {
+        long request = ++promptQuickActionsRequest;
+        Thread.ofVirtual().name("prompt-quick-actions-load").start(() -> {
+            PromptCatalogRepo.PromptCatalogLoadResult result;
+            try {
+                result = promptCatalogRepo.loadResult();
+            } catch (RuntimeException | LinkageError e) {
+                warnWithoutStack("Failed to refresh prompt quick actions", e);
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (result.failed()
+                        || request != promptQuickActionsRequest
+                        || shutdownState.shutdownInProgress()
+                        || permanentCleanupStarted
+                ) {
+                    return;
+                }
+                chatPanel.setPromptQuickActions(promptQuickActions(result.prompts()));
+            });
+        });
+    }
+
     private void openCommandCenter() {
+        if (shutdownState.shutdownInProgress()) {
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening the command center.");
             return;
@@ -1990,6 +2029,7 @@ public class MainFrame extends JFrame {
                 () -> SettingsDialogCoordinator.DialogHandle.forSettingsDialog(new SettingsDialog(
                         this,
                         settingsRepo,
+                        promptCatalogRepo,
                         chatWebViewRuntimeStatus,
                         this::requestWindowClose,
                         sttModelsDirectory,
@@ -2011,7 +2051,7 @@ public class MainFrame extends JFrame {
                     applyGeneralSettings();
                     chatPanel.reloadTextToSpeechSettings();
                     chatPanel.reloadSpeechToTextSettings();
-                    chatPanel.setPromptQuickActions(promptQuickActions());
+                    refreshPromptQuickActionsAsync();
                 }
         );
     }
