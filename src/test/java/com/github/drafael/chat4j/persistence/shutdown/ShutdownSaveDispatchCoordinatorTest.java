@@ -166,6 +166,39 @@ class ShutdownSaveDispatchCoordinatorTest {
         assertThat(completionCalls).hasValue(1);
     }
 
+    @Test
+    @DisplayName("Injected clock and scheduler drive hard deadline without wall-clock delay")
+    void dispatchStages_whenInjectedDeadlineRuns_reportsTimeoutDeterministically() {
+        var now = new AtomicReference<>(100L);
+        var delayedTask = new AtomicReference<Runnable>();
+        var scheduledDelay = new AtomicReference<Long>();
+        var timeoutCalls = new AtomicInteger();
+        var completionCalls = new AtomicInteger();
+        var subject = new ShutdownSaveDispatchCoordinator(
+                Runnable::run,
+                now::get,
+                (delay, task) -> {
+                    scheduledDelay.set(delay);
+                    delayedTask.set(task);
+                }
+        );
+
+        subject.dispatchStages(
+                500L,
+                new CompletableFuture<>(),
+                new CompletableFuture<>(),
+                completionCalls::incrementAndGet,
+                timeoutCalls::incrementAndGet,
+                error -> { }
+        );
+        now.set(500L);
+        delayedTask.get().run();
+
+        assertThat(scheduledDelay).hasValue(400L);
+        assertThat(timeoutCalls).hasValue(1);
+        assertThat(completionCalls).hasValue(1);
+    }
+
     private long deadlineAfter(long duration, TimeUnit unit) {
         return System.nanoTime() + unit.toNanos(duration);
     }

@@ -13,18 +13,52 @@ public class ShutdownSaveDispatchCoordinator {
 
     private final EdtDispatcher edtDispatcher;
     private final LongSupplier nanoTime;
+    private final DelayedTaskScheduler delayedTaskScheduler;
 
     public ShutdownSaveDispatchCoordinator() {
-        this(SwingUtilities::invokeLater, System::nanoTime);
+        this(
+                SwingUtilities::invokeLater,
+                System::nanoTime,
+                (delay, task) -> CompletableFuture.delayedExecutor(
+                        delay,
+                        TimeUnit.NANOSECONDS,
+                        Runnable::run
+                ).execute(task)
+        );
     }
 
     ShutdownSaveDispatchCoordinator(@NonNull EdtDispatcher edtDispatcher) {
-        this(edtDispatcher, System::nanoTime);
+        this(
+                edtDispatcher,
+                System::nanoTime,
+                (delay, task) -> CompletableFuture.delayedExecutor(
+                        delay,
+                        TimeUnit.NANOSECONDS,
+                        Runnable::run
+                ).execute(task)
+        );
     }
 
     ShutdownSaveDispatchCoordinator(@NonNull EdtDispatcher edtDispatcher, @NonNull LongSupplier nanoTime) {
+        this(
+                edtDispatcher,
+                nanoTime,
+                (delay, task) -> CompletableFuture.delayedExecutor(
+                        delay,
+                        TimeUnit.NANOSECONDS,
+                        Runnable::run
+                ).execute(task)
+        );
+    }
+
+    ShutdownSaveDispatchCoordinator(
+            @NonNull EdtDispatcher edtDispatcher,
+            @NonNull LongSupplier nanoTime,
+            @NonNull DelayedTaskScheduler delayedTaskScheduler
+    ) {
         this.edtDispatcher = edtDispatcher;
         this.nanoTime = nanoTime;
+        this.delayedTaskScheduler = delayedTaskScheduler;
     }
 
     public void dispatchStages(
@@ -57,8 +91,7 @@ public class ShutdownSaveDispatchCoordinator {
                 new Outcome(combineFailures(saved.failure(), cleaned.failure()))
         );
         CompletableFuture<Outcome> timeout = new CompletableFuture<>();
-        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS, Runnable::run)
-                .execute(() -> timeout.complete(timeoutOutcome()));
+        delayedTaskScheduler.schedule(remainingNanos, () -> timeout.complete(timeoutOutcome()));
 
         aggregate.applyToEither(timeout, outcome -> outcome).thenAccept(outcome -> dispatchOutcome(
                 outcome,
@@ -113,6 +146,11 @@ public class ShutdownSaveDispatchCoordinator {
     }
 
     private record Outcome(Throwable failure) {
+    }
+
+    @FunctionalInterface
+    interface DelayedTaskScheduler {
+        void schedule(long delayNanos, Runnable task);
     }
 
     @FunctionalInterface

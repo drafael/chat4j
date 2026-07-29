@@ -65,6 +65,14 @@ class StoragePathsTest {
     }
 
     @Test
+    @DisplayName("MCP configuration path is rooted under the application config directory")
+    void mcpFile_whenResolved_usesApplicationConfigDirectory() {
+        var subject = StoragePaths.defaultPaths(false, "/home/me", "/tmp/xdg", null);
+
+        assertThat(subject.mcpFile()).isEqualTo(Path.of("/tmp/xdg", "chat4j", "mcp.json"));
+    }
+
+    @Test
     @DisplayName("Runtime and legacy cache paths are separate under the application config directory")
     void cacheDirectories_whenResolved_useCanonicalAndLegacyLocations() {
         var subject = StoragePaths.defaultPaths(false, "/home/me", "/tmp/xdg", null);

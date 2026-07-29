@@ -13,12 +13,15 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
+import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentProviderAdapterFactoryTest {
 
@@ -64,6 +67,55 @@ class AgentProviderAdapterFactoryTest {
                 "token-123",
                 providerService(),
                 ""
+        );
+
+        assertThat(adapter).isInstanceOf(OpenAiCompatibleFallbackAgentAdapter.class);
+    }
+
+    @Test
+    @DisplayName("MCP-required Google path rejects fallback and keeps the native tool adapter")
+    void create_whenGoogleRequiresMcpTools_doesNotUseFallbackWrapper() {
+        AgentProviderAdapter adapter = subject.create(
+                "Google AI",
+                "gemini-3.1-pro-preview",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "token-123",
+                providerService(),
+                "",
+                List.of(mcpTool())
+        );
+
+        assertThat(adapter)
+                .isInstanceOf(OpenAiToolAgentAdapter.class)
+                .isNotInstanceOf(OpenAiCompatibleFallbackAgentAdapter.class);
+    }
+
+    @Test
+    @DisplayName("MCP-required unsupported provider rejects provider-service fallback")
+    void create_whenCodexRequiresMcpTools_rejectsFallbackPath() {
+        assertThatThrownBy(() -> subject.create(
+                "OpenAI Codex",
+                "gpt-5.5",
+                "https://api.openai.com/v1",
+                "token-123",
+                providerService(),
+                "",
+                List.of(mcpTool())
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("cannot advertise MCP tools");
+    }
+
+    @Test
+    @DisplayName("Zero-tool Google path preserves the provider fallback wrapper")
+    void create_whenGoogleHasZeroTools_preservesFallbackWrapper() {
+        AgentProviderAdapter adapter = subject.create(
+                "Google AI",
+                "gemini-3.1-pro-preview",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "token-123",
+                providerService(),
+                "",
+                emptyList()
         );
 
         assertThat(adapter).isInstanceOf(OpenAiCompatibleFallbackAgentAdapter.class);
@@ -191,6 +243,15 @@ class AgentProviderAdapterFactoryTest {
         );
 
         assertThat(adapter).isInstanceOf(AnthropicToolAgentAdapter.class);
+    }
+
+    private AgentToolDefinition mcpTool() {
+        return new AgentToolDefinition(
+                "mcp_inventory_lookup",
+                "Inventory lookup",
+                Map.of("type", "object", "properties", emptyMap()),
+                AgentToolSource.MCP
+        );
     }
 
     private ProviderService providerService() {

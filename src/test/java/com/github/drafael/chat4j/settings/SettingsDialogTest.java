@@ -6,6 +6,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -103,6 +104,31 @@ class SettingsDialogTest {
         assertThat(result.sectionName()).isEqualTo("Appearance settings");
         assertThat(result.message()).isEqualTo("forced exceptional failure");
         assertThat(secondStarted).isFalse();
+    }
+
+    @Test
+    @DisplayName("Settings-originated exit admits mandatory cleanup before returning its hard deadline")
+    void admitSettingsOriginatedExit_whenRestartRequested_invokesAdmissionWithSettingsDeadline() {
+        var admittedDeadline = new AtomicLong();
+
+        long hardDeadline = SettingsDialog.admitSettingsOriginatedExit(
+                () -> 1_000L,
+                settingsDeadline -> {
+                    admittedDeadline.set(settingsDeadline);
+                    return settingsDeadline + 500L;
+                }
+        );
+
+        assertThat(admittedDeadline).hasValue(1_000L + TimeUnit.MILLISECONDS.toNanos(2_000));
+        assertThat(hardDeadline).isEqualTo(admittedDeadline.get() + 500L);
+    }
+
+    @Test
+    @DisplayName("External exit continues after save failure but ordinary Close remains open")
+    void abortCloseAfterSaveFailure_whenExitAlreadyAdmitted_continuesOnlyExternalExit() {
+        assertThat(SettingsDialog.abortCloseAfterSaveFailure(true, false)).isFalse();
+        assertThat(SettingsDialog.abortCloseAfterSaveFailure(false, false)).isTrue();
+        assertThat(SettingsDialog.abortCloseAfterSaveFailure(false, true)).isFalse();
     }
 
     private AsyncPendingSettingsSaveParticipant participant(AsyncSave save) {

@@ -1,5 +1,7 @@
 # Agent Mode
 
+Agent Mode can also advertise user-configured [Model Context Protocol tools](mcp.md) alongside its local workspace tools. MCP still requires a valid selected workspace and is initialized before the first provider turn.
+
 ## Overview
 
 Agent Mode lets Chat4J run multi-step workspace tasks with local tools (`read`, `write`, `edit`, `ls`, `find`, `grep`, `bash`) inside a selected folder.

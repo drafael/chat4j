@@ -38,7 +38,7 @@ import static java.util.stream.Collectors.joining;
 @Slf4j
 public final class LocalToolRuntime {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final int MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
+    private static final int MAX_TOOL_OUTPUT_BYTES = AgentToolResultLimiter.MAX_BYTES;
     private static final int MAX_READ_BYTES = MAX_TOOL_OUTPUT_BYTES;
     private static final int MAX_EDIT_FILE_BYTES = 1024 * 1024;
     private static final int MAX_DIRECTORY_ENTRIES = 1_000;
@@ -674,29 +674,14 @@ public final class LocalToolRuntime {
 
     private String readLimitedUtf8File(Path target, int maxBytes) throws Exception {
         try (InputStream input = Files.newInputStream(target)) {
-            byte[] bytes = input.readNBytes(maxBytes + 1);
-            if (bytes.length <= maxBytes) {
-                return new String(bytes, StandardCharsets.UTF_8);
-            }
-
-            return "%s\n\n[truncated after %d bytes]".formatted(
-                    new String(bytes, 0, maxBytes, StandardCharsets.UTF_8),
-                    maxBytes
-            );
+            byte[] bytes = input.readNBytes(maxBytes + 4);
+            String value = new String(bytes, StandardCharsets.UTF_8);
+            return bytes.length <= maxBytes ? value : AgentToolResultLimiter.limit(value);
         }
     }
 
     private String limitOutput(String output) {
-        String value = StringUtils.defaultString(output);
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= MAX_TOOL_OUTPUT_BYTES) {
-            return value;
-        }
-
-        return "%s\n\n[truncated after %d bytes]".formatted(
-                new String(bytes, 0, MAX_TOOL_OUTPUT_BYTES, StandardCharsets.UTF_8),
-                MAX_TOOL_OUTPUT_BYTES
-        );
+        return AgentToolResultLimiter.limit(output);
     }
 
     private String appendTruncationNotice(String output, String itemName, int limit) {

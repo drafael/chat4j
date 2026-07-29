@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.github.drafael.chat4j.util.SingleInstanceWindowTracker;
 import lombok.NonNull;
 
+import java.awt.Window;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 
@@ -37,6 +38,11 @@ public class SettingsDialogCoordinator {
         dialog.setVisible(true);
     }
 
+    public Window activeWindow() {
+        DialogHandle dialog = tracker.get();
+        return dialog != null && dialog.isDisplayable() && dialog.isVisible() ? dialog.window() : null;
+    }
+
     public void requestApplicationExit(long deadlineNanos, @NonNull Runnable whenNoDialog) {
         DialogHandle dialog = tracker.get();
         if (dialog != null && dialog.isDisplayable()) {
@@ -59,6 +65,11 @@ public class SettingsDialogCoordinator {
         static DialogHandle forSettingsDialog(@NonNull SettingsDialog dialog) {
 
             return new DialogHandle() {
+                @Override
+                public Window window() {
+                    return dialog;
+                }
+
                 @Override
                 public boolean isDisplayable() {
                     return dialog.isDisplayable();
@@ -99,6 +110,10 @@ public class SettingsDialogCoordinator {
                     dialog.requestApplicationExit(deadlineNanos);
                 }
             };
+        }
+
+        default Window window() {
+            return null;
         }
 
         boolean isDisplayable();

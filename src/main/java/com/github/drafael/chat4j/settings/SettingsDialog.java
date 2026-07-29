@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.webview.WebViewRuntimeStatus;
+import com.github.drafael.chat4j.mcp.McpManager;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -19,6 +20,7 @@ import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
 import java.net.URL;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -28,13 +30,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
+import java.util.function.LongSupplier;
+import java.util.function.LongUnaryOperator;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static java.util.Collections.emptyList;
 
+@Slf4j
 public class SettingsDialog extends JDialog {
 
     private static final long APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS = 2_000;
@@ -52,6 +60,8 @@ public class SettingsDialog extends JDialog {
     private final PropertyChangeListener lafChangeListener;
 
     private final LongConsumer exitAction;
+    private final LongUnaryOperator exitAdmission;
+    private final ExitTiming exitTiming;
     private final Path sttModelsDirectory;
     private final VoskModelManagementService voskModelManagementService;
     private final WhisperModelManagementService whisperModelManagementService;
@@ -62,6 +72,7 @@ public class SettingsDialog extends JDialog {
     private final CredentialMutationService credentialMutationService;
     private final Map<String, String> subprocessEnvironment;
     private final WhisperNativeRuntime whisperNativeRuntime;
+    private final McpManager mcpManager;
 
     public SettingsDialog(
             @NonNull Frame owner,
@@ -69,6 +80,7 @@ public class SettingsDialog extends JDialog {
             @NonNull PromptCatalogRepo promptCatalogRepo,
             @NonNull WebViewRuntimeStatus chatWebViewRuntimeStatus,
             @NonNull LongConsumer exitAction,
+            @NonNull LongUnaryOperator exitAdmission,
             @NonNull Path sttModelsDirectory,
             @NonNull VoskModelManagementService voskModelManagementService,
             @NonNull WhisperModelManagementService whisperModelManagementService,
@@ -78,10 +90,14 @@ public class SettingsDialog extends JDialog {
             @NonNull CredentialResolver credentialResolver,
             @NonNull CredentialMutationService credentialMutationService,
             @NonNull Map<String, String> subprocessEnvironment,
-            @NonNull WhisperNativeRuntime whisperNativeRuntime
+            @NonNull WhisperNativeRuntime whisperNativeRuntime,
+            @NonNull McpManager mcpManager,
+            @NonNull ExitTiming exitTiming
     ) {
         super(owner, "Settings", true);
         this.exitAction = exitAction;
+        this.exitAdmission = exitAdmission;
+        this.exitTiming = exitTiming;
         this.sttModelsDirectory = sttModelsDirectory;
         this.voskModelManagementService = voskModelManagementService;
         this.whisperModelManagementService = whisperModelManagementService;
@@ -92,6 +108,7 @@ public class SettingsDialog extends JDialog {
         this.credentialMutationService = credentialMutationService;
         this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
         this.whisperNativeRuntime = whisperNativeRuntime;
+        this.mcpManager = mcpManager;
 
         configureDialog(owner);
         configureMacTitleBarIfNeeded();
@@ -205,7 +222,7 @@ public class SettingsDialog extends JDialog {
             WebViewRuntimeStatus chatWebViewRuntimeStatus
     ) {
         ApiTokenFieldRegistry tokenFieldRegistry = new ApiTokenFieldRegistry();
-        return List.of(
+        List<SettingsSection> created = new ArrayList<>(List.of(
                 new SettingsSection(
                         "general",
                         "General",
@@ -252,7 +269,9 @@ public class SettingsDialog extends JDialog {
                         credentialChangeListener
                 )),
                 new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(promptCatalogRepo))
-        );
+        ));
+        created.add(new SettingsSection("mcp", "MCP", "/icons/settings/mcp.svg", new McpPanel(mcpManager)));
+        return List.copyOf(created);
     }
 
     private JComponent createActionBar() {
@@ -312,7 +331,17 @@ public class SettingsDialog extends JDialog {
     }
 
     private void requestApplicationExit() {
-        requestApplicationExit(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS));
+        requestApplicationExit(admitSettingsOriginatedExit(exitTiming.nanoTime(), exitAdmission));
+    }
+
+    static long admitSettingsOriginatedExit(LongSupplier nanoTime, LongUnaryOperator exitAdmission) {
+        long settingsDeadline = nanoTime.getAsLong()
+                + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS);
+        return exitAdmission.applyAsLong(settingsDeadline);
+    }
+
+    static boolean abortCloseAfterSaveFailure(boolean exitAfterSave, boolean saved) {
+        return !saved && !exitAfterSave;
     }
 
     void requestApplicationExit(long deadlineNanos) {
@@ -332,7 +361,12 @@ public class SettingsDialog extends JDialog {
             startSaveBeforeDispose();
         }
         if (newExitAttempt) {
-            scheduleApplicationExitTimeout(closeAttempt, applicationExitDeadlineNanos);
+            long settingsDeadlineNanos = min(
+                    applicationExitDeadlineNanos,
+                    exitTiming.nanoTime().getAsLong()
+                            + TimeUnit.MILLISECONDS.toNanos(APPLICATION_EXIT_SAVE_TIMEOUT_MILLIS)
+            );
+            scheduleApplicationExitTimeout(closeAttempt, settingsDeadlineNanos);
         }
     }
 
@@ -347,9 +381,11 @@ public class SettingsDialog extends JDialog {
     }
 
     private void scheduleApplicationExitTimeout(long attempt, long deadlineNanos) {
-        long remainingNanos = Math.max(0, deadlineNanos - System.nanoTime());
-        CompletableFuture.delayedExecutor(remainingNanos, TimeUnit.NANOSECONDS, Runnable::run).execute(() ->
-                SwingUtilities.invokeLater(() -> finishApplicationExitAfterTimeout(attempt)));
+        long remainingNanos = max(0, deadlineNanos - exitTiming.nanoTime().getAsLong());
+        exitTiming.scheduler().schedule(
+                remainingNanos,
+                () -> SwingUtilities.invokeLater(() -> finishApplicationExitAfterTimeout(attempt))
+        );
     }
 
     private void finishApplicationExitAfterTimeout(long attempt) {
@@ -378,15 +414,17 @@ public class SettingsDialog extends JDialog {
         setCursor(Cursor.getDefaultCursor());
         savingBeforeDispose = false;
         if (!saveResult.saved()) {
-            exitAfterSave = false;
             setEnabled(true);
-            JOptionPane.showMessageDialog(
-                    this,
-                    "%s could not be saved:\n\n%s".formatted(saveResult.sectionName(), saveResult.message()),
-                    "Settings Not Saved",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            return;
+            if (abortCloseAfterSaveFailure(exitAfterSave, saveResult.saved())) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "%s could not be saved:\n\n%s".formatted(saveResult.sectionName(), saveResult.message()),
+                        "Settings Not Saved",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                return;
+            }
+            log.warn("{} could not be saved during application exit; continuing exit", saveResult.sectionName());
         }
         boolean shouldExit = exitAfterSave;
         exitAfterSave = false;
@@ -432,6 +470,8 @@ public class SettingsDialog extends JDialog {
         if (content instanceof GeneralPanel panel) {
             panel.disposePanel();
         } else if (content instanceof AppearancePanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof McpPanel panel) {
             panel.disposePanel();
         } else if (content instanceof PromptsPanel panel) {
             panel.disposePanel();
@@ -584,6 +624,24 @@ public class SettingsDialog extends JDialog {
             icon.setColorFilter(new FlatSVGIcon.ColorFilter((component, original) -> color));
             return icon;
         }
+    }
+
+    public record ExitTiming(@NonNull LongSupplier nanoTime, @NonNull DelayedTaskScheduler scheduler) {
+        public static ExitTiming system() {
+            return new ExitTiming(
+                    System::nanoTime,
+                    (delayNanos, task) -> CompletableFuture.delayedExecutor(
+                            delayNanos,
+                            TimeUnit.NANOSECONDS,
+                            Runnable::run
+                    ).execute(task)
+            );
+        }
+    }
+
+    @FunctionalInterface
+    public interface DelayedTaskScheduler {
+        void schedule(long delayNanos, @NonNull Runnable task);
     }
 
     private record SettingsSection(String id, String title, String iconPath, JComponent content) {

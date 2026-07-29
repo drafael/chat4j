@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 
 import com.github.drafael.chat4j.provider.api.Message;
@@ -13,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -20,6 +23,52 @@ import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AnthropicToolAgentAdapterTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    @DisplayName("Native Anthropic payload preserves MCP name, description, and recursive schema")
+    void executeTurn_whenMcpToolIsAdvertised_preservesProviderNeutralDefinition() throws Exception {
+        AgentToolDefinition definition = mcpDefinition();
+        List<String> requestBodies = new ArrayList<>();
+        HttpServer server = createMessagesServer(List.of("""
+                {
+                  "id": "msg_1",
+                  "type": "message",
+                  "role": "assistant",
+                  "content": [{"type": "text", "text": "done"}],
+                  "stop_reason": "end_turn"
+                }
+                """), requestBodies);
+        try {
+            var subject = new AnthropicToolAgentAdapter(
+                    "claude-sonnet-4",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "key",
+                    "",
+                    ProviderAttachmentTestSupport.authority(),
+                    List.of(definition)
+            );
+
+            subject.executeTurn(
+                    new AgentRunRequest(
+                            List.of(Message.user("use MCP")),
+                            ReasoningLevel.OFF,
+                            Path.of("."),
+                            emptyList(),
+                            () -> false
+                    ),
+                    new AgentRunCallbacks(token -> { }, thinking -> { }, () -> { }, error -> { })
+            );
+
+            JsonNode tool = JSON.readTree(requestBodies.getFirst()).path("tools").get(0);
+            assertThat(tool.path("name").asText()).isEqualTo(definition.name());
+            assertThat(tool.path("description").asText()).isEqualTo(definition.description());
+            assertThat(tool.path("input_schema")).isEqualTo(JSON.valueToTree(definition.inputSchema()));
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Adapter parses tool_use blocks and includes tool_result on next turn")
@@ -217,6 +266,30 @@ class AnthropicToolAgentAdapterTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    private AgentToolDefinition mcpDefinition() {
+        return new AgentToolDefinition(
+                "mcp_inventory_lookup",
+                "Look up nested inventory data",
+                Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "query", Map.of("type", "string"),
+                                "options", Map.of(
+                                        "type", "object",
+                                        "properties", Map.of(
+                                                "tags", Map.of(
+                                                        "type", "array",
+                                                        "items", Map.of("type", "string")
+                                                )
+                                        )
+                                )
+                        ),
+                        "required", List.of("query")
+                ),
+                AgentToolSource.MCP
+        );
     }
 
     private HttpServer createMessagesServer(List<String> responses, List<String> requestBodies) throws Exception {

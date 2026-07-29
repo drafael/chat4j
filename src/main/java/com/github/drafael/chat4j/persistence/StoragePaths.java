@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.persistence;
 
 import java.nio.file.Path;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.SystemUtils;
 
@@ -19,7 +20,7 @@ public final class StoragePaths {
         this.configHome = configHome;
     }
 
-    public static StoragePaths ofConfigHome(Path configHome) {
+    public static StoragePaths ofConfigHome(@NonNull Path configHome) {
         return new StoragePaths(configHome);
     }
 
@@ -115,6 +116,10 @@ public final class StoragePaths {
 
     public Path promptsFile() {
         return appConfigDirectory().resolve("prompts.json");
+    }
+
+    public Path mcpFile() {
+        return appConfigDirectory().resolve("mcp.json");
     }
 
     public Path secretsDirectory() {

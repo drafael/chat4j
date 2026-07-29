@@ -3,10 +3,11 @@ package com.github.drafael.chat4j.chat;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
-import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
 import com.github.drafael.chat4j.chat.agent.AgentRunCallbacks;
 import com.github.drafael.chat4j.chat.agent.AgentRunRequest;
 import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
+import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
+import com.github.drafael.chat4j.chat.agent.McpApprovalHandler;
 import com.github.drafael.chat4j.chat.composer.AttachmentStager;
 import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
 import com.github.drafael.chat4j.chat.composer.ComposerPanel;
@@ -36,11 +37,12 @@ import com.github.drafael.chat4j.chat.ui.JumpToLatestButton;
 import com.github.drafael.chat4j.chat.ui.ScrollablePanel;
 import com.github.drafael.chat4j.chat.ui.ThemeAwareSvgIcon;
 import com.github.drafael.chat4j.chat.webview.WebViewEngine;
+import com.github.drafael.chat4j.mcp.McpRunProvider;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
 import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -365,7 +367,9 @@ public class ChatPanel extends JPanel {
             @NonNull CodexAuthResolver codexAuthResolver,
             @NonNull CredentialResolver credentialResolver,
             @NonNull StoragePaths storagePaths,
-            @NonNull ProviderAttachmentSupport attachmentSupport
+            @NonNull ProviderAttachmentSupport attachmentSupport,
+            @NonNull McpRunProvider mcpRunProvider,
+            @NonNull McpApprovalHandler mcpApprovalHandler
     ) {
         this.modelCacheService = modelCacheService;
         this.modelFavoritesService = modelFavoritesService;
@@ -391,7 +395,9 @@ public class ChatPanel extends JPanel {
         }
         this.configuredAgentOrchestrator = new AgentOrchestrator(
                 new AgentProviderAdapterFactory(attachmentSupport),
-                new LocalToolRuntime()
+                new LocalToolRuntime(),
+                mcpRunProvider,
+                mcpApprovalHandler
         );
         this.agentOrchestrator = configuredAgentOrchestrator;
         setLayout(new BorderLayout());

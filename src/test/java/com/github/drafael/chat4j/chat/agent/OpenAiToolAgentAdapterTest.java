@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 
 import com.github.drafael.chat4j.provider.api.Message;
@@ -12,11 +14,13 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -24,6 +28,49 @@ import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class OpenAiToolAgentAdapterTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    @Test
+    @DisplayName("Native OpenAI payload preserves MCP name, description, and recursive schema")
+    void executeTurn_whenMcpToolIsAdvertised_preservesProviderNeutralDefinition() throws Exception {
+        AgentToolDefinition definition = mcpDefinition();
+        List<String> requestBodies = new ArrayList<>();
+        HttpServer server = createChatCompletionsServer(
+                List.of("{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"),
+                requestBodies,
+                List.of(200)
+        );
+        try {
+            var subject = new OpenAiToolAgentAdapter(
+                    "OpenAI",
+                    "gpt-5",
+                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
+                    "key",
+                    "",
+                    ProviderAttachmentTestSupport.authority(),
+                    List.of(definition)
+            );
+
+            subject.executeTurn(
+                    new AgentRunRequest(
+                            List.of(Message.user("use MCP")),
+                            ReasoningLevel.OFF,
+                            Path.of("."),
+                            emptyList(),
+                            () -> false
+                    ),
+                    new AgentRunCallbacks(token -> { }, thinking -> { }, () -> { }, error -> { })
+            );
+
+            JsonNode function = JSON.readTree(requestBodies.getFirst()).path("tools").get(0).path("function");
+            assertThat(function.path("name").asText()).isEqualTo(definition.name());
+            assertThat(function.path("description").asText()).isEqualTo(definition.description());
+            assertThat(function.path("parameters")).isEqualTo(JSON.valueToTree(definition.inputSchema()));
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     @DisplayName("Direct agent projection uses bounded metadata labels without paths or generated alt text")
@@ -65,7 +112,7 @@ class OpenAiToolAgentAdapterTest {
                     new AgentRunRequest(
                             List.of(message),
                             ReasoningLevel.OFF,
-                            java.nio.file.Path.of("."),
+                            Path.of("."),
                             emptyList(),
                             () -> false
                     ),
@@ -133,7 +180,7 @@ class OpenAiToolAgentAdapterTest {
             );
 
             AgentTurnResult firstTurn = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("read note")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("read note")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(token -> {
                     }, thinking -> {
                     }, () -> {
@@ -149,7 +196,7 @@ class OpenAiToolAgentAdapterTest {
                     new AgentRunRequest(
                             List.of(Message.user("read note")),
                             ReasoningLevel.OFF,
-                            java.nio.file.Path.of("."),
+                            Path.of("."),
                             List.of(new ToolInvocationResult("call_1", "read", true, "note content", "")),
                             () -> false
                     ),
@@ -223,7 +270,7 @@ class OpenAiToolAgentAdapterTest {
 
             List<String> thinkingTokens = new ArrayList<>();
             AgentTurnResult firstTurn = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("explore folder")), ReasoningLevel.HIGH, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("explore folder")), ReasoningLevel.HIGH, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(token -> {
                     }, thinkingTokens::add, () -> {
                     }, error -> {
@@ -238,7 +285,7 @@ class OpenAiToolAgentAdapterTest {
                     new AgentRunRequest(
                             List.of(Message.user("explore folder")),
                             ReasoningLevel.HIGH,
-                            java.nio.file.Path.of("."),
+                            Path.of("."),
                             List.of(new ToolInvocationResult("call_1", "ls", true, "note.txt", "")),
                             () -> false
                     ),
@@ -287,7 +334,7 @@ class OpenAiToolAgentAdapterTest {
 
             List<String> tokens = new ArrayList<>();
             AgentTurnResult turnResult = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(tokens::add, thinking -> {
                     }, () -> {
                     }, error -> {
@@ -333,7 +380,7 @@ class OpenAiToolAgentAdapterTest {
             );
 
             subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(token -> {
                     }, thinking -> {
                     }, () -> {
@@ -376,7 +423,7 @@ class OpenAiToolAgentAdapterTest {
 
             List<String> errors = new ArrayList<>();
             AgentTurnResult turnResult = subject.executeTurn(
-                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, java.nio.file.Path.of("."), emptyList(), () -> false),
+                    new AgentRunRequest(List.of(Message.user("ping")), ReasoningLevel.OFF, Path.of("."), emptyList(), () -> false),
                     new AgentRunCallbacks(token -> {
                     }, thinking -> {
                     }, () -> {
@@ -393,6 +440,30 @@ class OpenAiToolAgentAdapterTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    private AgentToolDefinition mcpDefinition() {
+        return new AgentToolDefinition(
+                "mcp_inventory_lookup",
+                "Look up nested inventory data",
+                Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "query", Map.of("type", "string"),
+                                "options", Map.of(
+                                        "type", "object",
+                                        "properties", Map.of(
+                                                "tags", Map.of(
+                                                        "type", "array",
+                                                        "items", Map.of("type", "string")
+                                                )
+                                        )
+                                )
+                        ),
+                        "required", List.of("query")
+                ),
+                AgentToolSource.MCP
+        );
     }
 
     private HttpServer createChatCompletionsServer(

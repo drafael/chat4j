@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.bootstrap;
 
+import com.github.drafael.chat4j.mcp.McpManager;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.settings.FontSettings;
@@ -14,9 +15,12 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ApplicationBootstrapTest {
 
@@ -101,10 +105,9 @@ class ApplicationBootstrapTest {
             return null;
         });
         Thread environmentThread = Thread.ofVirtual().start(task);
-        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
-        var subject = new ApplicationBootstrap(new EnvironmentBootstrapper());
-
         try {
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            var subject = new ApplicationBootstrap(new EnvironmentBootstrapper());
             Thread.currentThread().interrupt();
             subject.cancelEnvironmentTask(task, environmentThread);
 
@@ -112,6 +115,10 @@ class ApplicationBootstrapTest {
             assertThat(environmentThread.isAlive()).isFalse();
             assertThat(cleaned.getCount()).isZero();
         } finally {
+            Thread.interrupted();
+            task.cancel(true);
+            environmentThread.interrupt();
+            environmentThread.join(2_000);
             Thread.interrupted();
         }
     }
@@ -130,11 +137,27 @@ class ApplicationBootstrapTest {
     }
 
     @Test
+    @DisplayName("Bootstrap failure closes MCP ownership before credential vault ownership")
+    void closeSharedServicesAfterFailure_whenBootstrapOwnsServices_closesManagerBeforeVault() {
+        AppServices services = mock(AppServices.class);
+        McpManager manager = mock(McpManager.class);
+        CredentialMutationService credentials = mock(CredentialMutationService.class);
+        when(services.mcpManager()).thenReturn(manager);
+        when(services.credentialMutationService()).thenReturn(credentials);
+
+        ApplicationBootstrap.closeSharedServicesAfterFailure(services, new IllegalStateException("startup failed"));
+
+        var order = inOrder(manager, credentials);
+        order.verify(manager).close();
+        order.verify(credentials).closeSecrets();
+    }
+
+    @Test
     @DisplayName("Subprocess environment snapshots are immutable")
     void assembleSubprocessEnvironment_whenCreated_rejectsMutation() {
         Map<String, String> result = ApplicationBootstrap.assembleSubprocessEnvironment(
                 Map.of("PATH", "/process/bin"),
-                Map.of(),
+                emptyMap(),
                 false
         );
 

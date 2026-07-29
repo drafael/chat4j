@@ -11,4 +11,9 @@ public record ToolInvocationRequest(String id, String name, String argumentsJson
         name = StringUtils.defaultString(name).trim();
         argumentsJson = StringUtils.defaultIfBlank(argumentsJson, "{}");
     }
+
+    @Override
+    public String toString() {
+        return "ToolInvocationRequest[id=%s, name=%s, argumentsJson=****]".formatted(id, name);
+    }
 }

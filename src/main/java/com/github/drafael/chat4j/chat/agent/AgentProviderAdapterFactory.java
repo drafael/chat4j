@@ -3,17 +3,18 @@ package com.github.drafael.chat4j.chat.agent;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.Validate;
 
+import java.util.List;
+
+@RequiredArgsConstructor
 public class AgentProviderAdapterFactory {
 
+    @NonNull
     private final ProviderAttachmentSupport attachmentSupport;
-
-    public AgentProviderAdapterFactory(@NonNull ProviderAttachmentSupport attachmentSupport) {
-        this.attachmentSupport = attachmentSupport;
-    }
 
     public AgentProviderAdapter create(
             String providerName,
@@ -23,7 +24,34 @@ public class AgentProviderAdapterFactory {
             @NonNull ProviderService providerService,
             String agentSystemPromptAppend
     ) {
+        return create(
+                providerName,
+                modelId,
+                baseUrl,
+                apiKey,
+                providerService,
+                agentSystemPromptAppend,
+                LocalAgentToolCatalog.definitions()
+        );
+    }
+
+    public AgentProviderAdapter create(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            @NonNull ProviderService providerService,
+            String agentSystemPromptAppend,
+            @NonNull List<AgentToolDefinition> toolDefinitions
+    ) {
         Validate.notBlank(providerName, "providerName should not be blank");
+        List<AgentToolDefinition> immutableDefinitions = List.copyOf(toolDefinitions);
+        boolean requiresMcpTools = immutableDefinitions.stream().anyMatch(tool -> tool.source() == AgentToolSource.MCP);
+        boolean anthropicToolPath = supportsAnthropicToolAdapter(providerName, modelId, baseUrl)
+                || supportsCopilotAnthropicToolAdapter(providerName, modelId, baseUrl, apiKey);
+        if (immutableDefinitions.size() > 128 && !anthropicToolPath) {
+            throw new IllegalStateException("OpenAI-compatible Agent Mode supports at most 128 tools.");
+        }
 
         if (supportsAnthropicToolAdapter(providerName, modelId, baseUrl)) {
             return new AnthropicToolAgentAdapter(
@@ -31,13 +59,17 @@ public class AgentProviderAdapterFactory {
                     baseUrl,
                     apiKey,
                     agentSystemPromptAppend,
-                    attachmentSupport
+                    attachmentSupport,
+                    immutableDefinitions
             );
         }
 
         AgentProviderAdapter providerServiceAdapter = new ProviderServiceAgentAdapter(providerService, agentSystemPromptAppend);
 
         if (shouldUseCodexCliOnly(providerName)) {
+            if (requiresMcpTools) {
+                throw unsupportedMcpPath(providerName);
+            }
             return providerServiceAdapter;
         }
 
@@ -47,9 +79,12 @@ public class AgentProviderAdapterFactory {
                     baseUrl,
                     apiKey,
                     agentSystemPromptAppend,
-                    attachmentSupport
+                    attachmentSupport,
+                    immutableDefinitions
             );
-            return new OpenAiCompatibleFallbackAgentAdapter(providerName, copilotAnthropicToolAdapter, providerServiceAdapter);
+            return requiresMcpTools
+                    ? copilotAnthropicToolAdapter
+                    : new OpenAiCompatibleFallbackAgentAdapter(providerName, copilotAnthropicToolAdapter, providerServiceAdapter);
         }
 
         if (supportsOpenAiCompatibleToolAdapter(providerName, modelId, baseUrl, apiKey)) {
@@ -59,15 +94,24 @@ public class AgentProviderAdapterFactory {
                     baseUrl,
                     apiKey,
                     agentSystemPromptAppend,
-                    attachmentSupport
+                    attachmentSupport,
+                    immutableDefinitions
             );
-            if (shouldUseProviderFallbackWrapper(providerName)) {
+            if (!requiresMcpTools && shouldUseProviderFallbackWrapper(providerName)) {
                 return new OpenAiCompatibleFallbackAgentAdapter(providerName, openAiToolAdapter, providerServiceAdapter);
             }
             return openAiToolAdapter;
         }
 
+        if (requiresMcpTools) {
+            throw unsupportedMcpPath(providerName);
+        }
         return providerServiceAdapter;
+    }
+
+    private IllegalStateException unsupportedMcpPath(String providerName) {
+        return new IllegalStateException("%s cannot advertise MCP tools for the selected model."
+                .formatted(StringUtils.defaultIfBlank(providerName, "This provider")));
     }
 
     private boolean supportsOpenAiCompatibleToolAdapter(

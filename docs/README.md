@@ -15,6 +15,8 @@ Use this page as the canonical entry point for implementation and operational de
 
 - [agent-mode.md](agent-mode.md)
   - Agent Mode behavior, adapter selection, and fallback/runtime rules.
+- [mcp.md](mcp.md)
+  - MCP server configuration, credentials, approvals, transports, and lifecycle.
 
 - [chat-rendering.md](chat-rendering.md)
   - Swing HTML Renderer, System WebView, JCEF, fallback behavior, math/diagram/chem rendering, packaging, and validation.

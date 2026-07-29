@@ -81,7 +81,6 @@ public class ApiTokenVault {
     private static final int GCM_TAG_BYTES = 16;
     private static final int GCM_TAG_BITS = GCM_TAG_BYTES * Byte.SIZE;
     private static final int LOCK_MARKER_BYTES = 32;
-    private static final int MAX_RECORDS = 64;
     private static final int MAX_TOKEN_ID_CHARS = 128;
     private static final int MAX_NONCE_TEXT_CHARS = 64;
     private static final int MAX_CIPHERTEXT_TEXT_CHARS = 100_000;
@@ -150,6 +149,37 @@ public class ApiTokenVault {
         } catch (IllegalArgumentException e) {
             return ApiTokenLookup.error(tokenId, e.getMessage());
         }
+        return readTokenCharsUnchecked(tokenId);
+    }
+
+    ApiTokenLookup readMcpTokenChars(String tokenId) {
+        try {
+            validateMcpTokenId(tokenId);
+        } catch (IllegalArgumentException e) {
+            return ApiTokenLookup.error(tokenId, e.getMessage());
+        }
+        return readTokenCharsUnchecked(tokenId);
+    }
+
+    Set<String> mcpTokenIds() {
+        synchronized (stateLock) {
+            return snapshot.records().keySet().stream()
+                    .filter(tokenId -> tokenId.startsWith("MCP_"))
+                    .collect(toSet());
+        }
+    }
+
+    void applyMcpBatch(Map<String, char[]> upserts, Set<String> removals) {
+        upserts.keySet().forEach(ApiTokenVault::validateMcpTokenId);
+        removals.forEach(ApiTokenVault::validateMcpTokenId);
+        upserts.values().forEach(ApiTokenVault::validateRequiredTokenInput);
+        withWriteLock(() -> {
+            applyMcpBatchLocked(upserts, removals);
+            return null;
+        });
+    }
+
+    private ApiTokenLookup readTokenCharsUnchecked(String tokenId) {
         ApiTokenRecord record;
         byte[] masterKey;
         String errorMessage;
@@ -273,6 +303,58 @@ public class ApiTokenVault {
         return token == null
                 || token.length == 0
                 || CharBuffer.wrap(token).chars().allMatch(Character::isWhitespace);
+    }
+
+    private static void validateMcpTokenId(String tokenId) {
+        if (StringUtils.isBlank(tokenId) || !tokenId.matches("MCP_[A-F0-9]{32}")) {
+            throw new IllegalArgumentException("Unsupported MCP credential ID.");
+        }
+    }
+
+    private static void validateRequiredTokenInput(char[] token) {
+        validateTokenInput(token);
+        if (isBlank(token)) {
+            throw new IllegalArgumentException("MCP credential value must not be blank.");
+        }
+    }
+
+    private void applyMcpBatchLocked(Map<String, char[]> upserts, Set<String> removals) throws Exception {
+        VaultSnapshot current = loadSnapshot(true);
+        try {
+            Map<String, ApiTokenRecord> records = new LinkedHashMap<>(current.records());
+            removals.forEach(records::remove);
+            if (upserts.isEmpty() && records.equals(current.records())) {
+                publishSnapshot(current);
+                current = null;
+                return;
+            }
+            byte[] masterKey = current.masterKey();
+            if (!upserts.isEmpty() && masterKey == null) {
+                if (!records.isEmpty()) {
+                    throw new ApiTokenVaultException(VAULT_KEY_UNAVAILABLE_MESSAGE);
+                }
+                masterKey = createAndPersistMasterKey(current.keyVersion());
+                current = new VaultSnapshot(
+                        current.records(),
+                        masterKey,
+                        current.errorMessage(),
+                        current.vaultVersion(),
+                        fileVersion(storagePaths.tokenVaultMasterKeyFile(), true)
+                );
+            }
+            byte[] finalMasterKey = masterKey;
+            upserts.forEach((tokenId, token) -> {
+                try {
+                    records.put(tokenId, encrypt(tokenId, token, finalMasterKey, records.values()));
+                } catch (Exception e) {
+                    throw new ApiTokenVaultException("Could not encrypt MCP credential.");
+                }
+            });
+            FileVersion publishedVault = writeVault(records, current.vaultVersion(), current.keyVersion());
+            publishReloadedSnapshot(publishedVault, current.keyVersion());
+        } finally {
+            clearSnapshot(current);
+        }
     }
 
     private boolean applyTokenMutationLocked(
@@ -483,9 +565,6 @@ public class ApiTokenVault {
             if (contents.schemaVersion() != SCHEMA_VERSION || contents.records() == null) {
                 throw new IOException("Saved token vault schema is invalid.");
             }
-            if (contents.records().size() > MAX_RECORDS) {
-                throw new IOException("Saved token vault contains too many records.");
-            }
             Map<String, ApiTokenRecord> records = new LinkedHashMap<>();
             contents.records().forEach((tokenId, record) -> {
                 validateRecord(tokenId, record);
@@ -519,7 +598,11 @@ public class ApiTokenVault {
         if (tokenId == null || tokenId.length() > MAX_TOKEN_ID_CHARS) {
             throw new ApiTokenVaultException("Saved token id is invalid.");
         }
-        CredentialTokenIds.validateSupportedTokenId(tokenId);
+        if (tokenId.startsWith("MCP_")) {
+            validateMcpTokenId(tokenId);
+        } else {
+            CredentialTokenIds.validateSupportedTokenId(tokenId);
+        }
         if (record == null || !ApiTokenRecord.ALGORITHM.equals(record.algorithm())) {
             throw new ApiTokenVaultException("Unsupported token encryption algorithm.");
         }

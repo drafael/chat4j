@@ -30,12 +30,6 @@ import static java.util.stream.Collectors.joining;
 final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String BASH_TOOL_DESCRIPTION = String.join(
-            " ",
-            "Execute a bash shell command with the project root as working directory.",
-            "This command is not sandboxed and can access files outside the project root",
-            "with the Chat4J app user's permissions."
-    );
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -47,6 +41,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private final String apiKey;
     private final String systemPromptAppend;
     private final ProviderAttachmentSupport attachmentSupport;
+    private final List<AgentToolDefinition> agentToolDefinitions;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
     private List<Map<String, Object>> pendingToolCalls = emptyList();
     private String pendingReasoningContent = "";
@@ -69,16 +64,37 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             String systemPromptAppend,
             @NonNull ProviderAttachmentSupport attachmentSupport
     ) {
+        this(
+                providerName,
+                modelId,
+                baseUrl,
+                apiKey,
+                systemPromptAppend,
+                attachmentSupport,
+                LocalAgentToolCatalog.definitions()
+        );
+    }
+
+    OpenAiToolAgentAdapter(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String apiKey,
+            String systemPromptAppend,
+            @NonNull ProviderAttachmentSupport attachmentSupport,
+            @NonNull List<AgentToolDefinition> agentToolDefinitions
+    ) {
         this.providerName = StringUtils.defaultString(providerName);
         this.modelId = StringUtils.defaultString(modelId);
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.apiKey = apiKey;
         this.systemPromptAppend = StringUtils.defaultString(systemPromptAppend);
         this.attachmentSupport = attachmentSupport;
+        this.agentToolDefinitions = List.copyOf(agentToolDefinitions);
     }
 
     @Override
-    public AgentTurnResult executeTurn(AgentRunRequest request, AgentRunCallbacks callbacks) {
+    public AgentTurnResult executeTurn(@NonNull AgentRunRequest request, @NonNull AgentRunCallbacks callbacks) {
         try {
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
@@ -216,7 +232,11 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private Map<String, Object> systemPromptMessage(AgentRunRequest request) {
         Map<String, Object> message = new LinkedHashMap<>();
         message.put("role", "system");
-        message.put("content", AgentSystemPromptBuilder.buildToolAgentPrompt(request.projectRoot(), systemPromptAppend));
+        message.put("content", AgentSystemPromptBuilder.buildToolAgentPrompt(
+                request.projectRoot(),
+                systemPromptAppend,
+                agentToolDefinitions.stream().anyMatch(tool -> tool.source() == AgentToolSource.MCP)
+        ));
         return message;
     }
 
@@ -389,63 +409,20 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     }
 
     private List<Map<String, Object>> toolDefinitions() {
-        return List.of(
-                toolDefinition("read", "Read a UTF-8 text file from the project", Map.of(
-                        "path", stringProperty("Path to file, relative to project root")
-                ), List.of("path")),
-                toolDefinition("write", "Write UTF-8 text content to a file", Map.of(
-                        "path", stringProperty("Path to file, relative to project root"),
-                        "content", stringProperty("File content")
-                ), List.of("path", "content")),
-                toolDefinition("edit", "Apply exact text replacement edits in a file", Map.of(
-                        "path", stringProperty("Path to file, relative to project root"),
-                        "oldText", stringProperty("Old text to replace"),
-                        "newText", stringProperty("Replacement text")
-                ), List.of("path", "oldText", "newText")),
-                toolDefinition("ls", "List files in a directory", Map.of(
-                        "path", stringProperty("Directory path, defaults to .")
-                ), emptyList()),
-                toolDefinition("find", "Find files recursively by name pattern", Map.of(
-                        "path", stringProperty("Directory path, defaults to ."),
-                        "pattern", stringProperty("Glob-style pattern, for example *.java")
-                ), emptyList()),
-                toolDefinition("grep", "Search for text in files", Map.of(
-                        "query", stringProperty("Text to search for"),
-                        "path", stringProperty("Path to file or directory, defaults to .")
-                ), List.of("query")),
-                toolDefinition("bash", BASH_TOOL_DESCRIPTION, Map.of(
-                        "command", stringProperty("Command to execute"),
-                        "timeoutSeconds", Map.of("type", "integer", "description", "Timeout in seconds")
-                ), List.of("command"))
-        );
+        return agentToolDefinitions.stream()
+                .map(this::toolDefinition)
+                .toList();
     }
 
-    private Map<String, Object> toolDefinition(
-            String name,
-            String description,
-            Map<String, Object> properties,
-            List<String> required
-    ) {
-        Map<String, Object> parameters = new LinkedHashMap<>();
-        parameters.put("type", "object");
-        parameters.put("properties", properties);
-        parameters.put("required", required);
-
+    private Map<String, Object> toolDefinition(AgentToolDefinition tool) {
         Map<String, Object> function = new LinkedHashMap<>();
-        function.put("name", name);
-        function.put("description", description);
-        function.put("parameters", parameters);
+        function.put("name", tool.name());
+        function.put("description", tool.description());
+        function.put("parameters", tool.inputSchema());
 
         Map<String, Object> definition = new LinkedHashMap<>();
         definition.put("type", "function");
         definition.put("function", function);
         return definition;
-    }
-
-    private Map<String, Object> stringProperty(String description) {
-        Map<String, Object> property = new LinkedHashMap<>();
-        property.put("type", "string");
-        property.put("description", description);
-        return property;
     }
 }

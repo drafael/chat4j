@@ -19,6 +19,7 @@ import com.github.drafael.chat4j.chat.agent.AgentProviderAdapter;
 import com.github.drafael.chat4j.chat.agent.AgentProviderAdapterFactory;
 import com.github.drafael.chat4j.chat.agent.AgentTurnResult;
 import com.github.drafael.chat4j.chat.agent.LocalToolRuntime;
+import com.github.drafael.chat4j.chat.agent.McpApprovalHandler;
 import com.github.drafael.chat4j.chat.agent.ToolInvocationRequest;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -34,6 +35,7 @@ import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.mcp.McpRunProvider;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
 import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceIndeterminateException;
@@ -1150,7 +1152,7 @@ class ChatPanelTest {
     @DisplayName("Loading a known OAuth provider before discovery preserves its model selection")
     void setSelectedModel_whenKnownProviderIsStillBeingDiscovered_preservesSelection() throws Exception {
         runOnEdt(() -> {
-            setField(subject, "providerMap", Map.of());
+            setField(subject, "providerMap", emptyMap());
             subject.setSelectedModel("GitHub Copilot > claude-sonnet-4.6");
 
             assertThat(subject.getSelectedModel()).isEqualTo("GitHub Copilot > claude-sonnet-4.6");
@@ -5582,7 +5584,9 @@ class ChatPanelTest {
                 codexAuthResolver,
                 credentialResolver,
                 storagePaths,
-                attachmentSupport
+                attachmentSupport,
+                McpRunProvider.disabled(),
+                McpApprovalHandler.denyAll()
         );
     }
 
@@ -5757,7 +5761,7 @@ class ChatPanelTest {
         return callOnEdt(() -> {
             Object value = pendingAssistantRecoveryMap(chatPanel).get(conversationId);
             if (!(value instanceof List<?> recoveries)) {
-                return List.of();
+                return emptyList();
             }
             List<ConversationHistoryEntry> entries = new ArrayList<>();
             for (Object recovery : recoveries) {
@@ -5913,7 +5917,9 @@ class ChatPanelTest {
                 codexAuthResolver,
                 credentialResolver,
                 storagePaths,
-                attachmentSupport
+                attachmentSupport,
+                McpRunProvider.disabled(),
+                McpApprovalHandler.denyAll()
         )));
         return panelRef.get();
     }

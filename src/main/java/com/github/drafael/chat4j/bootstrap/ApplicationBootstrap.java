@@ -4,6 +4,8 @@ import com.formdev.flatlaf.intellijthemes.materialthemeuilite.FlatMTMaterialLigh
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.MainFrame;
 import com.github.drafael.chat4j.logging.LoggingBootstrap;
+import com.github.drafael.chat4j.mcp.McpConfigurationRepository;
+import com.github.drafael.chat4j.mcp.McpManager;
 import com.github.drafael.chat4j.persistence.CacheRootHandle;
 import com.github.drafael.chat4j.persistence.CacheStorageInitializer;
 import com.github.drafael.chat4j.persistence.StoragePaths;
@@ -26,6 +28,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.McpSecretVault;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.settings.AppearancePanel;
 import com.github.drafael.chat4j.settings.ThemeSettings;
@@ -33,19 +36,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
-import javax.sql.DataSource;
-import javax.swing.JOptionPane;
-import javax.swing.SwingUtilities;
-import javax.swing.UIManager;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import javax.sql.DataSource;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 
 /**
  * Coordinates application startup from platform/bootstrap setup through first window display.
@@ -98,7 +102,7 @@ public final class ApplicationBootstrap {
                 "service_assembly",
                 () -> assembleServices(storage, environment.shellEnv(), System.getenv())
         );
-        boolean frameOwnsCredentials = false;
+        var sharedServicesTransferred = new AtomicBoolean();
         try {
             boolean shouldWarnUser = EnvironmentBootstrapper.shouldWarnUser(
                     environment.macJpackageLaunch(),
@@ -113,13 +117,12 @@ public final class ApplicationBootstrap {
 
             runStage("appearance_apply", () -> applySavedAppearance(services.settingsRepo()));
             runStage("jcef_startup_init", () -> jcefStartupInitializer.initializeIfNeeded(services.settingsRepo()));
-            runStage("main_window_show", () -> showMainWindow(services));
-            frameOwnsCredentials = true;
+            runStage("main_window_show", () -> showMainWindow(services, sharedServicesTransferred));
             runStage("environment_warning", () -> showEnvironmentWarningIfNeeded(shouldWarnUser));
             log.info("Chat4J bootstrap finished");
         } catch (RuntimeException | Error e) {
-            if (!frameOwnsCredentials) {
-                closeSecretsAfterFailure(services.credentialMutationService(), e);
+            if (!sharedServicesTransferred.get()) {
+                closeSharedServicesAfterFailure(services, e);
             }
             throw e;
         }
@@ -220,7 +223,6 @@ public final class ApplicationBootstrap {
                     subprocessEnvironment,
                     attachmentSupport
             );
-
             storage.providerModelCacheService().primeFromDisk(
                     providerRegistry.allProviders().stream()
                             .map(ProviderRegistry.ProviderDef::name)
@@ -228,6 +230,12 @@ public final class ApplicationBootstrap {
             );
             storage.modelFavoritesService().primeFromSettings();
             log.info("Storage initialized and model cache primed");
+            McpManager mcpManager = new McpManager(
+                    new McpConfigurationRepository(storage.storagePaths().mcpFile()),
+                    new McpSecretVault(tokenVault),
+                    subprocessEnvironment,
+                    storage.storagePaths().appConfigDirectory()
+            );
 
             return new AppServices(
                     storage.conversationRepository(),
@@ -243,7 +251,8 @@ public final class ApplicationBootstrap {
                     credentialResolver,
                     credentialMutationService,
                     subprocessEnvironment,
-                    attachmentSupport
+                    attachmentSupport,
+                    mcpManager
             );
         } catch (RuntimeException | Error e) {
             closeSecretsAfterFailure(credentialMutationService, e);
@@ -258,6 +267,17 @@ public final class ApplicationBootstrap {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to initialize managed attachment storage.", e);
         }
+    }
+
+    static void closeSharedServicesAfterFailure(AppServices services, Throwable startupFailure) {
+        try {
+            services.mcpManager().close();
+        } catch (Throwable cleanupFailure) {
+            startupFailure.addSuppressed(cleanupFailure);
+            log.warn("Failed to close MCP services after startup failure: {}",
+                    cleanupFailure.getClass().getSimpleName());
+        }
+        closeSecretsAfterFailure(services.credentialMutationService(), startupFailure);
     }
 
     static void closeSecretsAfterFailure(
@@ -338,7 +358,7 @@ public final class ApplicationBootstrap {
         }
     }
 
-    private void showMainWindow(AppServices services) {
+    private void showMainWindow(AppServices services, AtomicBoolean sharedServicesTransferred) {
         Runnable createAndShow = () -> {
             MainFrame frame = null;
             try {
@@ -356,8 +376,11 @@ public final class ApplicationBootstrap {
                     services.credentialResolver(),
                     services.credentialMutationService(),
                     services.subprocessEnvironment(),
-                    services.attachmentSupport()
+                    services.attachmentSupport(),
+                    services.mcpManager()
                 );
+                frame.acceptSharedServiceOwnership();
+                sharedServicesTransferred.set(true);
                 frame.setVisible(true);
             } catch (RuntimeException | Error e) {
                 if (frame != null) {

@@ -1,7 +1,13 @@
 package com.github.drafael.chat4j.chat.agent;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.mcp.McpInvocationTarget;
+import com.github.drafael.chat4j.mcp.McpRunProvider;
+import com.github.drafael.chat4j.mcp.McpRunSession;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -10,24 +16,33 @@ import org.apache.commons.lang3.Validate;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 import static java.lang.Math.min;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Stream.concat;
 
 @Slf4j
+@RequiredArgsConstructor
 public final class AgentOrchestrator {
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_TOOL_ROUNDS = 8;
     private static final int LOOP_GUARD_REPEAT_THRESHOLD = 3;
     private static final Set<String> LOOP_GUARD_TOOL_NAMES = Set.of("ls", "find", "grep", "read");
 
+    @NonNull
     private final AgentProviderAdapterFactory adapterFactory;
+    @NonNull
     private final LocalToolRuntime toolRuntime;
+    @NonNull
+    private final McpRunProvider mcpRunProvider;
+    @NonNull
+    private final McpApprovalHandler approvalHandler;
 
     public AgentOrchestrator(@NonNull AgentProviderAdapterFactory adapterFactory, @NonNull LocalToolRuntime toolRuntime) {
-        this.adapterFactory = adapterFactory;
-        this.toolRuntime = toolRuntime;
+        this(adapterFactory, toolRuntime, McpRunProvider.disabled(), McpApprovalHandler.denyAll());
     }
 
     public void streamCompletion(
@@ -47,14 +62,42 @@ public final class AgentOrchestrator {
             throw new IllegalStateException("Agent Mode requires a valid project folder.");
         }
 
-        AgentProviderAdapter adapter = adapterFactory.create(
-                providerName,
-                modelId,
-                baseUrl,
-                apiKey,
-                providerService,
-                agentSystemPromptAppend
-        );
+        try (McpRunSession mcpSession = mcpRunProvider.openRun(request.isCancelled())) {
+            List<AgentToolDefinition> tools = concat(
+                    LocalAgentToolCatalog.definitions().stream(),
+                    mcpSession.tools().stream()
+            ).toList();
+            AgentProviderAdapter adapter = mcpSession.hasTools()
+                    ? adapterFactory.create(
+                            providerName,
+                            modelId,
+                            baseUrl,
+                            apiKey,
+                            providerService,
+                            agentSystemPromptAppend,
+                            tools
+                    )
+                    : adapterFactory.create(
+                            providerName,
+                            modelId,
+                            baseUrl,
+                            apiKey,
+                            providerService,
+                            agentSystemPromptAppend
+                    );
+            runToolLoop(providerName, modelId, adapter, request, callbacks, projectRoot, mcpSession);
+        }
+    }
+
+    private void runToolLoop(
+            String providerName,
+            String modelId,
+            AgentProviderAdapter adapter,
+            AgentRunRequest request,
+            AgentRunCallbacks callbacks,
+            Path projectRoot,
+            McpRunSession mcpSession
+    ) {
         List<ToolInvocationResult> toolResults = request.toolResults();
         String previousToolBatchSignature = null;
         int repeatedToolBatchCount = 0;
@@ -104,7 +147,13 @@ public final class AgentOrchestrator {
             } else {
                 toolResults = toolInvocations.stream()
                         .takeWhile(ignored -> !shouldStop(request))
-                        .map(toolInvocation -> executeToolInvocation(toolInvocation, projectRoot, request, callbacks))
+                        .map(toolInvocation -> executeToolInvocation(
+                                toolInvocation,
+                                projectRoot,
+                                request,
+                                callbacks,
+                                mcpSession
+                        ))
                         .flatMap(Optional::stream)
                         .toList();
             }
@@ -147,8 +196,7 @@ public final class AgentOrchestrator {
             if (shouldStop(request)) {
                 return;
             }
-            callbacks.onToken().accept("\n\n[Agent notice: Repeated read-only tool calls were stopped to avoid a loop. "
-                    + "Proceeding with the best available context.]\n");
+            callbacks.onToken().accept("\n\n[Agent notice: Repeated read-only tool calls were stopped to avoid a loop. Proceeding with the best available context.]\n");
             if (!shouldStop(request)) {
                 callbacks.onComplete().run();
             }
@@ -173,18 +221,75 @@ public final class AgentOrchestrator {
             ToolInvocationRequest toolInvocation,
             Path projectRoot,
             AgentRunRequest request,
-            AgentRunCallbacks callbacks
+            AgentRunCallbacks callbacks,
+            McpRunSession mcpSession
     ) {
         if (shouldStop(request)) {
             return Optional.empty();
         }
         callbacks.onToolActivity().accept(AgentToolActivityFormatter.started(toolInvocation));
-        ToolInvocationResult result = toolRuntime.execute(toolInvocation, projectRoot, request.isCancelled());
+        ToolInvocationResult result = mcpSession.handles(toolInvocation.name())
+                ? executeMcpInvocation(toolInvocation, request, mcpSession)
+                : toolRuntime.execute(toolInvocation, projectRoot, request.isCancelled());
         if (shouldStop(request)) {
             return Optional.empty();
         }
-        callbacks.onToolActivity().accept(AgentToolActivityFormatter.completed(toolInvocation, result));
+        callbacks.onToolActivity().accept("User denied the MCP tool call.".equals(result.error())
+                ? AgentToolActivityFormatter.skipped(toolInvocation, "MCP tool call denied")
+                : AgentToolActivityFormatter.completed(toolInvocation, result));
         return Optional.of(result);
+    }
+
+    private ToolInvocationResult executeMcpInvocation(
+            ToolInvocationRequest toolInvocation,
+            AgentRunRequest request,
+            McpRunSession mcpSession
+    ) {
+        Map<String, Object> arguments;
+        try {
+            arguments = JSON.readValue(toolInvocation.argumentsJson(), new TypeReference<>() {
+            });
+            if (arguments == null) {
+                throw new IllegalArgumentException("MCP tool arguments must be a JSON object.");
+            }
+        } catch (Exception e) {
+            return ToolInvocationResult.failure(toolInvocation, "MCP tool arguments must be a JSON object.");
+        }
+
+        McpInvocationTarget target = mcpSession.target(toolInvocation.name());
+        McpInvocationPermit permit = target.automatic()
+                ? McpInvocationPermit.automaticallyAllowed()
+                : McpInvocationPermit.pendingApproval();
+        if (!target.automatic()) {
+            String formattedArguments;
+            try {
+                formattedArguments = AgentToolResultLimiter.limit(mcpSession.redactForDisplay(
+                        toolInvocation.name(),
+                        JSON.writerWithDefaultPrettyPrinter().writeValueAsString(arguments)
+                ));
+            } catch (Exception e) {
+                return ToolInvocationResult.failure(toolInvocation, "Could not display MCP tool arguments.");
+            }
+            McpApprovalDecision decision = approvalHandler.requestApproval(
+                    new McpApprovalRequest(target.serverName(), target.toolName(), formattedArguments),
+                    request.isCancelled()
+            );
+            if (decision != McpApprovalDecision.ALLOW_ONCE || shouldStop(request) || !permit.allowOnce()) {
+                permit.cancel();
+                return ToolInvocationResult.failure(toolInvocation, "User denied the MCP tool call.");
+            }
+        }
+        if (shouldStop(request)) {
+            permit.cancel();
+            return ToolInvocationResult.failure(toolInvocation, "MCP tool call cancelled.");
+        }
+        return mcpSession.invoke(
+                toolInvocation.name(),
+                arguments,
+                toolInvocation,
+                request.isCancelled(),
+                permit
+        );
     }
 
     private void emitSkippedToolActivities(
@@ -230,10 +335,8 @@ public final class AgentOrchestrator {
             List<ToolInvocationRequest> toolInvocations,
             int repeatedToolBatchCount
     ) {
-        String guidance = "LOOP_GUARD: The same read-only tool call was repeated %d times with no visible progress. "
-                .formatted(repeatedToolBatchCount)
-                + "STOP CALLING TOOLS NOW. You MUST provide a final answer immediately using already collected results. "
-                + "Only call another tool if the user explicitly asks for a different path/pattern/query.";
+        String guidance = "LOOP_GUARD: The same read-only tool call was repeated %d times with no visible progress. STOP CALLING TOOLS NOW. You MUST provide a final answer immediately using already collected results. Only call another tool if the user explicitly asks for a different path/pattern/query."
+                .formatted(repeatedToolBatchCount);
 
         return toolInvocations.stream()
                 .map(toolInvocation -> new ToolInvocationResult(
@@ -264,7 +367,7 @@ public final class AgentOrchestrator {
         int limit = min(6, names.size());
         String joined = String.join(",", names.subList(0, limit));
         if (names.size() > limit) {
-            return joined + ",+" + (names.size() - limit) + " more";
+            return "%s,+%d more".formatted(joined, names.size() - limit);
         }
         return joined;
     }

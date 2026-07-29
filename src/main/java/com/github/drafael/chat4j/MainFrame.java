@@ -3,6 +3,7 @@ package com.github.drafael.chat4j;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.ChatPanel;
 import com.github.drafael.chat4j.chat.NewChatCoordinator;
+import com.github.drafael.chat4j.chat.agent.McpSwingApprovalHandler;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.chat.search.ChatSearchPopup;
@@ -27,6 +28,8 @@ import com.github.drafael.chat4j.menu.MenuBarAssemblyFactory;
 import com.github.drafael.chat4j.menu.MenuSectionHeaderFactory;
 import com.github.drafael.chat4j.menu.MenuSelectionListenerBinder;
 import com.github.drafael.chat4j.menu.ViewMenuFactory;
+import com.github.drafael.chat4j.mcp.McpManager;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.conversation.ConversationLoadApplyDispatchCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
@@ -42,7 +45,6 @@ import com.github.drafael.chat4j.persistence.conversation.ConversationRepository
 import com.github.drafael.chat4j.persistence.conversation.ConversationTitleDeriver;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.persistence.shutdown.ShutdownSaveDispatchCoordinator;
 import com.github.drafael.chat4j.prompts.BuiltInPromptCatalog;
@@ -178,12 +180,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static java.lang.Math.max;
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toMap;
 
 @Slf4j
 public class MainFrame extends JFrame {
-    private static final long SHUTDOWN_SAVE_TIMEOUT_MILLIS = 2000;
+    private static final long SHUTDOWN_HARD_TIMEOUT_MILLIS = 3_000;
     private static final int EMPTY_STATE_PROMPT_ACTION_LIMIT = 7;
 
     private final ChatPanel chatPanel;
@@ -247,6 +250,7 @@ public class MainFrame extends JFrame {
     private final Map<String, String> subprocessEnvironment;
     private final StoragePaths storagePaths;
     private final ProviderAttachmentSupport attachmentSupport;
+    private final McpManager mcpManager;
     private final Path sttModelsDirectory;
     private final Path sttTempDirectory;
     private final VoskModelManagementService voskModelManagementService;
@@ -365,7 +369,10 @@ public class MainFrame extends JFrame {
     private UUID pendingLoadConversationId;
     private final MainFrameShutdownState shutdownState = new MainFrameShutdownState();
     private boolean permanentCleanupStarted;
+    private volatile boolean sharedServiceOwnershipAccepted;
     private CompletableFuture<Void> permanentCleanupFuture = CompletableFuture.completedFuture(null);
+    private volatile CompletableFuture<Void> mcpRuntimeShutdownFuture = CompletableFuture.completedFuture(null);
+    private boolean mcpRuntimeShutdownStarted;
     private final MainFrameSidebarState sidebarState = new MainFrameSidebarState();
     private final MainFrameSidebarToggleState sidebarToggleState = new MainFrameSidebarToggleState();
     private final ChatSearchPopupCoordinator chatSearchPopupCoordinator = new ChatSearchPopupCoordinator();
@@ -423,7 +430,8 @@ public class MainFrame extends JFrame {
             @NonNull CredentialResolver credentialResolver,
             @NonNull CredentialMutationService credentialMutationService,
             @NonNull Map<String, String> subprocessEnvironment,
-            @NonNull ProviderAttachmentSupport attachmentSupport
+            @NonNull ProviderAttachmentSupport attachmentSupport,
+            @NonNull McpManager mcpManager
     ) {
         super("Chat4J");
         this.conversationRepo = conversationRepo;
@@ -450,6 +458,7 @@ public class MainFrame extends JFrame {
         this.credentialMutationService = credentialMutationService;
         this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
         this.attachmentSupport = attachmentSupport;
+        this.mcpManager = mcpManager;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
                 conversationRepo,
                 settingsRepo,
@@ -695,6 +704,10 @@ public class MainFrame extends JFrame {
         }
     }
 
+    public void acceptSharedServiceOwnership() {
+        sharedServiceOwnershipAccepted = true;
+    }
+
     private void configureWindowChrome() {
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setMinimumSize(new Dimension(600, 400));
@@ -726,7 +739,12 @@ public class MainFrame extends JFrame {
                 codexAuthResolver,
                 credentialResolver,
                 storagePaths,
-                attachmentSupport
+                attachmentSupport,
+                mcpManager,
+                new McpSwingApprovalHandler(() -> {
+                    Window settingsWindow = settingsDialogCoordinator.activeWindow();
+                    return settingsWindow == null ? this : settingsWindow;
+                })
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
@@ -1127,8 +1145,8 @@ public class MainFrame extends JFrame {
         Dimension leftSize = layoutPreferredSize(leftButtons);
         Dimension rightSize = layoutPreferredSize(rightPanel);
         Dimension balancedSize = new Dimension(
-                Math.max(leftSize.width, rightSize.width),
-                Math.max(leftSize.height, rightSize.height)
+                max(leftSize.width, rightSize.width),
+                max(leftSize.height, rightSize.height)
         );
         leftButtons.setPreferredSize(balancedSize);
         leftButtons.setMinimumSize(balancedSize);
@@ -1356,7 +1374,7 @@ public class MainFrame extends JFrame {
     }
 
     private void requestApplicationExit() {
-        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_SAVE_TIMEOUT_MILLIS);
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_HARD_TIMEOUT_MILLIS);
         requestApplicationExit(deadlineNanos);
     }
 
@@ -1365,7 +1383,29 @@ public class MainFrame extends JFrame {
             SwingUtilities.invokeLater(() -> requestApplicationExit(deadlineNanos));
             return;
         }
-        settingsDialogCoordinator.requestApplicationExit(deadlineNanos, () -> requestWindowClose(deadlineNanos));
+        long hardDeadlineNanos = beginApplicationExit(deadlineNanos);
+        settingsDialogCoordinator.requestApplicationExit(
+                hardDeadlineNanos,
+                () -> requestWindowClose(hardDeadlineNanos)
+        );
+    }
+
+    long beginApplicationExit(long requestedDeadlineNanos) {
+        long hardDeadlineNanos = max(
+                requestedDeadlineNanos,
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_HARD_TIMEOUT_MILLIS)
+        );
+        chatPanel.beginShutdown();
+        beginMcpRuntimeShutdown();
+        return hardDeadlineNanos;
+    }
+
+    CompletableFuture<Void> beginMcpRuntimeShutdown() {
+        if (!mcpRuntimeShutdownStarted) {
+            mcpRuntimeShutdownStarted = true;
+            mcpRuntimeShutdownFuture = CompletableFuture.runAsync(mcpManager::beginRuntimeShutdown);
+        }
+        return mcpRuntimeShutdownFuture;
     }
 
     private void requestWindowClose(long deadlineNanos) {
@@ -1414,7 +1454,12 @@ public class MainFrame extends JFrame {
                 deadlineNanos,
                 persistence,
                 cleanup,
-                finishAction::run,
+                () -> mcpRuntimeShutdownFuture.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+                    if (error != null) {
+                        warnWithoutStack("Failed to clean up MCP processes during shutdown", error);
+                    }
+                    finishAction.run();
+                })),
                 () -> log.warn("Timed out persisting current conversation during shutdown"),
                 error -> warnWithoutStack("Failed to finish application shutdown", error)
         );
@@ -1437,7 +1482,13 @@ public class MainFrame extends JFrame {
             }
             branches.add(disposeSpeechServicesAsync());
             branches.add(cleanupStage(conversationRuntimeSettingsCoordinator::sealWebBrowsePersistence));
-            branches.add(cleanupAction(credentialMutationService::closeSecrets));
+            if (sharedServiceOwnershipAccepted) {
+                branches.add(cleanupStage(() -> closeMcpServicesAfterRuntimeSettlement(
+                        mcpRuntimeShutdownFuture,
+                        mcpManager,
+                        credentialMutationService
+                )));
+            }
             branches.add(closeSttModelManagementServicesAsync());
             branches.add(cleanupAction(conversationPersistenceCoordinator::close));
             if (chatPanel != null) {
@@ -1454,6 +1505,57 @@ public class MainFrame extends JFrame {
             permanentCleanupFuture.completeExceptionally(t);
         }
         return permanentCleanupFuture;
+    }
+
+    static CompletableFuture<Void> closeMcpServicesAfterRuntimeSettlement(
+            @NonNull CompletableFuture<Void> runtimeShutdown,
+            @NonNull McpManager mcpManager,
+            @NonNull CredentialMutationService credentialMutationService
+    ) {
+        return runtimeShutdown
+                .handle((ignored, error) -> unwrapCompletionFailure(error))
+                .thenAcceptAsync(runtimeFailure -> closeMcpManagerAndSecrets(
+                        mcpManager,
+                        credentialMutationService,
+                        runtimeFailure
+                ));
+    }
+
+    private static void closeMcpManagerAndSecrets(
+            McpManager mcpManager,
+            CredentialMutationService credentialMutationService,
+            Throwable runtimeFailure
+    ) {
+        Throwable primary = runtimeFailure;
+        try {
+            mcpManager.close();
+        } catch (RuntimeException | Error managerFailure) {
+            if (primary == null) {
+                primary = managerFailure;
+            } else if (primary != managerFailure) {
+                primary.addSuppressed(managerFailure);
+            }
+        }
+
+        if (mcpManager.publicationSettlementProvenOnClose()) {
+            try {
+                credentialMutationService.closeSecrets();
+            } catch (RuntimeException | Error credentialFailure) {
+                if (primary == null) {
+                    primary = credentialFailure;
+                } else if (primary != credentialFailure) {
+                    primary.addSuppressed(credentialFailure);
+                }
+            }
+        }
+
+        if (primary != null) {
+            throw new CompletionException(primary);
+        }
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
     }
 
     private CompletableFuture<Void> disposeViewResourcesOnEdt() {
@@ -2032,6 +2134,7 @@ public class MainFrame extends JFrame {
                         promptCatalogRepo,
                         chatWebViewRuntimeStatus,
                         this::requestWindowClose,
+                        this::beginApplicationExit,
                         sttModelsDirectory,
                         voskModelManagementService,
                         whisperModelManagementService,
@@ -2041,7 +2144,9 @@ public class MainFrame extends JFrame {
                         credentialResolver,
                         credentialMutationService,
                         subprocessEnvironment,
-                        whisperNativeRuntime
+                        whisperNativeRuntime,
+                        mcpManager,
+                        SettingsDialog.ExitTiming.system()
                 )),
                 () -> {
                     if (shutdownState.shutdownInProgress()) {
@@ -2224,7 +2329,7 @@ public class MainFrame extends JFrame {
             List<ProviderRegistry.ProviderStatus> statuses,
             Map<String, Integer> modelCountByProvider
     ) {
-        int providerWidth = Math.max(
+        int providerWidth = max(
                 "Provider".length(),
                 statuses.stream()
                         .map(ProviderRegistry.ProviderStatus::name)
@@ -2232,8 +2337,10 @@ public class MainFrame extends JFrame {
                         .max()
                         .orElse("Provider".length())
         );
-        String rowPattern = "| %-" + providerWidth + "s | %-7s | %-13s | %-9s | %6s |";
-        String separator = "+-" + "-".repeat(providerWidth) + "-+---------+---------------+-----------+--------+";
+        String rowPattern = "| %%-%ds | %%-7s | %%-13s | %%-9s | %%6s |".formatted(providerWidth);
+        String separator = "+-%s-+---------+---------------+-----------+--------+".formatted(
+                "-".repeat(providerWidth)
+        );
 
         String rows = statuses.stream()
                 .map(status -> rowPattern.formatted(
@@ -2247,7 +2354,7 @@ public class MainFrame extends JFrame {
                 .orElse("");
 
         String header = rowPattern.formatted("Provider", "Enabled", "Authenticated", "Available", "Models");
-        return rows.isBlank()
+        return StringUtils.isBlank(rows)
                 ? "%s\n%s\n%s".formatted(separator, header, separator)
                 : "%s\n%s\n%s\n%s\n%s".formatted(separator, header, separator, rows, separator);
     }
@@ -2257,7 +2364,7 @@ public class MainFrame extends JFrame {
                 .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
                 .toList();
 
-        int providerWidth = Math.max(
+        int providerWidth = max(
                 "Provider".length(),
                 entries.stream()
                         .map(Map.Entry::getKey)
@@ -2265,7 +2372,7 @@ public class MainFrame extends JFrame {
                         .max()
                         .orElse("Provider".length())
         );
-        int modelWidth = Math.max(
+        int modelWidth = max(
                 "Models".length(),
                 entries.stream()
                         .map(entry -> String.valueOf(entry.getValue().size()))
@@ -2274,8 +2381,11 @@ public class MainFrame extends JFrame {
                         .orElse("Models".length())
         );
 
-        String rowPattern = "| %-" + providerWidth + "s | %" + modelWidth + "s |";
-        String separator = "+-" + "-".repeat(providerWidth) + "-+-" + "-".repeat(modelWidth) + "-+";
+        String rowPattern = "| %%-%ds | %%%ds |".formatted(providerWidth, modelWidth);
+        String separator = "+-%s-+-%s-+".formatted(
+                "-".repeat(providerWidth),
+                "-".repeat(modelWidth)
+        );
         String header = rowPattern.formatted("Provider", "Models");
 
         String rows = entries.stream()

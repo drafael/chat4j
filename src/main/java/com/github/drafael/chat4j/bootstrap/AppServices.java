@@ -1,10 +1,11 @@
 package com.github.drafael.chat4j.bootstrap;
 
+import com.github.drafael.chat4j.mcp.McpManager;
+import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.persistence.model.ModelFavoritesService;
 import com.github.drafael.chat4j.persistence.model.ProviderModelCacheService;
-import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -14,6 +15,7 @@ import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.Map;
+import lombok.NonNull;
 
 /**
  * Startup-created services required to construct the main UI.
@@ -32,7 +34,8 @@ public record AppServices(
     CredentialResolver credentialResolver,
     CredentialMutationService credentialMutationService,
     Map<String, String> subprocessEnvironment,
-    ProviderAttachmentSupport attachmentSupport
+    ProviderAttachmentSupport attachmentSupport,
+    @NonNull McpManager mcpManager
 ) {
     public AppServices {
         subprocessEnvironment = Map.copyOf(subprocessEnvironment);

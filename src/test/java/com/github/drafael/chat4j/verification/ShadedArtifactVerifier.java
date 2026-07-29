@@ -7,6 +7,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Iterator;
+import java.util.ServiceLoader;
 
 public final class ShadedArtifactVerifier {
 
@@ -25,8 +26,48 @@ public final class ShadedArtifactVerifier {
         URL[] artifactUrl = {artifact.toUri().toURL()};
         try (var classLoader = new URLClassLoader(artifactUrl, ClassLoader.getPlatformClassLoader())) {
             verifyWebpService(classLoader);
+            verifyMcpJacksonServices(classLoader);
         }
-        System.out.println("Isolated shaded WebP SPI verification passed");
+        System.out.println("Isolated shaded WebP and MCP Jackson service verification passed");
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void verifyMcpJacksonServices(ClassLoader classLoader) throws Exception {
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        thread.setContextClassLoader(classLoader);
+        try {
+            verifyMcpJacksonServicesWithContext(classLoader);
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void verifyMcpJacksonServicesWithContext(ClassLoader classLoader) throws Exception {
+        Class<?> mapperSupplier = Class.forName(
+                "io.modelcontextprotocol.json.McpJsonMapperSupplier",
+                true,
+                classLoader
+        );
+        Object mapper = ServiceLoader.load((Class<Object>) (Class<?>) mapperSupplier, classLoader).findFirst()
+                .orElseThrow(() -> new IllegalStateException("MCP Jackson mapper service is missing"));
+        Object mapperInstance = mapperSupplier.getMethod("get").invoke(mapper);
+        if (!mapperInstance.getClass().getName().contains("JacksonMcpJsonMapper")) {
+            throw new IllegalStateException("MCP Jackson mapper service resolved the wrong implementation");
+        }
+
+        Class<?> validatorSupplier = Class.forName(
+                "io.modelcontextprotocol.json.schema.JsonSchemaValidatorSupplier",
+                true,
+                classLoader
+        );
+        Object validator = ServiceLoader.load((Class<Object>) (Class<?>) validatorSupplier, classLoader).findFirst()
+                .orElseThrow(() -> new IllegalStateException("MCP JSON schema validator service is missing"));
+        Object validatorInstance = validatorSupplier.getMethod("get").invoke(validator);
+        if (!validatorInstance.getClass().getName().contains("DefaultJsonSchemaValidator")) {
+            throw new IllegalStateException("MCP JSON schema validator service resolved the wrong implementation");
+        }
     }
 
     private static void verifyWebpService(ClassLoader classLoader) {

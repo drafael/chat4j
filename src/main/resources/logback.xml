@@ -25,6 +25,8 @@
     <logger name="org.flywaydb" level="WARN"/>
     <logger name="org.h2" level="WARN"/>
     <logger name="okhttp3" level="WARN"/>
+    <logger name="io.modelcontextprotocol" level="OFF"/>
+    <logger name="com.networknt.schema" level="OFF"/>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
