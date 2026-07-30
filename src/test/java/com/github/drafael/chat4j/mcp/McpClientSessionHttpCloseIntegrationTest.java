@@ -55,7 +55,7 @@ class McpClientSessionHttpCloseIntegrationTest {
     @Test
     @DisplayName("Clean out-of-band SSE EOF poisons the session without reconnect or tool replay")
     void openRun_whenOutOfBandSseEnds_poisonsSessionWithoutReconnect() throws Exception {
-        var listCompleted = new CountDownLatch(1);
+        var releaseSse = new CountDownLatch(1);
         var deleteReceived = new CountDownLatch(1);
         var getRequests = new AtomicInteger();
         var initializeRequests = new AtomicInteger();
@@ -68,7 +68,7 @@ class McpClientSessionHttpCloseIntegrationTest {
                 if ("GET".equals(exchange.getRequestMethod())) {
                     getRequests.incrementAndGet();
                     try {
-                        listCompleted.await();
+                        releaseSse.await();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
@@ -102,13 +102,10 @@ class McpClientSessionHttpCloseIntegrationTest {
                                 "serverInfo", Map.of("name", "sse-test", "version", "1")
                         );
                     }
-                    case "tools/list" -> {
-                        listCompleted.countDown();
-                        yield Map.of("tools", List.of(Map.of(
+                    case "tools/list" -> Map.of("tools", List.of(Map.of(
                                 "name", "echo",
                                 "inputSchema", Map.of("type", "object", "properties", emptyMap())
                         )));
-                    }
                     case "tools/call" -> {
                         toolCalls.incrementAndGet();
                         yield Map.of("content", emptyList(), "isError", false);
@@ -144,6 +141,7 @@ class McpClientSessionHttpCloseIntegrationTest {
                             new McpConfiguration(1, List.of(configured))
                     )).join();
                     try (McpRunSession run = manager.openRun(() -> false)) {
+                        releaseSse.countDown();
                         assertThat(deleteReceived.await(5, TimeUnit.SECONDS)).isTrue();
                         String alias = run.tools().getFirst().name();
                         var request = new ToolInvocationRequest("call", alias, "{}");
@@ -154,7 +152,7 @@ class McpClientSessionHttpCloseIntegrationTest {
                         assertThat(toolCalls).hasValue(0);
                     }
                 } finally {
-                    listCompleted.countDown();
+                    releaseSse.countDown();
                     manager.close();
                 }
             } finally {
