@@ -260,7 +260,7 @@ class McpManagerStdioIntegrationTest {
             long firstPid;
             try (McpRunSession ignored = subject.openRun(() -> false)) {
                 firstPid = Long.parseLong(Files.readString(pidFile));
-                ProcessHandle.of(firstPid).orElseThrow().onExit().get(5, TimeUnit.SECONDS);
+                awaitProcessExit(firstPid);
             }
 
             try (McpRunSession ignored = subject.openRun(() -> false)) {
@@ -312,6 +312,16 @@ class McpManagerStdioIntegrationTest {
                     }
                 }
             }
+        }
+    }
+
+    private void awaitProcessExit(long pid) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) {
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("Fixture process did not exit.");
+            }
+            Thread.onSpinWait();
         }
     }
 
