@@ -39,8 +39,12 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JScrollBar;
+import javax.swing.JScrollPane;
 import javax.swing.JTextField;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.DisplayName;
@@ -84,6 +88,104 @@ class McpPanelTest {
                 assertThat(Files.readString(storagePaths.mcpFile()))
                         .contains("local_tools")
                         .doesNotContain("replacementSecrets");
+            } finally {
+                try {
+                    runOnEdt(subject::disposePanel);
+                } finally {
+                    runOnEdt(() -> { });
+                }
+            }
+        } finally {
+            manager.close();
+        }
+    }
+
+    @Test
+    @DisplayName("The MCP editor fits the Settings viewport without horizontal clipping")
+    void layout_whenPanelUsesSettingsDialogWidth_keepsEditorWithinViewport() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory);
+        var repository = new McpConfigurationRepository(storagePaths.mcpFile());
+        repository.save(new McpConfiguration(1, List.of(new McpServerConfiguration(
+                UUID.randomUUID().toString(),
+                "HTTP server",
+                "http_server",
+                true,
+                false,
+                McpTransportType.STREAMABLE_HTTP,
+                "https://example.com/mcp",
+                "",
+                emptyList(),
+                emptyList(),
+                emptyList(),
+                false,
+                emptySet()
+        ))));
+        var manager = new McpManager(
+                repository,
+                new McpSecretVault(new ApiTokenVault(storagePaths)),
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        try {
+            McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+            try {
+                LayoutMetrics metrics = callOnEdt(() -> {
+                    JPanel transportFields = field(subject, "transportFields", JPanel.class);
+                    Component stdioFields = transportFields.getComponent(0);
+                    Component httpFields = transportFields.getComponent(1);
+                    int httpPreferredHeight = transportFields.getPreferredSize().height;
+                    boolean initialTransportVisibility = !stdioFields.isVisible() && httpFields.isVisible();
+                    JComboBox<?> transport = field(subject, "transportBox", JComboBox.class);
+                    transport.setSelectedItem(McpTransportType.STDIO);
+                    int stdioPreferredHeight = transportFields.getPreferredSize().height;
+                    boolean switchedTransportVisibility = stdioFields.isVisible() && !httpFields.isVisible();
+                    subject.setSize(610, 460);
+                    JButton replaceInvalid = field(subject, "replaceInvalidButton", JButton.class);
+                    replaceInvalid.setVisible(true);
+                    layoutRecursively(subject);
+                    layoutRecursively(subject);
+                    layoutRecursively(subject);
+                    JScrollPane editorScroll = findEditorScrollPane(subject);
+                    Component editor = editorScroll.getViewport().getView();
+                    JPanel verificationActions = (JPanel) replaceInvalid.getParent();
+                    JScrollBar verticalScroll = editorScroll.getVerticalScrollBar();
+                    int horizontalScrollBarPolicy = editorScroll.getHorizontalScrollBarPolicy();
+                    int editorWidth = editor.getWidth();
+                    int viewportWidth = editorScroll.getViewport().getExtentSize().width;
+                    int replaceInvalidRight = SwingUtilities.convertRectangle(
+                            verificationActions,
+                            replaceInvalid.getBounds(),
+                            editor
+                    ).x + replaceInvalid.getWidth();
+                    int replaceInvalidBottom = replaceInvalid.getY() + replaceInvalid.getHeight();
+                    int verificationActionsHeight = verificationActions.getHeight();
+                    int verticalScrollRange = verticalScroll.getMaximum() - verticalScroll.getVisibleAmount();
+
+                    return new LayoutMetrics(
+                            horizontalScrollBarPolicy,
+                            editorWidth,
+                            viewportWidth,
+                            replaceInvalidRight,
+                            replaceInvalidBottom,
+                            verificationActionsHeight,
+                            verticalScrollRange,
+                            stdioPreferredHeight == stdioFields.getPreferredSize().height,
+                            httpPreferredHeight == httpFields.getPreferredSize().height,
+                            initialTransportVisibility,
+                            switchedTransportVisibility
+                    );
+                });
+
+                assertThat(metrics.horizontalScrollBarPolicy())
+                        .isEqualTo(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+                assertThat(metrics.editorWidth()).isEqualTo(metrics.viewportWidth());
+                assertThat(metrics.replaceInvalidRight()).isLessThanOrEqualTo(metrics.editorWidth());
+                assertThat(metrics.replaceInvalidBottom()).isLessThanOrEqualTo(metrics.verificationActionsHeight());
+                assertThat(metrics.verticalScrollRange()).isPositive();
+                assertThat(metrics.stdioPreferredHeightMatches()).isTrue();
+                assertThat(metrics.httpPreferredHeightMatches()).isTrue();
+                assertThat(metrics.initialTransportVisibility()).isTrue();
+                assertThat(metrics.switchedTransportVisibility()).isTrue();
             } finally {
                 try {
                     runOnEdt(subject::disposePanel);
@@ -471,6 +573,39 @@ class McpPanelTest {
         }
     }
 
+    private void layoutRecursively(Container root) {
+        root.doLayout();
+        for (Component component : root.getComponents()) {
+            if (component instanceof Container child) {
+                layoutRecursively(child);
+            }
+        }
+    }
+
+    private JScrollPane findEditorScrollPane(Container root) {
+        JScrollPane result = findEditorScrollPaneOrNull(root);
+        if (result == null) {
+            throw new AssertionError("MCP editor scroll pane not found.");
+        }
+        return result;
+    }
+
+    private JScrollPane findEditorScrollPaneOrNull(Container root) {
+        for (Component component : root.getComponents()) {
+            if (component instanceof JScrollPane scrollPane
+                    && "VerticalScrollablePanel".equals(scrollPane.getViewport().getView().getClass().getSimpleName())) {
+                return scrollPane;
+            }
+            if (component instanceof Container child) {
+                JScrollPane found = findEditorScrollPaneOrNull(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
     private JButton findButton(Container root, String text) {
         for (Component component : root.getComponents()) {
             if (component instanceof JButton button && text.equals(button.getText())) {
@@ -545,6 +680,21 @@ class McpPanelTest {
             throw new AssertionError(error.get());
         }
         return result.get();
+    }
+
+    private record LayoutMetrics(
+            int horizontalScrollBarPolicy,
+            int editorWidth,
+            int viewportWidth,
+            int replaceInvalidRight,
+            int replaceInvalidBottom,
+            int verificationActionsHeight,
+            int verticalScrollRange,
+            boolean stdioPreferredHeightMatches,
+            boolean httpPreferredHeightMatches,
+            boolean initialTransportVisibility,
+            boolean switchedTransportVisibility
+    ) {
     }
 
     @FunctionalInterface

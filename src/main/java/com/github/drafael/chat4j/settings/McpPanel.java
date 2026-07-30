@@ -18,7 +18,7 @@ import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.Rectangle;
 import java.net.URI;
 import java.nio.CharBuffer;
 import java.util.ArrayList;
@@ -40,6 +40,7 @@ import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
@@ -47,9 +48,12 @@ import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.Scrollable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -57,6 +61,7 @@ import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.util.Arrays.copyOf;
 import static java.util.Arrays.fill;
@@ -92,7 +97,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final JLabel statusLabel = new JLabel(" ");
     private final JPanel toolCards = new JPanel();
     private final CardLayout transportCards = new CardLayout();
-    private final JPanel transportFields = new JPanel(transportCards);
+    private final JPanel transportFields = new VisibleCardPanel(transportCards);
     private final Map<String, List<McpDiscoveredTool>> lastTools = new HashMap<>();
     private final Map<String, Map<String, String>> formattedSchemas = new HashMap<>();
     private final Map<String, Set<String>> disabledTools = new HashMap<>();
@@ -237,56 +242,74 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         serverActions.add(removeButton);
         left.add(serverActions, BorderLayout.SOUTH);
 
-        JPanel right = new JPanel(new BorderLayout(8, 8));
-        JPanel form = new JPanel();
-        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
-        form.add(field("Name", nameField));
-        form.add(field("Model ID", modelIdField));
-        form.add(enabledBox);
-        form.add(automaticBox);
-        form.add(field("Transport", transportBox));
+        JPanel right = new JPanel(new BorderLayout());
+        var form = new VerticalScrollablePanel();
+        form.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+        addVertical(form, field("Name", nameField));
+        addVertical(form, field("Model ID", modelIdField));
+        JPanel behaviorOptions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        behaviorOptions.add(enabledBox);
+        behaviorOptions.add(automaticBox);
+        addVertical(form, behaviorOptions);
+        addVertical(form, field("Transport", transportBox));
 
         JPanel http = new JPanel(new BorderLayout(4, 4));
         JPanel httpContent = new JPanel();
         httpContent.setLayout(new BoxLayout(httpContent, BoxLayout.Y_AXIS));
-        httpContent.add(field("Streamable HTTP endpoint", endpointField));
-        httpContent.add(headerEditor);
-        httpContent.add(new JLabel("Credentials are encrypted; URL queries are stored as plaintext."));
+        addVertical(httpContent, field("Endpoint", endpointField));
+        addVertical(httpContent, headerEditor);
+        addVertical(httpContent, new JLabel("Credentials are encrypted; URL queries remain plaintext."));
         http.add(httpContent, BorderLayout.CENTER);
         JPanel stdio = new JPanel();
         stdio.setLayout(new BoxLayout(stdio, BoxLayout.Y_AXIS));
-        stdio.add(field("Executable", executableField));
-        stdio.add(new JLabel("Arguments remain ordered; commands are launched without a shell."));
-        stdio.add(argumentsEditor);
-        stdio.add(environmentEditor);
-        stdio.add(longRunningBox);
+        addVertical(stdio, field("Executable", executableField));
+        addVertical(stdio, new JLabel("Arguments are ordered and run without a shell."));
+        addVertical(stdio, argumentsEditor);
+        addVertical(stdio, environmentEditor);
+        addVertical(stdio, longRunningBox);
         transportFields.add(stdio, McpTransportType.STDIO.name());
         transportFields.add(http, McpTransportType.STREAMABLE_HTTP.name());
-        form.add(transportFields);
-        form.add(Box.createVerticalStrut(8));
-        JPanel verificationActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        verificationActions.add(verifyButton);
-        verificationActions.add(replaceInvalidButton);
-        form.add(verificationActions);
-        right.add(new JScrollPane(form), BorderLayout.NORTH);
+        addVertical(form, transportFields);
+        addVertical(form, Box.createVerticalStrut(8));
+        JPanel verificationActions = new JPanel();
+        verificationActions.setLayout(new BoxLayout(verificationActions, BoxLayout.Y_AXIS));
+        addVertical(verificationActions, verifyButton);
+        addVertical(verificationActions, Box.createVerticalStrut(4));
+        addVertical(verificationActions, replaceInvalidButton);
+        addVertical(form, verificationActions);
+        addVertical(form, Box.createVerticalStrut(8));
         toolCards.setLayout(new BoxLayout(toolCards, BoxLayout.Y_AXIS));
-        right.add(new JScrollPane(toolCards), BorderLayout.CENTER);
+        addVertical(form, toolCards);
+        JScrollPane editorScroll = new JScrollPane(form);
+        editorScroll.setBorder(null);
+        editorScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        editorScroll.getVerticalScrollBar().setUnitIncrement(16);
+        right.add(editorScroll, BorderLayout.CENTER);
 
+        left.setMinimumSize(new Dimension(170, 0));
+        right.setMinimumSize(new Dimension(0, 0));
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setDividerLocation(230);
+        split.setContinuousLayout(true);
+        split.setDividerLocation(210);
         split.setResizeWeight(0);
-        split.setPreferredSize(new Dimension(760, 520));
         return split;
     }
 
     private JPanel field(String label, Component component) {
         JPanel panel = new JPanel(new BorderLayout(8, 2));
-        panel.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
+        panel.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
         JLabel fieldLabel = new JLabel(label);
-        fieldLabel.setPreferredSize(new Dimension(150, fieldLabel.getPreferredSize().height));
+        fieldLabel.setPreferredSize(new Dimension(125, fieldLabel.getPreferredSize().height));
         panel.add(fieldLabel, BorderLayout.WEST);
         panel.add(component, BorderLayout.CENTER);
         return panel;
+    }
+
+    private static void addVertical(JPanel panel, Component component) {
+        if (component instanceof JComponent swingComponent) {
+            swingComponent.setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+        panel.add(component);
     }
 
     private void loadInitialState() {
@@ -344,7 +367,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         transportBox.addActionListener(event -> {
             McpTransportType transport = (McpTransportType) transportBox.getSelectedItem();
             if (transport != null) {
-                transportCards.show(transportFields, transport.name());
+                showTransportFields(transport);
                 if (!updating && transport == McpTransportType.STREAMABLE_HTTP) {
                     longRunningBox.setSelected(false);
                 }
@@ -517,6 +540,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             enabledBox.setSelected(server.enabled());
             automaticBox.setSelected(server.automatic());
             transportBox.setSelectedItem(server.transport());
+            showTransportFields(server.transport());
             endpointField.setText(server.endpoint());
             executableField.setText(server.executable());
             argumentsEditor.load(server.arguments());
@@ -530,6 +554,12 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         } finally {
             updating = false;
         }
+    }
+
+    private void showTransportFields(McpTransportType transport) {
+        transportCards.show(transportFields, transport.name());
+        transportFields.revalidate();
+        transportFields.repaint();
     }
 
     private void commitEditor() {
@@ -768,6 +798,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             JButton schemaButton = new JButton("Show input schema");
             JTextArea schema = new JTextArea(6, 30);
             schema.setEditable(false);
+            schema.setLineWrap(true);
             schema.setVisible(false);
             schemaButton.addActionListener(event -> {
                 if (StringUtils.isEmpty(schema.getText())) {
@@ -953,6 +984,53 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
     }
 
+    private static final class VisibleCardPanel extends JPanel {
+        private VisibleCardPanel(CardLayout layout) {
+            super(layout);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return List.of(getComponents()).stream()
+                    .filter(Component::isVisible)
+                    .map(Component::getPreferredSize)
+                    .findFirst()
+                    .orElseGet(super::getPreferredSize);
+        }
+    }
+
+    private static final class VerticalScrollablePanel extends JPanel implements Scrollable {
+        private VerticalScrollablePanel() {
+            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
+            return 16;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
+            int visibleExtent = orientation == SwingConstants.VERTICAL ? visibleRect.height : visibleRect.width;
+            return max(16, visibleExtent - 16);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return false;
+        }
+    }
+
     private final class ArgumentListEditor extends JPanel {
         private final DefaultListModel<String> arguments = new DefaultListModel<>();
         private final JList<String> argumentList = new JList<>(arguments);
@@ -962,7 +1040,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         private ArgumentListEditor() {
             setLayout(new BorderLayout(4, 4));
             setBorder(BorderFactory.createTitledBorder("Ordered arguments"));
-            argumentList.setVisibleRowCount(4);
+            argumentList.setVisibleRowCount(3);
             add(new JScrollPane(argumentList), BorderLayout.CENTER);
             add(argumentField, BorderLayout.NORTH);
             JButton add = new JButton("Add");
@@ -1064,7 +1142,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         private CredentialRowsEditor(String title) {
             setLayout(new BorderLayout(4, 4));
             setBorder(BorderFactory.createTitledBorder(title));
-            rowList.setVisibleRowCount(3);
+            rowList.setVisibleRowCount(2);
             rowList.setCellRenderer((list, value, index, selected, focus) -> {
                 JLabel label = new JLabel("%s  ••••••••".formatted(value.key()));
                 label.setOpaque(true);
@@ -1074,12 +1152,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             });
             add(new JScrollPane(rowList), BorderLayout.CENTER);
 
-            JPanel editor = new JPanel(new GridLayout(2, 2, 4, 4));
-            editor.add(new JLabel("Name"));
-            editor.add(keyField);
-            editor.add(new JLabel("New value"));
+            JPanel editor = new JPanel();
+            editor.setLayout(new BoxLayout(editor, BoxLayout.Y_AXIS));
+            addVertical(editor, field("Name", keyField));
             valueField.putClientProperty("JTextField.placeholderText", "Leave blank to retain saved value");
-            editor.add(valueField);
+            addVertical(editor, field("New value", valueField));
             add(editor, BorderLayout.NORTH);
 
             JButton add = new JButton("Add");
