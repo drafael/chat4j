@@ -32,7 +32,11 @@ public final class McpConfigurationValidator {
 
     public static void validate(@NonNull McpConfiguration configuration) {
         if (configuration.version() != McpConfiguration.CURRENT_VERSION) {
-            throw new IllegalArgumentException("Unsupported MCP configuration version: %d".formatted(configuration.version()));
+            throw failure(
+                    "Unsupported MCP configuration version: %d".formatted(configuration.version()),
+                    ValidationCategory.GENERAL,
+                    ""
+            );
         }
 
         Set<String> ids = new HashSet<>();
@@ -50,97 +54,191 @@ public final class McpConfigurationValidator {
         try {
             UUID.fromString(server.id());
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("MCP server ID must be a UUID.");
+            throw failure("MCP server ID must be a UUID.", ValidationCategory.GENERAL, "");
         }
         if (!ids.add(server.id())) {
-            throw new IllegalArgumentException("MCP server IDs must be unique.");
+            throw failure("MCP server IDs must be unique.", ValidationCategory.GENERAL, "");
         }
         if (!MODEL_ID.matcher(server.modelId()).matches()) {
-            throw new IllegalArgumentException("MCP model ID must contain only letters, digits, underscores, or hyphens.");
+            throw failure(
+                    "MCP model ID must contain only letters, digits, underscores, or hyphens.",
+                    ValidationCategory.MODEL_ID,
+                    server.id()
+            );
         }
         if (!modelIds.add(server.modelId().toLowerCase(Locale.ROOT))) {
-            throw new IllegalArgumentException("MCP model IDs must be unique.");
+            throw failure("MCP model IDs must be unique.", ValidationCategory.GENERAL, "");
         }
 
-        validateSecretRows(server.headers(), true, credentialRowIds);
-        validateSecretRows(server.environment(), false, credentialRowIds);
+        validateSecretRows(
+                server.headers(),
+                true,
+                credentialRowIds,
+                server.id(),
+                ValidationCategory.HTTP_HEADERS
+        );
+        validateSecretRows(
+                server.environment(),
+                false,
+                credentialRowIds,
+                server.id(),
+                ValidationCategory.ENVIRONMENT
+        );
         if (server.transport() == McpTransportType.STREAMABLE_HTTP) {
             if (server.longRunning()) {
-                throw new IllegalArgumentException("Long-running mode is available only for stdio MCP servers.");
+                throw failure(
+                        "Long-running mode is available only for stdio MCP servers.",
+                        ValidationCategory.GENERAL,
+                        ""
+                );
             }
-            validateEndpoint(server.endpoint());
+            validateEndpoint(server.endpoint(), server.id());
         } else {
-            validateExecutable(server.executable());
+            validateExecutable(server.executable(), server.id());
         }
         if (server.disabledTools().stream().anyMatch(StringUtils::isBlank)) {
-            throw new IllegalArgumentException("Disabled MCP tool names must not be blank.");
+            throw failure("Disabled MCP tool names must not be blank.", ValidationCategory.TOOLS, server.id());
         }
     }
 
-    private static void validateEndpoint(String value) {
+    private static void validateEndpoint(String value, String serverId) {
         try {
             URI endpoint = URI.create(value);
             if (!endpoint.isAbsolute() || !(Strings.CI.equals("http", endpoint.getScheme())
                     || Strings.CI.equals("https", endpoint.getScheme()))) {
-                throw new IllegalArgumentException("MCP endpoint must be an absolute HTTP or HTTPS URL.");
+                throw failure(
+                        "MCP endpoint must be an absolute HTTP or HTTPS URL.",
+                        ValidationCategory.ENDPOINT,
+                        serverId
+                );
             }
             if (endpoint.getUserInfo() != null || endpoint.getFragment() != null) {
-                throw new IllegalArgumentException("MCP endpoint must not contain user-info or a fragment.");
+                throw failure(
+                        "MCP endpoint must not contain user-info or a fragment.",
+                        ValidationCategory.ENDPOINT,
+                        serverId
+                );
             }
             if (StringUtils.isBlank(endpoint.getHost())) {
-                throw new IllegalArgumentException("MCP endpoint must include a host.");
+                throw failure("MCP endpoint must include a host.", ValidationCategory.ENDPOINT, serverId);
             }
+        } catch (ValidationException e) {
+            throw e;
         } catch (IllegalArgumentException e) {
-            if (e.getMessage() != null && e.getMessage().startsWith("MCP endpoint")) {
-                throw e;
-            }
-            throw new IllegalArgumentException("MCP endpoint URL is invalid.");
+            throw failure("MCP endpoint URL is invalid.", ValidationCategory.ENDPOINT, serverId);
         }
     }
 
-    private static void validateExecutable(String executable) {
+    private static void validateExecutable(String executable, String serverId) {
         if (StringUtils.isBlank(executable)) {
-            throw new IllegalArgumentException("MCP executable must not be blank.");
+            throw failure("MCP executable must not be blank.", ValidationCategory.EXECUTABLE, serverId);
         }
-        Path path = Path.of(executable);
+        Path path;
+        try {
+            path = Path.of(executable);
+        } catch (IllegalArgumentException e) {
+            throw failure(e.getMessage(), ValidationCategory.EXECUTABLE, serverId);
+        }
         boolean containsSeparator = executable.contains("/") || executable.contains("\\");
         if (containsSeparator && !path.isAbsolute()) {
-            throw new IllegalArgumentException("MCP executable must be absolute or a bare PATH command.");
+            throw failure(
+                    "MCP executable must be absolute or a bare PATH command.",
+                    ValidationCategory.EXECUTABLE,
+                    serverId
+            );
         }
         String normalized = executable.toLowerCase(Locale.ROOT);
         if (normalized.endsWith(".cmd") || normalized.endsWith(".bat")) {
-            throw new IllegalArgumentException("Windows command scripts require an explicit native interpreter.");
+            throw failure(
+                    "Windows command scripts require an explicit native interpreter.",
+                    ValidationCategory.EXECUTABLE,
+                    serverId
+            );
         }
     }
 
     private static void validateSecretRows(
             List<McpSecretReference> rows,
             boolean headers,
-            Set<String> credentialRowIds
+            Set<String> credentialRowIds,
+            String serverId,
+            ValidationCategory category
     ) {
         Set<String> keys = new HashSet<>();
         rows.forEach(row -> {
-            if (StringUtils.isBlank(row.rowId()) || !credentialRowIds.add(row.rowId())) {
-                throw new IllegalArgumentException("MCP credential row IDs must be nonblank and unique.");
+            if (StringUtils.isBlank(row.rowId())) {
+                throw failure(
+                        "MCP credential row IDs must be nonblank and unique.",
+                        category,
+                        serverId
+                );
+            }
+            if (!credentialRowIds.add(row.rowId())) {
+                throw failure(
+                        "MCP credential row IDs must be nonblank and unique.",
+                        ValidationCategory.GENERAL,
+                        ""
+                );
             }
             String key = row.key();
             if (headers ? !HEADER_NAME.matcher(key).matches() : !ENVIRONMENT_NAME.matcher(key).matches()) {
-                throw new IllegalArgumentException("Invalid MCP %s name: %s".formatted(headers ? "header" : "environment", key));
+                throw failure(
+                        "Invalid MCP %s name: %s".formatted(headers ? "header" : "environment", key),
+                        category,
+                        serverId
+                );
             }
             String normalized = headers || isWindows() ? key.toLowerCase(Locale.ROOT) : key;
             if (!keys.add(normalized)) {
-                throw new IllegalArgumentException("MCP %s names must be unique.".formatted(headers ? "header" : "environment"));
+                throw failure(
+                        "MCP %s names must be unique.".formatted(headers ? "header" : "environment"),
+                        category,
+                        serverId
+                );
             }
             if (headers && RESERVED_HEADERS.contains(normalized)) {
-                throw new IllegalArgumentException("MCP header is reserved: %s".formatted(key));
+                throw failure("MCP header is reserved: %s".formatted(key), category, serverId);
             }
             if (StringUtils.isNotBlank(row.secretId()) && !SECRET_ID.matcher(row.secretId()).matches()) {
-                throw new IllegalArgumentException("Invalid MCP secret reference.");
+                throw failure("Invalid MCP secret reference.", category, serverId);
             }
         });
     }
 
+    private static ValidationException failure(String message, ValidationCategory category, String responsibleServerId) {
+        return new ValidationException(message, category, responsibleServerId);
+    }
+
     private static boolean isWindows() {
         return Strings.CI.contains(System.getProperty("os.name", ""), "win");
+    }
+
+    public enum ValidationCategory {
+        GENERAL,
+        MODEL_ID,
+        ENDPOINT,
+        EXECUTABLE,
+        HTTP_HEADERS,
+        ENVIRONMENT,
+        TOOLS
+    }
+
+    public static final class ValidationException extends IllegalArgumentException {
+        private final ValidationCategory category;
+        private final String responsibleServerId;
+
+        private ValidationException(String message, ValidationCategory category, String responsibleServerId) {
+            super(message);
+            this.category = category;
+            this.responsibleServerId = StringUtils.defaultString(responsibleServerId);
+        }
+
+        public ValidationCategory category() {
+            return category;
+        }
+
+        public String responsibleServerId() {
+            return responsibleServerId;
+        }
     }
 }

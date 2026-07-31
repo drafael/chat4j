@@ -52,6 +52,7 @@ public class SettingsDialog extends JDialog {
     private JPanel actionBar;
     private JList<SettingsSection> sectionList;
     private List<SettingsSection> sections = emptyList();
+    private SettingsSection visibleSection;
     private boolean savingBeforeDispose;
     private boolean exitAfterSave;
     private boolean permanentlyClosed;
@@ -201,7 +202,12 @@ public class SettingsDialog extends JDialog {
 
             SettingsSection selected = sectionList.getSelectedValue();
             if (selected != null) {
+                if (visibleSection != null && visibleSection.content() instanceof McpPanel mcpPanel
+                        && visibleSection != selected) {
+                    mcpPanel.finishActiveEditing();
+                }
                 cardsLayout.show(cardsPanel, selected.id());
+                visibleSection = selected;
             }
         });
         sectionList.setSelectedIndex(0);

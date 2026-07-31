@@ -26,8 +26,10 @@ import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 
 class McpManagerPersistenceTest {
 
@@ -235,6 +237,140 @@ class McpManagerPersistenceTest {
             assertThat(subject.saveAndApply(McpConfigurationDraft.withoutSecretChanges(
                     McpConfiguration.empty()
             )).join().outcome()).isEqualTo(McpApplyOutcome.APPLIED);
+        } finally {
+            subject.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Cleanup status reports connection and credential work independently and together")
+    void cleanupStatus_whenCleanupSetsChange_composesOpaqueStatus() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("cleanup-status"));
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                new McpSecretVault(new ApiTokenVault(storagePaths)),
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        Set<McpClientSession> clients = field(subject, "pendingClientCleanup", Set.class);
+        Set<String> credentials = field(subject, "pendingOrphanSecretIds", Set.class);
+        McpClientSession client = mock(McpClientSession.class);
+        try {
+            assertThat(subject.cleanupStatus()).isEmpty();
+
+            clients.add(client);
+            assertThat(subject.cleanupStatus()).isEqualTo("MCP connection cleanup is pending.");
+
+            clients.clear();
+            credentials.add("MCP_11111111111111111111111111111111");
+            assertThat(subject.cleanupStatus()).isEqualTo("Encrypted MCP credential cleanup is pending.");
+
+            clients.add(client);
+            assertThat(subject.cleanupStatus())
+                    .isEqualTo("MCP connection and encrypted credential cleanup are pending.");
+        } finally {
+            clients.clear();
+            credentials.clear();
+            subject.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Repairing an invalid file to empty removes existing MCP vault orphans")
+    void replaceInvalidAndApply_whenRepairIsEmpty_removesExistingVaultOrphans() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("empty-repair"));
+        Files.createDirectories(storagePaths.mcpFile().getParent());
+        Files.writeString(storagePaths.mcpFile(), "{invalid", StandardCharsets.UTF_8);
+        var secrets = new McpSecretVault(new ApiTokenVault(storagePaths));
+        String orphanId = "MCP_22222222222222222222222222222222";
+        secrets.publish(Map.of(orphanId, "orphan".toCharArray()), emptySet());
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                secrets,
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        try {
+            McpApplyResult result = subject.replaceInvalidAndApply(
+                    McpConfigurationDraft.withoutSecretChanges(McpConfiguration.empty())
+            ).get(5, TimeUnit.SECONDS);
+
+            assertThat(result.outcome()).isEqualTo(McpApplyOutcome.APPLIED);
+            assertThat(secrets.secretIds()).isEmpty();
+            assertThat(subject.loadResult()).isInstanceOf(McpConfigurationLoadResult.Valid.class);
+            assertThat(subject.cleanupStatus()).isEmpty();
+        } finally {
+            subject.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Repairing an invalid file preserves referenced credentials and removes only orphans")
+    void replaceInvalidAndApply_whenRepairReferencesExistingSecret_preservesReferenceAndRemovesOrphan() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("nonempty-repair"));
+        Files.createDirectories(storagePaths.mcpFile().getParent());
+        Files.writeString(storagePaths.mcpFile(), "{invalid", StandardCharsets.UTF_8);
+        var secrets = new McpSecretVault(new ApiTokenVault(storagePaths));
+        String referencedId = "MCP_33333333333333333333333333333333";
+        String orphanId = "MCP_44444444444444444444444444444444";
+        secrets.publish(Map.of(
+                referencedId, "referenced".toCharArray(),
+                orphanId, "orphan".toCharArray()
+        ), emptySet());
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                secrets,
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        McpSecretReference reference = new McpSecretReference(
+                UUID.randomUUID().toString(),
+                "Authorization",
+                referencedId
+        );
+        try {
+            McpApplyResult result = subject.replaceInvalidAndApply(McpConfigurationDraft.withoutSecretChanges(
+                    new McpConfiguration(1, List.of(server(List.of(reference))))
+            )).get(5, TimeUnit.SECONDS);
+
+            assertThat(result.outcome()).isEqualTo(McpApplyOutcome.APPLIED);
+            assertThat(secrets.secretIds()).containsExactly(referencedId);
+            assertThat(result.configuration().servers().getFirst().headers().getFirst().secretId())
+                    .isEqualTo(referencedId);
+        } finally {
+            subject.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Repair remains applied when immediate orphan removal fails")
+    void replaceInvalidAndApply_whenOrphanRemovalFails_reportsCredentialCleanupPending() throws Exception {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("failed-repair-cleanup"));
+        Files.createDirectories(storagePaths.mcpFile().getParent());
+        Files.writeString(storagePaths.mcpFile(), "{invalid", StandardCharsets.UTF_8);
+        var realSecrets = new McpSecretVault(new ApiTokenVault(storagePaths));
+        String orphanId = "MCP_55555555555555555555555555555555";
+        realSecrets.publish(Map.of(orphanId, "orphan".toCharArray()), emptySet());
+        McpSecretVault secrets = spy(realSecrets);
+        doThrow(new IllegalStateException("forced removal failure"))
+                .doCallRealMethod()
+                .when(secrets).remove(anySet());
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                secrets,
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        try {
+            McpApplyResult result = subject.replaceInvalidAndApply(
+                    McpConfigurationDraft.withoutSecretChanges(McpConfiguration.empty())
+            ).get(5, TimeUnit.SECONDS);
+
+            assertThat(result.outcome()).isEqualTo(McpApplyOutcome.APPLIED_CLEANUP_PENDING);
+            assertThat(result.configuration()).isEqualTo(McpConfiguration.empty());
+            assertThat(subject.loadResult()).isInstanceOf(McpConfigurationLoadResult.Valid.class);
+            assertThat(subject.cleanupStatus()).isEqualTo("Encrypted MCP credential cleanup is pending.");
+            assertThat(realSecrets.secretIds()).containsExactly(orphanId);
         } finally {
             subject.close();
         }

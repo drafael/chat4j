@@ -115,10 +115,15 @@ public final class McpManager implements McpRunProvider, AutoCloseable {
 
     public String cleanupStatus() {
         synchronized (lock) {
-            if (!pendingClientCleanup.isEmpty()) {
+            boolean connectionCleanupPending = !pendingClientCleanup.isEmpty();
+            boolean credentialCleanupPending = !pendingOrphanSecretIds.isEmpty();
+            if (connectionCleanupPending && credentialCleanupPending) {
+                return "MCP connection and encrypted credential cleanup are pending.";
+            }
+            if (connectionCleanupPending) {
                 return "MCP connection cleanup is pending.";
             }
-            return pendingOrphanSecretIds.isEmpty() ? "" : "Encrypted MCP credential cleanup is pending.";
+            return credentialCleanupPending ? "Encrypted MCP credential cleanup is pending." : "";
         }
     }
 
@@ -376,6 +381,7 @@ public final class McpManager implements McpRunProvider, AutoCloseable {
     }
 
     private McpApplyResult applyLocked(McpConfigurationDraft draft, boolean replaceInvalid) {
+        boolean repairingInvalidConfiguration;
         synchronized (lock) {
             boolean invalid = loadResult instanceof McpConfigurationLoadResult.Invalid;
             if (invalid && !replaceInvalid || !invalid && replaceInvalid) {
@@ -383,6 +389,7 @@ public final class McpManager implements McpRunProvider, AutoCloseable {
                         ? "Confirm replacement of the invalid MCP configuration first."
                         : "MCP configuration is not in repair mode.");
             }
+            repairingInvalidConfiguration = invalid;
         }
 
         retryPendingClientCleanup();
@@ -444,9 +451,13 @@ public final class McpManager implements McpRunProvider, AutoCloseable {
         String message = clientCleanupPending
                 ? "MCP configuration was applied; connection cleanup is pending."
                 : "";
-        Set<String> obsolete = referencedSecretIds(previous);
+        Set<String> obsolete = repairingInvalidConfiguration
+                ? new HashSet<>(secretVault.secretIds())
+                : referencedSecretIds(previous);
         obsolete.removeAll(referencedSecretIds(prepared.configuration()));
-        obsolete.addAll(pendingOrphanSecretIds);
+        synchronized (lock) {
+            obsolete.addAll(pendingOrphanSecretIds);
+        }
         try {
             if (!obsolete.isEmpty()) {
                 secretVault.remove(obsolete);
