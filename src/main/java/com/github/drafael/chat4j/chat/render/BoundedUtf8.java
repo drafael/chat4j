@@ -8,6 +8,19 @@ public final class BoundedUtf8 {
     }
 
     public static String presentation(String source, int maximumCodePoints, long maximumBytes) {
+        return presentation(source, maximumCodePoints, maximumBytes, false);
+    }
+
+    public static String multilinePresentation(String source, int maximumCodePoints, long maximumBytes) {
+        return presentation(source, maximumCodePoints, maximumBytes, true);
+    }
+
+    private static String presentation(
+            String source,
+            int maximumCodePoints,
+            long maximumBytes,
+            boolean preserveLineFeeds
+    ) {
         if (maximumCodePoints < 0 || maximumBytes < 0) {
             throw new IllegalArgumentException("limits must not be negative");
         }
@@ -19,7 +32,7 @@ public final class BoundedUtf8 {
             if (characters == 1 && Character.isSurrogate(value.charAt(index))) {
                 codePoint = 0xfffd;
             }
-            if (!isPresentationControl(codePoint)) {
+            if (!isPresentationControl(codePoint, preserveLineFeeds)) {
                 filtered.appendCodePoint(codePoint);
             }
             index += characters;
@@ -47,7 +60,10 @@ public final class BoundedUtf8 {
         return codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
     }
 
-    private static boolean isPresentationControl(int codePoint) {
+    private static boolean isPresentationControl(int codePoint, boolean preserveLineFeeds) {
+        if (preserveLineFeeds && codePoint == '\n') {
+            return false;
+        }
         return codePoint <= 0x1f
                 || codePoint >= 0x7f && codePoint <= 0x9f
                 || codePoint == 0x061c

@@ -12,7 +12,10 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -50,6 +53,38 @@ class McpManagerDiscoveryIntegrationTest {
             try {
                 subject.close();
             } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Discovery loads JSON Schema resources when the caller context class loader is isolated")
+    void openRun_whenContextClassLoaderCannotSeeDependencies_discoversTools() throws Exception {
+        var mode = new AtomicReference<>(Mode.SINGLE_PAGE);
+        var listRequests = new AtomicInteger();
+        var initializeRequests = new AtomicInteger();
+        HttpServer server = server(mode, listRequests, initializeRequests);
+        McpManager subject = manager(server);
+        ExecutorService executor = Executors.newSingleThreadExecutor(task -> {
+            Thread thread = Thread.ofPlatform().name("isolated-mcp-discovery").unstarted(task);
+            thread.setContextClassLoader(new ClassLoader(null) { });
+            return thread;
+        });
+        try {
+            int toolCount = CompletableFuture.supplyAsync(() -> {
+                try (McpRunSession run = subject.openRun(() -> false)) {
+                    return run.tools().size();
+                }
+            }, executor).get();
+
+            assertThat(toolCount).isOne();
+            assertThat(listRequests).hasValue(1);
+        } finally {
+            try {
+                subject.close();
+            } finally {
+                executor.close();
                 server.stop(0);
             }
         }
@@ -277,6 +312,28 @@ class McpManagerDiscoveryIntegrationTest {
     }
 
     @Test
+    @DisplayName("Discovery accepts JSON Schema draft 7 tool definitions")
+    void openRun_whenSchemaDeclaresDraft7_acceptsCatalog() throws Exception {
+        var mode = new AtomicReference<>(Mode.DRAFT_7_DIALECT);
+        var listRequests = new AtomicInteger();
+        var initializeRequests = new AtomicInteger();
+        HttpServer server = server(mode, listRequests, initializeRequests);
+        McpManager subject = manager(server);
+        try {
+            try (McpRunSession run = subject.openRun(() -> false)) {
+                assertThat(run.tools()).hasSize(1);
+            }
+            assertThat(listRequests).hasValue(1);
+        } finally {
+            try {
+                subject.close();
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Discovery rejects schemas that declare an unsupported JSON Schema dialect")
     void openRun_whenSchemaDeclaresUnsupportedDialect_rejectsCatalog() throws Exception {
         var mode = new AtomicReference<>(Mode.UNSUPPORTED_DIALECT);
@@ -406,8 +463,13 @@ class McpManagerDiscoveryIntegrationTest {
     private Map<String, Object> listResult(Mode mode, JsonNode request, int page) {
         String description = mode == Mode.OVERSIZED_DESCRIPTION ? "x".repeat(512 * 1024 + 1) : "Tool";
         Map<String, Object> schema = switch (mode) {
-            case UNSUPPORTED_DIALECT -> Map.of(
+            case DRAFT_7_DIALECT -> Map.of(
                     "$schema", "http://json-schema.org/draft-07/schema#",
+                    "type", "object",
+                    "properties", emptyMap()
+            );
+            case UNSUPPORTED_DIALECT -> Map.of(
+                    "$schema", "https://example.com/unsupported-schema",
                     "type", "object",
                     "properties", emptyMap()
             );
@@ -423,7 +485,7 @@ class McpManagerDiscoveryIntegrationTest {
                 "inputSchema", schema
         );
         if (mode == Mode.SINGLE_PAGE || mode == Mode.OVERSIZED_DESCRIPTION
-                || mode == Mode.UNSUPPORTED_DIALECT || mode == Mode.SECRET_SCHEMA
+                || mode == Mode.DRAFT_7_DIALECT || mode == Mode.UNSUPPORTED_DIALECT || mode == Mode.SECRET_SCHEMA
                 || mode == Mode.EMPTY_CURSOR && request.path("params").has("cursor")) {
             return Map.of("tools", List.of(tool));
         }
@@ -442,6 +504,7 @@ class McpManagerDiscoveryIntegrationTest {
         OVERSIZED_DESCRIPTION,
         SINGLE_PAGE,
         UNSUPPORTED_PROTOCOL,
+        DRAFT_7_DIALECT,
         UNSUPPORTED_DIALECT,
         SECRET_SCHEMA
     }

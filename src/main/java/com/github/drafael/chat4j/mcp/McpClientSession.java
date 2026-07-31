@@ -65,6 +65,10 @@ final class McpClientSession implements AutoCloseable {
     private static final long MAX_SCHEMA_BYTES = 4L * 1024 * 1024;
     private static final long MAX_CATALOG_BYTES = 5L * 1024 * 1024;
     private static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(2);
+    private static final Set<String> SUPPORTED_SCHEMA_DIALECTS = Set.of(
+            McpSchema.JSON_SCHEMA_DIALECT_2020_12,
+            "http://json-schema.org/draft-07/schema#"
+    );
 
     private final McpServerConfiguration server;
     private final McpAsyncClient client;
@@ -72,6 +76,7 @@ final class McpClientSession implements AutoCloseable {
     private final BooleanSupplier transportHealthy;
     private final Duration requestTimeout;
     private final LongSupplier nanoTime;
+    private final JsonSchemaValidator schemaValidator;
     private final List<String> secretValues;
     private final AtomicBoolean poisoned = new AtomicBoolean();
     private final AtomicBoolean closeStarted = new AtomicBoolean();
@@ -84,6 +89,7 @@ final class McpClientSession implements AutoCloseable {
             BooleanSupplier transportHealthy,
             Duration requestTimeout,
             LongSupplier nanoTime,
+            JsonSchemaValidator schemaValidator,
             List<String> secretValues
     ) {
         this.server = server;
@@ -92,6 +98,7 @@ final class McpClientSession implements AutoCloseable {
         this.transportHealthy = transportHealthy;
         this.requestTimeout = requestTimeout;
         this.nanoTime = nanoTime;
+        this.schemaValidator = schemaValidator;
         this.secretValues = new CopyOnWriteArrayList<>(secretValues.stream()
                 .filter(StringUtils::isNotEmpty)
                 .distinct()
@@ -133,13 +140,15 @@ final class McpClientSession implements AutoCloseable {
     ) {
         ResolvedTransport resolved = resolveTransport(server, secretVault, subprocessEnvironment, configurationDirectory);
         McpAsyncClient client;
+        JsonSchemaValidator schemaValidator;
         try {
+            schemaValidator = createSchemaValidator();
             client = McpClient.async(resolved.transport())
                     .clientInfo(new McpSchema.Implementation("Chat4J", applicationVersion()))
                     .capabilities(McpSchema.ClientCapabilities.builder().build())
                     .initializationTimeout(initializeTimeout)
                     .requestTimeout(requestTimeout)
-                    .jsonSchemaValidator(new DefaultJsonSchemaValidator(JSON))
+                    .jsonSchemaValidator(schemaValidator)
                     .enableCallToolSchemaCaching(false)
                     .build();
         } catch (RuntimeException e) {
@@ -156,6 +165,7 @@ final class McpClientSession implements AutoCloseable {
                 resolved.transportHealthy(),
                 requestTimeout,
                 nanoTime,
+                schemaValidator,
                 resolved.secretValues()
         );
         resolved.transport().setExceptionHandler(error -> {
@@ -389,10 +399,10 @@ final class McpClientSession implements AutoCloseable {
             throw new IllegalStateException("MCP tool %s schema must have top-level type object.".formatted(label));
         }
         Object dialect = schema.get("$schema");
-        if (dialect != null && !McpSchema.JSON_SCHEMA_DIALECT_2020_12.equals(dialect.toString())) {
+        if (dialect != null && !SUPPORTED_SCHEMA_DIALECTS.contains(dialect.toString())) {
             throw new IllegalStateException("MCP tool %s schema declares an unsupported dialect.".formatted(label));
         }
-        JsonSchemaValidator.ValidationResponse validation = new DefaultJsonSchemaValidator(JSON).validateSchema(schema);
+        JsonSchemaValidator.ValidationResponse validation = schemaValidator.validateSchema(schema);
         if (!validation.valid()) {
             throw new IllegalStateException("MCP tool %s schema is invalid.".formatted(label));
         }
@@ -414,7 +424,7 @@ final class McpClientSession implements AutoCloseable {
                 throw new InvalidToolResultException();
             }
             if (!Boolean.TRUE.equals(result.isError()) && ObjectUtils.isNotEmpty(outputSchema)) {
-                JsonSchemaValidator.ValidationResponse validation = new DefaultJsonSchemaValidator(JSON).validate(outputSchema, structured);
+                JsonSchemaValidator.ValidationResponse validation = schemaValidator.validate(outputSchema, structured);
                 if (!validation.valid()) {
                     throw new InvalidToolResultException();
                 }
@@ -536,6 +546,18 @@ final class McpClientSession implements AutoCloseable {
             if (!future.isDone()) {
                 future.cancel(true);
             }
+        }
+    }
+
+    private static JsonSchemaValidator createSchemaValidator() {
+        Thread thread = Thread.currentThread();
+        ClassLoader original = thread.getContextClassLoader();
+        ClassLoader required = DefaultJsonSchemaValidator.class.getClassLoader();
+        try {
+            thread.setContextClassLoader(required);
+            return new DefaultJsonSchemaValidator(JSON);
+        } finally {
+            thread.setContextClassLoader(original);
         }
     }
 

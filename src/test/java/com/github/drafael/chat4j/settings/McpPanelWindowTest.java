@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.provider.support.McpSecretVault;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dialog;
+import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.awt.Window;
 import java.lang.reflect.Field;
@@ -32,6 +33,7 @@ import javax.swing.JFrame;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -139,7 +141,10 @@ class McpPanelWindowTest {
         McpPanel subject = null;
         JFrame frame = null;
         var actionReturned = new CountDownLatch(1);
+        Object originalCodeFont = callOnEdt(() -> UIManager.get("monospaced.font"));
+        Font selectedCodeFont = new Font(Font.DIALOG_INPUT, Font.PLAIN, 17);
         try {
+            runOnEdt(() -> UIManager.put("monospaced.font", selectedCodeFont));
             McpPanel createdSubject = callOnEdt(() -> new McpPanel(manager));
             subject = createdSubject;
             JFrame createdFrame = callOnEdt(() -> {
@@ -176,8 +181,15 @@ class McpPanelWindowTest {
             runOnEdt(() -> {
                 assertThat(dialog.getModalityType()).isEqualTo(Dialog.ModalityType.DOCUMENT_MODAL);
                 assertThat(dialog.getOwner()).isEqualTo(createdFrame);
-                assertThat(component(dialog.getContentPane(), "MCP tool input schema", JTextArea.class).isEditable())
-                        .isFalse();
+                JTextArea schemaContent = component(
+                        dialog.getContentPane(),
+                        "MCP tool input schema",
+                        JTextArea.class
+                );
+                assertThat(schemaContent.isEditable()).isFalse();
+                assertThat(schemaContent.getLineWrap()).isTrue();
+                assertThat(schemaContent.getWrapStyleWord()).isTrue();
+                assertThat(schemaContent.getFont()).isEqualTo(selectedCodeFont);
                 button(createdSubject, "Show input schema").doClick();
                 assertThat(schemaDialogs()).containsExactly(dialog);
                 findTextButton(dialog.getContentPane(), "Close").doClick();
@@ -195,6 +207,11 @@ class McpPanelWindowTest {
                 }
                 if (frameToDispose != null) {
                     frameToDispose.dispose();
+                }
+                if (originalCodeFont == null) {
+                    UIManager.getDefaults().remove("monospaced.font");
+                } else {
+                    UIManager.put("monospaced.font", originalCodeFont);
                 }
             });
             flushEdt();

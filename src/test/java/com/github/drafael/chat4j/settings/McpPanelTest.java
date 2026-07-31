@@ -266,6 +266,36 @@ class McpPanelTest {
     }
 
     @Test
+    @DisplayName("Tool schemas retain pretty-printed JSON line breaks and indentation")
+    void formatSchemas_whenSchemaIsNested_preservesPrettyPrintedLayout() throws Exception {
+        McpServerConfiguration configured = server("Schema", "schema", McpTransportType.STDIO);
+        try (var fixture = fixture("schema-format", new McpConfiguration(1, List.of(configured)))) {
+            var schema = Map.of(
+                    "$schema", "http://json-schema.org/draft-07/schema#",
+                    "type", "object",
+                    "properties", Map.of("query", Map.of("type", "string"))
+            );
+            var tool = new McpDiscoveredTool("lookup", "Lookup", "Lookup documentation", schema, null);
+
+            Map<?, ?> formatted = invoke(
+                    fixture.subject(),
+                    "formatSchemas",
+                    List.class,
+                    List.of(tool),
+                    Map.class
+            );
+
+            assertThat((String) formatted.get("lookup"))
+                    .startsWith("{")
+                    .contains("\n  \"$schema\" : \"http://json-schema.org/draft-07/schema#\"")
+                    .contains("\n  \"properties\" : {")
+                    .contains("\n    \"query\" : {")
+                    .contains("\n      \"type\" : \"string\"")
+                    .endsWith("\n}");
+        }
+    }
+
+    @Test
     @DisplayName("Untouched invalid configuration remains repairable without overwriting its bytes")
     void savePendingChangesAsync_whenInvalidDraftIsUntouched_preservesInvalidFile() throws Exception {
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("invalid"));
@@ -1147,6 +1177,22 @@ class McpPanelTest {
             Method method = target.getClass().getDeclaredMethod(methodName);
             method.setAccessible(true);
             method.invoke(target);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private <T> T invoke(
+            Object target,
+            String methodName,
+            Class<?> parameterType,
+            Object argument,
+            Class<T> resultType
+    ) {
+        try {
+            Method method = target.getClass().getDeclaredMethod(methodName, parameterType);
+            method.setAccessible(true);
+            return resultType.cast(method.invoke(target, argument));
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }

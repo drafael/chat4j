@@ -24,6 +24,7 @@ import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Dialog;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.GraphicsConfiguration;
 import java.awt.GraphicsEnvironment;
@@ -1574,13 +1575,19 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         JTextArea content = new JTextArea(schema, 22, 72);
         content.setEditable(false);
-        content.setLineWrap(false);
+        content.setLineWrap(true);
+        content.setWrapStyleWord(true);
+        Font selectedCodeFont = UIManager.getFont("monospaced.font");
+        content.setFont(selectedCodeFont == null
+                ? new Font(Font.MONOSPACED, Font.PLAIN, content.getFont().getSize())
+                : selectedCodeFont);
         content.setCaretPosition(0);
         content.getAccessibleContext().setAccessibleName("MCP tool input schema");
         content.getAccessibleContext().setAccessibleDescription(
                 "Read-only JSON input schema for %s".formatted(tool.name())
         );
         JScrollPane scroll = new JScrollPane(content);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         JButton close = new JButton("Close");
         close.addActionListener(event -> dialog.dispose());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
@@ -1632,7 +1639,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         Map<String, String> schemas = new HashMap<>();
         tools.forEach(tool -> {
             try {
-                schemas.put(tool.name(), BoundedUtf8.presentation(
+                schemas.put(tool.name(), BoundedUtf8.multilinePresentation(
                         JSON.writerWithDefaultPrettyPrinter().writeValueAsString(tool.inputSchema()),
                         16_384,
                         65_536
