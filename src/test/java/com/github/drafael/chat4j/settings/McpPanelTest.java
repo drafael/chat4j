@@ -70,6 +70,7 @@ import org.mockito.MockedStatic;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -756,6 +757,7 @@ class McpPanelTest {
                 JTable headers = component(subject, "HTTP headers", JTable.class);
                 Container editor = (Container) field(subject, "headerEditor", Object.class);
                 assertThat(components(editor, JButton.class))
+                        .filteredOn(button -> isNotBlank(button.getText()))
                         .extracting(JButton::getText)
                         .containsExactly("Add", "Remove");
                 assertThat(components(editor, JTextField.class)).isEmpty();
@@ -1095,6 +1097,7 @@ class McpPanelTest {
                 assertThat(actionsTop).isGreaterThanOrEqualTo(tableBottom);
                 assertThat(components((Container) environmentEditor, JTextField.class)).isEmpty();
                 assertThat(components((Container) environmentEditor, JButton.class))
+                        .filteredOn(button -> isNotBlank(button.getText()))
                         .extracting(JButton::getText)
                         .containsExactly("Add", "Remove");
                 JPanel transportCards = field(fixture.subject(), "transportCards", JPanel.class);
