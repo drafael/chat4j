@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.mcp.McpConfiguration;
 import com.github.drafael.chat4j.mcp.McpConfigurationRepository;
 import com.github.drafael.chat4j.mcp.McpDiscoveredTool;
 import com.github.drafael.chat4j.mcp.McpManager;
+import com.github.drafael.chat4j.mcp.McpSecretReference;
 import com.github.drafael.chat4j.mcp.McpServerConfiguration;
 import com.github.drafael.chat4j.mcp.McpTransportType;
 import com.github.drafael.chat4j.persistence.StoragePaths;
@@ -30,7 +31,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
+import javax.swing.JList;
+import javax.swing.JMenuItem;
+import javax.swing.JPasswordField;
+import javax.swing.JPopupMenu;
+import javax.swing.KeyStroke;
 import javax.swing.JTable;
+import javax.swing.JTextField;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
@@ -50,8 +57,8 @@ class McpPanelWindowTest {
     Path tempDirectory;
 
     @Test
-    @DisplayName("The real MCP window switches from empty state to the selected-server editor")
-    void addServer_whenPanelIsShowing_switchesVisibleCardWithoutClippingRailAction() throws Exception {
+    @DisplayName("The creation menu works from both Add controls and closes with its panel")
+    void serverCreationMenu_whenPanelIsShowing_supportsBothAddControlsAndDisposal() throws Exception {
         assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for MCP window behavior.");
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory);
         var manager = new McpManager(
@@ -78,20 +85,50 @@ class McpPanelWindowTest {
             flushEdt();
 
             runOnEdt(() -> {
-                JButton railAdd = buttons(createdSubject, "Add server").stream()
-                        .filter(button -> button.getIcon() != null)
-                        .findFirst()
-                        .orElseThrow();
-                JButton emptyAdd = buttons(createdSubject, "Add server").stream()
-                        .filter(button -> button.getIcon() == null)
-                        .findFirst()
-                        .orElseThrow();
+                JButton railAdd = button(createdSubject, "New MCP server");
+                JButton emptyAdd = button(createdSubject, "Add server");
+                JPopupMenu creationMenu = field(createdSubject, "serverCreationMenu", JPopupMenu.class);
+                JList<?> servers = component(createdSubject, "MCP servers", JList.class);
                 assertThat(railAdd.isShowing()).isTrue();
+                assertThat(railAdd.getText()).isEqualTo("+");
                 assertThat(emptyAdd.isShowing()).isTrue();
+
                 emptyAdd.doClick();
+                assertThat(creationMenu.isShowing()).isTrue();
+                assertThat(creationMenu.getInvoker()).isSameAs(emptyAdd);
+                assertThat(components(creationMenu, JMenuItem.class))
+                        .extracting(JMenuItem::getText)
+                        .containsExactly("Command-line (stdio)", "HTTP Server (http)");
+                creationMenu.setVisible(false);
+                assertThat(servers.getModel().getSize()).isZero();
+
+                emptyAdd.doClick();
+                assertThat(creationMenu.getInvoker()).isSameAs(emptyAdd);
+                menuItem(creationMenu, "HTTP Server (http)").doClick();
+                creationMenu.setVisible(false);
+                assertThat(servers.getModel().getSize()).isEqualTo(1);
+                assertThat(((McpServerConfiguration) servers.getSelectedValue()).transport())
+                        .isEqualTo(McpTransportType.STREAMABLE_HTTP);
+
+                railAdd.doClick();
+                assertThat(creationMenu.isShowing()).isTrue();
+                assertThat(creationMenu.getInvoker()).isSameAs(railAdd);
+                menuItem(creationMenu, "Command-line (stdio)").doClick();
+                creationMenu.setVisible(false);
+                assertThat(servers.getModel().getSize()).isEqualTo(2);
+                assertThat(((McpServerConfiguration) servers.getSelectedValue()).transport())
+                        .isEqualTo(McpTransportType.STDIO);
                 assertThat(railAdd.isShowing()).isTrue();
-                assertThat(railAdd.getBounds().width).isPositive();
-                assertThat(railAdd.getBounds().height).isPositive();
+                assertThat(railAdd.getBounds().width).isGreaterThanOrEqualTo(railAdd.getPreferredSize().width);
+                assertThat(railAdd.getBounds().height).isGreaterThanOrEqualTo(railAdd.getPreferredSize().height);
+
+                railAdd.doClick();
+                assertThat(creationMenu.isShowing()).isTrue();
+                assertThat(creationMenu.getInvoker()).isSameAs(railAdd);
+                createdSubject.disposePanel();
+                assertThat(creationMenu.isVisible()).isFalse();
+                menuItem(creationMenu, "Command-line (stdio)").doClick();
+                assertThat(servers.getModel().getSize()).isZero();
             });
         } finally {
             McpPanel panelToDispose = subject;
@@ -107,6 +144,93 @@ class McpPanelWindowTest {
                 });
                 flushEdt();
             }
+            manager.close();
+        }
+    }
+
+    @Test
+    @DisplayName("A visible inline credential editor supports cancellation and committed password masking")
+    void credentialEditor_whenPanelIsShowing_supportsCancelAndCommitActions() throws Exception {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for MCP window behavior.");
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("credential-editor"));
+        McpServerConfiguration configured = new McpServerConfiguration(
+                UUID.randomUUID().toString(),
+                "HTTP server",
+                "http_server",
+                false,
+                false,
+                McpTransportType.STREAMABLE_HTTP,
+                "https://example.test/mcp",
+                "",
+                emptyList(),
+                List.of(new McpSecretReference(UUID.randomUUID().toString(), "Authorization", "")),
+                emptyList(),
+                false,
+                emptySet()
+        );
+        new McpConfigurationRepository(storagePaths.mcpFile()).save(new McpConfiguration(1, List.of(configured)));
+        var manager = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                new McpSecretVault(new ApiTokenVault(storagePaths)),
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        McpPanel subject = null;
+        JFrame frame = null;
+        try {
+            McpPanel createdSubject = callOnEdt(() -> new McpPanel(manager));
+            subject = createdSubject;
+            JFrame createdFrame = callOnEdt(() -> {
+                var window = new JFrame("MCP credential editor test");
+                window.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+                window.setContentPane(createdSubject);
+                window.setSize(700, 520);
+                window.setLocationRelativeTo(null);
+                window.setVisible(true);
+                return window;
+            });
+            frame = createdFrame;
+            flushEdt();
+
+            runOnEdt(() -> {
+                JTable headers = component(createdSubject, "HTTP headers", JTable.class);
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField cancelled = (JPasswordField) headers.getEditorComponent();
+                assertThat(cancelled.isShowing()).isTrue();
+                cancelled.setText("cancelled-secret");
+                Object cancelActionKey = cancelled.getInputMap().get(KeyStroke.getKeyStroke("ESCAPE"));
+                assertThat(cancelActionKey).isEqualTo("cancelCredentialEditing");
+                cancelled.getActionMap().get(cancelActionKey).actionPerformed(null);
+                assertThat(cancelled.getPassword()).isEmpty();
+                assertThat(headers.isEditing()).isFalse();
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("");
+
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField committed = (JPasswordField) headers.getEditorComponent();
+                committed.setText("committed-secret");
+                committed.postActionEvent();
+                assertThat(committed.getPassword()).isEmpty();
+                assertThat(headers.isEditing()).isFalse();
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+
+                Container editor = (Container) field(createdSubject, "headerEditor", Object.class);
+                findTextButton(editor, "Add").doClick();
+                assertThat(headers.getEditingColumn()).isZero();
+                assertThat(headers.getEditorComponent()).isInstanceOf(JTextField.class);
+                assertThat(headers.getEditorComponent().isShowing()).isTrue();
+            });
+        } finally {
+            McpPanel panelToDispose = subject;
+            JFrame frameToDispose = frame;
+            runOnEdt(() -> {
+                if (panelToDispose != null) {
+                    panelToDispose.disposePanel();
+                }
+                if (frameToDispose != null) {
+                    frameToDispose.dispose();
+                }
+            });
+            flushEdt();
             manager.close();
         }
     }
@@ -245,34 +369,19 @@ class McpPanelWindowTest {
                 .orElseThrow(() -> new AssertionError("Button not found: %s".formatted(accessibleName)));
     }
 
-    private JButton findTextButton(Container root, String text) {
-        for (Component component : root.getComponents()) {
-            if (component instanceof JButton button && text.equals(button.getText())) {
-                return button;
-            }
-            if (component instanceof Container child) {
-                JButton found = findTextButtonOrNull(child, text);
-                if (found != null) {
-                    return found;
-                }
-            }
-        }
-        throw new AssertionError("Button not found: %s".formatted(text));
+    private JMenuItem menuItem(JPopupMenu menu, String text) {
+        return components(menu, JMenuItem.class).stream()
+                .filter(item -> text.equals(item.getText()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Menu item not found: %s".formatted(text)));
     }
 
-    private JButton findTextButtonOrNull(Container root, String text) {
-        for (Component component : root.getComponents()) {
-            if (component instanceof JButton button && text.equals(button.getText())) {
-                return button;
-            }
-            if (component instanceof Container child) {
-                JButton found = findTextButtonOrNull(child, text);
-                if (found != null) {
-                    return found;
-                }
-            }
-        }
-        return null;
+    private JButton findTextButton(Container root, String text) {
+        List<JButton> matches = components(root, JButton.class).stream()
+                .filter(button -> text.equals(button.getText()))
+                .toList();
+        assertThat(matches).as("button with text %s", text).hasSize(1);
+        return matches.getFirst();
     }
 
     private <T extends Component> T component(Container root, String accessibleName, Class<T> type) {

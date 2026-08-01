@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.FlatClientProperties;
+import com.formdev.flatlaf.FlatLightLaf;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.mcp.McpApplyOutcome;
 import com.github.drafael.chat4j.mcp.McpApplyResult;
@@ -30,28 +32,36 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
+import javax.swing.LookAndFeel;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -77,50 +87,269 @@ class McpPanelTest {
     Path tempDirectory;
 
     @Test
-    @DisplayName("Adding and saving a server publishes the redesigned editor draft")
-    void savePendingChangesAsync_whenServerIsAdded_publishesConfiguration() throws Exception {
+    @DisplayName("A new server derives a model ID from its name and keeps it stable after saving")
+    void savePendingChangesAsync_whenServerIsAdded_generatesAndStabilizesModelId() throws Exception {
         try (var fixture = fixture("save", null)) {
-            CompletableFuture<Boolean> publication = callOnEdt(() -> {
-                button(fixture.subject(), "Add server").doClick();
+            CompletableFuture<Boolean> firstPublication = callOnEdt(() -> {
+                menuItem(fixture.subject(), "Command-line (stdio)").doClick();
                 component(fixture.subject(), "MCP server name", JTextField.class).setText("Local tools");
-                component(fixture.subject(), "MCP model ID", JTextField.class).setText("local_tools");
                 component(fixture.subject(), "MCP executable", JTextField.class).setText("java");
                 return fixture.subject().savePendingChangesAsync();
             });
 
-            assertThat(publication.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(firstPublication.get(5, TimeUnit.SECONDS)).isTrue();
             flushEdt();
             assertThat(Files.readString(fixture.storagePaths().mcpFile()))
                     .contains("local_tools")
                     .doesNotContain("replacementSecrets");
+
+            CompletableFuture<Boolean> secondPublication = callOnEdt(() -> {
+                component(fixture.subject(), "MCP server name", JTextField.class).setText("Renamed tools");
+                return fixture.subject().savePendingChangesAsync();
+            });
+            assertThat(secondPublication.get(5, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            assertThat(persisted.servers()).singleElement()
+                    .satisfies(server -> {
+                        assertThat(server.name()).isEqualTo("Renamed tools");
+                        assertThat(server.modelId()).isEqualTo("local_tools");
+                    });
             assertThat(callOnEdt(fixture.subject()::lastSaveError)).isEmpty();
         }
     }
 
     @Test
-    @DisplayName("Empty, search, and Add states preserve rail semantics and unique model IDs")
+    @DisplayName("Renaming an existing server preserves its persisted model ID")
+    void savePendingChangesAsync_whenExistingServerIsRenamed_preservesModelId() throws Exception {
+        McpServerConfiguration configured = server("Existing", "stable_alias", McpTransportType.STDIO);
+        try (var fixture = fixture("existing-model-id", new McpConfiguration(1, List.of(configured)))) {
+            CompletableFuture<Boolean> publication = callOnEdt(() -> {
+                component(fixture.subject(), "MCP server name", JTextField.class).setText("Renamed existing server");
+                return fixture.subject().savePendingChangesAsync();
+            });
+
+            assertThat(publication.get(5, TimeUnit.SECONDS)).isTrue();
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            assertThat(persisted.servers()).singleElement()
+                    .satisfies(server -> assertThat(server.modelId()).isEqualTo("stable_alias"));
+        }
+    }
+
+    @Test
+    @DisplayName("New servers derive unique model IDs from duplicate names")
+    void finishActiveEditing_whenNewServerNamesCollide_generatesUniqueModelIds() throws Exception {
+        try (var fixture = fixture("unique-model-ids", null)) {
+            runOnEdt(() -> {
+                menuItem(fixture.subject(), "Command-line (stdio)").doClick();
+                component(fixture.subject(), "MCP server name", JTextField.class).setText("Context 7!");
+                component(fixture.subject(), "MCP executable", JTextField.class).setText("java");
+                fixture.subject().finishActiveEditing();
+
+                menuItem(fixture.subject(), "Command-line (stdio)").doClick();
+                component(fixture.subject(), "MCP server name", JTextField.class).setText("Context 7!");
+                component(fixture.subject(), "MCP executable", JTextField.class).setText("java");
+                fixture.subject().finishActiveEditing();
+
+                JList<?> list = component(fixture.subject(), "MCP servers", JList.class);
+                assertThat(List.of(
+                        ((McpServerConfiguration) list.getModel().getElementAt(0)).modelId(),
+                        ((McpServerConfiguration) list.getModel().getElementAt(1)).modelId()
+                )).containsExactly("context_7", "context_7_2");
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Generated model IDs fall back for non-ASCII names and remain within the validator limit")
+    void finishActiveEditing_whenNewServerNamesNeedNormalization_generatesBoundedFallbackIds() throws Exception {
+        try (var fixture = fixture("model-id-boundaries", null)) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                menuItem(subject, "Command-line (stdio)").doClick();
+                component(subject, "MCP server name", JTextField.class).setText("a".repeat(80));
+                subject.finishActiveEditing();
+
+                menuItem(subject, "Command-line (stdio)").doClick();
+                component(subject, "MCP server name", JTextField.class).setText("你好");
+                subject.finishActiveEditing();
+
+                JList<?> list = component(subject, "MCP servers", JList.class);
+                assertThat(((McpServerConfiguration) list.getModel().getElementAt(0)).modelId())
+                        .isEqualTo("a".repeat(48));
+                assertThat(((McpServerConfiguration) list.getModel().getElementAt(1)).modelId())
+                        .isEqualTo("server");
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Verify does not stabilize a new server model ID before coordinated Save")
+    void savePendingChangesAsync_whenVerifyRunsFirst_stabilizesIdFromNameAtCoordinatedSave() throws Exception {
+        AtomicLong generation = new AtomicLong();
+        McpManager manager = controlledManager(McpConfiguration.empty(), generation);
+        List<McpConfiguration> submissions = new ArrayList<>();
+        doAnswer(invocation -> {
+            McpConfigurationDraft draft = invocation.getArgument(0);
+            submissions.add(draft.configuration());
+            draft.clearSecrets();
+            long appliedGeneration = generation.incrementAndGet();
+            return CompletableFuture.completedFuture(new McpApplyResult(
+                    McpApplyOutcome.APPLIED,
+                    appliedGeneration,
+                    submissions.getLast(),
+                    ""
+            ));
+        }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
+        CompletableFuture<McpVerificationResult> discovery = new CompletableFuture<>() {
+            @Override
+            public Executor defaultExecutor() {
+                return Runnable::run;
+            }
+        };
+        CountDownLatch discoveryStarted = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            discoveryStarted.countDown();
+            return discovery;
+        }).when(manager).verifyAppliedAsync(any(), any(), any());
+        McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+        try {
+            runOnEdt(() -> {
+                menuItem(subject, "Command-line (stdio)").doClick();
+                component(subject, "MCP server name", JTextField.class).setText("Before verify");
+                component(subject, "MCP executable", JTextField.class).setText("java");
+                button(subject, "Verify / Refresh").doClick();
+            });
+            assertThat(discoveryStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            CompletableFuture<Boolean> firstSave = callOnEdt(() -> {
+                component(subject, "MCP server name", JTextField.class).setText("Saved name");
+                return subject.savePendingChangesAsync();
+            });
+            assertThat(firstSave.get(5, TimeUnit.SECONDS)).isTrue();
+
+            CompletableFuture<Boolean> secondSave = callOnEdt(() -> {
+                component(subject, "MCP server name", JTextField.class).setText("Later rename");
+                return subject.savePendingChangesAsync();
+            });
+            assertThat(secondSave.get(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(submissions).hasSize(3);
+            assertThat(submissions.get(0).servers().getFirst().modelId()).isEqualTo("before_verify");
+            assertThat(submissions.get(1).servers().getFirst().modelId()).isEqualTo("saved_name");
+            assertThat(submissions.get(2).servers().getFirst().modelId()).isEqualTo("saved_name");
+        } finally {
+            discovery.cancel(true);
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
+    @DisplayName("The editor hides model IDs and uses separator-free transport headings")
+    void transportEditor_whenDisplayed_omitsModelIdWarningAndHeadingSeparators() throws Exception {
+        try (var fixture = fixture("simplified-editor", null)) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                menuItem(subject, "Command-line (stdio)").doClick();
+                JPanel transportCards = field(subject, "transportCards", JPanel.class);
+
+                assertThat(components(subject, JLabel.class))
+                        .extracting(JLabel::getText)
+                        .doesNotContain(
+                                "Model ID",
+                                "Credentials are encrypted; URL queries remain plaintext."
+                        );
+                List<JLabel> sectionHeadings = components(transportCards, JLabel.class).stream()
+                        .filter(label -> Set.of("Ordered arguments", "Environment variables", "HTTP headers")
+                                .contains(label.getText()))
+                        .toList();
+                assertThat(sectionHeadings)
+                        .extracting(JLabel::getText)
+                        .containsExactlyInAnyOrder("Ordered arguments", "Environment variables", "HTTP headers");
+                assertThat(sectionHeadings)
+                        .extracting(label -> label.getClientProperty(FlatClientProperties.STYLE_CLASS))
+                        .containsOnly("h4");
+                assertThat(components(transportCards, JSeparator.class)).isEmpty();
+                for (String tableName : List.of("Environment variables", "HTTP headers")) {
+                    JTable credentials = component(subject, tableName, JTable.class);
+                    assertThat(credentials.getColumnCount()).isEqualTo(2);
+                    assertThat(credentials.getColumnName(0)).isEqualTo("Name");
+                    assertThat(credentials.getColumnName(1)).isEqualTo("Value");
+                }
+            });
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Empty, search, and Add states preserve rail semantics while hiding model IDs")
     void serverRail_whenSelectionAndSearchChange_preservesMasterDetailState() throws Exception {
-        McpServerConfiguration first = server("Alpha", "SERVER_3", McpTransportType.STDIO);
+        McpServerConfiguration first = server("", "SERVER_3", McpTransportType.STDIO);
         McpServerConfiguration second = server("Beta", "beta_tools", McpTransportType.STDIO);
         try (var fixture = fixture("rail", new McpConfiguration(1, List.of(first, second)))) {
             runOnEdt(() -> {
                 JList<?> list = component(fixture.subject(), "MCP servers", JList.class);
                 list.clearSelection();
-                assertThat(button(fixture.subject(), "Add server").isEnabled()).isTrue();
-                assertThat(button(fixture.subject(), "Remove server").isEnabled()).isFalse();
+                JButton add = button(fixture.subject(), "New MCP server");
+                JButton remove = button(fixture.subject(), "Remove selected MCP server");
+                assertThat(add.isEnabled()).isTrue();
+                assertThat(add.getText()).isEqualTo("+");
+                assertThat(add.getToolTipText()).isEqualTo("New MCP server");
+                assertThat(remove.isEnabled()).isFalse();
+                assertThat(remove.getText()).isEqualTo("−");
+                assertThat(remove.getToolTipText()).isEqualTo("Remove selected MCP server");
+                JPopupMenu creationMenu = field(fixture.subject(), "serverCreationMenu", JPopupMenu.class);
+                assertThat(components(creationMenu, JMenuItem.class))
+                        .extracting(JMenuItem::getText)
+                        .containsExactly("Command-line (stdio)", "HTTP Server (http)");
                 assertThat(button(fixture.subject(), "Verify / Refresh").isEnabled()).isFalse();
 
                 JTextField search = component(fixture.subject(), "Search MCP servers", JTextField.class);
-                search.setText("  beta_tools  ");
+                search.setText("  BETA  ");
+                assertThat(((McpServerConfiguration) list.getSelectedValue()).id()).isEqualTo(second.id());
+                search.setText("SERVER_3");
                 assertThat(((McpServerConfiguration) list.getSelectedValue()).id()).isEqualTo(second.id());
                 search.setText("no match");
                 assertThat(((McpServerConfiguration) list.getSelectedValue()).id()).isEqualTo(second.id());
                 search.setText("");
                 assertThat(((McpServerConfiguration) list.getSelectedValue()).id()).isEqualTo(second.id());
 
-                button(fixture.subject(), "Add server").doClick();
+                JList<McpServerConfiguration> typedList = (JList<McpServerConfiguration>) list;
+                Component rendered = typedList.getCellRenderer().getListCellRendererComponent(
+                        typedList,
+                        second,
+                        1,
+                        false,
+                        false
+                );
+                assertThat(components((Container) rendered, JLabel.class))
+                        .extracting(JLabel::getText)
+                        .containsExactly("Beta", "STDIO · disabled")
+                        .doesNotContain("beta_tools");
+                assertThat(rendered.getAccessibleContext().getAccessibleName())
+                        .isEqualTo("Beta, STDIO, disabled");
+                assertThat(first.displayName()).isEqualTo("SERVER_3");
+                Component unnamed = typedList.getCellRenderer().getListCellRendererComponent(
+                        typedList,
+                        first,
+                        0,
+                        false,
+                        false
+                );
+                assertThat(components((Container) unnamed, JLabel.class))
+                        .extracting(JLabel::getText)
+                        .containsExactly("Unnamed server", "STDIO · disabled")
+                        .doesNotContain("SERVER_3");
+                assertThat(unnamed.getAccessibleContext().getAccessibleName())
+                        .isEqualTo("Unnamed server, STDIO, disabled");
+
+                menuItem(fixture.subject(), "Command-line (stdio)").doClick();
                 McpServerConfiguration added = (McpServerConfiguration) list.getSelectedValue();
-                assertThat(added.modelId()).isEqualTo("server_4");
+                assertThat(added.modelId()).isEqualTo("new_server");
                 assertThat(component(fixture.subject(), "MCP server editor", JTabbedPane.class).getSelectedIndex())
                         .isZero();
             });
@@ -128,7 +357,80 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("Transport toggles and ordered arguments preserve inactive values exactly")
+    @DisplayName("FlatLaf keeps the server action buttons square without clipping enlarged text")
+    void serverRail_whenFlatLafIsActive_keepsTextActionsSquareAndUnclipped() throws Exception {
+        LookAndFeel originalLookAndFeel = callOnEdt(UIManager::getLookAndFeel);
+        PanelFixture fixture = null;
+        try {
+            runOnEdt(() -> UIManager.setLookAndFeel(new FlatLightLaf()));
+            fixture = fixture("flat-square-actions", null);
+            McpPanel subject = fixture.subject();
+
+            runOnEdt(() -> {
+                JButton add = button(subject, "New MCP server");
+                JButton remove = button(subject, "Remove selected MCP server");
+                for (JButton action : List.of(add, remove)) {
+                    assertThat(action.getClientProperty(FlatClientProperties.BUTTON_TYPE))
+                            .isEqualTo(FlatClientProperties.BUTTON_TYPE_SQUARE);
+                    assertThat(action.getPreferredSize().width).isEqualTo(action.getPreferredSize().height);
+
+                    var enlarged = action.getFont().deriveFont(32f);
+                    action.setFont(enlarged);
+                    assertThat(action.getPreferredSize().width).isEqualTo(action.getPreferredSize().height);
+                    assertThat(action.getPreferredSize().height)
+                            .isGreaterThan(action.getFontMetrics(enlarged).getHeight());
+                }
+            });
+        } finally {
+            try {
+                if (fixture != null) {
+                    fixture.close();
+                }
+            } finally {
+                runOnEdt(() -> UIManager.setLookAndFeel(originalLookAndFeel));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Editing and saving an HTTP server preserves its creation-time transport")
+    void savePendingChangesAsync_whenHttpServerIsEdited_preservesCreationTransport() throws Exception {
+        try (var fixture = fixture("add-http", null)) {
+            CompletableFuture<Boolean> publication = callOnEdt(() -> {
+                menuItem(fixture.subject(), "HTTP Server (http)").doClick();
+                component(fixture.subject(), "MCP server name", JTextField.class).setText("HTTP tools");
+                JTextField endpoint = component(fixture.subject(), "MCP HTTP endpoint", JTextField.class);
+                endpoint.setText("https://example.test/mcp");
+                fixture.subject().finishActiveEditing();
+
+                JList<?> servers = component(fixture.subject(), "MCP servers", JList.class);
+                McpServerConfiguration added = (McpServerConfiguration) servers.getSelectedValue();
+                assertThat(added.transport()).isEqualTo(McpTransportType.STREAMABLE_HTTP);
+                JPanel transportCards = field(fixture.subject(), "transportCards", JPanel.class);
+                Component activeCard = Arrays.stream(transportCards.getComponents())
+                        .filter(Component::isVisible)
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(SwingUtilities.isDescendingFrom(endpoint, activeCard)).isTrue();
+                assertThat(components(fixture.subject(), JToggleButton.class))
+                        .extracting(JToggleButton::getText)
+                        .doesNotContain("STDIO", "HTTP");
+                return fixture.subject().savePendingChangesAsync();
+            });
+
+            assertThat(publication.get(5, TimeUnit.SECONDS)).isTrue();
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            assertThat(persisted.servers()).singleElement()
+                    .satisfies(server -> {
+                        assertThat(server.transport()).isEqualTo(McpTransportType.STREAMABLE_HTTP);
+                        assertThat(server.endpoint()).isEqualTo("https://example.test/mcp");
+                    });
+        }
+    }
+
+    @Test
+    @DisplayName("Fixed transport and ordered arguments preserve exact STDIO values")
     void finishActiveEditing_whenArgumentIsEdited_commitsExactValueWithoutPublishing() throws Exception {
         McpServerConfiguration configured = new McpServerConfiguration(
                 UUID.randomUUID().toString(),
@@ -153,24 +455,68 @@ class McpPanelTest {
                 ((JTextField) arguments.getEditorComponent()).setText("<html>精🔧é</html>");
                 fixture.subject().finishActiveEditing();
                 assertThat(arguments.getValueAt(0, 0)).isEqualTo("<html>精🔧é</html>");
+                long revisionBeforeCancellation = field(fixture.subject(), "draftRevision", Long.class);
+                assertThat(arguments.editCellAt(0, 0)).isTrue();
+                ((JTextField) arguments.getEditorComponent()).setText("cancelled argument");
+                arguments.getCellEditor().cancelCellEditing();
+                assertThat(arguments.getValueAt(0, 0)).isEqualTo("<html>精🔧é</html>");
+                assertThat(field(fixture.subject(), "draftRevision", Long.class))
+                        .isGreaterThan(revisionBeforeCancellation);
                 assertThat(fixture.manager().generation()).isZero();
-
-                JToggleButton http = component(fixture.subject(), "Streamable HTTP transport", JToggleButton.class);
-                JToggleButton stdio = component(fixture.subject(), "STDIO transport", JToggleButton.class);
-                http.doClick();
-                assertThat(http.isSelected()).isTrue();
-                assertThat(stdio.isSelected()).isFalse();
-                assertThat(findCheckBox(fixture.subject(), "Long-running").isSelected()).isFalse();
-                stdio.doClick();
-                assertThat(stdio.isSelected()).isTrue();
-                assertThat(http.isSelected()).isFalse();
+                assertThat(findCheckBox(fixture.subject(), "Long-running").isSelected()).isTrue();
                 assertThat(tableValues(arguments)).containsExactly("<html>精🔧é</html>", "", "--flag", "  ", "value");
             });
         }
     }
 
     @Test
-    @DisplayName("Credential state exposes no plaintext and server removal wipes pending replacement")
+    @DisplayName("Automatic tool approval attempts fence verification before confirmation")
+    void toggleAutomaticExecution_whenConfirmationRuns_marksEachAttemptOnce() throws Exception {
+        McpServerConfiguration configured = server("Automatic", "automatic", McpTransportType.STDIO);
+        try (var fixture = fixture("automatic-cancel", new McpConfiguration(1, List.of(configured)))) {
+            runOnEdt(() -> {
+                JCheckBox automatic = findCheckBox(fixture.subject(), "Run tools automatically");
+                long revision = field(fixture.subject(), "draftRevision", Long.class);
+                try (MockedStatic<JOptionPane> confirmation = mockStatic(JOptionPane.class)) {
+                    confirmation.when(() -> JOptionPane.showConfirmDialog(
+                            any(Component.class),
+                            any(),
+                            any(String.class),
+                            anyInt(),
+                            anyInt()
+                    )).thenAnswer(invocation -> {
+                        assertThat(field(fixture.subject(), "draftRevision", Long.class)).isEqualTo(revision + 1);
+                        return JOptionPane.CANCEL_OPTION;
+                    });
+
+                    automatic.doClick();
+                }
+
+                assertThat(automatic.isSelected()).isFalse();
+                long revisionAfterCancellation = field(fixture.subject(), "draftRevision", Long.class);
+                assertThat(revisionAfterCancellation).isEqualTo(revision + 1);
+
+                try (MockedStatic<JOptionPane> confirmation = mockStatic(JOptionPane.class)) {
+                    confirmation.when(() -> JOptionPane.showConfirmDialog(
+                            any(Component.class),
+                            any(),
+                            any(String.class),
+                            anyInt(),
+                            anyInt()
+                    )).thenReturn(JOptionPane.OK_OPTION);
+
+                    automatic.doClick();
+                }
+
+                assertThat(automatic.isSelected()).isTrue();
+                assertThat(field(fixture.subject(), "draftRevision", Long.class))
+                        .isEqualTo(revisionAfterCancellation + 1);
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Masked credential editing exposes no plaintext and server removal wipes pending replacement")
     void removeServer_whenCredentialReplacementIsPending_wipesOwnedSecret() throws Exception {
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("credential"));
         var manager = manager(storagePaths);
@@ -190,35 +536,376 @@ class McpPanelTest {
                 false,
                 emptySet()
         );
-        manager.saveAndApply(new McpConfigurationDraft(
-                new McpConfiguration(1, List.of(configured)),
-                Map.of(rowId, "saved-value".toCharArray())
-        )).join();
+        char[] savedValue = "saved-value".toCharArray();
+        try {
+            manager.saveAndApply(new McpConfigurationDraft(
+                    new McpConfiguration(1, List.of(configured)),
+                    Map.of(rowId, savedValue)
+            )).join();
+        } finally {
+            Arrays.fill(savedValue, '\0');
+        }
         McpPanel subject = callOnEdt(() -> new McpPanel(manager));
         try (var fixture = new PanelFixture(storagePaths, manager, subject)) {
             AtomicReference<char[]> owned = new AtomicReference<>();
             runOnEdt(() -> {
                 JTable headers = component(subject, "HTTP headers", JTable.class);
-                assertThat(headers.getValueAt(0, 1)).isEqualTo("Saved");
+                assertThat(headers.getColumnName(0)).isEqualTo("Name");
+                assertThat(headers.getColumnName(1)).isEqualTo("Value");
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
                 Component rendered = headers.prepareRenderer(headers.getCellRenderer(0, 1), 0, 1);
-                assertThat(((JLabel) rendered).getToolTipText()).contains("has not been rechecked");
+                assertThat(((JLabel) rendered).getToolTipText()).isEqualTo("Credential available. Edit to replace it.");
+                assertThat(rendered.getAccessibleContext().getAccessibleName())
+                        .isEqualTo("Authorization, credential available");
 
-                Object headerEditor = field(subject, "headerEditor", Object.class);
-                JPasswordField password = findComponent((Container) headerEditor, JPasswordField.class);
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField password = (JPasswordField) headers.getEditorComponent();
+                assertThat(password.getPassword()).isEmpty();
                 password.setText("unique-sentinel-secret");
-                findButton((Container) headerEditor, "Apply").doClick();
-                assertThat(headers.getValueAt(0, 1)).isEqualTo("New value entered");
+                subject.finishActiveEditing();
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
                 assertThat(password.getPassword()).isEmpty();
                 assertThat(tableValues(headers).toString()).doesNotContain("unique-sentinel-secret");
-                assertThat(subject.toString()).doesNotContain("unique-sentinel-secret");
 
                 Map<String, char[]> replacements = field(subject, "replacementSecrets", Map.class);
                 owned.set(replacements.get(rowId));
                 assertThat(owned.get()).containsExactly("unique-sentinel-secret".toCharArray());
-                button(subject, "Remove server").doClick();
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField uncommitted = (JPasswordField) headers.getEditorComponent();
+                uncommitted.setText("must-not-be-committed");
+                button(subject, "Remove selected MCP server").doClick();
+                assertThat(uncommitted.getPassword()).isEmpty();
                 assertThat(replacements).isEmpty();
             });
             assertThat(owned.get()).containsOnly('\0');
+        }
+    }
+
+    @Test
+    @DisplayName("Inline credential cells persist exact names and encrypted replacement values")
+    void savePendingChangesAsync_whenCredentialCellsAreEdited_persistsNameAndEncryptedValue() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration configured = httpServerWithHeader(rowId, "");
+        try (var fixture = fixture("inline-credential-save", new McpConfiguration(1, List.of(configured)))) {
+            CompletableFuture<Boolean> publication = callOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(headers.getColumnCount()).isEqualTo(2);
+                assertThat(headers.getColumnName(0)).isEqualTo("Name");
+                assertThat(headers.getColumnName(1)).isEqualTo("Value");
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("");
+                Component missing = headers.prepareRenderer(headers.getCellRenderer(0, 1), 0, 1);
+                assertThat(((JLabel) missing).getToolTipText())
+                        .isEqualTo("No credential value. Edit to add one.");
+                assertThat(missing.getAccessibleContext().getAccessibleName())
+                        .isEqualTo("Authorization, credential missing");
+
+                assertThat(headers.editCellAt(0, 0)).isTrue();
+                assertThat(headers.getEditorComponent().getAccessibleContext().getAccessibleName())
+                        .isEqualTo("HTTP headers name");
+                ((JTextField) headers.getEditorComponent()).setText("<html><b>X-Token</b></html>");
+                assertThat(headers.getCellEditor().stopCellEditing()).isTrue();
+                Component literal = headers.prepareRenderer(headers.getCellRenderer(0, 0), 0, 0);
+                assertThat(((JLabel) literal).getText()).isEqualTo("<html><b>X-Token</b></html>");
+                assertThat(((JComponent) literal).getClientProperty("html.disable")).isEqualTo(Boolean.TRUE);
+
+                assertThat(headers.editCellAt(0, 0)).isTrue();
+                ((JTextField) headers.getEditorComponent()).setText("X-Token");
+                assertThat(headers.getCellEditor().stopCellEditing()).isTrue();
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                assertThat(headers.getEditorComponent()).isInstanceOf(JPasswordField.class);
+                JPasswordField password = (JPasswordField) headers.getEditorComponent();
+                assertThat(password.getAccessibleContext().getAccessibleName()).isEqualTo("HTTP headers value");
+                assertThat(password.getPassword()).isEmpty();
+                password.setText("inline-secret");
+                subject.finishActiveEditing();
+                assertThat(password.getPassword()).isEmpty();
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+                assertThat(tableValues(headers).toString()).doesNotContain("inline-secret");
+                return subject.savePendingChangesAsync();
+            });
+
+            assertThat(publication.get(5, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            McpSecretReference persistedHeader = persisted.servers().getFirst().headers().getFirst();
+            assertThat(persistedHeader.key()).isEqualTo("X-Token");
+            assertThat(persistedHeader.secretId()).startsWith("MCP_");
+            assertStoredSecret(fixture.storagePaths(), persistedHeader.secretId(), "inline-secret");
+            assertThat(Files.readString(fixture.storagePaths().mcpFile())).doesNotContain("inline-secret");
+            assertThat(callOnEdt(() -> field(fixture.subject(), "replacementSecrets", Map.class))).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("Inline environment editing is active only for STDIO and persists encrypted values")
+    void savePendingChangesAsync_whenEnvironmentCellsAreEdited_persistsStdioCredential() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration base = server("STDIO", "stdio", McpTransportType.STDIO);
+        McpServerConfiguration configured = new McpServerConfiguration(
+                base.id(),
+                base.name(),
+                base.modelId(),
+                base.enabled(),
+                base.automatic(),
+                base.transport(),
+                base.endpoint(),
+                base.executable(),
+                base.arguments(),
+                base.headers(),
+                List.of(new McpSecretReference(rowId, "TOKEN", "")),
+                base.longRunning(),
+                base.disabledTools()
+        );
+        try (var fixture = fixture("inline-environment-save", new McpConfiguration(1, List.of(configured)))) {
+            CompletableFuture<Boolean> publication = callOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable environment = component(subject, "Environment variables", JTable.class);
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(environment.isEnabled()).isTrue();
+                assertThat(headers.isEnabled()).isFalse();
+
+                assertThat(environment.editCellAt(0, 0)).isTrue();
+                ((JTextField) environment.getEditorComponent()).setText("API_TOKEN");
+                assertThat(environment.getCellEditor().stopCellEditing()).isTrue();
+                assertThat(environment.editCellAt(0, 1)).isTrue();
+                JPasswordField password = (JPasswordField) environment.getEditorComponent();
+                password.setText("environment-secret");
+                subject.finishActiveEditing();
+                assertThat(password.getPassword()).isEmpty();
+                assertThat(environment.getValueAt(0, 1)).isEqualTo("••••••••");
+                return subject.savePendingChangesAsync();
+            });
+
+            assertThat(publication.get(5, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            McpSecretReference persistedVariable = persisted.servers().getFirst().environment().getFirst();
+            assertThat(persistedVariable.key()).isEqualTo("API_TOKEN");
+            assertThat(persistedVariable.secretId()).startsWith("MCP_");
+            assertStoredSecret(fixture.storagePaths(), persistedVariable.secretId(), "environment-secret");
+            assertThat(Files.readString(fixture.storagePaths().mcpFile()))
+                    .doesNotContain("environment-secret");
+        }
+    }
+
+    @Test
+    @DisplayName("Blank and cancelled inline value edits retain the pending credential")
+    void credentialEditor_whenValueEditIsBlankOrCancelled_retainsPendingCredential() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration configured = httpServerWithHeader(
+                rowId,
+                "MCP_11111111111111111111111111111111"
+        );
+        AtomicReference<char[]> overwritten = new AtomicReference<>();
+        AtomicReference<char[]> owned = new AtomicReference<>();
+        try (var fixture = fixture("inline-credential-retain", new McpConfiguration(1, List.of(configured)))) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+
+                applyHeaderReplacement(subject, "first-secret");
+                Map<String, char[]> replacements = field(subject, "replacementSecrets", Map.class);
+                overwritten.set(replacements.get(rowId));
+                applyHeaderReplacement(subject, "pending-secret");
+                owned.set(replacements.get(rowId));
+                assertThat(overwritten.get()).containsOnly('\0');
+                assertThat(owned.get()).containsExactly("pending-secret".toCharArray());
+                long revisionBeforeRetainedEdits = field(subject, "draftRevision", Long.class);
+
+                assertThat(headers.editCellAt(0, 0)).isTrue();
+                ((JTextField) headers.getEditorComponent()).setText("Cancelled-Name");
+                headers.getCellEditor().cancelCellEditing();
+                assertThat(headers.getValueAt(0, 0)).isEqualTo("Authorization");
+                long revisionAfterNameCancellation = field(subject, "draftRevision", Long.class);
+                assertThat(revisionAfterNameCancellation).isGreaterThan(revisionBeforeRetainedEdits);
+
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField blank = (JPasswordField) headers.getEditorComponent();
+                blank.setText("   ");
+                assertThat(headers.getCellEditor().stopCellEditing()).isTrue();
+                assertThat(blank.getPassword()).isEmpty();
+                assertThat(replacements.get(rowId)).isSameAs(owned.get());
+                long revisionAfterBlankSettlement = field(subject, "draftRevision", Long.class);
+                assertThat(revisionAfterBlankSettlement).isGreaterThan(revisionAfterNameCancellation);
+
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField cancelled = (JPasswordField) headers.getEditorComponent();
+                cancelled.setText("cancelled-secret");
+                headers.getCellEditor().cancelCellEditing();
+                assertThat(cancelled.getPassword()).isEmpty();
+                assertThat(replacements.get(rowId)).isSameAs(owned.get());
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+                assertThat(field(subject, "draftRevision", Long.class))
+                        .isGreaterThan(revisionAfterBlankSettlement);
+            });
+        }
+        assertThat(owned.get()).containsOnly('\0');
+    }
+
+    @Test
+    @DisplayName("Credential Add starts inline Name editing and Remove discards an active password")
+    void credentialEditor_whenRowIsAddedAndRemoved_usesInlineEditorsAndWipesValue() throws Exception {
+        McpServerConfiguration configured = server("HTTP", "http", McpTransportType.STREAMABLE_HTTP);
+        try (var fixture = fixture("inline-credential-actions", new McpConfiguration(1, List.of(configured)))) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                Container editor = (Container) field(subject, "headerEditor", Object.class);
+                assertThat(components(editor, JButton.class))
+                        .extracting(JButton::getText)
+                        .containsExactly("Add", "Remove");
+                assertThat(components(editor, JTextField.class)).isEmpty();
+                assertThat(components(editor, JPasswordField.class)).isEmpty();
+                JButton addRow = findButton(editor, "Add");
+                JButton removeRow = findButton(editor, "Remove");
+                assertThat(addRow.getAccessibleContext().getAccessibleName()).isEqualTo("Add a row to HTTP headers");
+                assertThat(removeRow.getAccessibleContext().getAccessibleName())
+                        .isEqualTo("Remove the selected row from HTTP headers");
+
+                addRow.doClick();
+                assertThat(headers.getRowCount()).isEqualTo(1);
+                assertThat(headers.getSelectedRow()).isZero();
+                assertThat(headers.getEditingColumn()).isZero();
+                assertThat(headers.getEditorComponent()).isInstanceOf(JTextField.class);
+                ((JTextField) headers.getEditorComponent()).setText("X-Temporary");
+                assertThat(headers.getCellEditor().stopCellEditing()).isTrue();
+                assertThat(headers.getValueAt(0, 0)).isEqualTo("X-Temporary");
+
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField password = (JPasswordField) headers.getEditorComponent();
+                password.setText("must-not-survive");
+                findButton(editor, "Remove").doClick();
+
+                assertThat(password.getPassword()).isEmpty();
+                assertThat(headers.isEditing()).isFalse();
+                assertThat(headers.getRowCount()).isZero();
+                assertThat(field(subject, "replacementSecrets", Map.class)).isEmpty();
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Inline password settlement remains bound to its original credential row")
+    void finishActiveEditing_whenCredentialSelectionChanges_commitsValueToOriginalRow() throws Exception {
+        String firstRowId = UUID.randomUUID().toString();
+        String secondRowId = UUID.randomUUID().toString();
+        McpServerConfiguration base = server("HTTP", "http", McpTransportType.STREAMABLE_HTTP);
+        McpServerConfiguration configured = new McpServerConfiguration(
+                base.id(),
+                base.name(),
+                base.modelId(),
+                base.enabled(),
+                base.automatic(),
+                base.transport(),
+                base.endpoint(),
+                base.executable(),
+                base.arguments(),
+                List.of(
+                        new McpSecretReference(firstRowId, "X-First", ""),
+                        new McpSecretReference(secondRowId, "X-Second", "")
+                ),
+                base.environment(),
+                base.longRunning(),
+                base.disabledTools()
+        );
+        try (var fixture = fixture("inline-credential-row-identity", new McpConfiguration(1, List.of(configured)))) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                ((JPasswordField) headers.getEditorComponent()).setText("first-row-secret");
+                headers.setRowSelectionInterval(1, 1);
+
+                subject.finishActiveEditing();
+
+                Map<String, char[]> replacements = field(subject, "replacementSecrets", Map.class);
+                assertThat(replacements).containsOnlyKeys(firstRowId);
+                assertThat(replacements.get(firstRowId)).containsExactly("first-row-secret".toCharArray());
+                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+                assertThat(headers.getValueAt(1, 1)).isEqualTo("");
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Changing servers settles a password against its original credential row")
+    void finishActiveEditing_whenServerSelectionChanges_commitsCredentialToOriginalServer() throws Exception {
+        String firstRowId = UUID.randomUUID().toString();
+        McpServerConfiguration first = httpServerWithHeader(firstRowId, "");
+        McpServerConfiguration second = server("Second HTTP", "second_http", McpTransportType.STREAMABLE_HTTP);
+        try (var fixture = fixture(
+                "inline-credential-server-identity",
+                new McpConfiguration(1, List.of(first, second))
+        )) {
+            CompletableFuture<Boolean> publication = callOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField password = (JPasswordField) headers.getEditorComponent();
+                password.setText("first-server-secret");
+
+                component(subject, "MCP servers", JList.class).setSelectedIndex(1);
+
+                assertThat(password.getPassword()).isEmpty();
+                Map<String, char[]> replacements = field(subject, "replacementSecrets", Map.class);
+                assertThat(replacements).containsOnlyKeys(firstRowId);
+                assertThat(replacements.get(firstRowId)).containsExactly("first-server-secret".toCharArray());
+                assertThat(headers.getRowCount()).isZero();
+                return subject.savePendingChangesAsync();
+            });
+
+            assertThat(publication.get(5, TimeUnit.SECONDS))
+                    .as(callOnEdt(fixture.subject()::lastSaveError))
+                    .isTrue();
+            McpConfiguration persisted = ((McpConfigurationLoadResult.Valid) fixture.manager().loadResult())
+                    .configuration();
+            McpServerConfiguration persistedFirst = persisted.servers().stream()
+                    .filter(server -> server.id().equals(first.id()))
+                    .findFirst()
+                    .orElseThrow();
+            McpServerConfiguration persistedSecond = persisted.servers().stream()
+                    .filter(server -> server.id().equals(second.id()))
+                    .findFirst()
+                    .orElseThrow();
+            McpSecretReference persistedHeader = persistedFirst.headers().getFirst();
+            assertThat(persistedHeader.secretId()).startsWith("MCP_");
+            assertThat(persistedSecond.headers()).isEmpty();
+            assertStoredSecret(fixture.storagePaths(), persistedHeader.secretId(), "first-server-secret");
+        }
+    }
+
+    @Test
+    @DisplayName("Disposal cancels an inline password edit and wipes its prior pending replacement")
+    void disposePanel_whenCredentialValueIsEditing_wipesEditorAndReplacement() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration configured = httpServerWithHeader(rowId, "");
+        AtomicReference<char[]> owned = new AtomicReference<>();
+        PanelFixture fixture = fixture("inline-credential-dispose", new McpConfiguration(1, List.of(configured)));
+        try {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                applyHeaderReplacement(subject, "pending-secret");
+                Map<String, char[]> replacements = field(subject, "replacementSecrets", Map.class);
+                owned.set(replacements.get(rowId));
+                JTable headers = component(subject, "HTTP headers", JTable.class);
+                assertThat(headers.editCellAt(0, 1)).isTrue();
+                JPasswordField password = (JPasswordField) headers.getEditorComponent();
+                password.setText("uncommitted-secret");
+
+                subject.disposePanel();
+
+                assertThat(password.getPassword()).isEmpty();
+                assertThat(headers.isEditing()).isFalse();
+                assertThat(headers.getRowCount()).isZero();
+                assertThat(replacements).isEmpty();
+            });
+            assertThat(owned.get()).containsOnly('\0');
+        } finally {
+            fixture.close();
         }
     }
 
@@ -266,6 +953,47 @@ class McpPanelTest {
     }
 
     @Test
+    @DisplayName("Removing a server clears tool selection before showing the next server")
+    void removeServer_whenNextServerHasSameToolName_doesNotCarryToolSelectionAcrossServers() throws Exception {
+        McpServerConfiguration first = server("First", "first", McpTransportType.STDIO);
+        McpServerConfiguration second = server("Second", "second", McpTransportType.STDIO);
+        try (var fixture = fixture("remove-tool-selection", new McpConfiguration(1, List.of(first, second)))) {
+            runOnEdt(() -> {
+                McpPanel subject = fixture.subject();
+                McpDiscoveredTool firstTool = new McpDiscoveredTool(
+                        "echo",
+                        "First echo",
+                        "First server tool",
+                        Map.of("type", "object"),
+                        null
+                );
+                McpDiscoveredTool secondTool = new McpDiscoveredTool(
+                        "echo",
+                        "Second echo",
+                        "Second server tool",
+                        Map.of("type", "object"),
+                        null
+                );
+                Map<String, List<McpDiscoveredTool>> tools = field(subject, "lastTools", Map.class);
+                tools.put(first.id(), List.of(firstTool));
+                tools.put(second.id(), List.of(secondTool));
+                invoke(subject, "refreshToolPresentation");
+                JTable table = component(subject, "Discovered MCP tools", JTable.class);
+                table.setRowSelectionInterval(0, 0);
+
+                button(subject, "Remove selected MCP server").doClick();
+
+                assertThat(((McpServerConfiguration) component(subject, "MCP servers", JList.class)
+                        .getSelectedValue()).id()).isEqualTo(second.id());
+                assertThat(table.getRowCount()).isEqualTo(1);
+                assertThat(table.getSelectedRow()).isEqualTo(-1);
+                assertThat(field(subject, "toolDetailsHeading", JLabel.class).getText())
+                        .isEqualTo("No tool selected");
+            });
+        }
+    }
+
+    @Test
     @DisplayName("Tool schemas retain pretty-printed JSON line breaks and indentation")
     void formatSchemas_whenSchemaIsNested_preservesPrettyPrintedLayout() throws Exception {
         McpServerConfiguration configured = server("Schema", "schema", McpTransportType.STDIO);
@@ -306,14 +1034,14 @@ class McpPanelTest {
         try (var fixture = new PanelFixture(storagePaths, manager, subject)) {
             assertThat(callOnEdt(() -> button(subject, "Replace / Recreate invalid configuration").isVisible()))
                     .isTrue();
-            assertThat(callOnEdt(() -> button(subject, "Add server").isEnabled())).isTrue();
+            assertThat(callOnEdt(() -> button(subject, "New MCP server").isEnabled())).isTrue();
 
             CompletableFuture<Boolean> untouched = callOnEdt(subject::savePendingChangesAsync);
             assertThat(untouched.get(5, TimeUnit.SECONDS)).isTrue();
             assertThat(Files.readString(storagePaths.mcpFile())).isEqualTo("{invalid");
 
             CompletableFuture<Boolean> dirty = callOnEdt(() -> {
-                button(subject, "Add server").doClick();
+                menuItem(subject, "Command-line (stdio)").doClick();
                 component(subject, "MCP executable", JTextField.class).setText("java");
                 return subject.savePendingChangesAsync();
             });
@@ -325,50 +1053,62 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("Settings groups use the full editor width and place credential details below their table")
+    @DisplayName("Settings groups use the full editor width and place credential actions below their table")
     void layout_whenSettingsTabIsNarrow_keepsGroupsAlignedAndOrdered() throws Exception {
-        McpServerConfiguration configured = server("Layout", "layout", McpTransportType.STDIO);
-        try (var fixture = fixture("layout", new McpConfiguration(1, List.of(configured)))) {
+        McpServerConfiguration stdio = server("STDIO layout", "stdio_layout", McpTransportType.STDIO);
+        McpServerConfiguration http = server("HTTP layout", "http_layout", McpTransportType.STREAMABLE_HTTP);
+        try (var fixture = fixture("layout", new McpConfiguration(1, List.of(stdio, http)))) {
             runOnEdt(() -> {
                 fixture.subject().setSize(560, 430);
                 layoutRecursively(fixture.subject());
                 layoutRecursively(fixture.subject());
                 JScrollPane settingsScroll = settingsScroll(fixture.subject());
                 Container content = (Container) settingsScroll.getViewport().getView();
-                JLabel transport = label(fixture.subject(), "Transport");
                 JTextField executable = component(fixture.subject(), "MCP executable", JTextField.class);
                 JTable environment = component(fixture.subject(), "Environment variables", JTable.class);
                 Object environmentEditor = field(fixture.subject(), "environmentEditor", Object.class);
-                JTextField name = components((Container) environmentEditor, JTextField.class).getFirst();
-                java.awt.Rectangle transportBounds = SwingUtilities.convertRectangle(
-                        transport.getParent(),
-                        new java.awt.Rectangle(0, 0, transport.getParent().getWidth(), transport.getParent().getHeight()),
-                        content
-                );
+                JButton addCredential = findButton((Container) environmentEditor, "Add");
                 java.awt.Rectangle executableBounds = SwingUtilities.convertRectangle(
                         executable.getParent(),
                         new java.awt.Rectangle(0, 0, executable.getParent().getWidth(), executable.getParent().getHeight()),
                         content
                 );
+                JScrollPane environmentScroll = (JScrollPane) SwingUtilities.getAncestorOfClass(
+                        JScrollPane.class,
+                        environment
+                );
                 int tableBottom = SwingUtilities.convertPoint(
-                        environment,
+                        environmentScroll,
                         0,
-                        environment.getHeight(),
+                        environmentScroll.getHeight(),
                         (Container) environmentEditor
                 ).y;
-                int detailTop = SwingUtilities.convertPoint(name, 0, 0, (Container) environmentEditor).y;
+                int actionsTop = SwingUtilities.convertPoint(
+                        addCredential,
+                        0,
+                        0,
+                        (Container) environmentEditor
+                ).y;
 
-                assertThat(transportBounds.x).isLessThanOrEqualTo(8);
-                assertThat(transportBounds.width).isGreaterThan(content.getWidth() * 4 / 5);
                 assertThat(executableBounds.x).isLessThanOrEqualTo(8);
                 assertThat(executableBounds.width).isGreaterThan(content.getWidth() * 4 / 5);
-                assertThat(detailTop).isGreaterThanOrEqualTo(tableBottom);
+                assertThat(actionsTop).isGreaterThanOrEqualTo(tableBottom);
+                assertThat(components((Container) environmentEditor, JTextField.class)).isEmpty();
+                assertThat(components((Container) environmentEditor, JButton.class))
+                        .extracting(JButton::getText)
+                        .containsExactly("Add", "Remove");
+                JPanel transportCards = field(fixture.subject(), "transportCards", JPanel.class);
+                Component visibleStdioCard = Arrays.stream(transportCards.getComponents())
+                        .filter(Component::isVisible)
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(SwingUtilities.isDescendingFrom(executable, visibleStdioCard)).isTrue();
+                assertThat(components(fixture.subject(), JLabel.class))
+                        .extracting(JLabel::getText)
+                        .doesNotContain("Transport");
 
-                component(
-                        fixture.subject(),
-                        "Streamable HTTP transport",
-                        JToggleButton.class
-                ).doClick();
+                JList<?> servers = component(fixture.subject(), "MCP servers", JList.class);
+                servers.setSelectedIndex(1);
                 layoutRecursively(fixture.subject());
                 JTextField endpoint = component(fixture.subject(), "MCP HTTP endpoint", JTextField.class);
                 java.awt.Rectangle endpointBounds = SwingUtilities.convertRectangle(
@@ -378,6 +1118,11 @@ class McpPanelTest {
                 );
                 assertThat(endpointBounds.x).isLessThanOrEqualTo(8);
                 assertThat(endpointBounds.width).isGreaterThan(content.getWidth() * 4 / 5);
+                Component visibleHttpCard = Arrays.stream(transportCards.getComponents())
+                        .filter(Component::isVisible)
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(SwingUtilities.isDescendingFrom(endpoint, visibleHttpCard)).isTrue();
             });
         }
     }
@@ -419,21 +1164,28 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("Footer caps its viewport while preserving scrollable full text")
-    void footer_whenStatusIsLong_capsViewportWithoutClippingDocument() throws Exception {
+    @DisplayName("Footer grows from one visual row to its three-row cap while preserving full text")
+    void footer_whenStatusChanges_sizesViewportToVisibleRowsWithoutClippingDocument() throws Exception {
         try (var fixture = fixture("footer", null)) {
             runOnEdt(() -> {
                 JTextArea status = component(fixture.subject(), "MCP status", JTextArea.class);
                 JScrollPane scroll = field(fixture.subject(), "statusScroll", JScrollPane.class);
-                String message = "Long authoritative status\n".repeat(80);
-                status.setText(message);
                 fixture.subject().setSize(560, 430);
+                status.setText("Short status");
                 layoutRecursively(fixture.subject());
                 layoutRecursively(fixture.subject());
-                int expectedHeight = status.getFontMetrics(status.getFont()).getHeight() * 3
-                        + status.getInsets().top + status.getInsets().bottom;
+                int rowHeight = status.getFontMetrics(status.getFont()).getHeight();
+                int verticalInsets = status.getInsets().top + status.getInsets().bottom;
 
-                assertThat(status.getPreferredScrollableViewportSize().height).isEqualTo(expectedHeight);
+                assertThat(status.getPreferredScrollableViewportSize().height).isEqualTo(rowHeight + verticalInsets);
+
+                String message = "Long authoritative status ".repeat(80);
+                status.setText(message);
+                layoutRecursively(fixture.subject());
+                layoutRecursively(fixture.subject());
+
+                assertThat(status.getPreferredScrollableViewportSize().height)
+                        .isEqualTo(rowHeight * 3 + verticalInsets);
                 assertThat(status.getText()).isEqualTo(message);
                 assertThat(scroll.getVerticalScrollBarPolicy()).isEqualTo(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
                 assertThat(button(fixture.subject(), "Replace / Recreate invalid configuration").getParent())
@@ -534,6 +1286,93 @@ class McpPanelTest {
     }
 
     @Test
+    @DisplayName("An asynchronously rejected publication consumes its admitted credential value")
+    void savePendingChangesAsync_whenPublicationIsRejected_requiresCredentialReentry() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration configured = httpServerWithHeader(rowId, "");
+        AtomicLong generation = new AtomicLong();
+        McpManager manager = controlledManager(new McpConfiguration(1, List.of(configured)), generation);
+        CompletableFuture<McpApplyResult> rejectedPublication = new CompletableFuture<>();
+        CountDownLatch submitted = new CountDownLatch(1);
+        AtomicReference<char[]> submittedSecret = new AtomicReference<>();
+        doAnswer(invocation -> {
+            McpConfigurationDraft draft = invocation.getArgument(0);
+            char[] secret = draft.replacementSecrets().get(rowId);
+            submittedSecret.set(Arrays.copyOf(secret, secret.length));
+            draft.clearSecrets();
+            submitted.countDown();
+            return rejectedPublication;
+        }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
+        McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+        try {
+            runOnEdt(() -> applyHeaderReplacement(subject, "submitted-secret"));
+            CompletableFuture<Boolean> result = callOnEdt(subject::savePendingChangesAsync);
+            assertThat(submitted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(submittedSecret.get()).containsExactly("submitted-secret".toCharArray());
+            assertThat(callOnEdt(() -> field(subject, "replacementSecrets", Map.class))).isEmpty();
+
+            rejectedPublication.complete(new McpApplyResult(
+                    McpApplyOutcome.REJECTED_OLD_STATE_INTACT,
+                    0,
+                    new McpConfiguration(1, List.of(configured)),
+                    "publication rejected"
+            ));
+
+            assertThat(result.get(5, TimeUnit.SECONDS)).isFalse();
+            flushEdt();
+            assertThat(callOnEdt(() -> field(subject, "replacementSecrets", Map.class))).isEmpty();
+            assertThat(callOnEdt(() -> component(subject, "HTTP headers", JTable.class).getValueAt(0, 1)))
+                    .isEqualTo("");
+        } finally {
+            if (!rejectedPublication.isDone()) {
+                rejectedPublication.completeExceptionally(new IllegalStateException("test cleanup"));
+            }
+            if (submittedSecret.get() != null) {
+                Arrays.fill(submittedSecret.get(), '\0');
+            }
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
+    @DisplayName("An unobservable applied publication still consumes its admitted credential value")
+    void savePendingChangesAsync_whenAdvancedStateCannotBeObserved_requiresCredentialReentry() throws Exception {
+        String rowId = UUID.randomUUID().toString();
+        McpServerConfiguration configured = httpServerWithHeader(rowId, "");
+        AtomicLong generation = new AtomicLong();
+        McpManager manager = controlledManager(new McpConfiguration(1, List.of(configured)), generation);
+        when(manager.publicationsSettled()).thenReturn(
+                CompletableFuture.completedFuture(null),
+                CompletableFuture.failedFuture(new IllegalStateException("observation failed"))
+        );
+        doAnswer(invocation -> {
+            invocation.<McpConfigurationDraft>getArgument(0).clearSecrets();
+            generation.set(2);
+            return CompletableFuture.completedFuture(applied(
+                    1,
+                    withHeaderSecret(configured, "MCP_22222222222222222222222222222222")
+            ));
+        }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
+        McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+        try {
+            runOnEdt(() -> applyHeaderReplacement(subject, "retry-after-observation-failure"));
+
+            CompletableFuture<Boolean> result = callOnEdt(subject::savePendingChangesAsync);
+
+            assertThat(result.get(5, TimeUnit.SECONDS)).isFalse();
+            flushEdt();
+            assertThat(callOnEdt(subject::lastSaveError)).isEqualTo("observation failed");
+            assertThat(callOnEdt(() -> field(subject, "replacementSecrets", Map.class))).isEmpty();
+            assertThat(callOnEdt(() -> component(subject, "HTTP headers", JTable.class).getValueAt(0, 1)))
+                    .isEqualTo("");
+        } finally {
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
     @DisplayName("A publication completed after disposal settles the original caller without touching presentation")
     void savePendingChangesAsync_whenPublicationCompletesAfterDisposal_settlesCallerFuture() throws Exception {
         McpServerConfiguration configured = server("Late", "late", McpTransportType.STDIO);
@@ -574,27 +1413,164 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("A save waits for the manager publication barrier before making publication decisions")
-    void savePendingChangesAsync_whenExternalPublicationIsUnsettled_waitsForBarrier() throws Exception {
-        McpServerConfiguration configured = server("Barrier", "barrier", McpTransportType.STDIO);
+    @DisplayName("Disposal settles an applied save waiting to observe a newer manager generation")
+    void savePendingChangesAsync_whenDisposedDuringAdvancedObservation_settlesFromAppliedOutcome() throws Exception {
+        McpServerConfiguration configured = server("Advanced disposal", "advanced_disposal", McpTransportType.STDIO);
         AtomicLong generation = new AtomicLong();
         McpManager manager = controlledManager(new McpConfiguration(1, List.of(configured)), generation);
-        CompletableFuture<Void> barrier = new CompletableFuture<>();
-        when(manager.publicationsSettled()).thenReturn(barrier);
+        CompletableFuture<Void> observationBarrier = new CompletableFuture<>();
+        CountDownLatch observationStarted = new CountDownLatch(1);
+        AtomicInteger observations = new AtomicInteger();
+        when(manager.publicationsSettled()).thenAnswer(invocation -> {
+            if (observations.incrementAndGet() == 1) {
+                return CompletableFuture.completedFuture(null);
+            }
+            observationStarted.countDown();
+            return observationBarrier;
+        });
         doAnswer(invocation -> {
             invocation.<McpConfigurationDraft>getArgument(0).clearSecrets();
-            generation.set(1);
+            generation.set(2);
             return CompletableFuture.completedFuture(applied(1, configured));
         }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
         McpPanel subject = callOnEdt(() -> new McpPanel(manager));
         try {
             CompletableFuture<Boolean> result = callOnEdt(subject::savePendingChangesAsync);
-            runOnEdt(() -> component(subject, "MCP server name", JTextField.class).getText());
+            assertThat(observationStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            runOnEdt(subject::disposePanel);
+
+            assertThat(result.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(observationBarrier).isNotDone();
+            assertThat(callOnEdt(() -> field(subject, "serverModel", javax.swing.DefaultListModel.class).isEmpty()))
+                    .isTrue();
+            assertThat(callOnEdt(() -> field(subject, "publicationUiSettlement", CompletableFuture.class).isDone()))
+                    .isTrue();
+            observationBarrier.complete(null);
+            flushEdt();
+            assertThat(callOnEdt(() -> field(subject, "serverModel", javax.swing.DefaultListModel.class).isEmpty()))
+                    .isTrue();
+        } finally {
+            observationBarrier.complete(null);
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
+    @DisplayName("Disposal prevents rejected Repair observation from restoring cleared models")
+    void repairInvalidConfiguration_whenDisposedDuringRejectedObservation_keepsModelsCleared() throws Exception {
+        AtomicLong generation = new AtomicLong();
+        AtomicReference<McpConfigurationLoadResult> loadResult = new AtomicReference<>(
+                new McpConfigurationLoadResult.Invalid("Invalid test configuration")
+        );
+        McpManager manager = invalidControlledManager(generation, loadResult);
+        CompletableFuture<Void> observationBarrier = new CompletableFuture<>();
+        CountDownLatch observationStarted = new CountDownLatch(1);
+        AtomicInteger observations = new AtomicInteger();
+        when(manager.publicationsSettled()).thenAnswer(invocation -> {
+            if (observations.incrementAndGet() == 1) {
+                return CompletableFuture.completedFuture(null);
+            }
+            observationStarted.countDown();
+            return observationBarrier;
+        });
+        McpServerConfiguration externallyRepaired = server(
+                "External repair",
+                "external_repair",
+                McpTransportType.STDIO
+        );
+        doAnswer(invocation -> {
+            invocation.<McpConfigurationDraft>getArgument(0).clearSecrets();
+            return CompletableFuture.completedFuture(new McpApplyResult(
+                    McpApplyOutcome.REJECTED_OLD_STATE_INTACT,
+                    0,
+                    McpConfiguration.empty(),
+                    "publication rejected"
+            ));
+        }).when(manager).replaceInvalidAndApply(any(McpConfigurationDraft.class));
+        McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+        try {
+            runOnEdt(() -> clickWithConfirmation(
+                    subject,
+                    "Replace / Recreate invalid configuration",
+                    JOptionPane.OK_OPTION
+            ));
+            assertThat(observationStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            generation.set(1);
+            loadResult.set(new McpConfigurationLoadResult.Valid(
+                    new McpConfiguration(1, List.of(externallyRepaired))
+            ));
+
+            runOnEdt(subject::disposePanel);
+
+            assertThat(callOnEdt(() -> field(subject, "publicationUiSettlement", CompletableFuture.class).isDone()))
+                    .isTrue();
+            assertThat(callOnEdt(() -> field(subject, "serverModel", javax.swing.DefaultListModel.class).isEmpty()))
+                    .isTrue();
+            observationBarrier.complete(null);
+            flushEdt();
+            assertThat(callOnEdt(() -> field(subject, "serverModel", javax.swing.DefaultListModel.class).isEmpty()))
+                    .isTrue();
+        } finally {
+            observationBarrier.complete(null);
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
+    @DisplayName("A save waits for the manager barrier without recommitting editors")
+    void savePendingChangesAsync_whenExternalPublicationIsUnsettled_usesInitialEditorSettlement() throws Exception {
+        McpServerConfiguration base = server("Barrier", "barrier", McpTransportType.STDIO);
+        McpServerConfiguration configured = new McpServerConfiguration(
+                base.id(),
+                base.name(),
+                base.modelId(),
+                base.enabled(),
+                base.automatic(),
+                base.transport(),
+                base.endpoint(),
+                base.executable(),
+                List.of("original"),
+                base.headers(),
+                base.environment(),
+                base.longRunning(),
+                base.disabledTools()
+        );
+        AtomicLong generation = new AtomicLong();
+        McpManager manager = controlledManager(new McpConfiguration(1, List.of(configured)), generation);
+        CompletableFuture<Void> barrier = new CompletableFuture<>();
+        when(manager.publicationsSettled()).thenReturn(barrier);
+        AtomicReference<McpConfiguration> submittedConfiguration = new AtomicReference<>();
+        doAnswer(invocation -> {
+            McpConfigurationDraft draft = invocation.getArgument(0);
+            submittedConfiguration.set(draft.configuration());
+            draft.clearSecrets();
+            generation.set(1);
+            return CompletableFuture.completedFuture(new McpApplyResult(
+                    McpApplyOutcome.APPLIED,
+                    1,
+                    submittedConfiguration.get(),
+                    ""
+            ));
+        }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
+        McpPanel subject = callOnEdt(() -> new McpPanel(manager));
+        try {
+            CompletableFuture<Boolean> result = callOnEdt(subject::savePendingChangesAsync);
+            runOnEdt(() -> {
+                JTable arguments = component(subject, "Ordered MCP arguments", JTable.class);
+                assertThat(arguments.editCellAt(0, 0)).isTrue();
+                ((JTextField) arguments.getEditorComponent()).setText("late edit");
+            });
 
             assertThat(result).isNotDone();
             verify(manager, times(0)).saveAndApply(any(McpConfigurationDraft.class));
             barrier.complete(null);
             assertThat(result.get(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(submittedConfiguration.get().servers().getFirst().arguments()).containsExactly("original");
+            assertThat(callOnEdt(() -> component(subject, "Ordered MCP arguments", JTable.class).getValueAt(0, 0)))
+                    .isEqualTo("original");
         } finally {
             runOnEdt(subject::disposePanel);
             flushEdt();
@@ -693,7 +1669,12 @@ class McpPanelTest {
             generation.set(1);
             return CompletableFuture.completedFuture(applyResult);
         }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
-        CompletableFuture<McpVerificationResult> discovery = new CompletableFuture<>();
+        CompletableFuture<McpVerificationResult> discovery = new CompletableFuture<>() {
+            @Override
+            public Executor defaultExecutor() {
+                return Runnable::run;
+            }
+        };
         CountDownLatch discoveryStarted = new CountDownLatch(1);
         doAnswer(invocation -> {
             discoveryStarted.countDown();
@@ -720,7 +1701,6 @@ class McpPanelTest {
                             null
                     ))
             ));
-            assertThat(ForkJoinPool.commonPool().awaitQuiescence(5, TimeUnit.SECONDS)).isTrue();
             flushEdt();
 
             assertThat(callOnEdt(() -> component(subject, "MCP status", JTextArea.class).getText()))
@@ -816,7 +1796,12 @@ class McpPanelTest {
             generation.set(1);
             return CompletableFuture.completedFuture(applyResult);
         }).when(manager).saveAndApply(any(McpConfigurationDraft.class));
-        CompletableFuture<McpVerificationResult> discovery = new CompletableFuture<>();
+        CompletableFuture<McpVerificationResult> discovery = new CompletableFuture<>() {
+            @Override
+            public Executor defaultExecutor() {
+                return Runnable::run;
+            }
+        };
         CountDownLatch discoveryStarted = new CountDownLatch(1);
         doAnswer(invocation -> {
             discoveryStarted.countDown();
@@ -907,6 +1892,7 @@ class McpPanelTest {
                     "MCP_22222222222222222222222222222222")));
             assertThat(first.get(5, TimeUnit.SECONDS)).isTrue();
             assertThat(secondSubmitted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(second).isNotDone();
             assertThat(secondSubmittedSecret.get()).containsExactly("second-secret".toCharArray());
 
             generation.set(2);
@@ -923,6 +1909,9 @@ class McpPanelTest {
             }
             if (!secondPublication.isDone()) {
                 secondPublication.completeExceptionally(new IllegalStateException("test cleanup"));
+            }
+            if (secondSubmittedSecret.get() != null) {
+                Arrays.fill(secondSubmittedSecret.get(), '\0');
             }
             runOnEdt(subject::disposePanel);
             flushEdt();
@@ -957,11 +1946,16 @@ class McpPanelTest {
 
             fixture.subject().disposePanel();
             flushEdt();
-            runOnEdt(fixture.subject()::disposePanel);
+            runOnEdt(() -> {
+                fixture.subject().disposePanel();
+                menuItem(fixture.subject(), "HTTP Server (http)").doClick();
+            });
 
             assertThat(callOnEdt(() -> component(fixture.subject(), "Ordered MCP arguments", JTable.class).isEditing()))
                     .isFalse();
             assertThat(callOnEdt(() -> field(fixture.subject(), "replacementSecrets", Map.class))).isEmpty();
+            assertThat(callOnEdt(() -> component(fixture.subject(), "MCP servers", JList.class)
+                    .getModel().getSize())).isZero();
         } finally {
             fixture.close();
         }
@@ -1051,10 +2045,24 @@ class McpPanelTest {
     }
 
     private void applyHeaderReplacement(McpPanel subject, String replacement) {
-        Object headerEditor = field(subject, "headerEditor", Object.class);
-        Container editor = (Container) headerEditor;
-        findComponent(editor, JPasswordField.class).setText(replacement);
-        findButton(editor, "Apply").doClick();
+        JTable headers = component(subject, "HTTP headers", JTable.class);
+        assertThat(headers.editCellAt(0, 1)).isTrue();
+        JPasswordField password = (JPasswordField) headers.getEditorComponent();
+        password.setText(replacement);
+        assertThat(headers.getCellEditor().stopCellEditing()).isTrue();
+    }
+
+    private void assertStoredSecret(StoragePaths storagePaths, String secretId, String expected) {
+        try (var lookup = new McpSecretVault(new ApiTokenVault(storagePaths)).lookup(secretId)) {
+            char[] token = lookup.token();
+            try {
+                assertThat(token).containsExactly(expected.toCharArray());
+            } finally {
+                if (token != null) {
+                    Arrays.fill(token, '\0');
+                }
+            }
+        }
     }
 
     private PanelFixture fixture(String name, McpConfiguration configuration) throws Exception {
@@ -1114,13 +2122,6 @@ class McpPanelTest {
                 .orElseThrow(() -> new AssertionError("Settings scroll pane not found"));
     }
 
-    private JLabel label(Container root, String text) {
-        return components(root, JLabel.class).stream()
-                .filter(component -> text.equals(component.getText()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("Label not found: %s".formatted(text)));
-    }
-
     private JCheckBox findCheckBox(Container root, String text) {
         return components(root, JCheckBox.class).stream()
                 .filter(component -> text.equals(component.getText()))
@@ -1128,11 +2129,19 @@ class McpPanelTest {
                 .orElseThrow(() -> new AssertionError("Checkbox not found: %s".formatted(text)));
     }
 
+    private JMenuItem menuItem(McpPanel subject, String text) {
+        JPopupMenu menu = field(subject, "serverCreationMenu", JPopupMenu.class);
+        List<JMenuItem> matches = components(menu, JMenuItem.class).stream()
+                .filter(item -> text.equals(item.getText()))
+                .toList();
+        assertThat(matches).as("menu item %s", text).hasSize(1);
+        return matches.getFirst();
+    }
+
     private JButton button(Container root, String accessibleName) {
         List<JButton> matches = components(root, JButton.class).stream()
                 .filter(component -> component.getAccessibleContext() != null)
                 .filter(component -> accessibleName.equals(component.getAccessibleContext().getAccessibleName()))
-                .filter(component -> !"Add server".equals(accessibleName) || component.getIcon() != null)
                 .toList();
         assertThat(matches).as("button named %s", accessibleName).hasSize(1);
         return matches.getFirst();
@@ -1145,11 +2154,6 @@ class McpPanelTest {
                 .toList();
         assertThat(matches).as("component named %s", accessibleName).hasSize(1);
         return matches.getFirst();
-    }
-
-    private <T extends Component> T findComponent(Container root, Class<T> type) {
-        return components(root, type).stream().findFirst()
-                .orElseThrow(() -> new AssertionError("Component not found: %s".formatted(type.getSimpleName())));
     }
 
     private JButton findButton(Container root, String text) {

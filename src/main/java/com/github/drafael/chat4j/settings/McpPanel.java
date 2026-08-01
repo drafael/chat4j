@@ -41,8 +41,8 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.net.URI;
 import java.nio.CharBuffer;
+import java.text.Normalizer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -61,13 +61,15 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableCellEditor;
+import javax.swing.text.View;
 import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static java.lang.Math.ceil;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
-import static java.util.Arrays.copyOf;
 import static java.util.Arrays.fill;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
@@ -84,21 +86,21 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private static final String EDITOR_CARD = "editor";
     private static final String CANCELLED_STATUS = "Verification cancelled because settings or selection changed.";
     private static final String CLOSED_SAVE_ERROR = "MCP settings save was cancelled because Settings closed.";
+    private static final String CREDENTIAL_MASK = "••••••••";
     private static final int ICON_SIZE = 16;
+    private static final int MAX_STATUS_ROWS = 3;
 
     private final McpManager manager;
     private final DefaultListModel<McpServerConfiguration> serverModel = new DefaultListModel<>();
     private final JList<McpServerConfiguration> serverList = new JList<>(serverModel);
     private final JTextField searchField = new JTextField();
-    private final JButton addButton = iconButton("Add server", "/icons/titlebar/square-pen.svg");
+    private final JButton addButton = compactTextButton("+", "New MCP server");
     private final JButton emptyAddButton = new JButton("Add server");
-    private final JButton removeButton = iconButton("Remove server", "/icons/input/x.svg");
+    private final JButton removeButton = compactTextButton("−", "Remove selected MCP server");
+    private final JPopupMenu serverCreationMenu = new JPopupMenu();
     private final JTextField nameField = new JTextField();
-    private final JTextField modelIdField = new JTextField();
     private final JCheckBox enabledBox = new JCheckBox("Enabled");
     private final JCheckBox automaticBox = new JCheckBox("Run tools automatically");
-    private final JToggleButton stdioToggle = new JToggleButton("STDIO");
-    private final JToggleButton httpToggle = new JToggleButton("HTTP");
     private final CardLayout transportCardsLayout = new CardLayout();
     private final JPanel transportCards = new VisibleCardPanel(transportCardsLayout);
     private final JTextField endpointField = new JTextField();
@@ -124,8 +126,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final Map<String, Set<String>> disabledTools = new HashMap<>();
     private final Map<String, ToolSnapshotState> toolStates = new HashMap<>();
     private final Map<String, char[]> replacementSecrets = new HashMap<>();
+    private final Set<String> unstableModelIdServerIds = new HashSet<>();
     private final Set<SaveAction> pendingSaveActions = new HashSet<>();
     private final AtomicReference<AtomicBoolean> verifyCancellation = new AtomicReference<>(new AtomicBoolean());
+    private final CompletableFuture<Void> disposalSignal = new CompletableFuture<>();
     private boolean updating;
     private boolean disposed;
     private boolean invalidBase;
@@ -134,7 +138,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private boolean verificationRunning;
     private boolean publicationFinishing;
     private String editingServerId;
-    private McpTransportType editingTransport = McpTransportType.STDIO;
     private long requestIdentity;
     private long draftRevision;
     private CompletableFuture<Void> publicationUiSettlement = CompletableFuture.completedFuture(null);
@@ -148,6 +151,12 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         this.manager = manager;
         setLayout(new BorderLayout(8, 8));
         setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        JMenuItem addStdioServerItem = new JMenuItem("Command-line (stdio)");
+        addStdioServerItem.addActionListener(event -> addServer(McpTransportType.STDIO));
+        serverCreationMenu.add(addStdioServerItem);
+        JMenuItem addHttpServerItem = new JMenuItem("HTTP Server (http)");
+        addHttpServerItem.addActionListener(event -> addServer(McpTransportType.STREAMABLE_HTTP));
+        serverCreationMenu.add(addHttpServerItem);
         add(createMasterDetail(), BorderLayout.CENTER);
         add(createFooter(), BorderLayout.SOUTH);
         bindListeners();
@@ -194,8 +203,8 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         if (toolTable.isEditing()) {
             toolTable.getCellEditor().stopCellEditing();
         }
-        headerEditor.commitDetail();
-        environmentEditor.commitDetail();
+        headerEditor.stopEditing();
+        environmentEditor.stopEditing();
         commitServer(editingServerId);
     }
 
@@ -208,6 +217,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         disposed = true;
+        disposalSignal.complete(null);
         verifyCancellation.get().set(true);
         requestIdentity++;
         pendingSaveActions.stream()
@@ -218,6 +228,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         if (toolTable.isEditing()) {
             toolTable.getCellEditor().cancelCellEditing();
         }
+        serverCreationMenu.setVisible(false);
         if (activeSchemaDialog != null) {
             activeSchemaDialog.dispose();
             activeSchemaDialog = null;
@@ -231,6 +242,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         formattedSchemas.clear();
         disabledTools.clear();
         toolStates.clear();
+        unstableModelIdServerIds.clear();
     }
 
     private JComponent createMasterDetail() {
@@ -308,16 +320,14 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         JPanel header = new JPanel(new GridBagLayout());
         GridBagConstraints constraints = baseConstraints();
         addFormRow(header, constraints, 0, "Name", 'N', nameField);
-        addFormRow(header, constraints, 1, "Model ID", 'M', modelIdField);
         constraints.gridx = 1;
-        constraints.gridy = 2;
+        constraints.gridy = 1;
         constraints.weightx = 1;
         JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         options.add(enabledBox);
         options.add(automaticBox);
         header.add(options, constraints);
         nameField.getAccessibleContext().setAccessibleName("MCP server name");
-        modelIdField.getAccessibleContext().setAccessibleName("MCP model ID");
         return header;
     }
 
@@ -325,19 +335,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         WidthTrackingPanel content = new WidthTrackingPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 8));
-        content.add(sectionHeading("Transport"));
-        JPanel toggles = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        ButtonGroup group = new ButtonGroup();
-        group.add(stdioToggle);
-        group.add(httpToggle);
-        stdioToggle.putClientProperty(FlatClientProperties.STYLE_CLASS, "segmentedButton");
-        httpToggle.putClientProperty(FlatClientProperties.STYLE_CLASS, "segmentedButton");
-        stdioToggle.getAccessibleContext().setAccessibleName("STDIO transport");
-        httpToggle.getAccessibleContext().setAccessibleName("Streamable HTTP transport");
-        toggles.add(stdioToggle);
-        toggles.add(httpToggle);
-        content.add(toggles);
-        content.add(Box.createVerticalStrut(8));
         transportCards.add(createStdioCard(), McpTransportType.STDIO.name());
         transportCards.add(createHttpCard(), McpTransportType.STREAMABLE_HTTP.name());
         content.add(transportCards);
@@ -369,11 +366,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private JPanel createHttpCard() {
         JPanel card = verticalPanel();
         card.add(fieldPanel("Endpoint", 'E', endpointField));
-        JLabel warning = new JLabel("Credentials are encrypted; URL queries remain plaintext.");
-        warning.putClientProperty(FlatClientProperties.STYLE_CLASS, "small");
-        JPanel warningRow = new JPanel(new BorderLayout());
-        warningRow.add(warning, BorderLayout.WEST);
-        card.add(warningRow);
         card.add(Box.createVerticalStrut(10));
         card.add(sectionHeading("HTTP headers"));
         card.add(headerEditor);
@@ -400,7 +392,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         toolDetails.getAccessibleContext().setAccessibleName("Selected MCP tool details");
         JScrollPane detailsScroll = new JScrollPane(toolDetails);
         detailsScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        detailsScroll.setPreferredSize(new Dimension(0, 92));
+        detailsScroll.setPreferredSize(new Dimension(0, 140));
         details.add(detailsScroll, BorderLayout.CENTER);
         JPanel detailActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         detailActions.add(showSchemaButton);
@@ -434,12 +426,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 loadSelected();
             }
         });
-        addButton.addActionListener(event -> addServer());
-        emptyAddButton.addActionListener(event -> addServer());
+        addButton.addActionListener(event -> showServerCreationMenu(addButton));
+        emptyAddButton.addActionListener(event -> showServerCreationMenu(emptyAddButton));
         removeButton.addActionListener(event -> removeServer());
-        stdioToggle.addActionListener(event -> selectTransport(McpTransportType.STDIO));
-        httpToggle.addActionListener(event -> selectTransport(McpTransportType.STREAMABLE_HTTP));
-        automaticBox.addActionListener(this::toggleAutomaticExecution);
+        automaticBox.addActionListener(event -> toggleAutomaticExecution());
         verifyButton.addActionListener(event -> verifySelected());
         replaceInvalidButton.addActionListener(event -> repairInvalidConfiguration());
         showSchemaButton.addActionListener(event -> showSelectedSchema());
@@ -454,7 +444,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 refreshToolDetails();
             }
         });
-        List.of(nameField, modelIdField, endpointField, executableField).forEach(field ->
+        List.of(nameField, endpointField, executableField).forEach(field ->
                 field.getDocument().addDocumentListener(mutationDocumentListener()));
         enabledBox.addActionListener(event -> markDraftMutation());
         longRunningBox.addActionListener(event -> markDraftMutation());
@@ -524,6 +514,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         if (canSkipPublication(configuration, observation)) {
+            stabilizeSavedModelIds(configuration);
             transientStatus = "MCP settings saved.";
             refreshFooter();
             completeSave(action, true, "");
@@ -534,7 +525,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 requestIdentity,
                 draftRevision,
                 selectedServerId(),
-                configuration,
                 invalidBase,
                 submittedSecrets()
         );
@@ -544,22 +534,31 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         submitPublication(draft, attempt, result -> {
             boolean applied = result.error() == null && result.applyResult() != null
                     && result.applyResult().outcome().applied();
+            if (applied) {
+                stabilizeSavedModelIds(result.applyResult().configuration());
+            }
             String message = applied ? "" : publicationFailureMessage(result);
             completeSave(action, applied, message);
         });
     }
 
     private void observeStableManager(Object token, java.util.function.Consumer<StableManagerObservation> consumer) {
+        if (!observationNeeded(token)) {
+            return;
+        }
         CompletableFuture<Void> barrier;
         try {
             barrier = manager.publicationsSettled();
         } catch (RuntimeException e) {
-            SwingUtilities.invokeLater(() -> stableObservationFailed(token, consumer, e));
+            SwingUtilities.invokeLater(() -> stableObservationFailed(token, e));
             return;
         }
         barrier.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+            if (!observationNeeded(token)) {
+                return;
+            }
             if (error != null) {
-                stableObservationFailed(token, consumer, error);
+                stableObservationFailed(token, error);
                 return;
             }
             long before = manager.generation();
@@ -574,11 +573,15 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }));
     }
 
-    private void stableObservationFailed(
-            Object token,
-            java.util.function.Consumer<StableManagerObservation> consumer,
-            Throwable error
-    ) {
+    private boolean observationNeeded(Object token) {
+        if (token instanceof SaveAction action) {
+            return !action.result().isDone();
+        }
+        return !disposed && token instanceof ActionToken actionToken
+                && actionToken.request() == requestIdentity;
+    }
+
+    private void stableObservationFailed(Object token, Throwable error) {
         String message = StringUtils.defaultIfBlank(error.getMessage(), "Could not observe MCP configuration state.");
         if (token instanceof SaveAction action) {
             completeSave(action, false, message);
@@ -622,6 +625,41 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 && StringUtils.isBlank(observation.cleanupStatus());
     }
 
+    private void stabilizeSavedModelIds(McpConfiguration savedConfiguration) {
+        if (unstableModelIdServerIds.isEmpty()) {
+            return;
+        }
+        Map<String, McpServerConfiguration> savedServers = savedConfiguration.servers().stream()
+                .collect(toMap(McpServerConfiguration::id, identity()));
+        updating = true;
+        try {
+            for (int index = 0; index < serverModel.size(); index++) {
+                McpServerConfiguration current = serverModel.get(index);
+                McpServerConfiguration saved = savedServers.get(current.id());
+                if (saved != null && unstableModelIdServerIds.contains(current.id())) {
+                    serverModel.set(index, new McpServerConfiguration(
+                            current.id(),
+                            current.name(),
+                            saved.modelId(),
+                            current.enabled(),
+                            current.automatic(),
+                            current.transport(),
+                            current.endpoint(),
+                            current.executable(),
+                            current.arguments(),
+                            current.headers(),
+                            current.environment(),
+                            current.longRunning(),
+                            current.disabledTools()
+                    ));
+                }
+            }
+        } finally {
+            updating = false;
+        }
+        unstableModelIdServerIds.removeAll(savedServers.keySet());
+    }
+
     private void submitPublication(
             McpConfigurationDraft draft,
             PublicationAttempt attempt,
@@ -637,7 +675,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     : manager.saveAndApply(draft);
         } catch (RuntimeException e) {
             draft.clearSecrets();
-            clearSubmittedSecrets(attempt.submittedSecrets());
+            attempt.submittedSecrets().clear();
             SwingUtilities.invokeLater(() -> finishPublication(
                     attempt,
                     settlement,
@@ -680,29 +718,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             PublicationCompletion result,
             java.util.function.Consumer<PublicationCompletion> completion
     ) {
-        CompletableFuture<Void> barrier;
-        try {
-            barrier = manager.publicationsSettled();
-        } catch (RuntimeException e) {
-            finishPublication(attempt, settlement, result, completion, e);
-            return;
-        }
-        barrier.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
-            if (error != null) {
-                finishPublication(attempt, settlement, result, completion, error);
-                return;
-            }
-            long before = manager.generation();
-            McpConfigurationLoadResult latest = manager.loadResult();
-            String latestCleanup = manager.cleanupStatus();
-            long after = manager.generation();
-            if (before != after) {
-                settleRejectedRepair(attempt, settlement, result, completion);
-                return;
-            }
-            reconcileExternalRepair(new StableManagerObservation(after, latest, latestCleanup), false);
-            finishPublication(attempt, settlement, result, completion, null);
-        }));
+        settleAfterStableObservation(
+                attempt,
+                settlement,
+                result,
+                completion,
+                observation -> reconcileExternalRepair(observation, false)
+        );
     }
 
     private void settleAdvancedPublication(
@@ -711,6 +733,25 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             PublicationCompletion result,
             java.util.function.Consumer<PublicationCompletion> completion
     ) {
+        settleAfterStableObservation(attempt, settlement, result, completion, observation -> {
+            if (observation.loadResult() instanceof McpConfigurationLoadResult.Valid valid) {
+                cleanupStatus = observation.cleanupStatus();
+                reconcileSecretReferences(valid.configuration());
+            }
+        });
+    }
+
+    private void settleAfterStableObservation(
+            PublicationAttempt attempt,
+            CompletableFuture<Void> settlement,
+            PublicationCompletion result,
+            java.util.function.Consumer<PublicationCompletion> completion,
+            java.util.function.Consumer<StableManagerObservation> reconciliation
+    ) {
+        if (disposed) {
+            finishPublication(attempt, settlement, result, completion, null);
+            return;
+        }
         CompletableFuture<Void> barrier;
         try {
             barrier = manager.publicationsSettled();
@@ -718,25 +759,33 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             finishPublication(attempt, settlement, result, completion, e);
             return;
         }
-        barrier.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
-            if (error != null) {
-                finishPublication(attempt, settlement, result, completion, error);
-                return;
-            }
-            long before = manager.generation();
-            McpConfigurationLoadResult latest = manager.loadResult();
-            String latestCleanup = manager.cleanupStatus();
-            long after = manager.generation();
-            if (before != after) {
-                settleAdvancedPublication(attempt, settlement, result, completion);
-                return;
-            }
-            if (!disposed && latest instanceof McpConfigurationLoadResult.Valid valid) {
-                cleanupStatus = latestCleanup;
-                reconcileSecretReferences(valid.configuration());
-            }
-            finishPublication(attempt, settlement, result, completion, null);
-        }));
+        barrier.applyToEither(disposalSignal, ignored -> null)
+                .whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> {
+                    if (disposed) {
+                        finishPublication(attempt, settlement, result, completion, null);
+                        return;
+                    }
+                    if (error != null) {
+                        finishPublication(attempt, settlement, result, completion, error);
+                        return;
+                    }
+                    long before = manager.generation();
+                    McpConfigurationLoadResult latest = manager.loadResult();
+                    String latestCleanup = manager.cleanupStatus();
+                    long after = manager.generation();
+                    if (before != after) {
+                        settleAfterStableObservation(
+                                attempt,
+                                settlement,
+                                result,
+                                completion,
+                                reconciliation
+                        );
+                        return;
+                    }
+                    reconciliation.accept(new StableManagerObservation(after, latest, latestCleanup));
+                    finishPublication(attempt, settlement, result, completion, null);
+                }));
     }
 
     private void finishPublication(
@@ -802,27 +851,19 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
     }
 
-    private void clearSubmittedSecrets(Map<String, char[]> submitted) {
-        submitted.values().forEach(value -> fill(value, '\0'));
-        submitted.clear();
-    }
-
     private void transferSubmittedSecrets(Map<String, char[]> submitted) {
         submitted.forEach((rowId, submittedValue) -> {
-            char[] current = replacementSecrets.get(rowId);
-            if (current != null && Arrays.equals(current, submittedValue)) {
+            if (replacementSecrets.get(rowId) == submittedValue) {
                 replacementSecrets.remove(rowId);
-                fill(current, '\0');
                 fireCredentialStateChanged(rowId);
             }
             fill(submittedValue, '\0');
         });
+        submitted.clear();
     }
 
     private Map<String, char[]> submittedSecrets() {
-        Map<String, char[]> submitted = new HashMap<>();
-        replacementSecrets.forEach((rowId, value) -> submitted.put(rowId, copyOf(value, value.length)));
-        return submitted;
+        return new HashMap<>(replacementSecrets);
     }
 
     private void completeSave(SaveAction action, boolean saved, String error) {
@@ -896,14 +937,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
         AtomicBoolean cancellation = new AtomicBoolean();
         verifyCancellation.getAndSet(cancellation).set(true);
-        transientStatus = "Verifying %s…".formatted(selected.displayName());
+        transientStatus = "Verifying %s…".formatted(settingsDisplayName(selected));
         refreshFooter();
         refreshActionStates();
         PublicationAttempt attempt = new PublicationAttempt(
                 request,
                 revision,
                 serverId,
-                configuration,
                 invalidBase,
                 submittedSecrets()
         );
@@ -1009,7 +1049,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     request,
                     draftRevision,
                     selectedServerId(),
-                    configuration,
                     true,
                     submittedSecrets()
             );
@@ -1041,7 +1080,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         Component target = switch (error.category()) {
-            case MODEL_ID -> modelIdField;
+            case MODEL_ID -> null;
             case ENDPOINT -> server.transport() == McpTransportType.STREAMABLE_HTTP ? endpointField : null;
             case EXECUTABLE -> server.transport() == McpTransportType.STDIO ? executableField : null;
             case HTTP_HEADERS -> server.transport() == McpTransportType.STREAMABLE_HTTP ? headerEditor.table : null;
@@ -1068,7 +1107,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private void clearValidationOutlines() {
-        List.of(modelIdField, endpointField, executableField, headerEditor.table, environmentEditor.table, toolTable)
+        List.of(endpointField, executableField, headerEditor.table, environmentEditor.table, toolTable)
                 .forEach(component -> component.putClientProperty(FlatClientProperties.OUTLINE, null));
     }
 
@@ -1088,14 +1127,14 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 })
                 .allMatch(server -> JOptionPane.showConfirmDialog(
                         this,
-                        "The MCP server named %s uses cleartext HTTP. Continue?".formatted(server.displayName()),
+                        "The MCP server named %s uses cleartext HTTP. Continue?".formatted(settingsDisplayName(server)),
                         "Cleartext MCP Endpoint",
                         JOptionPane.OK_CANCEL_OPTION,
                         JOptionPane.WARNING_MESSAGE
                 ) == JOptionPane.OK_OPTION);
     }
 
-    private void toggleAutomaticExecution(ActionEvent event) {
+    private void toggleAutomaticExecution() {
         if (updating) {
             return;
         }
@@ -1103,9 +1142,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         if (automaticBox.isSelected()) {
             int answer = JOptionPane.showConfirmDialog(
                     this,
-                    "Chat4J is enabling automatic MCP tools for the server named %s. "
-                            .formatted(nameField.getText())
-                            + "Automatic tools can act with your user permissions. Enable only for trusted servers.",
+                    String.join(
+                            " ",
+                            "Chat4J is enabling automatic MCP tools for the server named %s.",
+                            "Automatic tools can act with your user permissions. Enable only for trusted servers."
+                    ).formatted(StringUtils.defaultIfBlank(nameField.getText(), "Unnamed server")),
                     "Enable Automatic MCP Tools?",
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
@@ -1121,47 +1162,26 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
     }
 
-    private void selectTransport(McpTransportType requested) {
-        if (updating || requested == editingTransport) {
+    private void showServerCreationMenu(Component invoker) {
+        if (!disposed && invoker.isShowing()) {
+            SwingUtilities.updateComponentTreeUI(serverCreationMenu);
+            serverCreationMenu.show(invoker, 0, invoker.getHeight());
+        }
+    }
+
+    private void addServer(McpTransportType transport) {
+        if (disposed) {
             return;
         }
-        updating = true;
-        try {
-            selectTransportToggle(editingTransport);
-        } finally {
-            updating = false;
-        }
-        finishActiveEditing();
-        updating = true;
-        try {
-            selectTransportToggle(requested);
-            transportCardsLayout.show(transportCards, requested.name());
-            if (requested == McpTransportType.STREAMABLE_HTTP) {
-                longRunningBox.setSelected(false);
-            }
-            editingTransport = requested;
-        } finally {
-            updating = false;
-        }
-        markDraftMutation();
-        commitServer(editingServerId);
-    }
-
-    private void selectTransportToggle(McpTransportType transport) {
-        stdioToggle.setSelected(transport == McpTransportType.STDIO);
-        httpToggle.setSelected(transport == McpTransportType.STREAMABLE_HTTP);
-    }
-
-    private void addServer() {
         finishActiveEditing();
         String id = UUID.randomUUID().toString();
         var server = new McpServerConfiguration(
                 id,
                 "New Server",
-                uniqueModelId(),
+                uniqueModelId("New Server", id),
                 true,
                 false,
-                McpTransportType.STDIO,
+                transport,
                 "",
                 "",
                 emptyList(),
@@ -1171,6 +1191,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 emptySet()
         );
         serverModel.addElement(server);
+        unstableModelIdServerIds.add(id);
         disabledTools.put(id, new LinkedHashSet<>());
         markDraftMutation();
         updating = true;
@@ -1185,42 +1206,39 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private void removeServer() {
-        argumentsEditor.stopEditing();
+        headerEditor.settleEditingForRemoval();
+        environmentEditor.settleEditingForRemoval();
+        finishActiveEditing();
         int index = serverList.getSelectedIndex();
         if (index < 0) {
             return;
         }
-        McpServerConfiguration selected = serverModel.get(index);
-        if (Objects.equals(selected.id(), editingServerId)) {
-            headerEditor.discardVisiblePassword();
-            environmentEditor.discardVisiblePassword();
-            wipeReplacementRows(headerEditor.rowIds());
-            wipeReplacementRows(environmentEditor.rowIds());
+        McpServerConfiguration removed;
+        updating = true;
+        try {
+            removed = serverModel.remove(index);
+            if (serverModel.isEmpty()) {
+                serverList.clearSelection();
+            } else {
+                serverList.setSelectedIndex(min(index, serverModel.size() - 1));
+            }
+        } finally {
+            updating = false;
         }
-        McpServerConfiguration removed = serverModel.remove(index);
         wipeServerReplacements(removed);
         disabledTools.remove(removed.id());
         lastTools.remove(removed.id());
         formattedSchemas.remove(removed.id());
         toolStates.remove(removed.id());
+        unstableModelIdServerIds.remove(removed.id());
+        toolModel.setTools("", emptyList(), false);
+        toolTable.clearSelection();
         editingServerId = null;
         markDraftMutation();
         if (serverModel.isEmpty()) {
-            updating = true;
-            try {
-                serverList.clearSelection();
-            } finally {
-                updating = false;
-            }
             clearEditor();
             emptyAddButton.requestFocusInWindow();
         } else {
-            updating = true;
-            try {
-                serverList.setSelectedIndex(min(index, serverModel.size() - 1));
-            } finally {
-                updating = false;
-            }
             loadSelected();
         }
         refreshSelectionPresentation();
@@ -1249,7 +1267,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
         for (int index = 0; index < serverModel.size(); index++) {
             McpServerConfiguration server = serverModel.get(index);
-            if (Strings.CI.contains(server.displayName(), query) || Strings.CI.contains(server.modelId(), query)) {
+            if (Strings.CI.contains(settingsDisplayName(server), query)) {
                 serverList.setSelectedIndex(index);
                 serverList.ensureIndexIsVisible(index);
                 return;
@@ -1267,7 +1285,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         updating = true;
         try {
             nameField.setText(server.name());
-            modelIdField.setText(server.modelId());
             enabledBox.setSelected(server.enabled());
             automaticBox.setSelected(server.automatic());
             endpointField.setText(server.endpoint());
@@ -1277,9 +1294,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             environmentEditor.load(server.environment());
             longRunningBox.setSelected(server.longRunning());
             editingServerId = server.id();
-            editingTransport = server.transport();
-            selectTransportToggle(editingTransport);
-            transportCardsLayout.show(transportCards, editingTransport.name());
+            transportCardsLayout.show(transportCards, server.transport().name());
         } finally {
             updating = false;
         }
@@ -1291,7 +1306,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         updating = true;
         try {
             nameField.setText("");
-            modelIdField.setText("");
             endpointField.setText("");
             executableField.setText("");
             enabledBox.setSelected(false);
@@ -1317,14 +1331,15 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         McpServerConfiguration previous = serverModel.get(index);
-        McpTransportType transport = editingTransport;
         var updated = new McpServerConfiguration(
                 previous.id(),
                 nameField.getText(),
-                modelIdField.getText(),
+                unstableModelIdServerIds.contains(previous.id())
+                        ? uniqueModelId(nameField.getText(), previous.id())
+                        : previous.modelId(),
                 enabledBox.isSelected(),
                 automaticBox.isSelected(),
-                transport,
+                previous.transport(),
                 endpointField.getText(),
                 executableField.getText(),
                 argumentsEditor.arguments(),
@@ -1475,7 +1490,6 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private void refreshSelectionPresentation() {
         boolean selected = serverList.getSelectedValue() != null;
         editorCardsLayout.show(editorCards, selected ? EDITOR_CARD : EMPTY_CARD);
-        removeButton.setEnabled(selected);
         refreshActionStates();
     }
 
@@ -1689,6 +1703,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         return selected == null ? null : selected.id();
     }
 
+    private boolean editingTransportIs(McpTransportType transport) {
+        McpServerConfiguration server = serverById(editingServerId);
+        return server != null && server.transport() == transport;
+    }
+
     private McpServerConfiguration serverById(String serverId) {
         int index = indexOfServer(serverId);
         return index < 0 ? null : serverModel.get(index);
@@ -1703,16 +1722,29 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         return -1;
     }
 
-    private String uniqueModelId() {
+    private static String settingsDisplayName(McpServerConfiguration server) {
+        return StringUtils.defaultIfBlank(server.name(), "Unnamed server");
+    }
+
+    private String uniqueModelId(String name, String serverId) {
+        String normalized = Normalizer.normalize(StringUtils.defaultString(name), Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "_");
+        String base = StringUtils.defaultIfBlank(StringUtils.strip(normalized, "_"), "server");
         Set<String> existing = new HashSet<>();
         for (int index = 0; index < serverModel.size(); index++) {
-            existing.add(serverModel.get(index).modelId().toLowerCase(Locale.ROOT));
+            McpServerConfiguration server = serverModel.get(index);
+            if (!server.id().equals(serverId)) {
+                existing.add(server.modelId().toLowerCase(Locale.ROOT));
+            }
         }
-        int suffix = serverModel.size() + 1;
-        String candidate;
-        do {
-            candidate = "server_%d".formatted(suffix++);
-        } while (existing.contains(candidate.toLowerCase(Locale.ROOT)));
+        String candidate = StringUtils.left(base, 48);
+        int suffix = 2;
+        while (existing.contains(candidate.toLowerCase(Locale.ROOT))) {
+            String suffixText = "_%d".formatted(suffix++);
+            candidate = "%s%s".formatted(StringUtils.left(base, 48 - suffixText.length()), suffixText);
+        }
         return candidate;
     }
 
@@ -1774,11 +1806,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private static JComponent sectionHeading(String text) {
-        JPanel heading = new JPanel(new BorderLayout(0, 3));
+        JPanel heading = new JPanel(new BorderLayout());
         JLabel label = new JLabel(text);
-        label.putClientProperty(FlatClientProperties.STYLE_CLASS, "h3");
+        label.putClientProperty(FlatClientProperties.STYLE_CLASS, "h4");
         heading.add(label, BorderLayout.CENTER);
-        heading.add(new JSeparator(), BorderLayout.SOUTH);
+        heading.setBorder(BorderFactory.createEmptyBorder(0, 0, 3, 0));
         heading.setAlignmentX(Component.CENTER_ALIGNMENT);
         return heading;
     }
@@ -1822,12 +1854,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         panel.add(field, constraints);
     }
 
-    private static JButton iconButton(String accessibleName, String resource) {
-        JButton button = new JButton(loadIcon(resource, ICON_SIZE));
-        button.putClientProperty(FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+    private static JButton compactTextButton(String text, String accessibleName) {
+        JButton button = new JButton(text);
+        button.putClientProperty(FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_SQUARE);
         button.setToolTipText(accessibleName);
         button.getAccessibleContext().setAccessibleName(accessibleName);
-        button.setPreferredSize(new Dimension(30, 30));
         return button;
     }
 
@@ -1972,7 +2003,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
 
         private void refreshActionStates() {
             int row = table.getSelectedRow();
-            boolean active = editingServerId != null && editingTransport == McpTransportType.STDIO && !disposed;
+            boolean active = !disposed && editingTransportIs(McpTransportType.STDIO);
             add.setEnabled(active);
             remove.setEnabled(active && row >= 0);
             up.setEnabled(active && row > 0);
@@ -1990,58 +2021,51 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final class CredentialRowsEditor extends JPanel {
         private final CredentialTableModel model = new CredentialTableModel();
         private final JTable table = new JTable(model);
-        private final JTextField keyField = new JTextField();
-        private final JPasswordField valueField = new JPasswordField();
+        private final CredentialPasswordCellEditor valueEditor;
         private final JButton add = new JButton("Add");
-        private final JButton apply = new JButton("Apply");
         private final JButton remove = new JButton("Remove");
-        private String editingCredentialRowId;
         private boolean loading;
 
         private CredentialRowsEditor(String accessibleName) {
+            valueEditor = new CredentialPasswordCellEditor("%s value".formatted(accessibleName));
+            JTextField nameEditorField = new JTextField();
             setLayout(new BorderLayout(4, 4));
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-            table.setDefaultRenderer(String.class, new CredentialRenderer());
+            table.getColumnModel().getColumn(0).setCellRenderer(new LiteralStringRenderer());
+            table.getColumnModel().getColumn(0).setCellEditor(new DefaultCellEditor(nameEditorField));
+            table.getColumnModel().getColumn(1).setCellRenderer(new CredentialValueRenderer());
+            table.getColumnModel().getColumn(1).setCellEditor(valueEditor);
             table.getAccessibleContext().setAccessibleName(accessibleName);
             table.getAccessibleContext().setAccessibleDescription(
-                    "Name and credential reference state. Saved means an opaque reference exists and was not rechecked."
+                    "Editable credential names and masked values. A fixed mask means a credential is available."
+            );
+            nameEditorField.getAccessibleContext().setAccessibleName("%s name".formatted(accessibleName));
+            nameEditorField.getDocument().addDocumentListener(documentListener(() -> {
+                if (!loading && table.isEditing() && table.getEditingColumn() == 0) {
+                    markDraftMutation();
+                }
+            }));
+            add.setToolTipText("Add a row to %s".formatted(accessibleName));
+            add.getAccessibleContext().setAccessibleName("Add a row to %s".formatted(accessibleName));
+            remove.setToolTipText("Remove the selected row from %s".formatted(accessibleName));
+            remove.getAccessibleContext().setAccessibleName(
+                    "Remove the selected row from %s".formatted(accessibleName)
             );
             table.setPreferredScrollableViewportSize(new Dimension(0, 82));
             add(new JScrollPane(table), BorderLayout.CENTER);
-            JPanel detail = new JPanel(new GridBagLayout());
-            GridBagConstraints constraints = baseConstraints();
-            addFormRow(detail, constraints, 0, "Name", 'N', keyField);
-            valueField.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Leave blank to retain current value");
-            addFormRow(detail, constraints, 1, "New value", 'V', valueField);
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
             actions.add(add);
-            actions.add(apply);
             actions.add(remove);
-            JPanel editor = new JPanel(new BorderLayout(0, 4));
-            editor.add(detail, BorderLayout.CENTER);
-            editor.add(actions, BorderLayout.SOUTH);
-            add(editor, BorderLayout.SOUTH);
-            table.getSelectionModel().addListSelectionListener(event -> {
-                if (!event.getValueIsAdjusting() && !loading) {
-                    finishActiveEditing();
-                    loadSelectedRow();
-                }
-            });
+            add(actions, BorderLayout.SOUTH);
+            table.getSelectionModel().addListSelectionListener(event -> refreshActionStates());
             add.addActionListener(event -> addRow());
-            apply.addActionListener(event -> commitDetail());
-            remove.addActionListener(event -> removeRowDiscardingDetail());
-            DocumentListener listener = documentListener(() -> {
-                if (!loading) {
-                    markDraftMutation();
-                }
-            });
-            keyField.getDocument().addDocumentListener(listener);
-            valueField.getDocument().addDocumentListener(listener);
+            remove.addActionListener(event -> removeRow());
         }
 
         private void load(List<McpSecretReference> source) {
             loading = true;
             try {
+                cancelEditing();
                 model.setRows(source);
                 if (!source.isEmpty()) {
                     table.setRowSelectionInterval(0, 0);
@@ -2051,103 +2075,71 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             } finally {
                 loading = false;
             }
-            loadSelectedRow();
+            refreshActionStates();
         }
 
         private List<McpSecretReference> rows() {
             return model.rows();
         }
 
-        private void loadSelectedRow() {
-            loading = true;
-            try {
-                McpSecretReference selected = model.rowAt(table.getSelectedRow());
-                editingCredentialRowId = selected == null ? null : selected.rowId();
-                keyField.setText(selected == null ? "" : selected.key());
-                clearPasswordField();
-            } finally {
-                loading = false;
-            }
-            refreshActionStates();
-        }
-
-        private void commitDetail() {
-            if (loading || editingCredentialRowId == null) {
-                return;
-            }
-            int rowIndex = model.indexOf(editingCredentialRowId);
-            if (rowIndex < 0) {
-                return;
-            }
-            McpSecretReference previous = model.rowAt(rowIndex);
-            char[] value = valueField.getPassword();
-            boolean replacementChanged = value.length > 0
-                    && !CharBuffer.wrap(value).chars().allMatch(Character::isWhitespace);
-            boolean nameChanged = !Objects.equals(previous.key(), keyField.getText());
-            try {
-                if (replacementChanged) {
-                    char[] old = replacementSecrets.put(previous.rowId(), copyOf(value, value.length));
-                    if (old != null) {
-                        fill(old, '\0');
-                    }
-                }
-                loading = true;
-                model.setRow(rowIndex, new McpSecretReference(
-                        previous.rowId(),
-                        keyField.getText(),
-                        previous.secretId()
-                ));
-                clearPasswordField();
-            } finally {
-                loading = false;
-                fill(value, '\0');
-            }
-            if (replacementChanged || nameChanged) {
-                markDraftMutation();
-            }
-        }
-
         private void addRow() {
             finishActiveEditing();
             var row = new McpSecretReference(UUID.randomUUID().toString(), "", "");
             int index = model.addRow(row);
-            loading = true;
-            try {
-                table.setRowSelectionInterval(index, index);
-            } finally {
-                loading = false;
+            table.setRowSelectionInterval(index, index);
+            table.editCellAt(index, 0);
+            Component editor = table.getEditorComponent();
+            if (editor != null) {
+                editor.requestFocusInWindow();
             }
-            loadSelectedRow();
-            keyField.requestFocusInWindow();
             markDraftMutation();
+            refreshActionStates();
         }
 
-        private void removeRowDiscardingDetail() {
+        private void removeRow() {
+            settleEditingForRemoval();
             int selected = table.getSelectedRow();
             McpSecretReference row = model.rowAt(selected);
             if (row == null) {
                 return;
             }
-            discardPasswordField();
             char[] replacement = replacementSecrets.remove(row.rowId());
             if (replacement != null) {
                 fill(replacement, '\0');
             }
-            loading = true;
-            try {
-                model.removeRow(selected);
-                if (model.getRowCount() > 0) {
-                    int next = min(selected, model.getRowCount() - 1);
-                    table.setRowSelectionInterval(next, next);
-                } else {
-                    table.clearSelection();
-                }
-            } finally {
-                loading = false;
+            model.removeRow(selected);
+            if (model.getRowCount() > 0) {
+                int next = min(selected, model.getRowCount() - 1);
+                table.setRowSelectionInterval(next, next);
+            } else {
+                table.clearSelection();
             }
-            loadSelectedRow();
             markDraftMutation();
             commitServer(editingServerId);
+            refreshActionStates();
+        }
+
+        private void settleEditingForRemoval() {
+            if (!table.isEditing()) {
+                return;
+            }
+            if (table.getEditingColumn() == 1) {
+                table.getCellEditor().cancelCellEditing();
+            } else {
+                table.getCellEditor().stopCellEditing();
+            }
+        }
+
+        private void stopEditing() {
+            if (table.isEditing()) {
+                table.getCellEditor().stopCellEditing();
+            }
+        }
+
+        private void cancelEditing() {
+            if (table.isEditing()) {
+                table.getCellEditor().cancelCellEditing();
+            }
         }
 
         private void fireRowChanged(String rowId) {
@@ -2158,41 +2150,109 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
 
         private void refreshActionStates() {
-            boolean selected = model.rowAt(table.getSelectedRow()) != null;
             boolean visibleTransport = this == headerEditor
-                    ? editingTransport == McpTransportType.STREAMABLE_HTTP
-                    : editingTransport == McpTransportType.STDIO;
-            boolean active = !disposed && editingServerId != null && visibleTransport;
+                    ? editingTransportIs(McpTransportType.STREAMABLE_HTTP)
+                    : editingTransportIs(McpTransportType.STDIO);
+            boolean active = !disposed && visibleTransport;
+            table.setEnabled(active);
             add.setEnabled(active);
-            keyField.setEnabled(active && selected);
-            valueField.setEnabled(active && selected);
-            apply.setEnabled(active && selected);
-            remove.setEnabled(active && selected);
-        }
-
-        private void clearPasswordField() {
-            char[] value = valueField.getPassword();
-            fill(value, '\0');
-            valueField.setText("");
-        }
-
-        private void discardPasswordField() {
-            clearPasswordField();
-        }
-
-        private List<String> rowIds() {
-            return model.rows().stream().map(McpSecretReference::rowId).toList();
-        }
-
-        private void discardVisiblePassword() {
-            discardPasswordField();
+            remove.setEnabled(active && model.rowAt(table.getSelectedRow()) != null);
         }
 
         private void disposeEditor() {
-            discardPasswordField();
-            keyField.setText("");
+            cancelEditing();
+            valueEditor.clearPasswordField();
             model.setRows(emptyList());
-            editingCredentialRowId = null;
+            table.clearSelection();
+        }
+
+        private final class CredentialPasswordCellEditor extends AbstractCellEditor implements TableCellEditor {
+            private final JPasswordField field = new JPasswordField();
+            private String editingRowId;
+            private boolean clearing;
+
+            private CredentialPasswordCellEditor(String accessibleName) {
+                field.putClientProperty(
+                        FlatClientProperties.PLACEHOLDER_TEXT,
+                        "Leave blank to retain the current value"
+                );
+                field.getAccessibleContext().setAccessibleName(accessibleName);
+                field.getDocument().addDocumentListener(documentListener(() -> {
+                    if (!clearing && !loading && table.isEditing() && table.getEditingColumn() == 1) {
+                        markDraftMutation();
+                    }
+                }));
+                field.addActionListener(event -> stopCellEditing());
+                field.getInputMap().put(KeyStroke.getKeyStroke("ESCAPE"), "cancelCredentialEditing");
+                field.getActionMap().put("cancelCredentialEditing", new AbstractAction() {
+                    @Override
+                    public void actionPerformed(ActionEvent event) {
+                        cancelCellEditing();
+                    }
+                });
+            }
+
+            @Override
+            public Component getTableCellEditorComponent(
+                    JTable editorTable,
+                    Object value,
+                    boolean selected,
+                    int row,
+                    int column
+            ) {
+                clearPasswordField();
+                McpSecretReference credential = model.rowAt(row);
+                editingRowId = credential == null ? null : credential.rowId();
+                return field;
+            }
+
+            @Override
+            public Object getCellEditorValue() {
+                return "";
+            }
+
+            @Override
+            public boolean stopCellEditing() {
+                char[] value = field.getPassword();
+                boolean replacementChanged = value.length > 0
+                        && !CharBuffer.wrap(value).chars().allMatch(Character::isWhitespace);
+                boolean transferred = false;
+                try {
+                    if (replacementChanged && model.indexOf(editingRowId) >= 0) {
+                        char[] previous = replacementSecrets.put(editingRowId, value);
+                        transferred = true;
+                        if (previous != null) {
+                            fill(previous, '\0');
+                        }
+                        fireRowChanged(editingRowId);
+                    }
+                    return super.stopCellEditing();
+                } finally {
+                    if (!transferred) {
+                        fill(value, '\0');
+                    }
+                    clearPasswordField();
+                    editingRowId = null;
+                }
+            }
+
+            @Override
+            public void cancelCellEditing() {
+                clearPasswordField();
+                editingRowId = null;
+                super.cancelCellEditing();
+            }
+
+            private void clearPasswordField() {
+                clearing = true;
+                try {
+                    char[] value = field.getPassword();
+                    fill(value, '\0');
+                    field.setText("");
+                } finally {
+                    clearing = false;
+                }
+            }
         }
     }
 
@@ -2279,7 +2339,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
 
         @Override
         public String getColumnName(int column) {
-            return column == 0 ? "Name" : "Credential reference state";
+            return column == 0 ? "Name" : "Value";
         }
 
         @Override
@@ -2289,7 +2349,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
 
         @Override
         public boolean isCellEditable(int rowIndex, int columnIndex) {
-            return false;
+            return true;
         }
 
         @Override
@@ -2298,10 +2358,23 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             if (columnIndex == 0) {
                 return row.key();
             }
-            if (replacementSecrets.containsKey(row.rowId())) {
-                return "New value entered";
+            boolean available = replacementSecrets.containsKey(row.rowId())
+                    || StringUtils.isNotBlank(row.secretId());
+            return available ? CREDENTIAL_MASK : "";
+        }
+
+        @Override
+        public void setValueAt(Object value, int rowIndex, int columnIndex) {
+            if (columnIndex != 0 || rowIndex < 0 || rowIndex >= rows.size()) {
+                return;
             }
-            return StringUtils.isNotBlank(row.secretId()) ? "Saved" : "Missing";
+            McpSecretReference previous = rows.get(rowIndex);
+            String name = Objects.toString(value, "");
+            if (Objects.equals(previous.key(), name)) {
+                return;
+            }
+            rows.set(rowIndex, new McpSecretReference(previous.rowId(), name, previous.secretId()));
+            fireTableCellUpdated(rowIndex, columnIndex);
         }
 
         private void setRows(List<McpSecretReference> source) {
@@ -2319,17 +2392,15 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
 
         private int indexOf(String rowId) {
+            if (rowId == null) {
+                return -1;
+            }
             for (int index = 0; index < rows.size(); index++) {
                 if (rows.get(index).rowId().equals(rowId)) {
                     return index;
                 }
             }
             return -1;
-        }
-
-        private void setRow(int index, McpSecretReference row) {
-            rows.set(index, row);
-            fireTableRowsUpdated(index, index);
         }
 
         private int addRow(McpSecretReference row) {
@@ -2455,10 +2526,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
     }
 
-    private static final class CredentialRenderer extends LiteralStringRenderer {
-        private static final String SAVED_DESCRIPTION =
-                "An opaque saved credential reference exists and has not been rechecked.";
-
+    private static final class CredentialValueRenderer extends LiteralStringRenderer {
         @Override
         public Component getTableCellRendererComponent(
                 JTable table,
@@ -2469,10 +2537,17 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 int column
         ) {
             JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, selected, focus, row, column);
-            if (column == 1 && "Saved".equals(value)) {
-                label.setToolTipText(SAVED_DESCRIPTION);
-                label.getAccessibleContext().setAccessibleDescription(SAVED_DESCRIPTION);
-            }
+            boolean available = StringUtils.isNotEmpty(Objects.toString(value, ""));
+            String state = available ? "credential available" : "credential missing";
+            String name = Objects.toString(table.getValueAt(row, 0), "");
+            label.setText(available ? CREDENTIAL_MASK : "");
+            label.setToolTipText(available
+                    ? "Credential available. Edit to replace it."
+                    : "No credential value. Edit to add one.");
+            label.getAccessibleContext().setAccessibleName(
+                    "%s, %s".formatted(StringUtils.defaultIfBlank(name, "Unnamed credential"), state)
+            );
+            label.getAccessibleContext().setAccessibleDescription(label.getToolTipText());
             return label;
         }
     }
@@ -2520,15 +2595,15 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         ) {
             String state = value.enabled() ? "enabled" : "disabled";
             String transport = value.transport() == McpTransportType.STDIO ? "STDIO" : "HTTP";
-            name.setText(value.displayName());
-            detail.setText("%s · %s · %s".formatted(value.modelId(), transport, state));
+            name.setText(settingsDisplayName(value));
+            detail.setText("%s · %s".formatted(transport, state));
             setOpaque(true);
             name.setOpaque(false);
             detail.setOpaque(false);
             setBackground(selected ? list.getSelectionBackground() : list.getBackground());
             name.setForeground(selected ? list.getSelectionForeground() : list.getForeground());
             detail.setForeground(selected ? list.getSelectionForeground() : list.getForeground());
-            String accessible = "%s, %s, %s, %s".formatted(value.displayName(), value.modelId(), transport, state);
+            String accessible = "%s, %s, %s".formatted(settingsDisplayName(value), transport, state);
             getAccessibleContext().setAccessibleName(accessible);
             return this;
         }
@@ -2590,7 +2665,31 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             Dimension preferred = super.getPreferredScrollableViewportSize();
             FontMetrics metrics = getFontMetrics(getFont());
             Insets insets = getInsets();
-            return new Dimension(preferred.width, metrics.getHeight() * 3 + insets.top + insets.bottom);
+            View root = getUI().getRootView(this);
+            root.setSize(availableTextWidth(preferred, insets), Integer.MAX_VALUE);
+            int visualRows = max(1, (int) ceil(root.getPreferredSpan(View.Y_AXIS) / metrics.getHeight()));
+            int visibleRows = min(MAX_STATUS_ROWS, visualRows);
+            return new Dimension(preferred.width, metrics.getHeight() * visibleRows + insets.top + insets.bottom);
+        }
+
+        private int availableTextWidth(Dimension preferred, Insets textInsets) {
+            int horizontalInsets = textInsets.left + textInsets.right;
+            if (getParent() instanceof JViewport viewport && viewport.getExtentSize().width > 0) {
+                return max(1, viewport.getExtentSize().width - horizontalInsets);
+            }
+            if (getWidth() > 0) {
+                return max(1, getWidth() - horizontalInsets);
+            }
+            for (Container ancestor = getParent(); ancestor != null; ancestor = ancestor.getParent()) {
+                if (ancestor instanceof JComponent component) {
+                    Insets insets = component.getInsets();
+                    horizontalInsets += insets.left + insets.right;
+                }
+                if (ancestor.getWidth() > 0) {
+                    return max(1, ancestor.getWidth() - horizontalInsets);
+                }
+            }
+            return max(1, preferred.width - horizontalInsets);
         }
     }
 
@@ -2628,15 +2727,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             long request,
             long revision,
             String selectedServerId,
-            McpConfiguration configuration,
             boolean repair,
             Map<String, char[]> submittedSecrets
     ) {
         @Override
         public String toString() {
-            return "PublicationAttempt[request=%d, revision=%d, selectedServerId=%s, configuration=%s, repair=%s, "
-                    .formatted(request, revision, selectedServerId, configuration, repair)
-                    + "submittedSecrets=****]";
+            return "PublicationAttempt[request=%d, revision=%d, selectedServerId=%s, repair=%s, submittedSecrets=****]"
+                    .formatted(request, revision, selectedServerId, repair);
         }
     }
 
