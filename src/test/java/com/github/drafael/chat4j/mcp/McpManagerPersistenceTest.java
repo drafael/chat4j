@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.mcp;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialStoragePolicy;
 import com.github.drafael.chat4j.provider.support.McpSecretVault;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -9,6 +10,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,13 +19,17 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Arrays.fill;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
+import static java.util.Collections.singletonMap;
+import static java.util.Objects.deepEquals;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anySet;
@@ -53,26 +59,107 @@ class McpManagerPersistenceTest {
             var row = new McpSecretReference(rowId, "Authorization", "");
             var configuration = new McpConfiguration(1, List.of(server(List.of(row))));
             char[] value = "Bearer top-secret".toCharArray();
+            try {
+                McpApplyResult result = subject.saveAndApply(new McpConfigurationDraft(
+                        configuration,
+                        Map.of(rowId, value)
+                )).join();
 
-            McpApplyResult result = subject.saveAndApply(new McpConfigurationDraft(
-                    configuration,
-                    Map.of(rowId, value)
-            )).join();
-
-            assertThat(result.outcome()).withFailMessage(result.toString()).isEqualTo(McpApplyOutcome.APPLIED);
-            McpSecretReference persisted = result.configuration().servers().getFirst().headers().getFirst();
-            assertThat(persisted.secretId()).startsWith("MCP_");
-            assertThat(Files.readString(storagePaths.mcpFile(), StandardCharsets.UTF_8))
-                    .doesNotContain("top-secret")
-                    .contains(persisted.secretId());
-            try (var lookup = secrets.lookup(persisted.secretId())) {
-                assertThat(lookup.present()).isTrue();
-                assertThat(lookup.token()).containsExactly("Bearer top-secret".toCharArray());
+                assertThat(result.outcome()).withFailMessage(result.toString()).isEqualTo(McpApplyOutcome.APPLIED);
+                McpSecretReference persisted = result.configuration().servers().getFirst().headers().getFirst();
+                assertThat(persisted.secretId()).startsWith("MCP_");
+                String persistedJson = Files.readString(storagePaths.mcpFile(), StandardCharsets.UTF_8);
+                assertThat(persistedJson.contains("top-secret"))
+                        .as("persisted MCP JSON should not contain credential plaintext")
+                        .isFalse();
+                assertThat(persistedJson.contains(persisted.secretId()))
+                        .as("persisted MCP JSON should contain the opaque credential reference")
+                        .isTrue();
+                try (var lookup = secrets.lookup(persisted.secretId())) {
+                    assertThat(lookup.present()).isTrue();
+                    char[] actual = lookup.token();
+                    char[] expected = "Bearer top-secret".toCharArray();
+                    try {
+                        assertThat(deepEquals(actual, expected))
+                                .as("stored MCP credential should retain its exact value")
+                                .isTrue();
+                    } finally {
+                        if (actual != null) {
+                            fill(actual, '\0');
+                        }
+                        fill(expected, '\0');
+                    }
+                }
+            } finally {
+                fill(value, '\0');
             }
         } finally {
             subject.close();
         }
         assertThat(subject.publicationSettlementProvenOnClose()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Null replacement values are rejected through normal draft validation")
+    void saveAndApply_whenReplacementValueIsNull_returnsRejectedResult() {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("null-replacement"));
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                new McpSecretVault(new ApiTokenVault(storagePaths)),
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        try {
+            String rowId = UUID.randomUUID().toString();
+            var row = new McpSecretReference(rowId, "Authorization", "");
+            var configuration = new McpConfiguration(1, List.of(server(List.of(row))));
+
+            McpApplyResult result = subject.saveAndApply(new McpConfigurationDraft(
+                    configuration,
+                    singletonMap(rowId, null)
+            )).join();
+
+            assertThat(result.outcome()).isEqualTo(McpApplyOutcome.REJECTED_OLD_STATE_INTACT);
+            assertThat(result.message()).isEqualTo("MCP credential values must not be blank.");
+        } finally {
+            subject.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Manual MCP credentials report secure-storage validation failures precisely")
+    void saveAndApply_whenCredentialViolatesStorageContract_returnsPreciseValidationFailure() {
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory.resolve("credential-storage-contract"));
+        var secrets = new McpSecretVault(new ApiTokenVault(storagePaths));
+        var subject = new McpManager(
+                new McpConfigurationRepository(storagePaths.mcpFile()),
+                secrets,
+                emptyMap(),
+                storagePaths.appConfigDirectory()
+        );
+        try {
+            String rowId = UUID.randomUUID().toString();
+            var row = new McpSecretReference(rowId, "Authorization", "");
+            var configuration = new McpConfiguration(1, List.of(server(List.of(row))));
+
+            assertReplacementRejected(
+                    subject,
+                    configuration,
+                    rowId,
+                    "\ud800",
+                    "MCP credential value contains malformed characters."
+            );
+            assertReplacementRejected(
+                    subject,
+                    configuration,
+                    rowId,
+                    "a".repeat(CredentialStoragePolicy.MAX_UTF8_BYTES + 1),
+                    "MCP credential value exceeds the 64 KiB limit."
+            );
+            assertThat(secrets.secretIds()).isEmpty();
+        } finally {
+            subject.close();
+        }
     }
 
     @Test
@@ -130,9 +217,10 @@ class McpManagerPersistenceTest {
         );
         try {
             McpVerificationResult result = subject.replaceInvalidAndVerify(
-                    new McpConfigurationDraft(
+                    draftWithReplacement(
                             new McpConfiguration(1, List.of(server)),
-                            Map.of(rowId, "new-secret".toCharArray())
+                            rowId,
+                            "new-secret"
                     ),
                     server.id(),
                     () -> false
@@ -140,7 +228,9 @@ class McpManagerPersistenceTest {
 
             assertThat(result.applyResult().outcome().applied()).isTrue();
             assertThat(result.verified()).isFalse();
-            assertThat(result.verificationError()).isNotBlank().doesNotContain("new-secret");
+            boolean secretRedacted = StringUtils.isNotBlank(result.verificationError())
+                    && !result.verificationError().contains("new-secret");
+            assertThat(secretRedacted).as("verification error should be nonblank and redact credentials").isTrue();
             McpConfiguration applied = result.applyResult().configuration();
             String secretId = applied.servers().getFirst().environment().getFirst().secretId();
             assertThat(secretId).matches("MCP_[A-F0-9]{32}");
@@ -166,9 +256,10 @@ class McpManagerPersistenceTest {
                 storagePaths.appConfigDirectory()
         );
         try {
-            McpApplyResult result = subject.saveAndApply(new McpConfigurationDraft(
+            McpApplyResult result = subject.saveAndApply(draftWithReplacement(
                     new McpConfiguration(1, List.of(server(emptyList()))),
-                    Map.of(UUID.randomUUID().toString(), "secret".toCharArray())
+                    UUID.randomUUID().toString(),
+                    "secret"
             )).join();
 
             assertThat(result.outcome()).isEqualTo(McpApplyOutcome.REJECTED_OLD_STATE_INTACT);
@@ -197,9 +288,10 @@ class McpManagerPersistenceTest {
                 new McpSecretReference(missingRow, "X-Second", "")
         ));
         try {
-            McpApplyResult result = subject.saveAndApply(new McpConfigurationDraft(
+            McpApplyResult result = subject.saveAndApply(draftWithReplacement(
                     new McpConfiguration(1, List.of(configured)),
-                    Map.of(firstRow, "prepared-secret".toCharArray())
+                    firstRow,
+                    "prepared-secret"
             )).join();
 
             assertThat(result.outcome()).isEqualTo(McpApplyOutcome.REJECTED_OLD_STATE_INTACT);
@@ -283,7 +375,7 @@ class McpManagerPersistenceTest {
         Files.writeString(storagePaths.mcpFile(), "{invalid", StandardCharsets.UTF_8);
         var secrets = new McpSecretVault(new ApiTokenVault(storagePaths));
         String orphanId = "MCP_22222222222222222222222222222222";
-        secrets.publish(Map.of(orphanId, "orphan".toCharArray()), emptySet());
+        publishSecrets(secrets, Map.of(orphanId, "orphan"));
         var subject = new McpManager(
                 new McpConfigurationRepository(storagePaths.mcpFile()),
                 secrets,
@@ -313,10 +405,10 @@ class McpManagerPersistenceTest {
         var secrets = new McpSecretVault(new ApiTokenVault(storagePaths));
         String referencedId = "MCP_33333333333333333333333333333333";
         String orphanId = "MCP_44444444444444444444444444444444";
-        secrets.publish(Map.of(
-                referencedId, "referenced".toCharArray(),
-                orphanId, "orphan".toCharArray()
-        ), emptySet());
+        publishSecrets(secrets, Map.of(
+                referencedId, "referenced",
+                orphanId, "orphan"
+        ));
         var subject = new McpManager(
                 new McpConfigurationRepository(storagePaths.mcpFile()),
                 secrets,
@@ -350,7 +442,7 @@ class McpManagerPersistenceTest {
         Files.writeString(storagePaths.mcpFile(), "{invalid", StandardCharsets.UTF_8);
         var realSecrets = new McpSecretVault(new ApiTokenVault(storagePaths));
         String orphanId = "MCP_55555555555555555555555555555555";
-        realSecrets.publish(Map.of(orphanId, "orphan".toCharArray()), emptySet());
+        publishSecrets(realSecrets, Map.of(orphanId, "orphan"));
         McpSecretVault secrets = spy(realSecrets);
         doThrow(new IllegalStateException("forced removal failure"))
                 .doCallRealMethod()
@@ -415,6 +507,42 @@ class McpManagerPersistenceTest {
             }
         }
         assertThat(subject.publicationSettlementProvenOnClose()).isFalse();
+    }
+
+    private void assertReplacementRejected(
+            McpManager subject,
+            McpConfiguration configuration,
+            String rowId,
+            String value,
+            String expectedMessage
+    ) {
+        McpApplyResult result = subject.saveAndApply(draftWithReplacement(configuration, rowId, value)).join();
+
+        assertThat(result.outcome()).isEqualTo(McpApplyOutcome.REJECTED_OLD_STATE_INTACT);
+        assertThat(result.message()).isEqualTo(expectedMessage);
+    }
+
+    private McpConfigurationDraft draftWithReplacement(
+            McpConfiguration configuration,
+            String rowId,
+            String value
+    ) {
+        char[] replacement = value.toCharArray();
+        try {
+            return new McpConfigurationDraft(configuration, Map.of(rowId, replacement));
+        } finally {
+            fill(replacement, '\0');
+        }
+    }
+
+    private void publishSecrets(McpSecretVault vault, Map<String, String> source) {
+        Map<String, char[]> values = new HashMap<>();
+        try {
+            source.forEach((secretId, value) -> values.put(secretId, value.toCharArray()));
+            vault.publish(values, emptySet());
+        } finally {
+            values.values().forEach(value -> fill(value, '\0'));
+        }
     }
 
     private void injectRetainedClient(

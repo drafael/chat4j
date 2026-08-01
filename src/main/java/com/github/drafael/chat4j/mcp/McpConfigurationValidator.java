@@ -12,6 +12,8 @@ import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS;
+
 public final class McpConfigurationValidator {
 
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9_-]{1,48}");
@@ -188,7 +190,7 @@ public final class McpConfigurationValidator {
                         serverId
                 );
             }
-            String normalized = headers || isWindows() ? key.toLowerCase(Locale.ROOT) : key;
+            String normalized = headers || IS_OS_WINDOWS ? key.toLowerCase(Locale.ROOT) : key;
             if (!keys.add(normalized)) {
                 throw failure(
                         "MCP %s names must be unique.".formatted(headers ? "header" : "environment"),
@@ -207,10 +209,6 @@ public final class McpConfigurationValidator {
 
     private static ValidationException failure(String message, ValidationCategory category, String responsibleServerId) {
         return new ValidationException(message, category, responsibleServerId);
-    }
-
-    private static boolean isWindows() {
-        return Strings.CI.contains(System.getProperty("os.name", ""), "win");
     }
 
     public enum ValidationCategory {

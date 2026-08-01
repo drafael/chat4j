@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
+import com.github.drafael.chat4j.provider.support.CredentialStoragePolicy;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTokenIds;
 import java.awt.Component;
@@ -36,11 +37,10 @@ import org.junit.jupiter.api.io.TempDir;
 import static java.util.Arrays.fill;
 import static java.util.Arrays.stream;
 import static java.util.Collections.emptyMap;
+import static java.util.Objects.deepEquals;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ApiTokenFieldPanelTest {
-
-    private static final int TOKEN_BYTE_LIMIT = 64 * 1024;
 
     @TempDir
     private Path tempDir;
@@ -117,7 +117,7 @@ class ApiTokenFieldPanelTest {
                 null
         ));
         JPasswordField tokenField = onEdt(() -> findPasswordField(subject));
-        char[] oversized = new char[TOKEN_BYTE_LIMIT + 1];
+        char[] oversized = new char[CredentialStoragePolicy.MAX_UTF8_BYTES + 1];
         fill(oversized, 'a');
 
         CompletableFuture<Boolean> save = onEdt(() -> {
@@ -267,7 +267,7 @@ class ApiTokenFieldPanelTest {
             assertThat(listenerStarted.await(2, TimeUnit.SECONDS)).isTrue();
             onEdt(() -> {
                 subject.removeNotify();
-                assertThat(tokenField.getPassword()).isEmpty();
+                assertPasswordEmpty(tokenField, "removed token field should be empty");
                 return null;
             });
         } finally {
@@ -392,7 +392,7 @@ class ApiTokenFieldPanelTest {
         assertThat(save.get()).isTrue();
         assertThat(tokenVault.hasRecord("OPENAI_API_KEY")).isFalse();
         onEdt(() -> {
-            assertThat(String.valueOf(tokenField.getPassword())).isEqualTo("env-token");
+            assertPasswordEquals(tokenField, "env-token", "effective environment token should be restored");
             assertThat(findStatusLabel(subject).getParent().isVisible()).isFalse();
             return null;
         });
@@ -945,6 +945,30 @@ class ApiTokenFieldPanelTest {
             }
         }
         throw new AssertionError("No JPasswordField found");
+    }
+
+    private static void assertPasswordEmpty(JPasswordField field, String description) {
+        char[] value = field.getPassword();
+        boolean empty;
+        try {
+            empty = value.length == 0;
+        } finally {
+            fill(value, '\0');
+        }
+        assertThat(empty).as(description).isTrue();
+    }
+
+    private static void assertPasswordEquals(JPasswordField field, String expected, String description) {
+        char[] actual = field.getPassword();
+        char[] expectedValue = expected.toCharArray();
+        boolean equal;
+        try {
+            equal = deepEquals(actual, expectedValue);
+        } finally {
+            fill(actual, '\0');
+            fill(expectedValue, '\0');
+        }
+        assertThat(equal).as(description).isTrue();
     }
 
     private static void assertTokenControlsEnabled(ApiTokenFieldPanel panel, boolean enabled) {

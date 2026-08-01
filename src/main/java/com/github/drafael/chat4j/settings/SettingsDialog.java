@@ -502,7 +502,15 @@ public class SettingsDialog extends JDialog {
             List<AsyncPendingSettingsSaveParticipant> participants,
             BooleanSupplier active
     ) {
-        return saveParticipantAt(participants, 0, active);
+        var orderedParticipants = new ArrayList<>(participants);
+        orderedParticipants.stream()
+                .filter(McpPanel.class::isInstance)
+                .findFirst()
+                .ifPresent(mcp -> {
+                    orderedParticipants.remove(mcp);
+                    orderedParticipants.addFirst(mcp);
+                });
+        return saveParticipantAt(orderedParticipants, 0, active);
     }
 
     private static CompletableFuture<SavePendingResult> saveParticipantAt(

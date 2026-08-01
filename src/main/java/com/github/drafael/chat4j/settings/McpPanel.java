@@ -35,10 +35,15 @@ import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.Window;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.net.URI;
 import java.nio.CharBuffer;
 import java.text.Normalizer;
@@ -56,6 +61,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -75,6 +81,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.function.Function.identity;
+import static java.util.stream.Collectors.joining;
 import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 import static java.util.stream.Stream.concat;
@@ -89,6 +96,9 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private static final String CREDENTIAL_MASK = "••••••••";
     private static final int ICON_SIZE = 16;
     private static final int MAX_STATUS_ROWS = 3;
+    private static final int IMPORT_TIMEOUT_MILLIS = 5_000;
+    private static final CompletableFuture<ImportSettlement> NO_IMPORT_SETTLEMENT =
+            CompletableFuture.completedFuture(new ImportSettlement(ImportOutcome.NO_IMPORT, ""));
 
     private final McpManager manager;
     private final DefaultListModel<McpServerConfiguration> serverModel = new DefaultListModel<>();
@@ -98,6 +108,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final JButton emptyAddButton = new JButton("Add server");
     private final JButton removeButton = compactTextButton("−", "Remove selected MCP server");
     private final JPopupMenu serverCreationMenu = new JPopupMenu();
+    private final JMenuItem importJsonItem = new JMenuItem("Import JSON from Clipboard");
     private final JTextField nameField = new JTextField();
     private final JCheckBox enabledBox = new JCheckBox("Enabled");
     private final JCheckBox automaticBox = new JCheckBox("Run tools automatically");
@@ -128,7 +139,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final Map<String, char[]> replacementSecrets = new HashMap<>();
     private final Set<String> unstableModelIdServerIds = new HashSet<>();
     private final Set<SaveAction> pendingSaveActions = new HashSet<>();
-    private final AtomicReference<AtomicBoolean> verifyCancellation = new AtomicReference<>(new AtomicBoolean());
+    private final AtomicReference<AtomicBoolean> verifyCancellation = new AtomicReference<>(new AtomicBoolean(true));
     private final CompletableFuture<Void> disposalSignal = new CompletableFuture<>();
     private boolean updating;
     private boolean disposed;
@@ -136,6 +147,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private boolean invalidReplacementConfirmed;
     private boolean invalidDraftDirty;
     private boolean verificationRunning;
+    private boolean repairRunning;
     private boolean publicationFinishing;
     private String editingServerId;
     private long requestIdentity;
@@ -146,6 +158,8 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private String cleanupStatus = "";
     private String lastSaveError = "";
     private JDialog activeSchemaDialog;
+    private ImportAction activeImport;
+    private Thread lingeringImportWorker;
 
     public McpPanel(@NonNull McpManager manager) {
         this.manager = manager;
@@ -157,6 +171,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         JMenuItem addHttpServerItem = new JMenuItem("HTTP Server (http)");
         addHttpServerItem.addActionListener(event -> addServer(McpTransportType.STREAMABLE_HTTP));
         serverCreationMenu.add(addHttpServerItem);
+        serverCreationMenu.addSeparator();
+        importJsonItem.getAccessibleContext().setAccessibleName("Import JSON from Clipboard");
+        importJsonItem.getAccessibleContext().setAccessibleDescription(
+                "Import one MCP server as disabled from JSON or JSONC on the clipboard"
+        );
+        importJsonItem.addActionListener(event -> importFromSystemClipboard());
+        serverCreationMenu.add(importJsonItem);
         add(createMasterDetail(), BorderLayout.CENTER);
         add(createFooter(), BorderLayout.SOUTH);
         bindListeners();
@@ -176,10 +197,18 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             }));
             return result;
         }
-        var action = new SaveAction();
+        ImportAction capturedImport = activeImport;
+        CompletableFuture<ImportSettlement> importSettlement = capturedImport == null
+                ? NO_IMPORT_SETTLEMENT
+                : capturedImport.settlement();
+        var action = new SaveAction(importSettlement);
         pendingSaveActions.add(action);
         lastSaveError = "";
+        refreshActionStates();
         finishActiveEditing();
+        if (capturedImport != null && activeImport == capturedImport) {
+            capturedImport.markEditorsSettledBySave();
+        }
         cancelVerification(true);
         continueSave(action);
         return action.result();
@@ -219,15 +248,19 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         disposed = true;
         disposalSignal.complete(null);
         verifyCancellation.get().set(true);
+        verificationRunning = false;
+        repairRunning = false;
         requestIdentity++;
         pendingSaveActions.stream()
                 .filter(action -> !action.submitted())
                 .toList()
                 .forEach(action -> completeSave(action, false, CLOSED_SAVE_ERROR));
+        disposeImport();
         argumentsEditor.disposeEditor();
         if (toolTable.isEditing()) {
             toolTable.getCellEditor().cancelCellEditing();
         }
+        importJsonItem.setEnabled(false);
         serverCreationMenu.setVisible(false);
         if (activeSchemaDialog != null) {
             activeSchemaDialog.dispose();
@@ -405,7 +438,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         JPanel footer = new JPanel(new BorderLayout(0, 6));
         statusArea.getAccessibleContext().setAccessibleName("MCP status");
         statusArea.getAccessibleContext().setAccessibleDescription(
-                "Validation, publication, verification, repair, and cleanup status"
+                "Validation, publication, verification, repair, import, and cleanup status"
         );
         statusScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         statusScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
@@ -476,6 +509,25 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             completeSave(action, false, CLOSED_SAVE_ERROR);
             return;
         }
+        if (!action.importObserved()) {
+            CompletableFuture<ImportSettlement> importSettlement = action.importSettlement();
+            if (!importSettlement.isDone()) {
+                importSettlement.whenComplete((ignored, error) ->
+                        SwingUtilities.invokeLater(() -> continueSave(action)));
+                return;
+            }
+            ImportSettlement settlement = importSettlement.getNow(NO_IMPORT_SETTLEMENT.join());
+            action.markImportObserved();
+            if (settlement.outcome() == ImportOutcome.FAILED
+                    || settlement.outcome() == ImportOutcome.TIMED_OUT) {
+                completeSave(action, false, settlement.diagnostic());
+                return;
+            }
+            if (settlement.outcome() == ImportOutcome.DISPOSED) {
+                completeSave(action, false, CLOSED_SAVE_ERROR);
+                return;
+            }
+        }
         CompletableFuture<Void> pending = publicationUiSettlement;
         if (!pending.isDone()) {
             pending.whenComplete((ignored, error) -> SwingUtilities.invokeLater(() -> continueSave(action)));
@@ -496,7 +548,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         reconcileExternalRepair(observation, false);
-        if (invalidBase && !invalidDraftDirty) {
+        if (invalidBase && !invalidDraftDirty && !invalidReplacementConfirmed) {
             completeSave(action, true, "");
             return;
         }
@@ -530,8 +582,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         );
         transientStatus = "Saving MCP settings…";
         refreshFooter();
-        action.markSubmitted();
-        submitPublication(draft, attempt, result -> {
+        submitPublication(draft, attempt, action::markSubmitted, result -> {
             boolean applied = result.error() == null && result.applyResult() != null
                     && result.applyResult().outcome().applied();
             if (applied) {
@@ -587,7 +638,8 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             completeSave(action, false, message);
         } else if (!disposed && token instanceof ActionToken actionToken
                 && actionToken.request() == requestIdentity) {
-            verificationRunning = false;
+            retireCurrentVerification();
+            repairRunning = false;
             transientStatus = message;
             refreshFooter();
             refreshActionStates();
@@ -665,6 +717,15 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             PublicationAttempt attempt,
             java.util.function.Consumer<PublicationCompletion> completion
     ) {
+        submitPublication(draft, attempt, () -> {}, completion);
+    }
+
+    private void submitPublication(
+            McpConfigurationDraft draft,
+            PublicationAttempt attempt,
+            Runnable markSubmitted,
+            java.util.function.Consumer<PublicationCompletion> completion
+    ) {
         CompletableFuture<Void> settlement = new CompletableFuture<>();
         publicationUiSettlement = settlement;
         refreshActionStates();
@@ -684,6 +745,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             ));
             return;
         }
+        markSubmitted.run();
         transferSubmittedSecrets(attempt.submittedSecrets());
         managerFuture.whenComplete((result, error) -> SwingUtilities.invokeLater(() -> finishPublication(
                 attempt,
@@ -808,13 +870,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     invalidDraftDirty = false;
                 }
                 cleanupStatus = manager.cleanupStatus();
-                boolean verificationWasCancelled = transientStatus.contains(CANCELLED_STATUS);
+                boolean attemptCurrent = attempt.request() == requestIdentity && attempt.revision() == draftRevision;
+                boolean verificationWasCancelled = CANCELLED_STATUS.equals(transientStatus);
+                String publicationStatus;
                 if (applied) {
                     replaceInvalidButton.setVisible(false);
                     if (manager.generation() == applyResult.generation()) {
-                        boolean unchanged = attempt.request() == requestIdentity
-                                && attempt.revision() == draftRevision;
-                        if (unchanged) {
+                        if (attemptCurrent) {
                             replaceConfiguration(applyResult.configuration(), attempt.selectedServerId(), true);
                         } else {
                             reconcileSecretReferences(applyResult.configuration());
@@ -822,17 +884,19 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     }
                     lastPanelApplied = new AppliedSnapshot(applyResult.generation(), applyResult.configuration());
                     markOldToolSnapshotsStale(applyResult.generation());
-                    transientStatus = observationError == null
+                    publicationStatus = observationError == null
                             ? "MCP configuration applied."
                             : StringUtils.defaultIfBlank(
                                     errorMessage(observationError),
                                     "MCP configuration applied, but its final state could not be observed."
                             );
                 } else {
-                    transientStatus = publicationFailureMessage(result);
+                    publicationStatus = publicationFailureMessage(callerResult);
                 }
-                if (verificationWasCancelled) {
-                    transientStatus = "%s %s".formatted(transientStatus, CANCELLED_STATUS);
+                if (attemptCurrent || verificationWasCancelled) {
+                    transientStatus = verificationWasCancelled
+                            ? "%s %s".formatted(publicationStatus, CANCELLED_STATUS)
+                            : publicationStatus;
                 }
                 refreshFooter();
                 refreshSelectionPresentation();
@@ -872,15 +936,22 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
         pendingSaveActions.remove(action);
         lastSaveError = saved ? "" : StringUtils.defaultIfBlank(error, "Could not save MCP settings.");
-        if (!saved && !disposed) {
-            transientStatus = lastSaveError;
-            refreshFooter();
+        try {
+            if (!disposed) {
+                if (!saved) {
+                    transientStatus = lastSaveError;
+                    refreshFooter();
+                }
+                refreshActionStates();
+            }
+        } finally {
+            action.result().complete(saved);
         }
-        action.result().complete(saved);
     }
 
     private void verifySelected() {
-        if (disposed || !publicationUiSettlement.isDone() || serverList.getSelectedValue() == null) {
+        if (disposed || verificationRunning || repairRunning || !publicationUiSettlement.isDone()
+                || serverList.getSelectedValue() == null) {
             return;
         }
         finishActiveEditing();
@@ -888,22 +959,36 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         long request = ++requestIdentity;
         long revision = draftRevision;
         String serverId = selectedServerId();
+        AtomicBoolean cancellation = new AtomicBoolean();
+        verifyCancellation.getAndSet(cancellation).set(true);
         verificationRunning = true;
         refreshActionStates();
-        observeStableManager(new ActionToken(request), observation -> continueVerify(request, revision, serverId, observation));
+        observeStableManager(new ActionToken(request), observation -> continueVerify(
+                request,
+                revision,
+                serverId,
+                cancellation,
+                observation,
+                VerifyPreflightPhase.INITIAL
+        ));
     }
 
     private void continueVerify(
             long request,
             long revision,
             String serverId,
-            StableManagerObservation observation
+            AtomicBoolean cancellation,
+            StableManagerObservation observation,
+            VerifyPreflightPhase phase
     ) {
-        if (disposed || request != requestIdentity || !Objects.equals(serverId, selectedServerId())) {
+        if (!keepCurrentVerification(request, revision, serverId, cancellation)) {
             return;
         }
         reconcileExternalRepair(observation, false);
-        if (invalidBase && !invalidReplacementConfirmed) {
+        if (!keepCurrentVerification(request, revision, serverId, cancellation)) {
+            return;
+        }
+        if (invalidBase && !invalidReplacementConfirmed && phase == VerifyPreflightPhase.INITIAL) {
             int answer = JOptionPane.showConfirmDialog(
                     this,
                     "The existing MCP configuration is invalid. Replace it with this draft?",
@@ -911,32 +996,61 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );
+            if (!keepCurrentVerification(request, revision, serverId, cancellation)) {
+                return;
+            }
             if (answer != JOptionPane.OK_OPTION) {
-                verificationRunning = false;
+                retireCurrentVerification();
                 refreshActionStates();
                 return;
             }
             invalidReplacementConfirmed = true;
-        }
-        if (!confirmCleartextEndpoints()) {
-            verificationRunning = false;
-            refreshActionStates();
+            observeStableManager(new ActionToken(request), latest -> continueVerify(
+                    request,
+                    revision,
+                    serverId,
+                    cancellation,
+                    latest,
+                    VerifyPreflightPhase.REPAIR_CONFIRMED
+            ));
             return;
+        }
+        if (phase != VerifyPreflightPhase.CONFIRMATIONS_COMPLETE) {
+            boolean accepted = confirmCleartextEndpoints(
+                    () -> isCurrentVerification(request, revision, serverId, cancellation)
+            );
+            if (!keepCurrentVerification(request, revision, serverId, cancellation)) {
+                return;
+            }
+            if (!accepted) {
+                retireCurrentVerification();
+                refreshActionStates();
+                return;
+            }
+            if (invalidBase) {
+                observeStableManager(new ActionToken(request), latest -> continueVerify(
+                        request,
+                        revision,
+                        serverId,
+                        cancellation,
+                        latest,
+                        VerifyPreflightPhase.CONFIRMATIONS_COMPLETE
+                ));
+                return;
+            }
         }
         McpConfiguration configuration = snapshotConfiguration();
         if (!validateForPresentation(configuration)) {
-            verificationRunning = false;
+            retireCurrentVerification();
             refreshActionStates();
             return;
         }
         McpServerConfiguration selected = serverById(serverId);
         if (selected == null) {
-            verificationRunning = false;
+            retireCurrentVerification();
             refreshActionStates();
             return;
         }
-        AtomicBoolean cancellation = new AtomicBoolean();
-        verifyCancellation.getAndSet(cancellation).set(true);
         transientStatus = "Verifying %s…".formatted(settingsDisplayName(selected));
         refreshFooter();
         refreshActionStates();
@@ -970,6 +1084,39 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         });
     }
 
+    private boolean keepCurrentVerification(
+            long request,
+            long revision,
+            String serverId,
+            AtomicBoolean cancellation
+    ) {
+        if (isCurrentVerification(request, revision, serverId, cancellation)) {
+            return true;
+        }
+        if (!disposed && request == requestIdentity && !cancellation.get()) {
+            cancelVerification(true);
+        }
+        return false;
+    }
+
+    private boolean isCurrentVerification(
+            long request,
+            long revision,
+            String serverId,
+            AtomicBoolean cancellation
+    ) {
+        return !disposed
+                && request == requestIdentity
+                && revision == draftRevision
+                && Objects.equals(serverId, selectedServerId())
+                && !cancellation.get();
+    }
+
+    private void retireCurrentVerification() {
+        verifyCancellation.get().set(true);
+        verificationRunning = false;
+    }
+
     private void finishVerification(
             long request,
             long revision,
@@ -982,7 +1129,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 || !Objects.equals(serverId, selectedServerId())) {
             return;
         }
-        verificationRunning = false;
+        retireCurrentVerification();
         boolean currentGeneration = result != null
                 && manager.generation() == result.applyResult().generation();
         if (error != null || result == null || !result.verified() || !currentGeneration) {
@@ -1015,21 +1162,39 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private void repairInvalidConfiguration() {
-        if (disposed || !invalidBase || !publicationUiSettlement.isDone()) {
+        if (disposed || repairRunning || verificationRunning || !invalidBase || !publicationUiSettlement.isDone()) {
             return;
         }
         finishActiveEditing();
         cancelVerification(true);
         long request = ++requestIdentity;
-        observeStableManager(new ActionToken(request), observation -> {
-            if (disposed || request != requestIdentity) {
-                return;
-            }
-            reconcileExternalRepair(observation, true);
-            if (!invalidBase) {
-                refreshActionStates();
-                return;
-            }
+        repairRunning = true;
+        refreshActionStates();
+        observeStableManager(new ActionToken(request), observation -> continueRepairInvalidConfiguration(
+                request,
+                observation,
+                false
+        ));
+    }
+
+    private void continueRepairInvalidConfiguration(
+            long request,
+            StableManagerObservation observation,
+            boolean replacementConfirmed
+    ) {
+        if (disposed || request != requestIdentity) {
+            return;
+        }
+        reconcileExternalRepair(observation, true);
+        if (disposed || request != requestIdentity) {
+            return;
+        }
+        if (!invalidBase) {
+            repairRunning = false;
+            refreshActionStates();
+            return;
+        }
+        if (!replacementConfirmed) {
             int answer = JOptionPane.showConfirmDialog(
                     this,
                     "Replace the invalid MCP configuration with the current draft?",
@@ -1037,22 +1202,37 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );
-            if (answer != JOptionPane.OK_OPTION) {
-                return;
-            }
-            McpConfiguration configuration = snapshotConfiguration();
-            if (!validateForPresentation(configuration)) {
+            if (disposed || request != requestIdentity || answer != JOptionPane.OK_OPTION) {
+                repairRunning = false;
+                refreshActionStates();
                 return;
             }
             invalidReplacementConfirmed = true;
-            PublicationAttempt attempt = new PublicationAttempt(
+            observeStableManager(new ActionToken(request), latest -> continueRepairInvalidConfiguration(
                     request,
-                    draftRevision,
-                    selectedServerId(),
-                    true,
-                    submittedSecrets()
-            );
-            submitPublication(new McpConfigurationDraft(configuration, replacementSecrets), attempt, ignored -> { });
+                    latest,
+                    true
+            ));
+            return;
+        }
+        McpConfiguration configuration = snapshotConfiguration();
+        if (!validateForPresentation(configuration)) {
+            repairRunning = false;
+            refreshActionStates();
+            return;
+        }
+        PublicationAttempt attempt = new PublicationAttempt(
+                request,
+                draftRevision,
+                selectedServerId(),
+                true,
+                submittedSecrets()
+        );
+        submitPublication(new McpConfigurationDraft(configuration, replacementSecrets), attempt, ignored -> {
+            if (!disposed && request == requestIdentity) {
+                repairRunning = false;
+                refreshActionStates();
+            }
         });
     }
 
@@ -1112,6 +1292,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private boolean confirmCleartextEndpoints() {
+        return confirmCleartextEndpoints(() -> true);
+    }
+
+    private boolean confirmCleartextEndpoints(BooleanSupplier stillCurrent) {
         return snapshotConfiguration().servers().stream()
                 .filter(server -> server.transport() == McpTransportType.STREAMABLE_HTTP)
                 .filter(server -> {
@@ -1125,13 +1309,16 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                         return false;
                     }
                 })
-                .allMatch(server -> JOptionPane.showConfirmDialog(
-                        this,
-                        "The MCP server named %s uses cleartext HTTP. Continue?".formatted(settingsDisplayName(server)),
-                        "Cleartext MCP Endpoint",
-                        JOptionPane.OK_CANCEL_OPTION,
-                        JOptionPane.WARNING_MESSAGE
-                ) == JOptionPane.OK_OPTION);
+                .allMatch(server -> stillCurrent.getAsBoolean()
+                        && JOptionPane.showConfirmDialog(
+                                this,
+                                "The MCP server named %s uses cleartext HTTP. Continue?"
+                                        .formatted(settingsDisplayName(server)),
+                                "Cleartext MCP Endpoint",
+                                JOptionPane.OK_CANCEL_OPTION,
+                                JOptionPane.WARNING_MESSAGE
+                        ) == JOptionPane.OK_OPTION
+                        && stillCurrent.getAsBoolean());
     }
 
     private void toggleAutomaticExecution() {
@@ -1160,6 +1347,398 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 }
             }
         }
+    }
+
+    private void importFromSystemClipboard() {
+        if (!canAdmitImport()) {
+            return;
+        }
+        try {
+            startClipboardImport(Toolkit.getDefaultToolkit().getSystemClipboard());
+        } catch (RuntimeException e) {
+            transientStatus = importDiagnostic(McpJsonImporter.ImportErrorReason.CLIPBOARD_UNAVAILABLE, "$");
+            refreshFooter();
+        }
+    }
+
+    private void startClipboardImport(Clipboard clipboard) {
+        if (!canAdmitImport() || clipboard == null) {
+            return;
+        }
+        var action = new ImportAction();
+        Timer timer = new Timer(IMPORT_TIMEOUT_MILLIS, event -> timeoutImport(action));
+        timer.setInitialDelay(IMPORT_TIMEOUT_MILLIS);
+        timer.setRepeats(false);
+        action.setTimer(timer);
+        WorkerToken token = action.workerToken();
+        WeakReference<McpPanel> owner = new WeakReference<>(this);
+        Thread worker = Thread.ofVirtual()
+                .name("chat4j-mcp-clipboard-import")
+                .unstarted(() -> runImportWorker(clipboard, token, owner));
+        action.setWorker(worker);
+        activeImport = action;
+        transientStatus = "Reading MCP configuration from clipboard…";
+        refreshFooter();
+        refreshActionStates();
+        try {
+            timer.start();
+            worker.start();
+        } catch (RuntimeException e) {
+            timer.stop();
+            token.fenced().set(true);
+            activeImport = null;
+            String diagnostic = importDiagnostic(McpJsonImporter.ImportErrorReason.CLIPBOARD_READ_FAILED, "$");
+            transientStatus = diagnostic;
+            refreshFooter();
+            refreshActionStates();
+            action.settlement().complete(new ImportSettlement(ImportOutcome.FAILED, diagnostic));
+        }
+    }
+
+    private boolean canAdmitImport() {
+        return !disposed
+                && pendingSaveActions.isEmpty()
+                && activeImport == null
+                && (lingeringImportWorker == null || !lingeringImportWorker.isAlive());
+    }
+
+    private static void runImportWorker(Clipboard clipboard, WorkerToken token, WeakReference<McpPanel> owner) {
+        WorkerCompletion completion = readClipboard(clipboard);
+        Thread worker = Thread.currentThread();
+        if (token.fenced().get()) {
+            completion.close();
+            completion = null;
+        }
+        if (owner.get() == null) {
+            if (completion != null) {
+                completion.close();
+            }
+            return;
+        }
+        WorkerCompletion delivered = completion;
+        SwingUtilities.invokeLater(() -> {
+            McpPanel panel = owner.get();
+            if (panel == null) {
+                if (delivered != null) {
+                    delivered.close();
+                }
+                return;
+            }
+            panel.reconcileImportWorker(token, worker, delivered);
+        });
+    }
+
+    private static WorkerCompletion readClipboard(Clipboard clipboard) {
+        try {
+            if (!clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+                return WorkerCompletion.failure(new McpJsonImporter.ImportException(
+                        McpJsonImporter.ImportErrorReason.CLIPBOARD_UNAVAILABLE,
+                        "$",
+                        -1,
+                        -1
+                ));
+            }
+            Object value = clipboard.getData(DataFlavor.stringFlavor);
+            if (!(value instanceof String content)) {
+                return WorkerCompletion.failure(new McpJsonImporter.ImportException(
+                        McpJsonImporter.ImportErrorReason.CLIPBOARD_UNAVAILABLE,
+                        "$",
+                        -1,
+                        -1
+                ));
+            }
+            return WorkerCompletion.success(new McpJsonImporter().parse(content));
+        } catch (McpJsonImporter.ImportException e) {
+            return WorkerCompletion.failure(e);
+        } catch (UnsupportedFlavorException e) {
+            return WorkerCompletion.failure(new McpJsonImporter.ImportException(
+                    McpJsonImporter.ImportErrorReason.CLIPBOARD_UNAVAILABLE,
+                    "$",
+                    -1,
+                    -1
+            ));
+        } catch (IOException | RuntimeException e) {
+            return WorkerCompletion.failure(new McpJsonImporter.ImportException(
+                    McpJsonImporter.ImportErrorReason.CLIPBOARD_READ_FAILED,
+                    "$",
+                    -1,
+                    -1
+            ));
+        }
+    }
+
+    private void reconcileImportWorker(WorkerToken token, Thread worker, WorkerCompletion completion) {
+        if (lingeringImportWorker == worker) {
+            lingeringImportWorker = null;
+            refreshActionStates();
+        }
+        ImportAction action = activeImport;
+        if (completion == null) {
+            return;
+        }
+        if (disposed || action == null || action.workerToken() != token || token.fenced().get()) {
+            completion.close();
+            return;
+        }
+        action.timer().stop();
+        token.fenced().set(true);
+        String installDiagnostic = importDiagnostic(McpJsonImporter.ImportErrorReason.INSTALL_FAILED, "$.server");
+        ImportSettlement settlement = new ImportSettlement(ImportOutcome.FAILED, installDiagnostic);
+        try (completion) {
+            if (completion.error() != null) {
+                String diagnostic = completion.error().diagnostic();
+                transientStatus = diagnostic;
+                refreshFooter();
+                settlement = new ImportSettlement(ImportOutcome.FAILED, diagnostic);
+            } else {
+                try {
+                    settlement = applyImportedServer(action, completion.result());
+                } catch (RuntimeException e) {
+                    transientStatus = installDiagnostic;
+                    refreshFooter();
+                }
+            }
+        } finally {
+            settleImportAction(action, settlement);
+        }
+    }
+
+    private void timeoutImport(ImportAction action) {
+        if (disposed || activeImport != action || action.workerToken().fenced().getAndSet(true)) {
+            return;
+        }
+        action.timer().stop();
+        Thread worker = action.worker();
+        if (worker != null) {
+            worker.interrupt();
+            if (worker.isAlive()) {
+                lingeringImportWorker = worker;
+            }
+        }
+        String diagnostic = importDiagnostic(McpJsonImporter.ImportErrorReason.IMPORT_TIMED_OUT, "$");
+        transientStatus = diagnostic;
+        try {
+            refreshFooter();
+        } finally {
+            settleImportAction(action, new ImportSettlement(ImportOutcome.TIMED_OUT, diagnostic));
+        }
+    }
+
+    private void settleImportAction(ImportAction action, ImportSettlement settlement) {
+        if (activeImport == action) {
+            activeImport = null;
+        }
+        try {
+            refreshActionStates();
+        } finally {
+            action.settlement().complete(settlement);
+        }
+    }
+
+    private ImportSettlement applyImportedServer(ImportAction action, McpJsonImporter.ImportResult result) {
+        if (disposed) {
+            return new ImportSettlement(ImportOutcome.DISPOSED, CLOSED_SAVE_ERROR);
+        }
+        if (!action.editorsSettledBySave()) {
+            finishActiveEditing();
+        }
+
+        long previousDraftRevision = draftRevision;
+        boolean previousInvalidDraftDirty = invalidDraftDirty;
+        boolean previousInvalidReplacementConfirmed = invalidReplacementConfirmed;
+        String serverId = UUID.randomUUID().toString();
+        List<McpJsonImporter.CredentialDescriptor> descriptors = result.credentialDescriptors();
+        List<String> rowIds = descriptors.stream().map(ignored -> UUID.randomUUID().toString()).toList();
+        List<McpSecretReference> rows = new ArrayList<>();
+        for (int index = 0; index < descriptors.size(); index++) {
+            rows.add(new McpSecretReference(rowIds.get(index), descriptors.get(index).key(), ""));
+        }
+        List<McpSecretReference> headers = result.transport() == McpTransportType.STREAMABLE_HTTP
+                ? List.copyOf(rows)
+                : emptyList();
+        List<McpSecretReference> environment = result.transport() == McpTransportType.STDIO
+                ? List.copyOf(rows)
+                : emptyList();
+        var server = new McpServerConfiguration(
+                serverId,
+                result.name(),
+                uniqueModelId(result.name(), serverId),
+                false,
+                false,
+                result.transport(),
+                result.endpoint(),
+                result.executable(),
+                result.arguments(),
+                headers,
+                environment,
+                false,
+                emptySet()
+        );
+        try {
+            McpConfigurationValidator.validate(new McpConfiguration(
+                    McpConfiguration.CURRENT_VERSION,
+                    List.of(server)
+            ));
+        } catch (McpConfigurationValidator.ValidationException e) {
+            String diagnostic = validationImportDiagnostic(e.category());
+            transientStatus = diagnostic;
+            refreshFooter();
+            return new ImportSettlement(ImportOutcome.FAILED, diagnostic);
+        }
+
+        List<McpJsonImporter.ImportedCredential> credentials = result.transferCredentials();
+        Set<String> installedRows = new HashSet<>();
+        boolean toolsInserted = false;
+        boolean unstableInserted = false;
+        boolean installed = false;
+        String previousSelection = selectedServerId();
+        int previousTab = editorTabs.getSelectedIndex();
+        String previousTool = toolModel.selectedRawName(toolTable.getSelectedRow());
+        try {
+            serverModel.addElement(server);
+            disabledTools.put(serverId, new LinkedHashSet<>());
+            toolsInserted = true;
+            unstableModelIdServerIds.add(serverId);
+            unstableInserted = true;
+            for (int index = 0; index < credentials.size(); index++) {
+                McpJsonImporter.ImportedCredential credential = credentials.get(index);
+                if (!credential.missing()) {
+                    String rowId = rowIds.get(index);
+                    if (replacementSecrets.containsKey(rowId)) {
+                        throw new IllegalStateException("Credential row ID collision.");
+                    }
+                    replacementSecrets.put(rowId, credential.value());
+                    installedRows.add(rowId);
+                }
+            }
+            markDraftMutation(false);
+            updating = true;
+            try {
+                serverList.setSelectedIndex(serverModel.size() - 1);
+                editorTabs.setSelectedIndex(0);
+            } finally {
+                updating = false;
+            }
+            toolModel.setTools("", emptyList(), false);
+            toolTable.clearSelection();
+            loadSelected();
+            nameField.requestFocusInWindow();
+            transientStatus = importSuccessStatus(result);
+            refreshFooter();
+            installed = true;
+            return new ImportSettlement(ImportOutcome.APPLIED, "");
+        } catch (RuntimeException e) {
+            draftRevision = previousDraftRevision;
+            invalidDraftDirty = previousInvalidDraftDirty;
+            invalidReplacementConfirmed = previousInvalidReplacementConfirmed;
+            try {
+                int serverIndex = indexOfServer(serverId);
+                if (serverIndex >= 0) {
+                    serverModel.remove(serverIndex);
+                }
+            } catch (RuntimeException ignored) {
+                // DefaultListModel removes the element before notifying listeners, so rollback must continue.
+            } finally {
+                if (toolsInserted) {
+                    disabledTools.remove(serverId);
+                }
+                if (unstableInserted) {
+                    unstableModelIdServerIds.remove(serverId);
+                }
+            }
+            updating = true;
+            try {
+                int previousIndex = previousSelection == null ? -1 : indexOfServer(previousSelection);
+                if (previousIndex >= 0) {
+                    serverList.setSelectedIndex(previousIndex);
+                } else {
+                    serverList.clearSelection();
+                }
+                editorTabs.setSelectedIndex(previousTab);
+            } finally {
+                updating = false;
+            }
+            editingServerId = null;
+            loadSelected();
+            int previousToolIndex = toolModel.indexOf(previousTool);
+            if (previousToolIndex >= 0) {
+                toolTable.setRowSelectionInterval(previousToolIndex, previousToolIndex);
+            }
+            String diagnostic = importDiagnostic(McpJsonImporter.ImportErrorReason.INSTALL_FAILED, "$.server");
+            transientStatus = diagnostic;
+            refreshFooter();
+            return new ImportSettlement(ImportOutcome.FAILED, diagnostic);
+        } finally {
+            if (!installed) {
+                for (int index = 0; index < credentials.size(); index++) {
+                    McpJsonImporter.ImportedCredential credential = credentials.get(index);
+                    String rowId = rowIds.get(index);
+                    if (installedRows.contains(rowId)) {
+                        char[] removed = replacementSecrets.remove(rowId);
+                        if (removed != null) {
+                            fill(removed, '\0');
+                        }
+                    } else {
+                        credential.wipe();
+                    }
+                }
+            }
+        }
+    }
+
+    private String importSuccessStatus(McpJsonImporter.ImportResult result) {
+        String presentedName = BoundedUtf8.presentation(result.name(), 80, 320);
+        int missing = result.missingCredentialCount();
+        String missingText = switch (missing) {
+            case 0 -> "";
+            case 1 -> " Review its settings and enter 1 missing credential before saving.";
+            default -> " Review its settings and enter %d missing credentials before saving.".formatted(missing);
+        };
+        String warnings = result.warnings().stream()
+                .map(McpJsonImporter.ImportWarning::message)
+                .collect(joining(" "));
+        String warningText = StringUtils.isBlank(warnings) ? "" : " %s".formatted(warnings);
+        return "Imported “%s” as disabled.%s%s".formatted(presentedName, missingText, warningText);
+    }
+
+    private String validationImportDiagnostic(McpConfigurationValidator.ValidationCategory category) {
+        McpJsonImporter.ImportErrorReason reason = switch (category) {
+            case MODEL_ID -> McpJsonImporter.ImportErrorReason.GENERATED_MODEL_ID_INVALID;
+            case ENDPOINT -> McpJsonImporter.ImportErrorReason.IMPORTED_ENDPOINT_INVALID;
+            case EXECUTABLE -> McpJsonImporter.ImportErrorReason.IMPORTED_EXECUTABLE_INVALID;
+            case HTTP_HEADERS -> McpJsonImporter.ImportErrorReason.IMPORTED_HEADERS_INVALID;
+            case ENVIRONMENT -> McpJsonImporter.ImportErrorReason.IMPORTED_ENVIRONMENT_INVALID;
+            case TOOLS -> McpJsonImporter.ImportErrorReason.IMPORTED_TOOLS_INVALID;
+            case GENERAL -> McpJsonImporter.ImportErrorReason.IMPORTED_SERVER_INVALID;
+        };
+        String path = switch (category) {
+            case MODEL_ID, GENERAL -> "$.server";
+            case ENDPOINT -> "$.server.endpoint";
+            case EXECUTABLE -> "$.server.executable";
+            case HTTP_HEADERS -> "$.server.headers";
+            case ENVIRONMENT -> "$.server.environment";
+            case TOOLS -> "$.server.tools";
+        };
+        return importDiagnostic(reason, path);
+    }
+
+    private static String importDiagnostic(McpJsonImporter.ImportErrorReason reason, String path) {
+        return "%s Path: %s".formatted(reason.message(), path);
+    }
+
+    private void disposeImport() {
+        ImportAction action = activeImport;
+        activeImport = null;
+        if (action != null) {
+            action.timer().stop();
+            action.workerToken().fenced().set(true);
+            Thread worker = action.worker();
+            if (worker != null) {
+                worker.interrupt();
+            }
+            action.settlement().complete(new ImportSettlement(ImportOutcome.DISPOSED, CLOSED_SAVE_ERROR));
+        }
+        lingeringImportWorker = null;
     }
 
     private void showServerCreationMenu(Component invoker) {
@@ -1357,19 +1936,27 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     }
 
     private void markDraftMutation() {
+        markDraftMutation(true);
+    }
+
+    private void markDraftMutation(boolean reportCancellation) {
         if (updating || disposed) {
             return;
         }
         draftRevision++;
         invalidDraftDirty = invalidBase;
+        if (invalidBase) {
+            invalidReplacementConfirmed = false;
+        }
         clearValidationOutlines();
-        cancelVerification(true);
+        cancelVerification(reportCancellation);
         refreshActionStates();
     }
 
     private void cancelVerification(boolean mutation) {
         boolean running = verifyCancellation.get().compareAndSet(false, true);
         verificationRunning = false;
+        repairRunning = false;
         requestIdentity++;
         if (mutation && running) {
             transientStatus = CANCELLED_STATUS;
@@ -1496,10 +2083,12 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private void refreshActionStates() {
         boolean selected = serverList.getSelectedValue() != null;
         boolean publicationIdle = publicationFinishing || publicationUiSettlement.isDone();
-        verifyButton.setEnabled(!disposed && selected && publicationIdle && !verificationRunning);
-        replaceInvalidButton.setEnabled(!disposed && invalidBase && publicationIdle);
+        boolean actionIdle = !verificationRunning && !repairRunning;
+        verifyButton.setEnabled(!disposed && selected && publicationIdle && actionIdle);
+        replaceInvalidButton.setEnabled(!disposed && invalidBase && publicationIdle && actionIdle);
         showSchemaButton.setEnabled(!disposed && selected && toolTable.getSelectedRow() >= 0);
         removeButton.setEnabled(!disposed && selected);
+        importJsonItem.setEnabled(canAdmitImport());
         headerEditor.refreshActionStates();
         environmentEditor.refreshActionStates();
         argumentsEditor.refreshActionStates();
@@ -1589,8 +2178,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         JTextArea content = new JTextArea(schema, 22, 72);
         content.setEditable(false);
-        content.setLineWrap(true);
-        content.setWrapStyleWord(true);
+        content.setLineWrap(false);
         Font selectedCodeFont = UIManager.getFont("monospaced.font");
         content.setFont(selectedCodeFont == null
                 ? new Font(Font.MONOSPACED, Font.PLAIN, content.getFont().getSize())
@@ -1601,7 +2189,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 "Read-only JSON input schema for %s".formatted(tool.name())
         );
         JScrollPane scroll = new JScrollPane(content);
-        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         JButton close = new JButton("Close");
         close.addActionListener(event -> dialog.dispose());
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
@@ -2057,7 +2645,12 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             actions.add(add);
             actions.add(remove);
             add(actions, BorderLayout.SOUTH);
-            table.getSelectionModel().addListSelectionListener(event -> refreshActionStates());
+            table.getSelectionModel().addListSelectionListener(event -> {
+                if (!event.getValueIsAdjusting() && !loading) {
+                    stopEditing();
+                }
+                refreshActionStates();
+            });
             add.addActionListener(event -> addRow());
             remove.addActionListener(event -> removeRow());
         }
@@ -2203,6 +2796,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 clearPasswordField();
                 McpSecretReference credential = model.rowAt(row);
                 editingRowId = credential == null ? null : credential.rowId();
+                boolean available = credential != null && (replacementSecrets.containsKey(credential.rowId())
+                        || StringUtils.isNotBlank(credential.secretId()));
+                String guidance = available
+                        ? "Leave blank to retain the current value"
+                        : "Enter a credential value; this server cannot be saved until one is entered.";
+                field.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, guidance);
+                field.getAccessibleContext().setAccessibleDescription(guidance);
                 return field;
             }
 
@@ -2700,15 +3300,132 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     ) {
     }
 
+    private enum VerifyPreflightPhase {
+        INITIAL,
+        REPAIR_CONFIRMED,
+        CONFIRMATIONS_COMPLETE
+    }
+
     private record AppliedSnapshot(long generation, McpConfiguration configuration) {
+    }
+
+    private enum ImportOutcome {
+        NO_IMPORT,
+        APPLIED,
+        FAILED,
+        TIMED_OUT,
+        DISPOSED
+    }
+
+    private record ImportSettlement(ImportOutcome outcome, String diagnostic) {
+    }
+
+    private record WorkerToken(AtomicBoolean fenced) {
+        private WorkerToken() {
+            this(new AtomicBoolean());
+        }
+    }
+
+    private static final class ImportAction {
+        private final WorkerToken workerToken = new WorkerToken();
+        private final CompletableFuture<ImportSettlement> settlement = new CompletableFuture<>();
+        private Timer timer;
+        private Thread worker;
+        private boolean editorsSettledBySave;
+
+        private WorkerToken workerToken() {
+            return workerToken;
+        }
+
+        private CompletableFuture<ImportSettlement> settlement() {
+            return settlement;
+        }
+
+        private Timer timer() {
+            return timer;
+        }
+
+        private void setTimer(Timer timer) {
+            this.timer = timer;
+        }
+
+        private Thread worker() {
+            return worker;
+        }
+
+        private void setWorker(Thread worker) {
+            this.worker = worker;
+        }
+
+        private boolean editorsSettledBySave() {
+            return editorsSettledBySave;
+        }
+
+        private void markEditorsSettledBySave() {
+            editorsSettledBySave = true;
+        }
+    }
+
+    private static final class WorkerCompletion implements AutoCloseable {
+        private final McpJsonImporter.ImportResult result;
+        private final McpJsonImporter.ImportException error;
+
+        private WorkerCompletion(
+                McpJsonImporter.ImportResult result,
+                McpJsonImporter.ImportException error
+        ) {
+            this.result = result;
+            this.error = error;
+        }
+
+        private static WorkerCompletion success(McpJsonImporter.ImportResult result) {
+            return new WorkerCompletion(result, null);
+        }
+
+        private static WorkerCompletion failure(McpJsonImporter.ImportException error) {
+            return new WorkerCompletion(null, error);
+        }
+
+        private McpJsonImporter.ImportResult result() {
+            return result;
+        }
+
+        private McpJsonImporter.ImportException error() {
+            return error;
+        }
+
+        @Override
+        public void close() {
+            if (result != null) {
+                result.close();
+            }
+        }
     }
 
     private static final class SaveAction {
         private final CompletableFuture<Boolean> result = new CompletableFuture<>();
+        private final CompletableFuture<ImportSettlement> importSettlement;
+        private boolean importObserved;
         private boolean submitted;
+
+        private SaveAction(CompletableFuture<ImportSettlement> importSettlement) {
+            this.importSettlement = importSettlement;
+        }
 
         private CompletableFuture<Boolean> result() {
             return result;
+        }
+
+        private CompletableFuture<ImportSettlement> importSettlement() {
+            return importSettlement;
+        }
+
+        private boolean importObserved() {
+            return importObserved;
+        }
+
+        private void markImportObserved() {
+            importObserved = true;
         }
 
         private boolean submitted() {

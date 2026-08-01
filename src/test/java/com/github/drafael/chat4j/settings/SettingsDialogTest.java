@@ -12,6 +12,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class SettingsDialogTest {
 
@@ -79,6 +81,30 @@ class SettingsDialogTest {
         assertThat(retryResult.saved()).isTrue();
         assertThat(firstCalls).hasValue(2);
         assertThat(secondCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("MCP save admission precedes slower settings participants")
+    void saveParticipants_whenMcpImportTimedOut_prioritizesMcpFailure() throws Exception {
+        var slowStarted = new AtomicBoolean();
+        AsyncPendingSettingsSaveParticipant slow = participant(() -> {
+            slowStarted.set(true);
+            return new CompletableFuture<>();
+        });
+        McpPanel mcp = mock(McpPanel.class);
+        when(mcp.savePendingChangesAsync()).thenReturn(CompletableFuture.completedFuture(false));
+        when(mcp.lastSaveError()).thenReturn("Clipboard import timed out. Path: $");
+        when(mcp.settingsSectionName()).thenReturn("MCP");
+
+        SettingsDialog.SavePendingResult result = SettingsDialog.saveParticipants(
+                List.of(slow, mcp),
+                () -> true
+        ).get(5, TimeUnit.SECONDS);
+
+        assertThat(result.saved()).isFalse();
+        assertThat(result.sectionName()).isEqualTo("MCP");
+        assertThat(result.message()).isEqualTo("Clipboard import timed out. Path: $");
+        assertThat(slowStarted).isFalse();
     }
 
     @Test

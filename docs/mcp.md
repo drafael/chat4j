@@ -6,7 +6,7 @@ Chat4J can use MCP tools in workspace-backed **Agent Mode**. Configure servers u
 
 Chat4J negotiates MCP `2025-06-18` and supports:
 
-- **Stdio** — a native executable or bare command resolved through `PATH`, plus one ordered argument per line.
+- **Stdio** — a native executable or bare command resolved through `PATH`, plus ordered arguments.
 - **Streamable HTTP** — one absolute HTTP(S) endpoint. The complete configured path and query are preserved and redirects are not followed.
 
 Deprecated two-endpoint HTTP+SSE, protocol downgrade, OAuth, resources, prompts, roots, sampling, elicitation, tasks, and returned image/audio/resource content are not supported.
@@ -27,7 +27,7 @@ Saved values remain masked. Leaving a masked field unchanged retains it; replaci
 
 ## Verification and tools
 
-**Verify / View Tools** saves the current draft, initializes that exact server configuration, and lists every tool page. Newly discovered tools are enabled by default; disabling a tool persists its exact case-sensitive name.
+**Verify / Refresh** saves the current draft, initializes that exact server configuration, and lists every tool page. Newly discovered tools are enabled by default; disabling a tool persists its exact case-sensitive name.
 
 Every enabled server must initialize and list tools before the first provider turn. An unavailable enabled server stops the Agent run with a repair/disable message.
 

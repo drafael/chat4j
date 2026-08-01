@@ -66,7 +66,7 @@ import static java.util.stream.Collectors.toSet;
 @Slf4j
 public class ApiTokenVault {
 
-    static final int MAX_TOKEN_BYTES = 64 * 1024;
+    static final int MAX_TOKEN_BYTES = CredentialStoragePolicy.MAX_UTF8_BYTES;
     static final int MAX_VAULT_BYTES = 4 * 1024 * 1024;
     static final int MAX_KEY_FILE_BYTES = 1024;
 
@@ -286,16 +286,10 @@ public class ApiTokenVault {
         if (token == null || isBlank(token)) {
             return;
         }
-        byte[] encoded = null;
-        try {
-            encoded = toUtf8(token);
-            if (encoded.length > MAX_TOKEN_BYTES) {
-                throw new IllegalArgumentException("API token exceeds the 64 KiB limit.");
-            }
-        } catch (CharacterCodingException e) {
-            throw new IllegalArgumentException("API token contains malformed characters.");
-        } finally {
-            clear(encoded);
+        switch (CredentialStoragePolicy.validate(CharBuffer.wrap(token))) {
+            case VALID -> { }
+            case MALFORMED_UTF16 -> throw new IllegalArgumentException("API token contains malformed characters.");
+            case TOO_LARGE -> throw new IllegalArgumentException("API token exceeds the 64 KiB limit.");
         }
     }
 

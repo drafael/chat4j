@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.mcp;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import lombok.NonNull;
 
 import static java.util.Arrays.copyOf;
@@ -26,7 +27,7 @@ public record McpConfigurationDraft(
     }
 
     public void clearSecrets() {
-        replacementSecrets.values().forEach(value -> fill(value, '\0'));
+        replacementSecrets.values().stream().filter(Objects::nonNull).forEach(value -> fill(value, '\0'));
     }
 
     @Override

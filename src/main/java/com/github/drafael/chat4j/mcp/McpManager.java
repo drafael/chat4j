@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.mcp;
 import com.github.drafael.chat4j.chat.agent.AgentToolDefinition;
 import com.github.drafael.chat4j.chat.agent.AgentToolSource;
 import com.github.drafael.chat4j.chat.agent.LocalAgentToolCatalog;
+import com.github.drafael.chat4j.provider.support.CredentialStoragePolicy;
 import com.github.drafael.chat4j.provider.support.McpSecretVault;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
@@ -753,6 +754,15 @@ public final class McpManager implements McpRunProvider, AutoCloseable {
             if (!headerRows.contains(rowId)
                     && CharBuffer.wrap(value).chars().anyMatch(character -> character == '\0')) {
                 throw new IllegalArgumentException("MCP environment values must not contain NUL.");
+            }
+            switch (CredentialStoragePolicy.validate(CharBuffer.wrap(value))) {
+                case VALID -> { }
+                case MALFORMED_UTF16 -> throw new IllegalArgumentException(
+                        "MCP credential value contains malformed characters."
+                );
+                case TOO_LARGE -> throw new IllegalArgumentException(
+                        "MCP credential value exceeds the 64 KiB limit."
+                );
             }
         });
     }

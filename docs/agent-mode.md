@@ -31,6 +31,16 @@ Stored setting key:
 
 Agent Mode toggle state and selected folder are stored per conversation in the local database.
 
+### Importing an MCP server from the clipboard
+
+In **Settings → MCP**, open either Add menu and choose **Import JSON from Clipboard**. Import accepts exactly one server from a bare object or from the `mcpServers`, `servers`, or `mcp` wrappers used by common MCP clients. It supports command-line (stdio) and Streamable HTTP configurations only.
+
+Imported servers are always added as disabled with automatic tool execution off, regardless of source `enabled`, approval, trust, sandbox, or tool-policy fields. Review the imported settings before enabling or saving the server. Chat4J rejects deprecated SSE/WebSocket transports and source fields that require unsupported execution or authentication behavior, such as working directories, environment files, or OAuth configuration.
+
+HTTP header and stdio environment values enter the existing encrypted MCP credential flow. Recognized foreign placeholders remain **Missing** and must be entered explicitly before Settings can save. Placeholder-looking command arguments remain literal argument text; like executables, endpoints, and other arguments, they are stored as ordinary plaintext configuration rather than credentials. Import does not execute the command, contact the endpoint, or publish configuration; the coordinated Settings Save remains the only persistence path.
+
+The importer accepts bounded strict JSON and JSONC with Java-style comments and trailing commas. It does not claim full compatibility with every client-specific configuration schema. See [MCP tools](mcp.md) for supported transports, credential behavior, approval policy, and runtime lifecycle.
+
 ## Tool activity UI and persistence
 
 Agent Mode emits redacted activity events for tool starts, successes, failures, and skipped loop-guard batches.

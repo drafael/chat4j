@@ -35,6 +35,7 @@ import javax.swing.JList;
 import javax.swing.JMenuItem;
 import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
 import javax.swing.JTable;
 import javax.swing.JTextField;
@@ -45,6 +46,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Arrays.fill;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
@@ -98,7 +100,11 @@ class McpPanelWindowTest {
                 assertThat(creationMenu.getInvoker()).isSameAs(emptyAdd);
                 assertThat(components(creationMenu, JMenuItem.class))
                         .extracting(JMenuItem::getText)
-                        .containsExactly("Command-line (stdio)", "HTTP Server (http)");
+                        .containsExactly(
+                                "Command-line (stdio)",
+                                "HTTP Server (http)",
+                                "Import JSON from Clipboard"
+                        );
                 creationMenu.setVisible(false);
                 assertThat(servers.getModel().getSize()).isZero();
 
@@ -127,7 +133,9 @@ class McpPanelWindowTest {
                 assertThat(creationMenu.getInvoker()).isSameAs(railAdd);
                 createdSubject.disposePanel();
                 assertThat(creationMenu.isVisible()).isFalse();
+                assertThat(menuItem(creationMenu, "Import JSON from Clipboard").isEnabled()).isFalse();
                 menuItem(creationMenu, "Command-line (stdio)").doClick();
+                menuItem(creationMenu, "Import JSON from Clipboard").doClick();
                 assertThat(servers.getModel().getSize()).isZero();
             });
         } finally {
@@ -201,17 +209,17 @@ class McpPanelWindowTest {
                 Object cancelActionKey = cancelled.getInputMap().get(KeyStroke.getKeyStroke("ESCAPE"));
                 assertThat(cancelActionKey).isEqualTo("cancelCredentialEditing");
                 cancelled.getActionMap().get(cancelActionKey).actionPerformed(null);
-                assertThat(cancelled.getPassword()).isEmpty();
+                assertPasswordEmpty(cancelled, "cancelled password editor should be empty");
                 assertThat(headers.isEditing()).isFalse();
-                assertThat(headers.getValueAt(0, 1)).isEqualTo("");
+                assertCredentialValue(headers, 0, "", "cancelled header value should render as blank");
 
                 assertThat(headers.editCellAt(0, 1)).isTrue();
                 JPasswordField committed = (JPasswordField) headers.getEditorComponent();
                 committed.setText("committed-secret");
                 committed.postActionEvent();
-                assertThat(committed.getPassword()).isEmpty();
+                assertPasswordEmpty(committed, "committed password editor should be empty");
                 assertThat(headers.isEditing()).isFalse();
-                assertThat(headers.getValueAt(0, 1)).isEqualTo("••••••••");
+                assertCredentialValue(headers, 0, "••••••••", "committed header value should render as masked");
 
                 Container editor = (Container) field(createdSubject, "headerEditor", Object.class);
                 findTextButton(editor, "Add").doClick();
@@ -311,8 +319,16 @@ class McpPanelWindowTest {
                         JTextArea.class
                 );
                 assertThat(schemaContent.isEditable()).isFalse();
-                assertThat(schemaContent.getLineWrap()).isTrue();
-                assertThat(schemaContent.getWrapStyleWord()).isTrue();
+                assertThat(schemaContent.getLineWrap()).isFalse();
+                assertThat(SwingUtilities.getAncestorOfClass(JScrollPane.class, schemaContent))
+                        .isInstanceOfSatisfying(JScrollPane.class, schemaScroll -> {
+                            assertThat(schemaScroll.getHorizontalScrollBarPolicy())
+                                    .isEqualTo(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+                            assertThat(schemaScroll.getVerticalScrollBarPolicy())
+                                    .isEqualTo(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+                        });
+                assertThat(schemaContent.getCaretPosition()).isZero();
+                assertThat(schemaContent.isFocusable()).isTrue();
                 assertThat(schemaContent.getFont()).isEqualTo(selectedCodeFont);
                 button(createdSubject, "Show input schema").doClick();
                 assertThat(schemaDialogs()).containsExactly(dialog);
@@ -438,6 +454,22 @@ class McpPanelWindowTest {
             }
         }
         return List.copyOf(result);
+    }
+
+    private void assertPasswordEmpty(JPasswordField field, String description) {
+        char[] value = field.getPassword();
+        boolean empty;
+        try {
+            empty = value.length == 0;
+        } finally {
+            fill(value, '\0');
+        }
+        assertThat(empty).as(description).isTrue();
+    }
+
+    private void assertCredentialValue(JTable table, int row, String expected, String description) {
+        boolean matches = expected.equals(table.getValueAt(row, 1));
+        assertThat(matches).as(description).isTrue();
     }
 
     private void runOnEdt(ThrowingAction action) throws Exception {

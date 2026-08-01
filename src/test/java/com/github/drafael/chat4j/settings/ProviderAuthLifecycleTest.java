@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.settings;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,12 +84,10 @@ class ProviderAuthLifecycleTest {
     @Test
     @DisplayName("Interrupting the dialog waiter before future completion preserves interrupt status")
     void awaitAuthDialogResult_whenWorkerInterruptsFirst_restoresInterruptStatus() throws Exception {
-        var result = new CompletableFuture<String>();
-        var workerStarted = new CountDownLatch(1);
+        var result = new AwaitObservedFuture<String>();
         var failure = new AtomicReference<Throwable>();
         var interrupted = new AtomicBoolean();
         Thread worker = Thread.startVirtualThread(() -> {
-            workerStarted.countDown();
             try {
                 ProvidersPanel.awaitAuthDialogResult(result);
             } catch (Throwable t) {
@@ -98,8 +97,7 @@ class ProviderAuthLifecycleTest {
         });
 
         try {
-            assertThat(workerStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            awaitThreadWaiting(worker);
+            assertThat(result.awaitGetCalled()).isTrue();
             worker.interrupt();
             worker.join(TimeUnit.SECONDS.toMillis(2));
 
@@ -127,13 +125,11 @@ class ProviderAuthLifecycleTest {
     @Test
     @DisplayName("Cancelling the dialog result resource interrupts its waiter before completion")
     void authDialogCancellation_whenResultResourceCancelsFirst_preservesWorkerInterruption() throws Exception {
-        var result = new CompletableFuture<String>();
-        var workerStarted = new CountDownLatch(1);
+        var result = new AwaitObservedFuture<String>();
         var observed = new AtomicReference<String>();
         var failure = new AtomicReference<Throwable>();
         var interrupted = new AtomicBoolean();
         Thread worker = Thread.startVirtualThread(() -> {
-            workerStarted.countDown();
             try {
                 observed.set(ProvidersPanel.awaitAuthDialogResult(result));
             } catch (Throwable t) {
@@ -144,8 +140,7 @@ class ProviderAuthLifecycleTest {
         });
 
         try {
-            assertThat(workerStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            awaitThreadWaiting(worker);
+            assertThat(result.awaitGetCalled()).isTrue();
 
             ProvidersPanel.authDialogCancellation(worker, result).run();
             worker.join(TimeUnit.SECONDS.toMillis(2));
@@ -177,11 +172,17 @@ class ProviderAuthLifecycleTest {
         assertThat(observed).hasValue("cancelled");
     }
 
-    private static void awaitThreadWaiting(Thread worker) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (worker.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
-            Thread.onSpinWait();
+    private static final class AwaitObservedFuture<T> extends CompletableFuture<T> {
+        private final CountDownLatch getCalled = new CountDownLatch(1);
+
+        @Override
+        public T get() throws InterruptedException, ExecutionException {
+            getCalled.countDown();
+            return super.get();
         }
-        assertThat(worker.getState()).isEqualTo(Thread.State.WAITING);
+
+        private boolean awaitGetCalled() throws InterruptedException {
+            return getCalled.await(2, TimeUnit.SECONDS);
+        }
     }
 }
