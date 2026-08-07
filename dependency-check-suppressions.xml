@@ -6,7 +6,7 @@
         unrelated Zoom video-conferencing CPE and its vulnerabilities.
         ]]></notes>
         <packageUrl regex="true">^pkg:maven/javazoom/jlayer@1\.0\.1$</packageUrl>
-        <cpe>cpe:2.3:a:zoom:zoom:1.0.1:*:*:*:*:*:*:*</cpe>
+        <cpe>cpe:/a:zoom:zoom</cpe>
     </suppress>
     <suppress>
         <notes><![CDATA[
@@ -25,7 +25,7 @@
         only the Kotlin runtime libraries transitively; it does not compile Kotlin or
         consume Kotlin build-cache metadata at runtime.
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/kotlin-(?:stdlib(?:-jdk7|-jdk8)?|reflect)@.*$</packageUrl>
+        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/kotlin-(?:stdlib(?:-common|-jdk7|-jdk8)?|reflect)@.*$</packageUrl>
         <cve>CVE-2020-29582</cve>
         <cve>CVE-2026-53914</cve>
     </suppress>
