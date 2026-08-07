@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.8.4</version>
+    <version>26.8.5</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -629,6 +629,9 @@
                         <configuration>
                             <failBuildOnCVSS>7</failBuildOnCVSS>
                             <dataDirectory>${user.home}/.m2/repository/org/owasp/dependency-check-data</dataDirectory>
+                            <suppressionFiles>
+                                <suppressionFile>${project.basedir}/dependency-check-suppressions.xml</suppressionFile>
+                            </suppressionFiles>
                             <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
                             <nvdMaxRetryCount>${dependency-check.nvd.max-retry-count}</nvdMaxRetryCount>
                             <nvdValidForHours>${dependency-check.nvd.valid-for-hours}</nvdValidForHours>

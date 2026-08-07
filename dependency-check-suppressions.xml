@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd">
+    <suppress>
+        <notes><![CDATA[
+        JavaZoom JLayer is an MP3 decoder. Dependency-Check incorrectly assigns the
+        unrelated Zoom video-conferencing CPE and its vulnerabilities.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/javazoom/jlayer@1\.0\.1$</packageUrl>
+        <cpe>cpe:2.3:a:zoom:zoom:1.0.1:*:*:*:*:*:*:*</cpe>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        This artifact contains CEF 146.0.10 / Chromium 146.0.7680.179. The two CEF
+        vulnerabilities affect versions before 121 and are fixed in 120.2.3,
+        121.2.6, and newer. Dependency-Check truncates the compound artifact version.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/me\.friwi/jcef-api@jcef-d3de827%2Bcef-146\.0\.10%2Bg8219561%2Bchromium-146\.0\.7680\.179$</packageUrl>
+        <cve>CVE-2024-21639</cve>
+        <cve>CVE-2024-21640</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+        These findings concern Kotlin compiler/build tooling: insecure temporary-file
+        creation and unsafe deserialization of build-cache metadata. Chat4J carries
+        only the Kotlin runtime libraries transitively; it does not compile Kotlin or
+        consume Kotlin build-cache metadata at runtime.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/kotlin-(?:stdlib(?:-jdk7|-jdk8)?|reflect)@.*$</packageUrl>
+        <cve>CVE-2020-29582</cve>
+        <cve>CVE-2026-53914</cve>
+    </suppress>
+</suppressions>

@@ -28,8 +28,9 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Cache Dependency-Check data
-        uses: actions/cache@v6
+      - name: Restore Dependency-Check data
+        id: dependency-check-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: dependency-check-data-${{ runner.os }}-${{ github.run_id }}
@@ -40,6 +41,13 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: mvn -B -ntp -Pdependency-audit verify
+
+      - name: Save Dependency-Check data
+        if: always() && steps.dependency-check-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: ${{ steps.dependency-check-cache.outputs.cache-primary-key }}
 
       - name: Upload dependency audit reports
         if: always()
