@@ -69,6 +69,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
@@ -194,6 +195,7 @@ public class ChatPanel extends JPanel {
     private boolean atBottom = true;
     private final ModelSelectorButton modelSelectorBtn;
     private final ProviderModelCacheService modelCacheService;
+    private final ProviderModelsResolver providerModelsResolver;
     private final ModelFavoritesService modelFavoritesService;
     private final ProviderRegistry providerRegistry;
     private final AttachmentStager attachmentStager;
@@ -218,6 +220,7 @@ public class ChatPanel extends JPanel {
     private final JPanel renderTogglePanel;
     private RenderMode renderMode = RenderMode.PREVIEW;
     private Consumer<RenderMode> renderModeChangedListener;
+    private Consumer<String> modelSelectionRequestedListener;
     private Runnable selectedModelChangedListener;
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
@@ -379,6 +382,7 @@ public class ChatPanel extends JPanel {
             @NonNull McpApprovalHandler mcpApprovalHandler
     ) {
         this.modelCacheService = modelCacheService;
+        this.providerModelsResolver = new ProviderModelsResolver(modelCacheService);
         this.modelFavoritesService = modelFavoritesService;
         this.providerRegistry = providerRegistry;
         this.copilotAuthResolver = copilotAuthResolver;
@@ -884,7 +888,7 @@ public class ChatPanel extends JPanel {
                 modelCacheService,
                 modelFavoritesService,
                 providerRegistry,
-                this::selectModel,
+                this::requestModelSelection,
                 this::updateProviderModelsFromPopup,
                 this::notifyModelFavoritesChanged,
                 this::notifyModelCatalogChanged,
@@ -902,6 +906,15 @@ public class ChatPanel extends JPanel {
         }
 
         ensureModelPopup(owner).preload();
+    }
+
+    private void requestModelSelection(String providerName, String modelId) {
+        String modelKey = ModelSelectionCodec.format(providerName, modelId);
+        if (modelSelectionRequestedListener == null) {
+            setSelectedModel(modelKey);
+            return;
+        }
+        modelSelectionRequestedListener.accept(modelKey);
     }
 
     private void selectModel(String providerName, String modelId) {
@@ -1142,6 +1155,7 @@ public class ChatPanel extends JPanel {
         if (visibleConversation) {
             inputBar.clear();
             history.add(userMessage);
+            refreshModelSelectorConversationState();
             int userMessageIndex = history.size() - 1;
             userHistoryEntries.put(
                     userMessageIndex,
@@ -4585,6 +4599,7 @@ public class ChatPanel extends JPanel {
         clearCurrentAgentToolBubbleState();
         currentAssistantBubble = null;
         history.clear();
+        refreshModelSelectorConversationState();
         userHistoryEntries.clear();
         nextMessageOrdinal = 1;
         historyRevision++;
@@ -4657,6 +4672,7 @@ public class ChatPanel extends JPanel {
         messagesPanel.revalidate();
         messagesPanel.repaint();
         messagesCardLayout.show(messagesContainer, history.isEmpty() ? CARD_EMPTY : CARD_CHAT);
+        refreshModelSelectorConversationState();
         updateClearChatButtonVisibility();
         SwingUtilities.invokeLater(() -> {
             updateAtBottom();
@@ -4880,6 +4896,21 @@ public class ChatPanel extends JPanel {
         return ModelSelectionCodec.format(selectedProviderName, selectedModelId);
     }
 
+    public boolean hasConversationMessages() {
+        return !history.isEmpty();
+    }
+
+    public String resolveUserSelectableModel(String modelKey) {
+        return ModelSelectionCodec.parse(modelKey)
+                .filter(selection -> {
+                    ProviderRegistry.ProviderDef providerDef = providerMap.get(selection.provider());
+                    return providerDef != null
+                            && providerModelsResolver.resolve(providerDef).contains(selection.model());
+                })
+                .map(selection -> ModelSelectionCodec.format(selection.provider(), selection.model()))
+                .orElse(null);
+    }
+
     public void setSelectedModel(String modelKey) {
         ModelSelectionCodec.parse(modelKey).ifPresent(selection -> {
             String safeModelId = safeModelId(selection.provider(), selection.model());
@@ -4985,6 +5016,10 @@ public class ChatPanel extends JPanel {
         } else {
             previewToggle.setSelected(true);
         }
+    }
+
+    public void setOnModelSelectionRequested(@NonNull Consumer<String> listener) {
+        this.modelSelectionRequestedListener = listener;
     }
 
     public void setOnSelectedModelChanged(Runnable listener) {
@@ -5403,6 +5438,10 @@ public class ChatPanel extends JPanel {
                 && !speechToTextService.active();
     }
 
+    private void refreshModelSelectorConversationState() {
+        modelSelectorBtn.setConversationHasMessages(!history.isEmpty());
+    }
+
     private void updateClearChatButtonVisibility() {
         inputBar.setClearChatVisible(canClearChat());
     }
@@ -5747,6 +5786,7 @@ public class ChatPanel extends JPanel {
         }
         Message assistantMessage = preparedResponse.entry().message();
         history.add(assistantMessage);
+        refreshModelSelectorConversationState();
         int assistantMessageIndex = history.size() - 1;
         if (currentAssistantBubble == null) {
             addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);

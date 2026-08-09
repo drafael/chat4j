@@ -23,20 +23,22 @@ public class ProviderModelsResolver {
         return providers.stream()
                 .collect(toMap(
                         ProviderRegistry.ProviderDef::name,
-                        provider -> {
-                            if (Strings.CS.equals(provider.name(), "Perplexity")) {
-                                return provider.seedModels();
-                            }
-
-                            return modelCacheService.findUsableModels(provider.name(), provider.baseUrl())
-                                    .filter(models -> !models.isEmpty())
-                                    .orElseGet(() -> modelCacheService.modelsWithLocalOverlay(
-                                            provider.name(),
-                                            provider.seedModels()
-                                    ));
-                        },
+                        this::resolve,
                         (existing, replacement) -> existing,
                         LinkedHashMap::new
+                ));
+    }
+
+    public List<String> resolve(@NonNull ProviderRegistry.ProviderDef provider) {
+        if (Strings.CS.equals(provider.name(), "Perplexity")) {
+            return provider.seedModels();
+        }
+
+        return modelCacheService.findUsableModels(provider.name(), provider.baseUrl())
+                .filter(models -> !models.isEmpty())
+                .orElseGet(() -> modelCacheService.modelsWithLocalOverlay(
+                        provider.name(),
+                        provider.seedModels()
                 ));
     }
 }

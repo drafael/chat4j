@@ -5,10 +5,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
 import java.lang.reflect.Method;
+import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,31 +29,96 @@ class ModelSelectorButtonTest {
     }
 
     @Test
-    @DisplayName("Tooltip shows provider before model on one line")
-    void setSelection_whenCalled_showsProviderBeforeModelInTooltip() {
-        var subject = new ModelSelectorButton();
+    @DisplayName("Empty-chat interaction text identifies the current model and direct selection")
+    void setSelection_whenChatEmpty_showsDirectSelectionText() throws Exception {
+        var subject = callOnEdt(ModelSelectorButton::new);
 
-        subject.setSelection("Anthropic", "claude-sonnet-4-6");
+        callOnEdt(() -> {
+            subject.setSelection("Anthropic", "claude-sonnet-4-6");
+            return null;
+        });
 
-        assertThat(subject.getToolTipText()).isEqualTo("Anthropic claude-sonnet-4-6");
+        assertThat(callOnEdt(() -> subject.getToolTipText()))
+                .isEqualTo("Current model: Anthropic claude-sonnet-4-6. Select a model.");
+        assertThat(callOnEdt(() -> subject.getAccessibleContext().getAccessibleName()))
+                .isEqualTo("Current model: Anthropic claude-sonnet-4-6. Select a model.");
+    }
+
+    @Test
+    @DisplayName("Non-empty-chat interaction text explains that another model starts a new chat")
+    void setConversationHasMessages_whenTrue_describesNewChatBehavior() throws Exception {
+        var subject = callOnEdt(ModelSelectorButton::new);
+
+        callOnEdt(() -> {
+            subject.setSelection("OpenAI", "gpt-5");
+            subject.setConversationHasMessages(true);
+            return null;
+        });
+
+        assertThat(callOnEdt(() -> subject.getToolTipText()))
+                .isEqualTo("Current model: OpenAI gpt-5. Start a new chat with another model.");
+        assertThat(callOnEdt(() -> subject.getAccessibleContext().getAccessibleName()))
+                .isEqualTo("Current model: OpenAI gpt-5. Start a new chat with another model.");
+    }
+
+    @Test
+    @DisplayName("Interaction text remains readable when no model is selected")
+    void setSelection_whenMissing_showsActionWithoutBlankCurrentModel() throws Exception {
+        var subject = callOnEdt(ModelSelectorButton::new);
+
+        callOnEdt(() -> {
+            subject.setSelection("", "");
+            subject.setConversationHasMessages(true);
+            return null;
+        });
+
+        assertThat(callOnEdt(() -> subject.getToolTipText())).isEqualTo("Start a new chat with another model.");
     }
 
     @Test
     @DisplayName("Preferred width can grow up to sixty percent of the title bar")
-    void getPreferredSize_whenModelNameIsLong_capsAtSixtyPercentOfTitleBar() {
-        var subject = new ModelSelectorButton();
-        subject.setSelection(
-                "LM Studio",
-                "gemma-4-e4b-claude-abliterated-super-extra-long-experimental-model-name"
-        );
+    void getPreferredSize_whenModelNameIsLong_capsAtSixtyPercentOfTitleBar() throws Exception {
+        int preferredWidth = callOnEdt(() -> {
+            var subject = new ModelSelectorButton();
+            subject.setSelection(
+                    "LM Studio",
+                    "gemma-4-e4b-claude-abliterated-super-extra-long-experimental-model-name"
+            );
 
-        JPanel titleBar = new JPanel(new BorderLayout());
-        JPanel centerPanel = new JPanel();
-        titleBar.setSize(new Dimension(1000, 32));
-        centerPanel.setSize(new Dimension(900, 32));
-        centerPanel.add(subject);
-        titleBar.add(centerPanel, BorderLayout.CENTER);
+            var titleBar = new JPanel(new BorderLayout());
+            var centerPanel = new JPanel();
+            titleBar.setSize(new Dimension(1000, 32));
+            centerPanel.setSize(new Dimension(900, 32));
+            centerPanel.add(subject);
+            titleBar.add(centerPanel, BorderLayout.CENTER);
+            return subject.getPreferredSize().width;
+        });
 
-        assertThat(subject.getPreferredSize().width).isEqualTo(600);
+        assertThat(preferredWidth).isEqualTo(600);
+    }
+
+    private <T> T callOnEdt(Callable<T> action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return action.call();
+        }
+        var result = new AtomicReference<T>();
+        var error = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.call());
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        if (error.get() instanceof Exception e) {
+            throw e;
+        }
+        if (error.get() instanceof Error e) {
+            throw e;
+        }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return result.get();
     }
 }

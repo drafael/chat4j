@@ -2,9 +2,14 @@ package com.github.drafael.chat4j;
 
 
 import lombok.NonNull;
+import javax.swing.ButtonGroup;
+import javax.swing.DefaultButtonModel;
 import javax.swing.JRadioButtonMenuItem;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+
+import static java.util.stream.Collectors.toSet;
 
 public class ModelMenuSelectionSynchronizer {
 
@@ -19,24 +24,22 @@ public class ModelMenuSelectionSynchronizer {
             return lastSelectedModelKey;
         }
 
-        if (Objects.equals(selectedModelKey, lastSelectedModelKey)) {
-            return lastSelectedModelKey;
-        }
+        Set<ButtonGroup> groups = modelMenuItemsByKey.values().stream()
+                .map(JRadioButtonMenuItem::getModel)
+                .filter(DefaultButtonModel.class::isInstance)
+                .map(DefaultButtonModel.class::cast)
+                .map(DefaultButtonModel::getGroup)
+                .filter(Objects::nonNull)
+                .collect(toSet());
+        groups.forEach(ButtonGroup::clearSelection);
+        modelMenuItemsByKey.values().stream()
+                .filter(item -> !(item.getModel() instanceof DefaultButtonModel model) || model.getGroup() == null)
+                .forEach(item -> item.setSelected(false));
 
-        if (lastSelectedModelKey != null) {
-            JRadioButtonMenuItem previous = modelMenuItemsByKey.get(lastSelectedModelKey);
-            if (previous != null) {
-                previous.setSelected(false);
-            }
+        JRadioButtonMenuItem selectedItem = modelMenuItemsByKey.get(selectedModelKey);
+        if (selectedItem != null) {
+            selectedItem.setSelected(true);
         }
-
-        if (selectedModelKey != null) {
-            JRadioButtonMenuItem current = modelMenuItemsByKey.get(selectedModelKey);
-            if (current != null) {
-                current.setSelected(true);
-            }
-        }
-
         return selectedModelKey;
     }
 }

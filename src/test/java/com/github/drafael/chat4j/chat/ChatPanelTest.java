@@ -978,6 +978,56 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("User selection rejects an invalidated stale model instead of substituting a seed model")
+    void resolveUserSelectableModel_whenProviderCacheInvalidated_rejectsStaleModel() throws Exception {
+        Path cacheHome = tempDir.resolve("model-cache-user-selection");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var provider = providerDef(null);
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            updateModels(cacheService, "OpenAI", "", List.of("old-account-model"));
+            cacheService.invalidate("OpenAI");
+            runOnEdt(() -> setField(panel, "providerMap", Map.of(provider.name(), provider)));
+
+            assertThat(callOnEdt(() -> panel.resolveUserSelectableModel("OpenAI > old-account-model"))).isNull();
+            assertThat(callOnEdt(() -> panel.resolveUserSelectableModel("OpenAI > seed-model")))
+                    .isEqualTo("OpenAI > seed-model");
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("User selection accepts visible seed models after an empty catalog refresh")
+    void resolveUserSelectableModel_whenUsableCacheEmpty_acceptsSeedModel() throws Exception {
+        Path cacheHome = tempDir.resolve("model-cache-empty-user-catalog");
+        ProviderModelCacheService cacheService = modelCacheService(cacheHome);
+        var provider = providerDef(null);
+        var panelRef = new AtomicReference<ChatPanel>();
+        runOnEdt(() -> panelRef.set(newChatPanel(cacheService, ModelFavoritesService.createInMemory())));
+        ChatPanel panel = panelRef.get();
+        try {
+            invokePrepareProviderModels(panel, List.of(provider), cacheService.nextScopeVersion());
+            updateModels(cacheService, "OpenAI", "", emptyList());
+            runOnEdt(() -> setField(panel, "providerMap", Map.of(provider.name(), provider)));
+
+            assertThat(callOnEdt(() -> panel.resolveUserSelectableModel("OpenAI > seed-model")))
+                    .isEqualTo("OpenAI > seed-model");
+        } finally {
+            runOnEdt(panel::removeNotify);
+        }
+    }
+
+    @Test
+    @DisplayName("User selection rejects providers outside the available provider map")
+    void resolveUserSelectableModel_whenProviderUnavailable_rejectsSelection() throws Exception {
+        assertThat(callOnEdt(() -> subject.resolveUserSelectableModel("UnavailableProvider > some-model"))).isNull();
+    }
+
+    @Test
     @DisplayName("Loading an invalidated non-seed model selection without seed models is ignored")
     void setSelectedModel_whenProviderCacheInvalidatedAndNoSeedModels_doesNotSelectStaleModel() throws Exception {
         Path cacheHome = tempDir.resolve("model-cache-empty-seed");
@@ -1034,6 +1084,41 @@ class ChatPanelTest {
 
         assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Ollama > llama3.2:latest");
         assertThat(factoryCalls).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Popup model selection dispatches user intent without directly changing the selected model")
+    void requestModelSelection_whenListenerConfigured_dispatchesWithoutApplying() throws Exception {
+        var requestedModel = new AtomicReference<String>();
+        String originalModel = callOnEdt(subject::getSelectedModel);
+        Method requestSelection = ChatPanel.class.getDeclaredMethod(
+                "requestModelSelection",
+                String.class,
+                String.class
+        );
+        requestSelection.setAccessible(true);
+
+        runOnEdt(() -> {
+            subject.setOnModelSelectionRequested(requestedModel::set);
+            requestSelection.invoke(subject, "OpenAI", "gpt-requested");
+        });
+
+        assertThat(requestedModel).hasValue("OpenAI > gpt-requested");
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo(originalModel);
+    }
+
+    @Test
+    @DisplayName("Direct model restoration does not dispatch user-selection intent")
+    void setSelectedModel_whenCalledDirectly_doesNotDispatchUserIntent() throws Exception {
+        var requestedModel = new AtomicReference<String>();
+
+        runOnEdt(() -> {
+            subject.setOnModelSelectionRequested(requestedModel::set);
+            subject.setSelectedModel("Ollama > llama3.2:latest");
+        });
+
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Ollama > llama3.2:latest");
+        assertThat(requestedModel.get()).isNull();
     }
 
     @Test
@@ -2321,6 +2406,46 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(subject.getInputBar().isClearChatVisible()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Model selector interaction text follows whether conversation history has messages")
+    void loadHistoryAndClearChat_whenHistoryChanges_updatesModelSelectionInteraction() throws Exception {
+        assertThat(callOnEdt(subject::hasConversationMessages)).isFalse();
+        assertThat(callOnEdt(() -> subject.getModelSelectorButton().getToolTipText()))
+                .endsWith("Select a model.");
+
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("hello"))));
+        flushEdt();
+
+        assertThat(callOnEdt(subject::hasConversationMessages)).isTrue();
+        assertThat(callOnEdt(() -> subject.getModelSelectorButton().getToolTipText()))
+                .endsWith("Start a new chat with another model.");
+
+        runOnEdt(subject::clearChatView);
+        flushEdt();
+
+        assertThat(callOnEdt(subject::hasConversationMessages)).isFalse();
+        assertThat(callOnEdt(() -> subject.getModelSelectorButton().getToolTipText()))
+                .endsWith("Select a model.");
+    }
+
+    @Test
+    @DisplayName("New-chat view clearing retains draft text and attachments")
+    void clearChatView_whenComposerHasDraft_retainsComposerState() throws Exception {
+        Path attachmentPath = Files.writeString(tempDir.resolve("draft.txt"), "draft attachment");
+        var attachment = new ComposerAttachment(attachmentPath, "text/plain", Files.size(attachmentPath), false);
+        var expectedComposer = new ComposerState("draft question", List.of(attachment), emptyList());
+
+        runOnEdt(() -> {
+            subject.getInputBar().setComposerState(expectedComposer);
+            subject.loadHistory(List.of(Message.user("previous question")));
+            subject.abandonVisibleUnsubmittedPreparation();
+            subject.clearChatView();
+        });
+        flushEdt();
+
+        assertThat(callOnEdt(() -> subject.getInputBar().getComposerState())).isEqualTo(expectedComposer);
     }
 
     @Test

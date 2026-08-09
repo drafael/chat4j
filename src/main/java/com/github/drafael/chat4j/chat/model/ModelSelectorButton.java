@@ -40,20 +40,39 @@ public class ModelSelectorButton extends JButton {
 
     private String modelName = "";
     private String providerName = "";
+    private boolean conversationHasMessages;
 
     public ModelSelectorButton() {
         putClientProperty("JButton.buttonType", "borderless");
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setFocusable(false);
         setHorizontalAlignment(SwingConstants.CENTER);
+        refreshInteractionText();
     }
 
     public void setSelection(String providerName, String modelName) {
         this.providerName = providerName != null ? providerName : "";
         this.modelName = modelName != null ? modelName : "";
-        setToolTipText("%s %s".formatted(this.providerName, this.modelName).trim());
+        refreshInteractionText();
         revalidate();
         repaint();
+    }
+
+    public void setConversationHasMessages(boolean conversationHasMessages) {
+        this.conversationHasMessages = conversationHasMessages;
+        refreshInteractionText();
+    }
+
+    private void refreshInteractionText() {
+        String action = conversationHasMessages
+                ? "Start a new chat with another model."
+                : "Select a model.";
+        String selection = "%s %s".formatted(providerName, modelName).trim();
+        String interactionText = selection.isEmpty()
+                ? action
+                : "Current model: %s. %s".formatted(selection, action);
+        setToolTipText(interactionText);
+        getAccessibleContext().setAccessibleName(interactionText);
     }
 
     public String getModelName() {

@@ -181,6 +181,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.swing.*;
 import lombok.NonNull;
@@ -764,6 +766,7 @@ public class MainFrame extends JFrame {
                 })
         );
         panel.setOnRenderModeChanged(this::onRenderModeChanged);
+        panel.setOnModelSelectionRequested(this::requestModelSelection);
         panel.setOnSelectedModelChanged(this::onSelectedModelChanged);
         panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
@@ -1320,8 +1323,12 @@ public class MainFrame extends JFrame {
     }
 
     private void newChat() {
+        startNewChat();
+    }
+
+    private boolean startNewChat() {
         if (!allowSidebarGuardedAction(true)) {
-            return;
+            return false;
         }
         chatPanel.discardFailedProvisionalUserSend();
         chatPanel.abandonVisibleUnsubmittedPreparation();
@@ -1337,6 +1344,7 @@ public class MainFrame extends JFrame {
                 () -> chatPanel.getInputBar().requestInputFocus()
         );
         applyCurrentRenderMode();
+        return true;
     }
 
     private void handleConversationsDeleteRequested(List<UUID> conversationIds) {
@@ -2764,6 +2772,43 @@ public class MainFrame extends JFrame {
         );
     }
 
+    private void requestModelSelection(String modelKey) {
+        String selectableModel = chatPanel.resolveUserSelectableModel(modelKey);
+        if (selectableModel == null) {
+            onSelectedModelChanged();
+            return;
+        }
+
+        BooleanSupplier prepareSelection = chatPanel.hasConversationMessages()
+                ? this::startNewChat
+                : this::allowSidebarGuardedAction;
+        boolean applied = applyUserModelSelection(
+                chatPanel.getSelectedModel(),
+                selectableModel,
+                prepareSelection,
+                chatPanel::setSelectedModel
+        );
+        if (!applied) {
+            onSelectedModelChanged();
+        }
+    }
+
+    static boolean applyUserModelSelection(
+            String currentModel,
+            @NonNull String requestedModel,
+            @NonNull BooleanSupplier prepareSelection,
+            @NonNull Consumer<String> applyModel
+    ) {
+        if (Objects.equals(currentModel, requestedModel)) {
+            return true;
+        }
+        if (!prepareSelection.getAsBoolean()) {
+            return false;
+        }
+        applyModel.accept(requestedModel);
+        return true;
+    }
+
     private void onSelectedModelChanged() {
         modelMenuCoordinator.onSelectedModelChanged(modelMenuContext());
     }
@@ -2782,7 +2827,7 @@ public class MainFrame extends JFrame {
                 menuItemsState,
                 modelMenuState,
                 chatPanel::getSelectedModel,
-                chatPanel::setSelectedModel
+                this::requestModelSelection
         );
     }
 

@@ -33,6 +33,63 @@ class MainFrameStateTransitionsIntegrationTest {
     }
 
     @Test
+    @DisplayName("Selecting the current model does not prepare or apply a transition")
+    void applyUserModelSelection_whenModelUnchanged_doesNothing() {
+        var calls = new ArrayList<String>();
+
+        boolean applied = MainFrame.applyUserModelSelection(
+                "OpenAI > gpt-5",
+                "OpenAI > gpt-5",
+                () -> {
+                    calls.add("prepare");
+                    return true;
+                },
+                model -> calls.add("apply:%s".formatted(model))
+        );
+
+        assertThat(applied).isTrue();
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A permitted different-model transition prepares before applying the model")
+    void applyUserModelSelection_whenPreparationAllowed_appliesAfterPreparation() {
+        var calls = new ArrayList<String>();
+
+        boolean applied = MainFrame.applyUserModelSelection(
+                "OpenAI > gpt-5",
+                "Anthropic > claude-sonnet",
+                () -> {
+                    calls.add("prepare");
+                    return true;
+                },
+                model -> calls.add("apply:%s".formatted(model))
+        );
+
+        assertThat(applied).isTrue();
+        assertThat(calls).containsExactly("prepare", "apply:Anthropic > claude-sonnet");
+    }
+
+    @Test
+    @DisplayName("A blocked different-model transition leaves the model unchanged")
+    void applyUserModelSelection_whenPreparationBlocked_doesNotApplyModel() {
+        var calls = new ArrayList<String>();
+
+        boolean applied = MainFrame.applyUserModelSelection(
+                "OpenAI > gpt-5",
+                "Anthropic > claude-sonnet",
+                () -> {
+                    calls.add("prepare");
+                    return false;
+                },
+                model -> calls.add("apply:%s".formatted(model))
+        );
+
+        assertThat(applied).isFalse();
+        assertThat(calls).containsExactly("prepare");
+    }
+
+    @Test
     @DisplayName("New-chat transition clears conversation state without changing render mode")
     void newChat_whenStarted_clearsConversationStateOnly() {
         var conversationState = new MainFrameConversationState();
