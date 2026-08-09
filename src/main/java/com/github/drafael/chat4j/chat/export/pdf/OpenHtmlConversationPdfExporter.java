@@ -19,6 +19,7 @@ public final class OpenHtmlConversationPdfExporter implements ConversationPdfExp
     public void export(
             @NonNull ConversationPdfDocument document,
             @NonNull Path destination,
+            @NonNull PdfPageFormat pageFormat,
             @NonNull BooleanSupplier cancelled
     ) throws Exception {
         if (cancelled.getAsBoolean()) {
@@ -35,7 +36,11 @@ public final class OpenHtmlConversationPdfExporter implements ConversationPdfExp
                 throw new IllegalStateException("Network resources are disabled during PDF export.");
             });
             builder.toStream(output);
-            builder.useDefaultPageSize(210, 297, PageSizeUnits.MM);
+            builder.useDefaultPageSize(
+                    pageFormat.widthMillimeters(),
+                    pageFormat.heightMillimeters(),
+                    PageSizeUnits.MM
+            );
             registerFonts(builder);
             builder.run();
         }

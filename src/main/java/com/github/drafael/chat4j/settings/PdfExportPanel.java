@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.github.drafael.chat4j.chat.export.pdf.PdfExportMode;
 import com.github.drafael.chat4j.chat.export.pdf.PdfExportSettings;
+import com.github.drafael.chat4j.chat.export.pdf.PdfPageFormat;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.BorderLayout;
 import java.awt.GridBagConstraints;
@@ -37,6 +38,7 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
     private final ExecutableChooser executableChooser;
     private final SettingsWriteQueue writeQueue = new SettingsWriteQueue("pdf-export-settings-save-");
     private final JComboBox<PdfExportMode> mode;
+    private final JComboBox<PdfPageFormat> pageFormat;
     private final JTextField pandocPath;
     private final JComboBox<String> latexEngine;
     private final JTextField latexPath;
@@ -73,6 +75,11 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
         mode.setName("pdfExportModeComboBox");
         mode.setSelectedItem(exportSettings.mode());
         addRow(form, constraints, row++, "Export engine", mode);
+
+        pageFormat = withPreferredWidth(new JComboBox<>(PdfPageFormat.values()), 220);
+        pageFormat.setName("pdfExportPageFormatComboBox");
+        pageFormat.setSelectedItem(exportSettings.pageFormat());
+        addRow(form, constraints, row++, "Page format", pageFormat);
 
         pandocPath = withPreferredWidth(new JTextField(initialExecutablePath(
                 exportSettings.pandocPathOverride(),
@@ -146,6 +153,11 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
         mode.addActionListener(e -> {
             if (mode.getSelectedItem() instanceof PdfExportMode selectedMode) {
                 enqueueSave(() -> exportSettings.persistMode(selectedMode));
+            }
+        });
+        pageFormat.addActionListener(e -> {
+            if (pageFormat.getSelectedItem() instanceof PdfPageFormat selectedPageFormat) {
+                enqueueSave(() -> exportSettings.persistPageFormat(selectedPageFormat));
             }
         });
         previousLatexEngine = exportSettings.latexEngine();
@@ -276,6 +288,9 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
         PdfExportMode currentMode = mode.getSelectedItem() instanceof PdfExportMode selectedMode
                 ? selectedMode
                 : PdfExportMode.AUTO;
+        PdfPageFormat currentPageFormat = pageFormat.getSelectedItem() instanceof PdfPageFormat selectedPageFormat
+                ? selectedPageFormat
+                : PdfPageFormat.A4;
         String currentLatexEngine = latexEngine.getSelectedItem() instanceof String selectedEngine
                 ? selectedEngine
                 : PdfExportSettings.DEFAULT_LATEX_ENGINE;
@@ -284,6 +299,7 @@ public class PdfExportPanel extends AbstractSettingsPanel implements AsyncPendin
         String currentMermaidCliPath = StringUtils.trimToEmpty(mermaidCliPath.getText());
         String currentChromiumPath = StringUtils.trimToEmpty(chromiumPath.getText());
         enqueueSave(() -> exportSettings.persistMode(currentMode));
+        enqueueSave(() -> exportSettings.persistPageFormat(currentPageFormat));
         enqueueSave(() -> exportSettings.persistLatexEngine(currentLatexEngine));
         enqueueSave(() -> exportSettings.persistPandocPath(currentPandocPath));
         enqueueSave(() -> exportSettings.persistLatexPath(currentLatexPath));

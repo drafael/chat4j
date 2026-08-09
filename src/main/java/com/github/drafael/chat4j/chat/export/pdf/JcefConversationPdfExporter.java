@@ -32,6 +32,7 @@ public final class JcefConversationPdfExporter implements ConversationPdfExporte
     public void export(
             @NonNull ConversationPdfDocument document,
             @NonNull Path destination,
+            @NonNull PdfPageFormat pageFormat,
             @NonNull BooleanSupplier cancelled
     ) throws Exception {
         String providerModel = java.util.stream.Stream.of(document.provider(), document.model())
@@ -65,6 +66,14 @@ public final class JcefConversationPdfExporter implements ConversationPdfExporte
                 })
                 .filter(Objects::nonNull)
                 .toList();
-        browserView.printToPdf(destination, document.title(), metadata, turns, imageReferences, cancelled);
+        browserView.printToPdf(
+                destination,
+                document.title(),
+                metadata,
+                turns,
+                imageReferences,
+                pageFormat,
+                cancelled
+        );
     }
 }

@@ -143,7 +143,13 @@ public final class ConversationPdfExportService implements AutoCloseable {
         Path temporary = createTemporaryPdf(parent);
         try {
             stageConsumer.accept(ExportStage.RENDERING_DOCUMENT);
-            String backend = exportDocument(document, temporary, request::isCancelled, enhancedAutoExporter);
+            String backend = exportDocument(
+                    document,
+                    temporary,
+                    settings.pageFormat(),
+                    request::isCancelled,
+                    enhancedAutoExporter
+            );
             if (request.isCancelled()) {
                 return ExportResult.cancelledResult();
             }
@@ -166,28 +172,29 @@ public final class ConversationPdfExportService implements AutoCloseable {
     private String exportDocument(
             ConversationPdfDocument document,
             Path temporary,
+            PdfPageFormat pageFormat,
             BooleanSupplier cancelled,
             ConversationPdfExporter enhancedAutoExporter
     ) throws Exception {
         PdfExportMode mode = settings.mode();
         if (mode == PdfExportMode.PUBLICATION) {
-            publicationExporter().export(document, temporary, cancelled);
+            publicationExporter().export(document, temporary, pageFormat, cancelled);
             return "Publication";
         }
         if (mode == PdfExportMode.AUTO && enhancedAutoExporter != null) {
             try {
-                enhancedAutoExporter.export(document, temporary, cancelled);
+                enhancedAutoExporter.export(document, temporary, pageFormat, cancelled);
                 return "Chromium Enhanced";
             } catch (Exception e) {
                 if (cancelled.getAsBoolean()) {
                     return "Chromium Enhanced";
                 }
                 Files.deleteIfExists(temporary);
-                standardExporter().export(document, temporary, cancelled);
+                standardExporter().export(document, temporary, pageFormat, cancelled);
                 return "Built-in Standard (Chromium unavailable; diagrams shown as source)";
             }
         }
-        standardExporter().export(document, temporary, cancelled);
+        standardExporter().export(document, temporary, pageFormat, cancelled);
         return "Built-in Standard";
     }
 

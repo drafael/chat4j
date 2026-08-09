@@ -626,6 +626,7 @@ class PandocConversationPdfExporterTest {
 
         Path markdown = tempDirectory.resolve("conversation.md");
         List<String> command = subject.command(markdown, output, tempDirectory);
+        List<String> letterCommand = subject.command(markdown, output, tempDirectory, PdfPageFormat.US_LETTER);
         List<String> fallbackCommand = subject.mathSourceFallbackCommand(markdown, output, tempDirectory);
 
         assertThat(command)
@@ -633,11 +634,13 @@ class PandocConversationPdfExporterTest {
                 .contains("--lua-filter=%s".formatted(tempDirectory.resolve("publication-filter.lua")))
                 .contains("--template=%s".formatted(tempDirectory.resolve("publication-template.tex")))
                 .contains("--pdf-engine-opt=-no-shell-escape")
+                .contains("--variable=chat4jpaper=a4paper")
                 .contains("--output=%s".formatted(output))
                 .doesNotContain("--lua-filter=%s".formatted(
                         tempDirectory.resolve("publication-math-source-filter.lua")
                 ))
                 .noneMatch(argument -> argument.startsWith("--highlight-style="));
+        assertThat(letterCommand).contains("--variable=chat4jpaper=letterpaper");
         assertThat(fallbackCommand).contains("--lua-filter=%s".formatted(
                 tempDirectory.resolve("publication-math-source-filter.lua")
         ));

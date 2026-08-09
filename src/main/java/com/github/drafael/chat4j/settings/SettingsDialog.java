@@ -242,12 +242,6 @@ public class SettingsDialog extends JDialog {
                         new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, this::requestApplicationExit)
                 ),
                 new SettingsSection(
-                        "pdf-export",
-                        "PDF Export",
-                        "/icons/settings/book-open.svg",
-                        new PdfExportPanel(settingsRepo)
-                ),
-                new SettingsSection(
                         "providers",
                         "Providers",
                         "/icons/settings/cpu.svg",
@@ -280,7 +274,18 @@ public class SettingsDialog extends JDialog {
                         tokenFieldRegistry,
                         credentialChangeListener
                 )),
-                new SettingsSection("prompts", "Prompts", "/icons/settings/book-open.svg", new PromptsPanel(promptCatalogRepo))
+                new SettingsSection(
+                        "pdf-export",
+                        "PDF Export",
+                        "/icons/settings/file-text.svg",
+                        new PdfExportPanel(settingsRepo)
+                ),
+                new SettingsSection(
+                        "prompts",
+                        "Prompts",
+                        "/icons/settings/message-square-text.svg",
+                        new PromptsPanel(promptCatalogRepo)
+                )
         ));
         created.add(new SettingsSection("mcp", "MCP", "/icons/settings/mcp.svg", new McpPanel(mcpManager)));
         return List.copyOf(created);

@@ -9,6 +9,15 @@ public interface ConversationPdfExporter {
     void export(
             @NonNull ConversationPdfDocument document,
             @NonNull Path destination,
+            @NonNull PdfPageFormat pageFormat,
             @NonNull BooleanSupplier cancelled
     ) throws Exception;
+
+    default void export(
+            @NonNull ConversationPdfDocument document,
+            @NonNull Path destination,
+            @NonNull BooleanSupplier cancelled
+    ) throws Exception {
+        export(document, destination, PdfPageFormat.A4, cancelled);
+    }
 }

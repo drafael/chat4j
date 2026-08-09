@@ -1,5 +1,4 @@
 @page {
-  size: A4 portrait;
   margin: 23mm 22mm 22mm 24mm;
   @top-center {
     content: "Chat4J Conversation";

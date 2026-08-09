@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptRend
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptUpdateScripts;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptBrowserAssets;
 import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
+import com.github.drafael.chat4j.chat.export.pdf.PdfPageFormat;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -245,6 +246,7 @@ public final class JcefBrowserView {
             String metadata,
             @NonNull List<PdfTurnMetadata> turns,
             @NonNull List<AttachmentRef> imageReferences,
+            @NonNull PdfPageFormat pageFormat,
             @NonNull BooleanSupplier cancelled
     ) throws Exception {
         if (!waitForPdfAdmission(turns, cancelled)) {
@@ -253,7 +255,7 @@ public final class JcefBrowserView {
         long requestId = pdfExportCounter.incrementAndGet();
         Path nativeOutput = Files.createTempFile(destination.toAbsolutePath().normalize().getParent(), ".chat4j-jcef-pdf-", ".pdf");
         Map<String, String> imageUrls = preparePdfImages(requestId, imageReferences);
-        var pending = new PendingPdfExport(requestId, nativeOutput);
+        var pending = new PendingPdfExport(requestId, nativeOutput, pageFormat);
         boolean detachedNativeWrite = false;
         try {
             runOnEdt(() -> beginPdfExport(pending, title, metadata, turns, imageUrls));
@@ -339,7 +341,14 @@ public final class JcefBrowserView {
         }
         pendingPdfExport = pending;
         try {
-            executeJavaScript(pdfPreparationScript(pending.requestId(), title, metadata, turns, imageUrls));
+            executeJavaScript(pdfPreparationScript(
+                    pending.requestId(),
+                    title,
+                    metadata,
+                    turns,
+                    imageUrls,
+                    pending.pageFormat()
+            ));
         } catch (Exception e) {
             pending.completion().completeExceptionally(e);
         }
@@ -406,17 +415,7 @@ public final class JcefBrowserView {
         if (pending != pendingPdfExport || pending.completion().isDone() || disposed || browser == null) {
             return;
         }
-        CefPdfPrintSettings settings = new CefPdfPrintSettings();
-        settings.landscape = false;
-        settings.print_background = true;
-        settings.scale = 1.0;
-        settings.paper_width = 8.2677;
-        settings.paper_height = 11.6929;
-        settings.prefer_css_page_size = true;
-        settings.margin_type = CefPdfPrintSettings.MarginType.NONE;
-        settings.display_header_footer = false;
-        settings.generate_tagged_pdf = true;
-        settings.generate_document_outline = true;
+        CefPdfPrintSettings settings = pdfPrintSettings(pending.pageFormat());
         try {
             browser.printToPDF(
                     pending.nativeOutput().toString(),
@@ -431,6 +430,21 @@ public final class JcefBrowserView {
         } catch (Throwable t) {
             pending.completion().completeExceptionally(t);
         }
+    }
+
+    static CefPdfPrintSettings pdfPrintSettings(PdfPageFormat pageFormat) {
+        CefPdfPrintSettings settings = new CefPdfPrintSettings();
+        settings.landscape = false;
+        settings.print_background = true;
+        settings.scale = 1.0;
+        settings.paper_width = pageFormat.widthInches();
+        settings.paper_height = pageFormat.heightInches();
+        settings.prefer_css_page_size = true;
+        settings.margin_type = CefPdfPrintSettings.MarginType.NONE;
+        settings.display_header_footer = false;
+        settings.generate_tagged_pdf = true;
+        settings.generate_document_outline = true;
+        return settings;
     }
 
     private void abortPendingPdfExport(PendingPdfExport pending) {
@@ -451,6 +465,8 @@ public final class JcefBrowserView {
                 (function() {
                   var header = document.getElementById('chat4j-pdf-export-header');
                   if (header) { header.remove(); }
+                  var pageStyle = document.getElementById('chat4j-pdf-page-format');
+                  if (pageStyle) { pageStyle.remove(); }
                   Array.prototype.forEach.call(document.querySelectorAll('.chat4j-pdf-turn-heading'), function(node) { node.remove(); });
                   var links = window.__chat4jPdfOriginalLinks || [];
                   links.forEach(function(item) {
@@ -756,12 +772,16 @@ public final class JcefBrowserView {
             String title,
             String metadata,
             List<PdfTurnMetadata> turns,
-            Map<String, String> imageUrls
+            Map<String, String> imageUrls,
+            PdfPageFormat pageFormat
     ) throws Exception {
         String titleJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultIfBlank(title, "Conversation"));
         String metadataJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultString(metadata));
         String turnsJson = OBJECT_MAPPER.writeValueAsString(turns);
         String imageUrlsJson = OBJECT_MAPPER.writeValueAsString(imageUrls);
+        String pageSizeCssJson = OBJECT_MAPPER.writeValueAsString(
+                "@page { size: %s portrait; }".formatted(pageFormat.cssPageSize())
+        );
         return """
                 (function() {
                   var requestId = %d;
@@ -772,6 +792,12 @@ public final class JcefBrowserView {
                   }
                   var existing = document.getElementById('chat4j-pdf-export-header');
                   if (existing) { existing.remove(); }
+                  var existingPageStyle = document.getElementById('chat4j-pdf-page-format');
+                  if (existingPageStyle) { existingPageStyle.remove(); }
+                  var pageStyle = document.createElement('style');
+                  pageStyle.id = 'chat4j-pdf-page-format';
+                  pageStyle.textContent = %s;
+                  document.head.appendChild(pageStyle);
                   Array.prototype.forEach.call(document.querySelectorAll('.chat4j-pdf-turn-heading'), function(node) { node.remove(); });
 
                   var rows = Array.prototype.slice.call(document.querySelectorAll('.row.user, .row.assistant'));
@@ -871,7 +897,7 @@ public final class JcefBrowserView {
                   var fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
                   Promise.resolve(fontsReady).catch(function() {}).then(notifyWhenReady);
                 })();
-                """.formatted(requestId, turnsJson, imageUrlsJson, titleJson, metadataJson);
+                """.formatted(requestId, pageSizeCssJson, turnsJson, imageUrlsJson, titleJson, metadataJson);
     }
 
     private String injectJcefBridge(String html) {
@@ -1040,13 +1066,15 @@ public final class JcefBrowserView {
     private static final class PendingPdfExport {
         private final long requestId;
         private final Path nativeOutput;
+        private final PdfPageFormat pageFormat;
         private final CompletableFuture<Boolean> completion = new CompletableFuture<>();
         private volatile boolean nativePrintScheduled;
         private volatile boolean nativePrintStarted;
 
-        private PendingPdfExport(long requestId, Path nativeOutput) {
+        private PendingPdfExport(long requestId, Path nativeOutput, PdfPageFormat pageFormat) {
             this.requestId = requestId;
             this.nativeOutput = nativeOutput.toAbsolutePath().normalize();
+            this.pageFormat = pageFormat;
         }
 
         private long requestId() {
@@ -1055,6 +1083,10 @@ public final class JcefBrowserView {
 
         private Path nativeOutput() {
             return nativeOutput;
+        }
+
+        private PdfPageFormat pageFormat() {
+            return pageFormat;
         }
 
         private CompletableFuture<Boolean> completion() {

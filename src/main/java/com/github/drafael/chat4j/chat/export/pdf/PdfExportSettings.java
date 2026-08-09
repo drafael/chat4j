@@ -7,6 +7,7 @@ import org.apache.commons.lang3.StringUtils;
 public class PdfExportSettings {
 
     public static final String MODE_KEY = "chat4j.pdfExport.mode";
+    public static final String PAGE_FORMAT_KEY = "chat4j.pdfExport.pageFormat";
     public static final String PANDOC_PATH_KEY = "chat4j.pdfExport.pandocPath";
     public static final String LATEX_ENGINE_KEY = "chat4j.pdfExport.latexEngine";
     public static final String LATEX_PATH_KEY = "chat4j.pdfExport.latexPath";
@@ -26,6 +27,17 @@ public class PdfExportSettings {
 
     public void persistMode(@NonNull PdfExportMode mode) {
         settingsRepository.put(MODE_KEY, mode.settingValue());
+    }
+
+    public PdfPageFormat pageFormat() {
+        return PdfPageFormat.fromSettingValue(settingsRepository.get(
+                PAGE_FORMAT_KEY,
+                PdfPageFormat.A4.settingValue()
+        ));
+    }
+
+    public void persistPageFormat(@NonNull PdfPageFormat pageFormat) {
+        settingsRepository.put(PAGE_FORMAT_KEY, pageFormat.settingValue());
     }
 
     public String pandocPathOverride() {

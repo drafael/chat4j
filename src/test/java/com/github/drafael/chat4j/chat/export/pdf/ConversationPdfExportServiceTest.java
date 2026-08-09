@@ -103,15 +103,42 @@ class ConversationPdfExportServiceTest {
     }
 
     @Test
+    @DisplayName("Standard export uses US Letter when selected")
+    void export_whenUsLetterSelected_writesLetterSizedPdf() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        ConversationRepository repository = mock(ConversationRepository.class);
+        when(repository.loadConversation(conversationId)).thenReturn(Optional.of(loadedConversation(conversationId, null)));
+        SettingsRepository settingsRepository = new SettingsRepository(tempDirectory.resolve("letter.properties"));
+        PdfExportSettings settings = new PdfExportSettings(settingsRepository);
+        settings.persistMode(PdfExportMode.STANDARD);
+        settings.persistPageFormat(PdfPageFormat.US_LETTER);
+        Path destination = tempDirectory.resolve("letter.pdf");
+
+        try (var subject = new ConversationPdfExportService(repository, settingsRepository, Map.of())) {
+            subject.export(conversationId, destination, ignored -> {
+            }).completion().join();
+        }
+
+        try (var pdf = Loader.loadPDF(destination.toFile())) {
+            PDPage firstPage = pdf.getPage(0);
+            assertThat(firstPage.getMediaBox().getWidth()).isCloseTo(612f, within(2f));
+            assertThat(firstPage.getMediaBox().getHeight()).isCloseTo(792f, within(2f));
+        }
+    }
+
+    @Test
     @DisplayName("Auto mode uses an available active Chromium exporter")
     void export_whenAutoModeHasEnhancedExporter_usesChromiumOutput() throws Exception {
         UUID conversationId = UUID.randomUUID();
         ConversationRepository repository = mock(ConversationRepository.class);
         when(repository.loadConversation(conversationId)).thenReturn(Optional.of(loadedConversation(conversationId, null)));
         SettingsRepository settingsRepository = new SettingsRepository(tempDirectory.resolve("auto-enhanced.properties"));
+        new PdfExportSettings(settingsRepository).persistPageFormat(PdfPageFormat.US_LETTER);
         Path destination = tempDirectory.resolve("enhanced.pdf");
-        ConversationPdfExporter enhanced = (document, output, cancelled) ->
-                new OpenHtmlConversationPdfExporter().export(document, output, cancelled);
+        ConversationPdfExporter enhanced = (document, output, pageFormat, cancelled) -> {
+            assertThat(pageFormat).isEqualTo(PdfPageFormat.US_LETTER);
+            new OpenHtmlConversationPdfExporter().export(document, output, pageFormat, cancelled);
+        };
 
         try (var subject = new ConversationPdfExportService(repository, settingsRepository, Map.of())) {
             var result = subject.export(conversationId, destination, ignored -> {
@@ -131,7 +158,7 @@ class ConversationPdfExportServiceTest {
         when(repository.loadConversation(conversationId)).thenReturn(Optional.of(loadedConversation(conversationId, null)));
         SettingsRepository settingsRepository = new SettingsRepository(tempDirectory.resolve("auto-fallback.properties"));
         Path destination = tempDirectory.resolve("fallback.pdf");
-        ConversationPdfExporter enhanced = (document, output, cancelled) -> {
+        ConversationPdfExporter enhanced = (document, output, pageFormat, cancelled) -> {
             throw new IOException("Chromium is not ready");
         };
 

@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.settings;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.export.pdf.PdfExportMode;
 import com.github.drafael.chat4j.chat.export.pdf.PdfExportSettings;
+import com.github.drafael.chat4j.chat.export.pdf.PdfPageFormat;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Component;
 import java.awt.Container;
@@ -170,21 +171,29 @@ class PdfExportPanelTest {
     }
 
     @Test
-    @DisplayName("Selecting Publication persists the PDF export backend without blocking the EDT")
-    void modeSelection_whenPublicationSelected_persistsSetting() throws Exception {
+    @DisplayName("Selecting Publication and US Letter persists both PDF export settings")
+    void selections_whenPublicationAndUsLetterSelected_persistSettings() throws Exception {
         SettingsRepository repository = new SettingsRepository(tempDirectory.resolve("settings.properties"));
         PdfExportPanel subject = callOnEdt(() -> new PdfExportPanel(repository));
         try {
             JComboBox<?> mode = callOnEdt(() -> componentNamed(subject, "pdfExportModeComboBox", JComboBox.class));
+            JComboBox<?> pageFormat = callOnEdt(() -> componentNamed(
+                    subject,
+                    "pdfExportPageFormatComboBox",
+                    JComboBox.class
+            ));
 
             callOnEdt(() -> {
                 mode.setSelectedItem(PdfExportMode.PUBLICATION);
+                pageFormat.setSelectedItem(PdfPageFormat.US_LETTER);
                 return null;
             });
             CompletableFuture<Boolean> saved = callOnEdt(subject::savePendingChangesAsync);
             assertThat(saved.get(5, TimeUnit.SECONDS)).isTrue();
 
-            assertThat(new PdfExportSettings(repository).mode()).isEqualTo(PdfExportMode.PUBLICATION);
+            PdfExportSettings settings = new PdfExportSettings(repository);
+            assertThat(settings.mode()).isEqualTo(PdfExportMode.PUBLICATION);
+            assertThat(settings.pageFormat()).isEqualTo(PdfPageFormat.US_LETTER);
         } finally {
             callOnEdt(() -> {
                 subject.disposePanel();

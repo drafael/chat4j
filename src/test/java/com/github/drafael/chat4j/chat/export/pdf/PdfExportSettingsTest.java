@@ -19,6 +19,7 @@ class PdfExportSettingsTest {
         var subject = new PdfExportSettings(new SettingsRepository(tempDirectory.resolve("settings.properties")));
 
         assertThat(subject.mode()).isEqualTo(PdfExportMode.AUTO);
+        assertThat(subject.pageFormat()).isEqualTo(PdfPageFormat.A4);
         assertThat(subject.pandocPathOverride()).isEmpty();
         assertThat(subject.pandocExecutable()).isEqualTo("pandoc");
         assertThat(subject.latexEngine()).isEqualTo("lualatex");
@@ -34,6 +35,7 @@ class PdfExportSettingsTest {
         var subject = new PdfExportSettings(new SettingsRepository(tempDirectory.resolve("publication.properties")));
 
         subject.persistMode(PdfExportMode.PUBLICATION);
+        subject.persistPageFormat(PdfPageFormat.US_LETTER);
         subject.persistPandocPath("/tools/pandoc");
         subject.persistLatexEngine("xelatex");
         subject.persistLatexPath("/tools/xelatex");
@@ -41,6 +43,7 @@ class PdfExportSettingsTest {
         subject.persistChromiumPath(" /tools/chromium ");
 
         assertThat(subject.mode()).isEqualTo(PdfExportMode.PUBLICATION);
+        assertThat(subject.pageFormat()).isEqualTo(PdfPageFormat.US_LETTER);
         assertThat(subject.pandocPathOverride()).isEqualTo("/tools/pandoc");
         assertThat(subject.pandocExecutable()).isEqualTo("/tools/pandoc");
         assertThat(subject.latexEngine()).isEqualTo("xelatex");

@@ -140,6 +140,7 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
     public void export(
             @NonNull ConversationPdfDocument document,
             @NonNull Path destination,
+            @NonNull PdfPageFormat pageFormat,
             @NonNull BooleanSupplier cancelled
     ) throws Exception {
         Path workspace = Files.createTempDirectory("chat4j-pdf-publication-");
@@ -155,14 +156,18 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
                 return;
             }
             try {
-                runProcess(command(markdown, destination, workspace), workspace, cancelled);
+                runProcess(command(markdown, destination, workspace, pageFormat), workspace, cancelled);
             } catch (PublicationRenderException firstFailure) {
                 if (cancelled.getAsBoolean()) {
                     return;
                 }
                 Files.deleteIfExists(destination);
                 try {
-                    runProcess(mathSourceFallbackCommand(markdown, destination, workspace), workspace, cancelled);
+                    runProcess(
+                            mathSourceFallbackCommand(markdown, destination, workspace, pageFormat),
+                            workspace,
+                            cancelled
+                    );
                 } catch (Exception fallbackFailure) {
                     fallbackFailure.addSuppressed(firstFailure);
                     throw fallbackFailure;
@@ -174,14 +179,33 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
     }
 
     List<String> command(Path markdown, Path destination, Path workspace) {
-        return command(markdown, destination, workspace, false);
+        return command(markdown, destination, workspace, PdfPageFormat.A4);
+    }
+
+    List<String> command(Path markdown, Path destination, Path workspace, PdfPageFormat pageFormat) {
+        return command(markdown, destination, workspace, pageFormat, false);
     }
 
     List<String> mathSourceFallbackCommand(Path markdown, Path destination, Path workspace) {
-        return command(markdown, destination, workspace, true);
+        return mathSourceFallbackCommand(markdown, destination, workspace, PdfPageFormat.A4);
     }
 
-    private List<String> command(Path markdown, Path destination, Path workspace, boolean mathSourceFallback) {
+    private List<String> mathSourceFallbackCommand(
+            Path markdown,
+            Path destination,
+            Path workspace,
+            PdfPageFormat pageFormat
+    ) {
+        return command(markdown, destination, workspace, pageFormat, true);
+    }
+
+    private List<String> command(
+            Path markdown,
+            Path destination,
+            Path workspace,
+            PdfPageFormat pageFormat,
+            boolean mathSourceFallback
+    ) {
         List<String> command = new ArrayList<>(List.of(
                 pandocExecutable,
                 markdown.toString(),
@@ -198,6 +222,7 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
                 "--resource-path=%s".formatted(workspace),
                 "--pdf-engine=%s".formatted(latexExecutable),
                 "--pdf-engine-opt=-no-shell-escape",
+                "--variable=chat4jpaper=%s".formatted(pageFormat.latexPaperOption()),
                 "--variable=colorlinks=true",
                 "--output=%s".formatted(destination)
         ));

@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.conversation.webview.jcef;
 
+import com.github.drafael.chat4j.chat.export.pdf.PdfPageFormat;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -12,10 +13,12 @@ import javax.swing.SwingUtilities;
 import org.cef.CefClient;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefMessageRouter;
+import org.cef.misc.CefPdfPrintSettings;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -128,11 +131,14 @@ class JcefBrowserViewTest {
                             new JcefBrowserView.PdfTurnMetadata("user", "You", "10:00 AM", "first"),
                             new JcefBrowserView.PdfTurnMetadata("assistant", "Assistant", "10:01 AM", "second")
                     ),
-                    Map.of("/managed/image.png", "https://chat4j.local/pdf-image/7/0")
+                    Map.of("/managed/image.png", "https://chat4j.local/pdf-image/7/0"),
+                    PdfPageFormat.US_LETTER
             ));
 
             assertThat(script)
                     .contains("window.chat4jRenderDiagrams(document)")
+                    .contains("@page { size: Letter portrait; }")
+                    .contains("chat4j-pdf-page-format")
                     .contains("rows.length !== turns.length")
                     .contains("state === 'pending'")
                     .contains("type: 'pdf-export-ready'")
@@ -147,6 +153,17 @@ class JcefBrowserViewTest {
         } finally {
             runOnEdt(subject::dispose);
         }
+    }
+
+    @Test
+    @DisplayName("Chromium print settings use US Letter dimensions when selected")
+    void pdfPrintSettings_whenUsLetterSelected_usesLetterDimensions() {
+        CefPdfPrintSettings settings = JcefBrowserView.pdfPrintSettings(PdfPageFormat.US_LETTER);
+
+        assertThat(settings.paper_width).isCloseTo(8.5, within(0.001));
+        assertThat(settings.paper_height).isCloseTo(11.0, within(0.001));
+        assertThat(settings.landscape).isFalse();
+        assertThat(settings.prefer_css_page_size).isTrue();
     }
 
     @Test
