@@ -98,7 +98,7 @@ public final class AboutDialog {
 
         gbc.gridy = 1;
         gbc.insets = new Insets(0, 0, 12, 0);
-        center.add(buildAuthorLink("Denys Rafael", "https://github.com/drafael"), gbc);
+        center.add(buildGitHubLink("github.com/drafael/chat4j", "https://github.com/drafael/chat4j"), gbc);
 
         gbc.gridwidth = 1;
         gbc.insets = new Insets(2, 0, 2, 8);
@@ -158,7 +158,7 @@ public final class AboutDialog {
         dialog.setVisible(true);
     }
 
-    private static JLabel buildAuthorLink(String text, String url) {
+    private static JLabel buildGitHubLink(String text, String url) {
         JLabel label = new JLabel(text, SwingConstants.CENTER);
         label.setHorizontalAlignment(SwingConstants.CENTER);
         label.setHorizontalTextPosition(SwingConstants.RIGHT);
