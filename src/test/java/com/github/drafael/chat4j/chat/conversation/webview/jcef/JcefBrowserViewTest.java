@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat.conversation.webview.jcef;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -112,6 +113,58 @@ class JcefBrowserViewTest {
     void navigationDecision_whenUnsafeNavigationWithoutUserGesture_returnsBlock() {
         assertThat(JcefBrowserView.navigationDecision("data:text/html;base64,PHNjcmlwdD4=", false))
                 .isEqualTo(JcefBrowserView.NavigationDecision.BLOCK);
+    }
+
+    @Test
+    @DisplayName("PDF preparation waits for rendered diagrams and verifies the durable turn shape")
+    void pdfPreparationScript_whenBuilt_requiresSettledDiagramsAndMatchingTurns() throws Exception {
+        JcefBrowserView subject = callOnEdt(JcefBrowserView::new);
+        try {
+            String script = callOnEdt(() -> subject.pdfPreparationScript(
+                    7L,
+                    "Conversation",
+                    "Provider · model",
+                    List.of(
+                            new JcefBrowserView.PdfTurnMetadata("user", "You", "10:00 AM", "first"),
+                            new JcefBrowserView.PdfTurnMetadata("assistant", "Assistant", "10:01 AM", "second")
+                    ),
+                    Map.of("/managed/image.png", "https://chat4j.local/pdf-image/7/0")
+            ));
+
+            assertThat(script)
+                    .contains("window.chat4jRenderDiagrams(document)")
+                    .contains("rows.length !== turns.length")
+                    .contains("state === 'pending'")
+                    .contains("type: 'pdf-export-ready'")
+                    .contains("notify(false)")
+                    .contains("Provider · model")
+                    .contains("parsed.protocol !== 'http:'")
+                    .contains("https://chat4j.local/pdf-image/7/0")
+                    .contains("__chat4jPdfOriginalLinks")
+                    .contains("__chat4jPdfOriginalImages")
+                    .doesNotContain("outerHTML")
+                    .doesNotContain("XMLSerializer");
+        } finally {
+            runOnEdt(subject::dispose);
+        }
+    }
+
+    @Test
+    @DisplayName("Transcript render admission remains pending until Chromium acknowledges the DOM revision")
+    void handleBridgeQuery_whenTranscriptRevisionIsApplied_clearsPendingRevision() throws Exception {
+        JcefBrowserView subject = callOnEdt(JcefBrowserView::new);
+        try {
+            runOnEdt(() -> {
+                setField(subject, "pendingTranscriptRenderRequestId", 11L);
+                Method method = JcefBrowserView.class.getDeclaredMethod("handleBridgeQuery", String.class);
+                method.setAccessible(true);
+                method.invoke(subject, "{\"type\":\"transcript-revision-applied\",\"args\":[11]}");
+
+                assertThat(fieldValue(subject, "pendingTranscriptRenderRequestId")).isEqualTo(0L);
+            });
+        } finally {
+            runOnEdt(subject::dispose);
+        }
     }
 
     @Test

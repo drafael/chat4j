@@ -2352,6 +2352,66 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Bubble PDF export item follows conversation and export availability")
+    void bubbleContextMenu_whenPdfExportAvailabilityChanges_updatesItemAndInvokesCallback() throws Exception {
+        var requested = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setOnExportPdfRequested(requested::incrementAndGet);
+            subject.setActiveConversationId(UUID.randomUUID());
+            subject.loadHistory(List.of(Message.user("hello")));
+        });
+        flushEdt();
+
+        MessageBubble bubble = callOnEdt(() ->
+                findComponents((JPanel) readField(subject, "messagesPanel"), MessageBubble.class).getFirst()
+        );
+        JPopupMenu popup = callOnEdt(() -> contentPopupMenu(bubble));
+        JMenuItem exportItem = callOnEdt(() -> findMenuItem(popup, "Export to PDF…"));
+
+        runOnEdt(() -> notifyPopupWillBecomeVisible(popup));
+        assertThat(callOnEdt(exportItem::isEnabled)).isTrue();
+
+        runOnEdt(() -> {
+            subject.setPdfExportRunning(true);
+            notifyPopupWillBecomeVisible(popup);
+        });
+        assertThat(callOnEdt(exportItem::isEnabled)).isFalse();
+
+        runOnEdt(() -> {
+            subject.setPdfExportRunning(false);
+            notifyPopupWillBecomeVisible(popup);
+            exportItem.doClick();
+        });
+        assertThat(requested).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("PDF export remains disabled until the visible assistant response is durably saved")
+    void canExportPdf_whenAssistantPersistenceIsPending_waitsForPersistence() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var entry = new ConversationHistoryEntry(UUID.randomUUID(), 2, Message.assistant("answer"));
+        Method queue = ChatPanel.class.getDeclaredMethod(
+                "queuePendingAssistantRecovery",
+                UUID.class,
+                ConversationHistoryEntry.class
+        );
+        Method remove = ChatPanel.class.getDeclaredMethod(
+                "removePendingAssistantRecovery",
+                UUID.class,
+                UUID.class
+        );
+        queue.setAccessible(true);
+        remove.setAccessible(true);
+        runOnEdt(() -> subject.setActiveConversationId(conversationId));
+
+        runOnEdt(() -> queue.invoke(subject, conversationId, entry));
+        assertThat(callOnEdt(subject::canExportPdf)).isFalse();
+
+        runOnEdt(() -> remove.invoke(subject, conversationId, entry.messageId()));
+        assertThat(callOnEdt(subject::canExportPdf)).isTrue();
+    }
+
+    @Test
     @DisplayName("Switching render mode rerenders loaded user and assistant bubbles")
     void setRenderMode_whenHistoryLoaded_updatesMessageBubbleModes() throws Exception {
         subject.loadHistory(List.of(
@@ -2577,6 +2637,23 @@ class ChatPanelTest {
         flushEdt();
 
         verify(popup).hidePopup();
+    }
+
+    @Test
+    @DisplayName("Browser transcript PDF action invokes the whole-conversation export callback")
+    void handleWebTranscriptAction_whenPdfExportRequested_invokesExportCallback() throws Exception {
+        var requested = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(UUID.randomUUID());
+            subject.setOnExportPdfRequested(requested::incrementAndGet);
+        });
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "export-pdf", 0, ""));
+        flushEdt();
+
+        assertThat(requested).hasValue(1);
     }
 
     @Test

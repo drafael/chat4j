@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.chat.conversation.webview.jcef;
 
 import com.github.drafael.chat4j.chat.conversation.ConversationActionListener;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
+import com.github.drafael.chat4j.chat.conversation.ConversationEntryKind;
+import com.github.drafael.chat4j.chat.conversation.ConversationTurnFingerprint;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptAssetMode;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptDocumentRenderer;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptDocumentRequest;
@@ -10,6 +12,8 @@ import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptRend
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptUpdateScripts;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptBrowserAssets;
 import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
+import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.formdev.flatlaf.util.SystemInfo;
@@ -19,14 +23,27 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
+import java.util.stream.IntStream;
+import javax.imageio.ImageIO;
 import javax.swing.*;
+import lombok.NonNull;
 import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -45,6 +62,7 @@ import org.cef.handler.CefResourceHandlerAdapter;
 import org.cef.handler.CefResourceRequestHandler;
 import org.cef.handler.CefResourceRequestHandlerAdapter;
 import org.cef.misc.BoolRef;
+import org.cef.misc.CefPdfPrintSettings;
 import org.cef.misc.IntRef;
 import org.cef.misc.StringRef;
 import org.cef.network.CefRequest;
@@ -59,6 +77,7 @@ public final class JcefBrowserView {
 
     private final JPanel browserPanel = new JPanel(new BorderLayout());
     private final Map<String, String> htmlByUrl = new ConcurrentHashMap<>();
+    private final Map<String, BinaryResource> pdfImageResources = new ConcurrentHashMap<>();
     private CefClient cefClient;
     private CefMessageRouter messageRouter;
     private CefBrowser browser;
@@ -67,11 +86,13 @@ public final class JcefBrowserView {
             Thread.ofVirtual().name("chat4j-transcript-render-", 0).factory()
     );
     private final AtomicLong renderRequestCounter = new AtomicLong();
+    private final AtomicLong pdfExportCounter = new AtomicLong();
     private List<ConversationEntry> entries = emptyList();
     private RenderMode renderMode = RenderMode.PREVIEW;
     private boolean dark;
     private boolean jumpButtonVisible;
     private boolean readAloudAvailable;
+    private boolean pdfExportAvailable;
     private int activeReadAloudMessageIndex = -1;
     private boolean documentInitialized;
     private boolean documentLoadPending;
@@ -86,6 +107,9 @@ public final class JcefBrowserView {
     private String initialBrowserUrl = "";
     private boolean nativeBrowserCreated;
     private volatile boolean disposed;
+    private volatile long pendingTranscriptRenderRequestId;
+    private volatile CompletableFuture<Void> transcriptSettlement = CompletableFuture.completedFuture(null);
+    private volatile PendingPdfExport pendingPdfExport;
     @Setter
     private ConversationActionListener actionListener;
 
@@ -170,6 +194,7 @@ public final class JcefBrowserView {
             return;
         }
         long requestId = renderRequestCounter.incrementAndGet();
+        transcriptSettlement = new CompletableFuture<>();
         documentInitialized = false;
         documentLoadPending = true;
         TranscriptRenderSnapshot snapshot = transcriptRenderSnapshot();
@@ -190,9 +215,304 @@ public final class JcefBrowserView {
         executeJavaScript(TranscriptUpdateScripts.scrollToBottom());
     }
 
+    public void setPdfExportAvailable(boolean available) {
+        pdfExportAvailable = available;
+        applyPdfExportAvailability();
+    }
+
+    private void applyPdfExportAvailability() {
+        executeJavaScript("window.chat4jPdfExportAvailable = %s;".formatted(pdfExportAvailable));
+    }
+
+    public boolean canExportPdf() {
+        return canAttemptPdfExport()
+                && documentInitialized
+                && !documentLoadPending
+                && pendingTranscriptRenderRequestId == 0L;
+    }
+
+    public boolean canAttemptPdfExport() {
+        return SwingUtilities.isEventDispatchThread()
+                && !disposed
+                && browser != null
+                && renderMode == RenderMode.PREVIEW
+                && browserPanel.isShowing();
+    }
+
+    public void printToPdf(
+            @NonNull Path destination,
+            String title,
+            String metadata,
+            @NonNull List<PdfTurnMetadata> turns,
+            @NonNull List<AttachmentRef> imageReferences,
+            @NonNull BooleanSupplier cancelled
+    ) throws Exception {
+        if (!waitForPdfAdmission(turns, cancelled)) {
+            return;
+        }
+        long requestId = pdfExportCounter.incrementAndGet();
+        Path nativeOutput = Files.createTempFile(destination.toAbsolutePath().normalize().getParent(), ".chat4j-jcef-pdf-", ".pdf");
+        Map<String, String> imageUrls = preparePdfImages(requestId, imageReferences);
+        var pending = new PendingPdfExport(requestId, nativeOutput);
+        boolean detachedNativeWrite = false;
+        try {
+            runOnEdt(() -> beginPdfExport(pending, title, metadata, turns, imageUrls));
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(130);
+            while (!pending.completion().isDone()) {
+                if (cancelled.getAsBoolean() && !pending.nativePrintScheduled()) {
+                    runOnEdt(() -> abortPendingPdfExport(pending));
+                }
+                if (System.nanoTime() >= deadlineNanos) {
+                    detachedNativeWrite = pending.nativePrintScheduled();
+                    if (detachedNativeWrite) {
+                        retainNativeOutputForLateCallback(pending, nativeOutput);
+                    }
+                    throw new IllegalStateException("Chromium PDF rendering timed out.");
+                }
+                try {
+                    pending.completion().get(200, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException ignored) {
+                    // Recheck cancellation and the bounded deadline.
+                } catch (InterruptedException e) {
+                    detachedNativeWrite = pending.nativePrintScheduled();
+                    if (detachedNativeWrite) {
+                        retainNativeOutputForLateCallback(pending, nativeOutput);
+                    } else {
+                        runOnEdt(() -> abortPendingPdfExport(pending));
+                    }
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+            boolean printed = pending.completion().join();
+            if (cancelled.getAsBoolean()) {
+                return;
+            }
+            if (!printed || !Files.isRegularFile(nativeOutput) || Files.size(nativeOutput) == 0) {
+                throw new IllegalStateException("Chromium could not write the PDF document.");
+            }
+            Files.move(nativeOutput, destination, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            cleanupPdfExportAfterWorker(pending);
+            if (!detachedNativeWrite) {
+                Files.deleteIfExists(nativeOutput);
+            }
+        }
+    }
+
+    private boolean waitForPdfAdmission(List<PdfTurnMetadata> turns, BooleanSupplier cancelled) throws Exception {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (!cancelled.getAsBoolean() && System.nanoTime() < deadlineNanos) {
+            CompletableFuture<Void> settlement = transcriptSettlement;
+            var ready = new AtomicBoolean();
+            runOnEdt(() -> ready.set(canExportPdf() && matchesDurableTurns(turns)));
+            if (ready.get()) {
+                return true;
+            }
+            if (settlement.isDone()) {
+                break;
+            }
+            try {
+                settlement.get(200, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException ignored) {
+                // Recheck the concrete browser revision and durable turn state.
+            }
+        }
+        if (cancelled.getAsBoolean()) {
+            return false;
+        }
+        throw new IllegalStateException("The active Chromium conversation did not become ready for PDF export.");
+    }
+
+    private void beginPdfExport(
+            PendingPdfExport pending,
+            String title,
+            String metadata,
+            List<PdfTurnMetadata> turns,
+            Map<String, String> imageUrls
+    ) {
+        if (!canExportPdf() || pendingPdfExport != null || !matchesDurableTurns(turns)) {
+            pending.completion().completeExceptionally(
+                    new IllegalStateException("The active Chromium conversation is not ready for PDF export.")
+            );
+            return;
+        }
+        pendingPdfExport = pending;
+        try {
+            executeJavaScript(pdfPreparationScript(pending.requestId(), title, metadata, turns, imageUrls));
+        } catch (Exception e) {
+            pending.completion().completeExceptionally(e);
+        }
+    }
+
+    private boolean matchesDurableTurns(List<PdfTurnMetadata> expectedTurns) {
+        List<ConversationEntry> messageEntries = entries.stream()
+                .filter(entry -> entry.kind() == ConversationEntryKind.MESSAGE)
+                .filter(entry -> entry.role() == Role.USER || entry.role() == Role.ASSISTANT)
+                .toList();
+        if (messageEntries.size() != expectedTurns.size()) {
+            return false;
+        }
+        return IntStream.range(0, messageEntries.size()).allMatch(index -> {
+            ConversationEntry entry = messageEntries.get(index);
+            PdfTurnMetadata expected = expectedTurns.get(index);
+            String fingerprint = ConversationTurnFingerprint.create(
+                    entry.role(),
+                    entry.parts(),
+                    entry.meta().fallbackNotices(),
+                    entry.meta().cancelled(),
+                    entry.meta().error(),
+                    entry.meta().citations()
+            );
+            return Strings.CS.equals(fingerprint, expected.fingerprint());
+        });
+    }
+
+    private Map<String, String> preparePdfImages(long requestId, List<AttachmentRef> references) {
+        Map<String, String> urlsByPath = new LinkedHashMap<>();
+        for (int index = 0; index < references.size(); index++) {
+            AttachmentRef reference = references.get(index);
+            if (reference == null || StringUtils.isBlank(reference.storagePath())) {
+                continue;
+            }
+            try {
+                Path path = Path.of(reference.storagePath());
+                if (!Files.isRegularFile(path) || ImageIO.read(path.toFile()) == null) {
+                    continue;
+                }
+                String url = "https://chat4j.local/pdf-image/%d/%d".formatted(requestId, index);
+                String mimeType = safeImageMimeType(StringUtils.defaultIfBlank(reference.mimeType(), Files.probeContentType(path)));
+                pdfImageResources.put(url, new BinaryResource(Files.readAllBytes(path), mimeType));
+                urlsByPath.put(reference.storagePath(), url);
+            } catch (Exception ignored) {
+                // Keep the displayed image when the persisted original is unavailable.
+            }
+        }
+        return Map.copyOf(urlsByPath);
+    }
+
+    private String safeImageMimeType(String mimeType) {
+        return switch (StringUtils.defaultString(mimeType).trim().toLowerCase(Locale.ROOT)) {
+            case "image/png" -> "image/png";
+            case "image/jpeg", "image/jpg" -> "image/jpeg";
+            case "image/gif" -> "image/gif";
+            case "image/webp" -> "image/webp";
+            case "image/bmp" -> "image/bmp";
+            default -> "application/octet-stream";
+        };
+    }
+
+    private void startNativePdfPrint(PendingPdfExport pending) {
+        if (pending != pendingPdfExport || pending.completion().isDone() || disposed || browser == null) {
+            return;
+        }
+        CefPdfPrintSettings settings = new CefPdfPrintSettings();
+        settings.landscape = false;
+        settings.print_background = true;
+        settings.scale = 1.0;
+        settings.paper_width = 8.2677;
+        settings.paper_height = 11.6929;
+        settings.prefer_css_page_size = true;
+        settings.margin_type = CefPdfPrintSettings.MarginType.NONE;
+        settings.display_header_footer = false;
+        settings.generate_tagged_pdf = true;
+        settings.generate_document_outline = true;
+        try {
+            browser.printToPDF(
+                    pending.nativeOutput().toString(),
+                    settings,
+                    (path, ok) -> {
+                        if (!pending.completion().complete(ok)) {
+                            deleteQuietly(pending.nativeOutput());
+                        }
+                    }
+            );
+            pending.markNativePrintStarted();
+        } catch (Throwable t) {
+            pending.completion().completeExceptionally(t);
+        }
+    }
+
+    private void abortPendingPdfExport(PendingPdfExport pending) {
+        if (pending == pendingPdfExport && !pending.nativePrintScheduled()) {
+            pending.completion().complete(false);
+        }
+    }
+
+    private void cleanupPdfExport(PendingPdfExport pending) {
+        if (pending == pendingPdfExport) {
+            pendingPdfExport = null;
+        }
+        if (pending.nativePrintScheduled() && !pending.nativePrintStarted()) {
+            pending.completion().complete(false);
+        }
+        pdfImageResources.keySet().removeIf(url -> url.contains("/pdf-image/%d/".formatted(pending.requestId())));
+        executeJavaScript("""
+                (function() {
+                  var header = document.getElementById('chat4j-pdf-export-header');
+                  if (header) { header.remove(); }
+                  Array.prototype.forEach.call(document.querySelectorAll('.chat4j-pdf-turn-heading'), function(node) { node.remove(); });
+                  var links = window.__chat4jPdfOriginalLinks || [];
+                  links.forEach(function(item) {
+                    if (item.href === null) { item.node.removeAttribute('href'); }
+                    else { item.node.setAttribute('href', item.href); }
+                  });
+                  delete window.__chat4jPdfOriginalLinks;
+                  var images = window.__chat4jPdfOriginalImages || [];
+                  images.forEach(function(item) {
+                    if (item.src === null) { item.node.removeAttribute('src'); }
+                    else { item.node.setAttribute('src', item.src); }
+                  });
+                  delete window.__chat4jPdfOriginalImages;
+                })();
+                """);
+    }
+
+    private void runOnEdt(Runnable action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+            return;
+        }
+        SwingUtilities.invokeAndWait(action);
+    }
+
+    private void cleanupPdfExportAfterWorker(PendingPdfExport pending) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            cleanupPdfExport(pending);
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(() -> cleanupPdfExport(pending));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            SwingUtilities.invokeLater(() -> cleanupPdfExport(pending));
+        } catch (Exception e) {
+            SwingUtilities.invokeLater(() -> cleanupPdfExport(pending));
+        }
+    }
+
+    private void retainNativeOutputForLateCallback(PendingPdfExport pending, Path nativeOutput) {
+        nativeOutput.toFile().deleteOnExit();
+        pending.completion().whenComplete((ignored, error) -> deleteQuietly(nativeOutput));
+    }
+
+    private void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (Exception ignored) {
+        }
+    }
+
     public void dispose() {
         disposed = true;
         actionListener = null;
+        PendingPdfExport pending = pendingPdfExport;
+        pendingPdfExport = null;
+        if (pending != null) {
+            pending.completion().completeExceptionally(new IllegalStateException("JCEF view was disposed during PDF export."));
+        }
+        pdfImageResources.clear();
+        transcriptSettlement.completeExceptionally(new IllegalStateException("JCEF view was disposed."));
         renderRequestCounter.incrementAndGet();
         renderExecutor.shutdownNow();
         deletePendingDocumentUrl();
@@ -241,6 +561,7 @@ public final class JcefBrowserView {
             removeDocumentUrl(documentUrl);
             documentInitialized = false;
             documentLoadPending = false;
+            transcriptSettlement.complete(null);
             return;
         }
         replaceCurrentDocumentUrl(documentUrl);
@@ -313,6 +634,7 @@ public final class JcefBrowserView {
         }
         documentInitialized = false;
         documentLoadPending = false;
+        transcriptSettlement.complete(null);
     }
 
     private boolean isActiveLoadingDocument(String url) {
@@ -335,21 +657,33 @@ public final class JcefBrowserView {
             return;
         }
         long requestId = renderRequestCounter.incrementAndGet();
+        pendingTranscriptRenderRequestId = requestId;
+        transcriptSettlement = new CompletableFuture<>();
         renderExecutor.execute(() -> {
             if (disposed || requestId != renderRequestCounter.get()) {
+                clearPendingTranscriptRender(requestId);
                 return;
             }
             String entriesHtml = TranscriptRenderSupport.withSnapshotFonts(snapshot, () -> renderEntriesHtml(snapshot, requestId));
             if (entriesHtml == null) {
+                clearPendingTranscriptRender(requestId);
                 return;
             }
             SwingUtilities.invokeLater(() -> {
                 if (disposed || requestId != renderRequestCounter.get() || !documentInitialized) {
+                    clearPendingTranscriptRender(requestId);
                     return;
                 }
-                updateTranscriptHtml(scrollToBottom, snapshot, entriesHtml);
+                updateTranscriptHtml(requestId, scrollToBottom, snapshot, entriesHtml);
             });
         });
+    }
+
+    private void clearPendingTranscriptRender(long requestId) {
+        if (pendingTranscriptRenderRequestId == requestId) {
+            pendingTranscriptRenderRequestId = 0L;
+            transcriptSettlement.complete(null);
+        }
     }
 
     private TranscriptRenderSnapshot transcriptRenderSnapshot() {
@@ -357,13 +691,18 @@ public final class JcefBrowserView {
     }
 
 
-    private void updateTranscriptHtml(boolean scrollToBottom, TranscriptRenderSnapshot snapshot, String entriesHtml) {
+    private void updateTranscriptHtml(long requestId, boolean scrollToBottom, TranscriptRenderSnapshot snapshot, String entriesHtml) {
         String script = TranscriptUpdateScripts.transcriptHtmlUpdate(
                 encodeSupplementaryCodePoints(entriesHtml),
                 snapshot.jumpButtonVisible(),
                 scrollToBottom
-        );
+        ) + """
+                if (window.chat4jJcefQuery) {
+                  window.chat4jJcefQuery({request: JSON.stringify({type: 'transcript-revision-applied', args: [%d]})});
+                }
+                """.formatted(requestId);
         executeJavaScript(script);
+        applyPdfExportAvailability();
     }
 
     private String renderEntriesHtml(TranscriptRenderSnapshot snapshot, long requestId) {
@@ -410,6 +749,129 @@ public final class JcefBrowserView {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    String pdfPreparationScript(
+            long requestId,
+            String title,
+            String metadata,
+            List<PdfTurnMetadata> turns,
+            Map<String, String> imageUrls
+    ) throws Exception {
+        String titleJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultIfBlank(title, "Conversation"));
+        String metadataJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultString(metadata));
+        String turnsJson = OBJECT_MAPPER.writeValueAsString(turns);
+        String imageUrlsJson = OBJECT_MAPPER.writeValueAsString(imageUrls);
+        return """
+                (function() {
+                  var requestId = %d;
+                  function notify(ready) {
+                    if (window.chat4jJcefQuery) {
+                      window.chat4jJcefQuery({request: JSON.stringify({type: 'pdf-export-ready', args: [requestId, Boolean(ready)]})});
+                    }
+                  }
+                  var existing = document.getElementById('chat4j-pdf-export-header');
+                  if (existing) { existing.remove(); }
+                  Array.prototype.forEach.call(document.querySelectorAll('.chat4j-pdf-turn-heading'), function(node) { node.remove(); });
+
+                  var rows = Array.prototype.slice.call(document.querySelectorAll('.row.user, .row.assistant'));
+                  var turns = %s;
+                  if (rows.length !== turns.length) {
+                    notify(false);
+                    return;
+                  }
+                  for (var index = 0; index < rows.length; index++) {
+                    var turn = turns[index];
+                    if (!rows[index].classList.contains(turn.role)) {
+                      notify(false);
+                      return;
+                    }
+                    var heading = document.createElement('div');
+                    heading.className = 'chat4j-pdf-turn-heading';
+                    heading.appendChild(document.createTextNode(turn.label));
+                    if (turn.timestamp) {
+                      var time = document.createElement('time');
+                      time.textContent = turn.timestamp;
+                      heading.appendChild(time);
+                    }
+                    rows[index].insertBefore(heading, rows[index].firstChild);
+                  }
+
+                  window.__chat4jPdfOriginalLinks = [];
+                  Array.prototype.forEach.call(document.querySelectorAll('a[href]'), function(link) {
+                    var original = link.getAttribute('href');
+                    window.__chat4jPdfOriginalLinks.push({node: link, href: original});
+                    try {
+                      var parsed = new URL(String(original || '').trim(), document.baseURI);
+                      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) {
+                        link.removeAttribute('href');
+                      }
+                    } catch (ignored) {
+                      link.removeAttribute('href');
+                    }
+                  });
+
+                  window.__chat4jPdfOriginalImages = [];
+                  var imageUrls = %s;
+                  Array.prototype.forEach.call(document.querySelectorAll('[data-attachment-path]'), function(container) {
+                    var image = container.querySelector('img');
+                    var replacement = imageUrls[container.getAttribute('data-attachment-path')];
+                    if (image && replacement) {
+                      window.__chat4jPdfOriginalImages.push({node: image, src: image.hasAttribute('src') ? image.getAttribute('src') : null});
+                      image.setAttribute('src', replacement);
+                    }
+                  });
+
+                  var header = document.createElement('header');
+                  header.id = 'chat4j-pdf-export-header';
+                  header.className = 'chat4j-pdf-export-header';
+                  var heading = document.createElement('h1');
+                  heading.textContent = %s;
+                  header.appendChild(heading);
+                  var detail = document.createElement('div');
+                  detail.textContent = %s;
+                  header.appendChild(detail);
+                  document.body.insertBefore(header, document.body.firstChild);
+
+                  if (window.chat4jRenderDiagrams) {
+                    window.chat4jRenderDiagrams(document);
+                  }
+                  var deadline = Date.now() + 10000;
+                  function diagramState(table) {
+                    var shell = table.parentNode && table.parentNode.classList && table.parentNode.classList.contains('code-block-shell')
+                      ? table.parentNode
+                      : null;
+                    return (shell && shell.getAttribute('data-chat4j-diagram-rendered'))
+                      || table.getAttribute('data-chat4j-diagram-rendered')
+                      || '';
+                  }
+                  function settled() {
+                    var diagrams = document.querySelectorAll('table.md-diagram-block');
+                    for (var i = 0; i < diagrams.length; i++) {
+                      var state = diagramState(diagrams[i]);
+                      if (!state || state === 'pending') { return false; }
+                    }
+                    var images = document.images || [];
+                    for (var j = 0; j < images.length; j++) {
+                      if (!images[j].complete) { return false; }
+                    }
+                    return true;
+                  }
+                  function notifyWhenReady() {
+                    if (settled()) {
+                      notify(true);
+                      return;
+                    }
+                    if (Date.now() >= deadline) {
+                      notify(false);
+                      return;
+                    }
+                    window.setTimeout(notifyWhenReady, 60);
+                  }
+                  var fontsReady = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+                  Promise.resolve(fontsReady).catch(function() {}).then(notifyWhenReady);
+                })();
+                """.formatted(requestId, turnsJson, imageUrlsJson, titleJson, metadataJson);
     }
 
     private String injectJcefBridge(String html) {
@@ -523,6 +985,25 @@ public final class JcefBrowserView {
             JsonNode node = OBJECT_MAPPER.readTree(StringUtils.defaultString(request));
             String type = node.path("type").asText("");
             JsonNode args = node.path("args");
+            if (Strings.CS.equals(type, "transcript-revision-applied")) {
+                long requestId = args.isArray() && !args.isEmpty() ? args.get(0).asLong(-1L) : -1L;
+                clearPendingTranscriptRender(requestId);
+                return;
+            }
+            if (Strings.CS.equals(type, "pdf-export-ready")) {
+                long requestId = args.isArray() && !args.isEmpty() ? args.get(0).asLong(-1L) : -1L;
+                boolean ready = args.isArray() && args.size() >= 2 && args.get(1).asBoolean(false);
+                PendingPdfExport pending = pendingPdfExport;
+                if (pending != null && pending.requestId() == requestId) {
+                    if (ready) {
+                        pending.markNativePrintScheduled();
+                        SwingUtilities.invokeLater(() -> startNativePdfPrint(pending));
+                    } else {
+                        pending.completion().complete(false);
+                    }
+                }
+                return;
+            }
             if (Strings.CS.equals(type, "open-link")) {
                 String link = args.isArray() && !args.isEmpty() ? args.get(0).asText("") : "";
                 ExternalLinkSupport.openExternalLink(link);
@@ -545,6 +1026,56 @@ public final class JcefBrowserView {
             return;
         }
         browser.executeJavaScript(script, browser.getURL(), 0);
+    }
+
+    public record PdfTurnMetadata(String role, String label, String timestamp, String fingerprint) {
+        public PdfTurnMetadata {
+            role = StringUtils.defaultString(role);
+            label = StringUtils.defaultString(label);
+            timestamp = StringUtils.defaultString(timestamp);
+            fingerprint = StringUtils.defaultString(fingerprint);
+        }
+    }
+
+    private static final class PendingPdfExport {
+        private final long requestId;
+        private final Path nativeOutput;
+        private final CompletableFuture<Boolean> completion = new CompletableFuture<>();
+        private volatile boolean nativePrintScheduled;
+        private volatile boolean nativePrintStarted;
+
+        private PendingPdfExport(long requestId, Path nativeOutput) {
+            this.requestId = requestId;
+            this.nativeOutput = nativeOutput.toAbsolutePath().normalize();
+        }
+
+        private long requestId() {
+            return requestId;
+        }
+
+        private Path nativeOutput() {
+            return nativeOutput;
+        }
+
+        private CompletableFuture<Boolean> completion() {
+            return completion;
+        }
+
+        private boolean nativePrintScheduled() {
+            return nativePrintScheduled;
+        }
+
+        private void markNativePrintScheduled() {
+            nativePrintScheduled = true;
+        }
+
+        private boolean nativePrintStarted() {
+            return nativePrintStarted;
+        }
+
+        private void markNativePrintStarted() {
+            nativePrintStarted = true;
+        }
     }
 
     private void installBrowserResizeWorkaround() {
@@ -723,26 +1254,41 @@ public final class JcefBrowserView {
                 return new DirectResourceRequestHandler(html, "text/html", "text/html; charset=utf-8");
             }
             String script = scriptForUrl(url);
-            return script == null
+            if (script != null) {
+                return new DirectResourceRequestHandler(script, "application/javascript", "application/javascript; charset=utf-8");
+            }
+            BinaryResource image = pdfImageResources.get(url);
+            return image == null
                     ? null
-                    : new DirectResourceRequestHandler(script, "application/javascript", "application/javascript; charset=utf-8");
+                    : new DirectResourceRequestHandler(image.bytes(), image.mimeType(), image.mimeType());
+        }
+    }
+
+    private record BinaryResource(byte[] bytes, String mimeType) {
+        private BinaryResource {
+            bytes = bytes.clone();
+            mimeType = StringUtils.defaultIfBlank(mimeType, "application/octet-stream");
         }
     }
 
     private static final class DirectResourceRequestHandler extends CefResourceRequestHandlerAdapter {
-        private final String content;
+        private final byte[] bytes;
         private final String mimeType;
         private final String contentType;
 
         private DirectResourceRequestHandler(String content, String mimeType, String contentType) {
-            this.content = content;
+            this(content.getBytes(StandardCharsets.UTF_8), mimeType, contentType);
+        }
+
+        private DirectResourceRequestHandler(byte[] bytes, String mimeType, String contentType) {
+            this.bytes = bytes.clone();
             this.mimeType = mimeType;
             this.contentType = contentType;
         }
 
         @Override
         public DirectResourceHandler getResourceHandler(CefBrowser browser, CefFrame frame, CefRequest request) {
-            return new DirectResourceHandler(content, mimeType, contentType);
+            return new DirectResourceHandler(bytes, mimeType, contentType);
         }
     }
 
@@ -752,8 +1298,8 @@ public final class JcefBrowserView {
         private final String contentType;
         private int offset;
 
-        private DirectResourceHandler(String content, String mimeType, String contentType) {
-            bytes = content.getBytes(StandardCharsets.UTF_8);
+        private DirectResourceHandler(byte[] bytes, String mimeType, String contentType) {
+            this.bytes = bytes.clone();
             this.mimeType = mimeType;
             this.contentType = contentType;
         }
@@ -772,7 +1318,7 @@ public final class JcefBrowserView {
             response.setHeaderByName("Content-Type", contentType, true);
             response.setHeaderByName("Cache-Control", "no-store", true);
             if (Strings.CS.equals(mimeType, "text/html")) {
-                response.setHeaderByName("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src data:; font-src data:;", true);
+                response.setHeaderByName("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src data:;", true);
             }
             responseLength.set(bytes.length);
         }

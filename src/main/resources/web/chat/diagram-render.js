@@ -868,14 +868,14 @@
                     height: 360,
                     scale: 1.35,
                     padding: 12,
-                    compactDrawing: true,
+                    compactDrawing: false,
                     themes: { chat4j: chemistryTheme() }
                 };
                 var drawer = new window.SmilesDrawer.SvgDrawer(options);
                 var originalNode = sourceNode(table);
                 replaceSource(table, target);
                 try {
-                    drawer.draw(tree, svg, 'chat4j', false);
+                    drawer.draw(tree, svg, 'chat4j', null);
                 } catch (error) {
                     if (target.parentNode && originalNode) {
                         target.parentNode.replaceChild(originalNode, target);

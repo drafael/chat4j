@@ -42,6 +42,7 @@ public final class SystemWebView {
     private boolean dark;
     private boolean jumpButtonVisible;
     private boolean readAloudAvailable;
+    private boolean pdfExportAvailable;
     private int activeReadAloudMessageIndex = -1;
     private boolean documentInitialized;
     private boolean documentLoadPending;
@@ -177,6 +178,17 @@ public final class SystemWebView {
         webView.eval(TranscriptUpdateScripts.scrollToBottom());
     }
 
+    public void setPdfExportAvailable(boolean available) {
+        pdfExportAvailable = available;
+        applyPdfExportAvailability();
+    }
+
+    private void applyPdfExportAvailability() {
+        if (!disposed) {
+            webView.eval("window.chat4jPdfExportAvailable = %s;".formatted(pdfExportAvailable));
+        }
+    }
+
     public void dispose() {
         disposed = true;
         actionListener = null;
@@ -297,6 +309,7 @@ public final class SystemWebView {
                 scrollToBottom
         );
         webView.eval(script);
+        applyPdfExportAvailability();
     }
 
     private String renderEntriesHtml(TranscriptRenderSnapshot snapshot, long requestId) {

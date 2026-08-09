@@ -1,7 +1,13 @@
 package com.github.drafael.chat4j;
 
+import com.formdev.flatlaf.util.SystemFileChooser;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.ChatPanel;
+import com.github.drafael.chat4j.chat.export.pdf.ConversationPdfExportService;
+import com.github.drafael.chat4j.chat.export.pdf.PdfExportFileNames;
+import com.github.drafael.chat4j.chat.export.pdf.PdfExportMode;
+import com.github.drafael.chat4j.chat.export.pdf.PdfExportProgressDialog;
+import com.github.drafael.chat4j.chat.export.pdf.PdfExportSettings;
 import com.github.drafael.chat4j.chat.NewChatCoordinator;
 import com.github.drafael.chat4j.chat.agent.McpSwingApprovalHandler;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
@@ -159,6 +165,8 @@ import java.awt.event.InputEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.beans.PropertyChangeListener;
+import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -233,6 +241,7 @@ public class MainFrame extends JFrame {
     private final JSplitPane splitPane;
     private final ConversationRepository conversationRepo;
     private final SettingsRepository settingsRepo;
+    private final ConversationPdfExportService pdfExportService;
     private final WebViewRuntimeStatus chatWebViewRuntimeStatus;
     private final PromptCatalogRepo promptCatalogRepo;
     private final PromptTemplateRenderer promptTemplateRenderer = new PromptTemplateRenderer();
@@ -408,6 +417,7 @@ public class MainFrame extends JFrame {
     private final Set<UUID> indeterminateHistoryConversationIds = new HashSet<>();
     private final Set<UUID> indeterminateClearConversationIds = new HashSet<>();
     private final MainFramePreviewMenuState previewMenuState = new MainFramePreviewMenuState();
+    private JMenuItem exportPdfMenuItem;
     private final PropertyChangeListener lookAndFeelListener = event -> {
         if (!"lookAndFeel".equals(event.getPropertyName())) {
             return;
@@ -457,6 +467,11 @@ public class MainFrame extends JFrame {
         this.credentialResolver = credentialResolver;
         this.credentialMutationService = credentialMutationService;
         this.subprocessEnvironment = Map.copyOf(subprocessEnvironment);
+        this.pdfExportService = new ConversationPdfExportService(
+                conversationRepo,
+                settingsRepo,
+                this.subprocessEnvironment
+        );
         this.attachmentSupport = attachmentSupport;
         this.mcpManager = mcpManager;
         var dependencies = mainFrameDependenciesFactory.create(new MainFrameDependenciesFactory.DependenciesContext(
@@ -755,6 +770,7 @@ public class MainFrame extends JFrame {
                 conversationPersistenceCoordinator::markUserMessageFailureDelivered
         );
         panel.setOnClearChatRequested(this::confirmClearCurrentChat);
+        panel.setOnExportPdfRequested(this::exportCurrentConversationToPdf);
         panel.setPromptQuickActions(promptQuickActions(BuiltInPromptCatalog.prompts()));
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
         panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
@@ -799,6 +815,146 @@ public class MainFrame extends JFrame {
         });
     }
 
+    private void exportCurrentConversationToPdf() {
+        UUID conversationId = conversationState.currentConversationId();
+        if (conversationId == null || !chatPanel.canExportPdf() || pdfExportService.isExporting()) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the current response or export to finish.");
+            return;
+        }
+        if (new PdfExportSettings(settingsRepo).mode() != PdfExportMode.PUBLICATION) {
+            choosePdfDestinationAndExport(conversationId);
+            return;
+        }
+
+        var progressDialog = new PdfExportProgressDialog(this);
+        progressDialog.setStage(ConversationPdfExportService.ExportStage.CHECKING_PUBLICATION_TOOLS);
+        chatPanel.setPdfExportRunning(true);
+        progressDialog.show();
+        pdfExportService.validatePublicationBackend(progressDialog::isCancelled)
+                .whenComplete((reason, error) -> SwingUtilities.invokeLater(() -> {
+                    progressDialog.close();
+                    chatPanel.setPdfExportRunning(false);
+                    if (shutdownState.shutdownInProgress() || !isDisplayable()) {
+                        return;
+                    }
+                    if (error != null) {
+                        JOptionPane.showMessageDialog(
+                                this,
+                                "Could not check the Publication tools.\n\n%s".formatted(
+                                        StringUtils.defaultIfBlank(
+                                                ExceptionUtils.getRootCauseMessage(error),
+                                                "Unknown validation error"
+                                        )
+                                ),
+                                "Publication Export Unavailable",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        return;
+                    }
+                    if (progressDialog.isCancelled()) {
+                        return;
+                    }
+                    if (reason.isPresent()) {
+                        JOptionPane.showMessageDialog(
+                                this,
+                                "%s\n\nConfigure the executable paths in Settings → PDF Export.".formatted(reason.get()),
+                                "Publication Export Unavailable",
+                                JOptionPane.WARNING_MESSAGE
+                        );
+                        return;
+                    }
+                    if (Objects.equals(conversationState.currentConversationId(), conversationId)
+                            && chatPanel.canExportPdf()
+                    ) {
+                        choosePdfDestinationAndExport(conversationId);
+                    }
+                }));
+    }
+
+    private void choosePdfDestinationAndExport(UUID conversationId) {
+        if (!canExportConversation(conversationId)) {
+            return;
+        }
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setDialogTitle("Export Conversation to PDF");
+        chooser.setSelectedFile(new File(PdfExportFileNames.suggestedFileName(
+                sidebarPanel.selectedConversationTitle().orElse("Chat4J Conversation")
+        )));
+        chooser.setFileFilter(new SystemFileChooser.FileNameExtensionFilter("PDF documents (*.pdf)", "pdf"));
+        chooser.putPlatformProperty(SystemFileChooser.WINDOWS_DEFAULT_EXTENSION, "pdf");
+        if (chooser.showSaveDialog(this) != SystemFileChooser.APPROVE_OPTION || chooser.getSelectedFile() == null) {
+            return;
+        }
+        if (!canExportConversation(conversationId)) {
+            return;
+        }
+
+        Path selectedDestination = chooser.getSelectedFile().toPath();
+        Path destination = PdfExportFileNames.ensurePdfExtension(selectedDestination);
+        // SystemFileChooser already confirms replacement. Ask only if adding .pdf changes the selected target.
+        if (!destination.equals(selectedDestination) && Files.exists(destination)) {
+            int overwrite = JOptionPane.showConfirmDialog(
+                    this,
+                    "Replace the existing file?\n%s".formatted(destination),
+                    "Export to PDF",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE
+            );
+            if (overwrite != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+        if (!canExportConversation(conversationId)) {
+            return;
+        }
+
+        var enhancedAutoExporter = chatPanel.activeEnhancedPdfExporter().orElse(null);
+        var progressDialog = new PdfExportProgressDialog(this);
+        chatPanel.setPdfExportRunning(true);
+        progressDialog.show();
+        var exportHandle = pdfExportService.export(
+                conversationId,
+                destination,
+                progressDialog::setStage,
+                enhancedAutoExporter
+        );
+        progressDialog.setCancelAction(exportHandle::cancel);
+        exportHandle.completion().whenComplete((result, error) -> SwingUtilities.invokeLater(() -> {
+            progressDialog.close();
+            chatPanel.setPdfExportRunning(false);
+            if (shutdownState.shutdownInProgress() || !isDisplayable()) {
+                return;
+            }
+            if (error != null) {
+                Throwable cause = unwrapCompletionFailure(error);
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Could not export the conversation.\n\n%s".formatted(
+                                StringUtils.defaultIfBlank(ExceptionUtils.getRootCauseMessage(cause), "Unknown export error")
+                        ),
+                        "PDF Export Failed",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                return;
+            }
+            if (result.cancelled()) {
+                return;
+            }
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Exported with %s:\n%s".formatted(result.backend(), destination),
+                    "PDF Export Complete",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        }));
+    }
+
+    private boolean canExportConversation(UUID conversationId) {
+        return Objects.equals(conversationState.currentConversationId(), conversationId)
+                && chatPanel.canExportPdf()
+                && !pdfExportService.isExporting();
+    }
+
     private void installCloseHandlers() {
         addWindowListener(new WindowAdapter() {
             @Override
@@ -841,6 +997,10 @@ public class MainFrame extends JFrame {
 
     private boolean allowSidebarGuardedAction(boolean allowFailedProvisionalDiscard) {
         if (shutdownState.shutdownInProgress()) {
+            return false;
+        }
+        if (pdfExportService.isExporting()) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the PDF export to finish.");
             return false;
         }
         if (chatPanel.isSpeechToTextActive()) {
@@ -1492,7 +1652,10 @@ public class MainFrame extends JFrame {
             branches.add(closeSttModelManagementServicesAsync());
             branches.add(cleanupAction(conversationPersistenceCoordinator::close));
             if (chatPanel != null) {
-                branches.add(disposeViewResourcesOnEdt());
+                branches.add(cleanupStage(() -> pdfExportService.closeAsync()
+                        .thenCompose(ignored -> disposeViewResourcesOnEdt())));
+            } else {
+                branches.add(cleanupStage(pdfExportService::closeAsync));
             }
             combineCleanupBranches(branches).whenComplete((ignored, error) -> {
                 if (error == null) {
@@ -2121,6 +2284,10 @@ public class MainFrame extends JFrame {
         if (shutdownState.shutdownInProgress()) {
             return;
         }
+        if (pdfExportService.isExporting()) {
+            chatPanel.getInputBar().showValidationMessage("Wait for the PDF export to finish before opening Settings.");
+            return;
+        }
         if (chatPanel.isSpeechToTextActive()) {
             chatPanel.getInputBar().showValidationMessage("Finish or cancel transcription before opening Settings.");
             return;
@@ -2541,6 +2708,19 @@ public class MainFrame extends JFrame {
                 modelMenuState::setModelsMenuDirty,
                 themeMenuState::setThemesMenuBuilt,
                 fontMenuState::setFontMenuBuilt
+        );
+        installPdfExportMenuItem();
+    }
+
+    private void installPdfExportMenuItem() {
+        JMenu fileMenu = topMenusState.fileMenu();
+        if (fileMenu == null || exportPdfMenuItem != null && exportPdfMenuItem.getParent() == fileMenu) {
+            return;
+        }
+        exportPdfMenuItem = fileMenuFactory.addExportPdfItem(
+                fileMenu,
+                this::exportCurrentConversationToPdf,
+                chatPanel::canExportPdf
         );
     }
 

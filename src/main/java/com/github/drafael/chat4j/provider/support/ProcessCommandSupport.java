@@ -8,7 +8,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
@@ -36,7 +38,7 @@ public final class ProcessCommandSupport {
             return command;
         }
 
-        String resolvedExecutable = resolveExecutable(executable.trim(), environment);
+        String resolvedExecutable = resolveExecutable(executable.trim(), environment, false);
         if (StringUtils.isBlank(resolvedExecutable)) {
             return command;
         }
@@ -50,7 +52,14 @@ public final class ProcessCommandSupport {
         return executable.contains("/") || executable.contains("\\");
     }
 
-    private static String resolveExecutable(String executable, Map<String, String> environment) {
+    public static Optional<String> findDirectExecutable(String executable, Map<String, String> environment) {
+        if (StringUtils.isBlank(executable) || hasPathComponent(executable)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(resolveExecutable(executable.trim(), Map.copyOf(environment), true));
+    }
+
+    private static String resolveExecutable(String executable, Map<String, String> environment, boolean directOnly) {
         String pathValue = environmentValue(environment, "PATH");
         if (StringUtils.isBlank(pathValue)) {
             return null;
@@ -62,13 +71,16 @@ public final class ProcessCommandSupport {
                 continue;
             }
 
-            Path candidate = Path.of(trimmedDirectory, executable);
-            if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
+            Path candidate = Path.of(trimmedDirectory, executable).toAbsolutePath().normalize();
+            if (Files.isRegularFile(candidate)
+                    && Files.isExecutable(candidate)
+                    && (!directOnly || isDirectExecutable(candidate))
+            ) {
                 return candidate.toString();
             }
 
             if (SystemInfo.isWindows) {
-                String fromPathext = resolveWindowsExecutable(candidate, environment);
+                String fromPathext = resolveWindowsExecutable(candidate, environment, directOnly);
                 if (fromPathext != null) {
                     return fromPathext;
                 }
@@ -78,7 +90,11 @@ public final class ProcessCommandSupport {
         return null;
     }
 
-    private static String resolveWindowsExecutable(Path candidate, Map<String, String> environment) {
+    private static String resolveWindowsExecutable(
+            Path candidate,
+            Map<String, String> environment,
+            boolean directOnly
+    ) {
         String executableName = candidate.getFileName().toString();
         if (executableName.contains(".")) {
             return null;
@@ -94,13 +110,21 @@ public final class ProcessCommandSupport {
                 continue;
             }
 
-            Path withExtension = Path.of(candidate.toString() + normalizedExt.toLowerCase());
-            if (Files.isRegularFile(withExtension) && Files.isExecutable(withExtension)) {
+            Path withExtension = Path.of(candidate.toString() + normalizedExt.toLowerCase(Locale.ROOT));
+            if (Files.isRegularFile(withExtension)
+                    && Files.isExecutable(withExtension)
+                    && (!directOnly || isDirectExecutable(withExtension))
+            ) {
                 return withExtension.toString();
             }
         }
 
         return null;
+    }
+
+    public static boolean isDirectExecutable(Path path) {
+        String normalized = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return !normalized.endsWith(".cmd") && !normalized.endsWith(".bat");
     }
 
     private static String environmentValue(Map<String, String> environment, String name) {

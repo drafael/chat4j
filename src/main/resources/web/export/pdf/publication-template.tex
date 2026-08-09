@@ -1,0 +1,76 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=23mm]{geometry}
+\usepackage{xcolor}
+\usepackage{amsmath,amssymb}
+\usepackage{fontspec}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+
+\setmainfont[
+  Path=fonts/,
+  UprightFont=LibertinusSerif-Regular.ttf,
+  BoldFont=LibertinusSerif-Bold.ttf,
+  ItalicFont=LibertinusSerif-Italic.ttf,
+  BoldItalicFont=LibertinusSerif-BoldItalic.ttf
+]{LibertinusSerif-Regular.ttf}
+\setsansfont[
+  Path=fonts/,
+  UprightFont=LibertinusSans-Regular.ttf,
+  BoldFont=LibertinusSans-Bold.ttf
+]{LibertinusSans-Regular.ttf}
+\newfontfamily\chatjEmojiFont[
+  Path=fonts/,
+  Renderer=HarfBuzz
+]{NotoEmoji.ttf}
+\setmonofont[
+  Path=fonts/,
+  Scale=MatchLowercase,
+  UprightFont=JetBrainsMono-Regular.ttf,
+  BoldFont=JetBrainsMono-Bold.ttf,
+  ItalicFont=JetBrainsMono-Italic.ttf,
+  BoldItalicFont=JetBrainsMono-BoldItalic.ttf
+]{JetBrainsMono-Regular.ttf}
+
+$common.latex()$
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.7\baselineskip plus 2pt minus 1pt}
+$hypersetup.latex()$
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue}
+\setcounter{secnumdepth}{-\maxdimen}
+\setlength{\emergencystretch}{3em}
+
+\pagestyle{fancy}
+\fancyhf{}
+$if(title)$
+\fancyhead[C]{\small\sffamily $title$}
+$endif$
+\fancyfoot[C]{\sffamily\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\fancypagestyle{plain}{
+  \fancyhf{}
+$if(title)$
+  \fancyhead[C]{\small\sffamily $title$}
+$endif$
+  \fancyfoot[C]{\sffamily\thepage}
+  \renewcommand{\headrulewidth}{0.3pt}
+}
+
+$if(title)$
+\title{$title$}
+$endif$
+$if(subtitle)$
+\usepackage{etoolbox}
+\makeatletter
+\providecommand{\subtitle}[1]{\apptocmd{\@title}{\par {\large #1\par}}{}{}}
+\makeatother
+\subtitle{$subtitle$}
+$endif$
+\author{}
+\date{$date$}
+
+\begin{document}
+$if(title)$
+\maketitle
+$endif$
+$body$
+\end{document}

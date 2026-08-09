@@ -1217,6 +1217,13 @@ public class SidebarPanel extends JPanel {
         }
     }
 
+    public Optional<String> selectedConversationTitle() {
+        Object selectedValue = conversationList != null ? conversationList.getSelectedValue() : null;
+        return selectedValue instanceof ConversationItem conversation
+                ? Optional.of(conversation.title())
+                : Optional.empty();
+    }
+
     private Optional<UUID> selectedConversationId() {
         Object selectedValue = conversationList != null ? conversationList.getSelectedValue() : null;
         return selectedValue instanceof ConversationItem conversation ? Optional.of(conversation.id()) : Optional.empty();

@@ -6,7 +6,7 @@
 
     <groupId>com.github.drafael.chat4j</groupId>
     <artifactId>chat4j</artifactId>
-    <version>26.8.6</version>
+    <version>26.8.8</version>
     <packaging>jar</packaging>
 
     <name>Chat4J</name>
@@ -24,7 +24,10 @@
         <jackson.version>2.22.1</jackson.version>
         <zt-exec.version>1.12</zt-exec.version>
         <jsoup.version>1.22.2</jsoup.version>
+        <jsvg.version>2.1.0</jsvg.version>
         <pdfbox.version>3.0.8</pdfbox.version>
+        <openhtmltopdf.version>1.1.70</openhtmltopdf.version>
+        <openhtmltopdf.classpath>openhtmltopdf-core-${openhtmltopdf.version}.jar openhtmltopdf-pdfbox-${openhtmltopdf.version}.jar</openhtmltopdf.classpath>
         <twelvemonkeys.version>3.13.0</twelvemonkeys.version>
         <jlayer.version>1.0.1</jlayer.version>
         <swingwebview.version>1.0.11</swingwebview.version>
@@ -42,6 +45,7 @@
         <dependency-check.nvd.valid-for-hours>24</dependency-check.nvd.valid-for-hours>
         <dependency-check.nvd.max-retry-count>10</dependency-check.nvd.max-retry-count>
         <versions.maven.plugin.version>2.21.0</versions.maven.plugin.version>
+        <maven.dependency.plugin.version>3.9.0</maven.dependency.plugin.version>
         <jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
         <jacoco.argLine></jacoco.argLine>
         <junit.version>6.1.2</junit.version>
@@ -98,6 +102,11 @@
                 <version>2.0.0</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>xmpbox</artifactId>
+                <version>${pdfbox.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -188,9 +197,19 @@
             <version>${jsoup.version}</version>
         </dependency>
         <dependency>
+            <groupId>com.github.weisj</groupId>
+            <artifactId>jsvg</artifactId>
+            <version>${jsvg.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>${pdfbox.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>${openhtmltopdf.version}</version>
         </dependency>
         <dependency>
             <groupId>com.twelvemonkeys.imageio</groupId>
@@ -462,6 +481,26 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>${maven.dependency.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>copy-replaceable-openhtmltopdf-libraries</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeGroupIds>io.github.openhtmltopdf</includeGroupIds>
+                            <includeArtifactIds>openhtmltopdf-core,openhtmltopdf-pdfbox</includeArtifactIds>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <overWriteReleases>true</overWriteReleases>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.6.2</version>
                 <executions>
@@ -471,12 +510,19 @@
                             <goal>shade</goal>
                         </goals>
                         <configuration>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>io.github.openhtmltopdf:openhtmltopdf-core</exclude>
+                                    <exclude>io.github.openhtmltopdf:openhtmltopdf-pdfbox</exclude>
+                                </excludes>
+                            </artifactSet>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.github.drafael.chat4j.App</mainClass>
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
+                                        <Class-Path>${openhtmltopdf.classpath}</Class-Path>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
@@ -676,6 +722,10 @@
                                         <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
                                         <copy file="${project.build.directory}/${project.build.finalName}.jar"
                                               todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-core-${openhtmltopdf.version}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-pdfbox-${openhtmltopdf.version}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.build.outputDirectory}/build.properties"
                                               todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
@@ -812,6 +862,10 @@
                                         <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
                                         <copy file="${project.build.directory}/${project.build.finalName}.jar"
                                               todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-core-${openhtmltopdf.version}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-pdfbox-${openhtmltopdf.version}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.build.outputDirectory}/build.properties"
                                               todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.basedir}/scripts/chat4j-doctor.sh"
@@ -888,6 +942,10 @@
                                         <mkdir dir="${chat4j.jpackage.input.dir}"/>
                                         <mkdir dir="${chat4j.jpackage.input.dir}/tools"/>
                                         <copy file="${project.build.directory}/${project.build.finalName}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-core-${openhtmltopdf.version}.jar"
+                                              todir="${chat4j.jpackage.input.dir}"/>
+                                        <copy file="${project.build.directory}/openhtmltopdf-pdfbox-${openhtmltopdf.version}.jar"
                                               todir="${chat4j.jpackage.input.dir}"/>
                                         <copy file="${project.build.outputDirectory}/build.properties"
                                               todir="${chat4j.jpackage.input.dir}"/>

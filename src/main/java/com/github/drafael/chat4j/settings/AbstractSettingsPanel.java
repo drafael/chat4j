@@ -119,6 +119,7 @@ public abstract class AbstractSettingsPanel extends JPanel {
         gbc.weighty = 0;
         gbc.insets = new Insets(FORM_ROW_GAP, 0, FORM_ROW_GAP, FORM_COLUMN_GAP);
         JLabel label = createRowLabel(labelText);
+        label.setLabelFor(field);
         form.add(label, gbc);
 
         gbc.gridx = 1;

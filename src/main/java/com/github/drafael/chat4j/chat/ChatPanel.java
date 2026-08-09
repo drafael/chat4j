@@ -20,6 +20,8 @@ import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefBrowserView;
 import com.github.drafael.chat4j.chat.conversation.webview.system.SystemWebView;
 import com.github.drafael.chat4j.chat.diagram.DiagramHtmlExporter;
+import com.github.drafael.chat4j.chat.export.pdf.ConversationPdfExporter;
+import com.github.drafael.chat4j.chat.export.pdf.JcefConversationPdfExporter;
 import com.github.drafael.chat4j.chat.message.ChatMessageView;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.model.ModelSelectorButton;
@@ -107,6 +109,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -218,6 +221,7 @@ public class ChatPanel extends JPanel {
     private Runnable modelFavoritesChangedListener;
     private Runnable modelCatalogChangedListener;
     private Runnable clearChatRequestedListener;
+    private Runnable exportPdfRequestedListener;
     private DurableUserMessagePersistenceListener durableUserMessageSubmittedListener;
     private BiConsumer<UUID, UUID> durableUserMessageFailureDeliveredListener;
     private DurableAssistantMessagePersistenceListener durableAssistantMessageCompletedListener;
@@ -242,6 +246,7 @@ public class ChatPanel extends JPanel {
     private boolean batchMessageRefresh;
     private volatile boolean removed;
     private volatile boolean shutdownInProgress;
+    private boolean pdfExportRunning;
     private ActivityBubble currentAssistantWebSearchBubble;
     private ActivityBubble currentAssistantActivityBubble;
     private final Map<String, ActivityBubble> currentAssistantAgentToolBubbles = new LinkedHashMap<>();
@@ -272,6 +277,7 @@ public class ChatPanel extends JPanel {
     private volatile boolean streaming = false;
     private volatile boolean autoScrollEnabled = true;
     private volatile UUID activeConversationId;
+    private volatile UUID persistedConversationId;
     private List<PromptQuickAction> promptQuickActions = emptyList();
     private volatile SendPreparer sendPreparer = this::prepareUserMessage;
     private boolean autoScrollQueued = false;
@@ -3360,6 +3366,7 @@ public class ChatPanel extends JPanel {
 
     private void refreshComposerAvailability() {
         inputBar.setConversationBusy(isVisibleConversationBusy());
+        updatePdfExportAvailability();
         inputBar.setProviderReady(selectedProviderDef() != null && StringUtils.isNotBlank(selectedModelId));
         inputBar.setNormalComposeMode(editingUserMessage == null);
     }
@@ -3727,6 +3734,13 @@ public class ChatPanel extends JPanel {
                 () -> regenerateFromBubble(bubble)
         );
 
+        JMenuItem exportPdfItem = buildChatMenuItem(
+                "Export to PDF…",
+                "/icons/settings/book-open.svg",
+                null,
+                this::requestPdfExport
+        );
+
         JMenuItem clearChatItem = buildChatMenuItem(
                 "Clear Chat",
                 "/icons/input/eraser.svg",
@@ -3745,6 +3759,7 @@ public class ChatPanel extends JPanel {
         }
         popup.addSeparator();
         popup.add(regenerateItem);
+        popup.add(exportPdfItem);
         popup.add(clearChatItem);
 
         popup.addPopupMenuListener(new PopupMenuListener() {
@@ -3756,6 +3771,7 @@ public class ChatPanel extends JPanel {
                 readAloudItem.setVisible(bubble.getRole() == Role.ASSISTANT);
                 updateReadAloudMenuItem(readAloudItem, bubble);
                 regenerateItem.setEnabled(canRegenerateFrom(bubble));
+                exportPdfItem.setEnabled(canExportPdf());
                 clearChatItem.setVisible(canClearChat());
             }
 
@@ -3875,6 +3891,10 @@ public class ChatPanel extends JPanel {
             }
             if (Strings.CS.equalsAny(action, "copy-selected", "copy-text")) {
                 copyTextToClipboard(text);
+                return;
+            }
+            if (Strings.CS.equals(action, "export-pdf")) {
+                requestPdfExport();
                 return;
             }
             if (speechToTextService.active()) {
@@ -4985,6 +5005,51 @@ public class ChatPanel extends JPanel {
         this.clearChatRequestedListener = listener;
     }
 
+    public void setOnExportPdfRequested(@NonNull Runnable listener) {
+        this.exportPdfRequestedListener = listener;
+    }
+
+    public void setPdfExportRunning(boolean running) {
+        this.pdfExportRunning = running;
+        refreshComposerAvailability();
+        updateClearChatButtonVisibility();
+        refreshBubbleActionBars();
+    }
+
+    public boolean canExportPdf() {
+        return activeConversationId != null
+                && Objects.equals(activeConversationId, persistedConversationId)
+                && !hasPendingAssistantRecovery(activeConversationId)
+                && !isVisibleConversationBusy()
+                && !removed
+                && !shutdownInProgress;
+    }
+
+    public Optional<ConversationPdfExporter> activeEnhancedPdfExporter() {
+        return canExportPdf() && jcefBrowserView != null && jcefBrowserView.canAttemptPdfExport()
+                ? Optional.of(new JcefConversationPdfExporter(jcefBrowserView))
+                : Optional.empty();
+    }
+
+    private void requestPdfExport() {
+        if (!canExportPdf()) {
+            inputBar.showValidationMessage("Wait for the current response or export to finish.");
+            return;
+        }
+        if (exportPdfRequestedListener != null) {
+            exportPdfRequestedListener.run();
+        }
+    }
+
+    private void updatePdfExportAvailability() {
+        boolean available = canExportPdf();
+        if (systemWebView != null) {
+            systemWebView.setPdfExportAvailable(available);
+        }
+        if (jcefBrowserView != null) {
+            jcefBrowserView.setPdfExportAvailable(available);
+        }
+    }
 
     public void setOnDurableUserMessageSubmitted(DurableUserMessagePersistenceListener listener) {
         this.durableUserMessageSubmittedListener = listener;
@@ -5066,6 +5131,7 @@ public class ChatPanel extends JPanel {
     }
 
     public void setActiveConversationId(UUID conversationId) {
+        persistedConversationId = conversationId;
         boolean conversationChanged = !Objects.equals(this.activeConversationId, conversationId);
         if (conversationChanged) {
             clearVisibleFailedDraft();
@@ -5238,6 +5304,7 @@ public class ChatPanel extends JPanel {
             entries.add(new PendingAssistantRecovery(entry, persistenceFailed));
             return List.copyOf(entries);
         });
+        updatePdfExportAvailabilityFor(conversationId);
     }
 
     private void removePendingAssistantRecovery(UUID conversationId, UUID messageId) {
@@ -5250,6 +5317,7 @@ public class ChatPanel extends JPanel {
                     .toList();
             return retainedEntries.isEmpty() ? null : retainedEntries;
         });
+        updatePdfExportAvailabilityFor(conversationId);
     }
 
     private void removePendingAssistantRecoveries(
@@ -5265,6 +5333,12 @@ public class ChatPanel extends JPanel {
                     .toList();
             return remaining.isEmpty() ? null : remaining;
         });
+        updatePdfExportAvailabilityFor(conversationId);
+    }
+
+    private boolean hasPendingAssistantRecovery(UUID conversationId) {
+        List<PendingAssistantRecovery> recoveries = pendingCompletedAssistantRecoveries.get(conversationId);
+        return recoveries != null && !recoveries.isEmpty();
     }
 
     private boolean hasFailedAssistantRecovery(UUID conversationId) {
@@ -5285,6 +5359,13 @@ public class ChatPanel extends JPanel {
                     .map(PendingAssistantRecovery::entry)
                     .map(ConversationHistoryEntry::message)
                     .forEach(this::discardStagedAttachments);
+        }
+        updatePdfExportAvailabilityFor(conversationId);
+    }
+
+    private void updatePdfExportAvailabilityFor(UUID conversationId) {
+        if (Objects.equals(activeConversationId, conversationId)) {
+            runOnEdt(this::updatePdfExportAvailability);
         }
     }
 
@@ -5344,6 +5425,7 @@ public class ChatPanel extends JPanel {
             return;
         }
         this.streaming = streaming;
+        updatePdfExportAvailability();
         if (visibleStreamingChangedListener == null) {
             return;
         }
@@ -6332,7 +6414,8 @@ public class ChatPanel extends JPanel {
     }
 
     private boolean isVisibleConversationBusy() {
-        return conversationLoading
+        return pdfExportRunning
+                || conversationLoading
                 || conversationMutationPending
                 || blockedConversationIds.contains(activeConversationId)
                 || visiblePreparingJob() != null

@@ -155,6 +155,9 @@ class TranscriptBrowserAssetsTest {
                 .contains("mermaid")
                 .contains("SmilesDrawer")
                 .contains("scale: 1.35")
+                .contains("compactDrawing: false")
+                .contains("drawer.draw(tree, svg, 'chat4j', null)")
+                .doesNotContain("drawer.draw(tree, svg, 'chat4j', false)")
                 .contains("parseMolV2000")
                 .contains("renderMolLikeBlock")
                 .contains("SDF_MAX_RECORDS = 12")
@@ -293,7 +296,10 @@ class TranscriptBrowserAssetsTest {
                 .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
                 .contains("data-action=\"open-diagram\"")
                 .contains("class=\"icon open-diagram\"")
-                .contains("Open Diagram");
+                .contains("Open Diagram")
+                .contains("data-action=\"export-pdf\"")
+                .contains("Export to PDF…")
+                .contains("window.chat4jPdfExportAvailable === true");
     }
 
     @Test
@@ -417,6 +423,7 @@ class TranscriptBrowserAssetsTest {
         String cssTemplate = TranscriptResources.resourceText("/web/chat/transcript.css");
         String layoutCss = TranscriptResources.resourceText("/web/chat/transcript-layout.css");
         String messageCss = TranscriptResources.resourceText("/web/chat/transcript-message-content.css");
+        String tableCss = TranscriptResources.resourceText("/web/chat/transcript-tables.css");
         String diagramCss = TranscriptResources.resourceText("/web/chat/transcript-diagrams.css");
         String actionsCss = TranscriptResources.resourceText("/web/chat/transcript-actions.css");
         String sourceCss = TranscriptResources.resourceText("/web/chat/transcript-sources.css");
@@ -442,6 +449,9 @@ class TranscriptBrowserAssetsTest {
                 .contains(".transcript")
                 .contains("var(--chat4j-bg)");
         assertThat(messageCss).contains(".message.assistant");
+        assertThat(tableCss)
+                .contains("min-width: 760px")
+                .contains("overflow-x: auto");
         assertThat(diagramCss)
                 .contains(".chat4j-diagram")
                 .contains(".chat4j-mermaid-display")
@@ -449,7 +459,21 @@ class TranscriptBrowserAssetsTest {
                 .contains("var(--chat4j-mermaid-canvas-bg)");
         assertThat(actionsCss)
                 .contains(".icon.open-diagram")
-                .contains("var(--chat4j-open-diagram-icon-mask)");
+                .contains("var(--chat4j-open-diagram-icon-mask)")
+                .contains("@media print")
+                .contains(".chat4j-pdf-export-header")
+                .contains(".chat4j-pdf-turn-heading")
+                .contains(".row.activity")
+                .contains(".chat4j-fade")
+                .contains("a.source-citation.citation-ref[href]")
+                .contains("a.source-citation.citation-ref[href]::before")
+                .contains("content: \"[\"")
+                .contains("vertical-align: super !important")
+                .contains(".message .table-wrap")
+                .contains("min-width: 0 !important")
+                .contains("overflow-wrap: break-word !important")
+                .contains("width: 22% !important")
+                .contains("overflow-wrap: anywhere !important");
         assertThat(sourceCss).contains(".source-preview");
         assertThat(jumpCss).contains(".jump-button");
     }

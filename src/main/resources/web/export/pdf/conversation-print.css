@@ -1,0 +1,306 @@
+@page {
+  size: A4 portrait;
+  margin: 23mm 22mm 22mm 24mm;
+  @top-center {
+    content: "Chat4J Conversation";
+    color: #6b7280;
+    font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+    font-size: 8.5pt;
+  }
+  @bottom-center {
+    content: counter(page);
+    color: #6b7280;
+    font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+    font-size: 8.5pt;
+  }
+}
+
+html {
+  color: #202124;
+  font-family: "Libertinus Serif", "Noto Sans", "Noto Emoji";
+  font-size: 10.5pt;
+  line-height: 1.52;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.document-header {
+  border-bottom: 1pt solid #b8bec7;
+  margin: 0 0 18pt;
+  padding: 0 0 13pt;
+}
+
+.document-title {
+  color: #172033;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 23pt;
+  line-height: 1.12;
+  margin: 0 0 8pt;
+}
+
+.document-meta {
+  color: #596273;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8.8pt;
+  margin: 2pt 0;
+}
+
+.turn {
+  border-bottom: 0.6pt solid #d7dbe2;
+  margin: 0 0 15pt;
+  padding: 0 0 13pt;
+}
+
+.turn-heading {
+  color: #27344d;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 11.5pt;
+  font-weight: bold;
+  margin: 0 0 7pt;
+}
+
+.turn-time {
+  color: #737b89;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8pt;
+  font-weight: normal;
+  margin-left: 6pt;
+}
+
+.turn-content p {
+  margin: 0 0 7pt;
+}
+
+.turn-content h1,
+.turn-content h2,
+.turn-content h3,
+.turn-content h4 {
+  color: #172033;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  line-height: 1.22;
+  margin: 12pt 0 6pt;
+}
+
+.turn-content h1 { font-size: 17pt; }
+.turn-content h2 { font-size: 14.5pt; }
+.turn-content h3 { font-size: 12.5pt; }
+.turn-content h4 { font-size: 11pt; }
+
+.turn-content a {
+  color: #075f9f;
+  text-decoration: underline;
+}
+
+.turn-content .source-citation-print {
+  font-size: 0.72em;
+  line-height: 1;
+  vertical-align: super;
+  white-space: nowrap;
+}
+
+.turn-content .source-citation-link {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.turn-content blockquote {
+  border-left: 2.5pt solid #9aa6b6;
+  color: #4d5665;
+  margin: 8pt 0;
+  padding: 2pt 0 2pt 10pt;
+}
+
+.turn-content ul,
+.turn-content ol {
+  margin: 5pt 0 8pt 18pt;
+  padding: 0;
+}
+
+.turn-content table {
+  border-collapse: collapse;
+  border-bottom: 0.7pt solid #aeb6c2;
+  border-top: 0.7pt solid #aeb6c2;
+  font-size: 9pt;
+  margin: 8pt 0;
+  width: 100%;
+}
+
+.turn-content table td,
+.turn-content table th {
+  border: 0;
+  border-bottom: 0.35pt solid #d8dde5;
+  padding: 4pt 5pt;
+}
+
+.turn-content table th {
+  background: #eef1f5;
+  border-bottom: 0.8pt solid #aeb6c2;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-weight: bold;
+}
+
+.turn-content table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+code,
+pre,
+.md-code-block {
+  font-family: "JetBrains Mono", "Noto Sans", "Noto Emoji";
+}
+
+code {
+  background: #eef1f5;
+  border-radius: 2pt;
+  font-size: 8.8pt;
+  padding: 0.5pt 2pt;
+}
+
+.md-code-block {
+  border: 0.7pt solid #b9c1cc;
+  border-collapse: collapse;
+  font-size: 8.2pt;
+  margin: 8pt 0;
+  width: 100%;
+}
+
+.md-code-block td {
+  border: 0;
+}
+
+.md-code-block .code-header td {
+  background: #e5e9ef;
+  color: #4d5665;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 7.8pt;
+  padding: 3pt 6pt;
+}
+
+.md-code-block .code-body td {
+  background: #f5f7fa;
+  padding: 6pt 7pt;
+}
+
+.md-code-block pre {
+  font-size: 8pt;
+  line-height: 1.38;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.hljs-comment,
+.hljs-quote { color: #65737e; font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-title.function_ { color: #7c3aed; font-weight: bold; }
+.hljs-string,
+.hljs-regexp,
+.hljs-addition { color: #087f5b; }
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet { color: #b45309; }
+.hljs-title,
+.hljs-section,
+.hljs-type,
+.hljs-built_in { color: #075f9f; }
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable { color: #9f1239; }
+.hljs-deletion { color: #b42318; }
+
+.diagram-fallback-note,
+.remote-image,
+.missing-asset,
+.message-status {
+  background: #fff8e7;
+  border-left: 2.5pt solid #d79b2b;
+  color: #6d5120;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8.5pt;
+  margin: 4pt 0 8pt;
+  padding: 4pt 7pt;
+}
+
+.message-status.error {
+  background: #fff0f0;
+  border-left-color: #b42318;
+  color: #7a271a;
+}
+
+.local-image {
+  page-break-inside: avoid;
+  margin: 9pt 0;
+  text-align: center;
+}
+
+.local-image img {
+  height: auto;
+  max-height: 220mm;
+  max-width: 100%;
+}
+
+.local-image figcaption {
+  color: #687080;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8pt;
+  margin-top: 3pt;
+}
+
+.smiles-diagram {
+  page-break-inside: avoid;
+  margin: 9pt 0;
+  text-align: center;
+}
+
+.smiles-diagram img {
+  height: auto;
+  max-width: 132mm;
+  width: 100%;
+}
+
+.smiles-diagram-small img {
+  max-width: 55mm;
+}
+
+.smiles-diagram-medium img {
+  max-width: 90mm;
+}
+
+.smiles-diagram figcaption {
+  color: #687080;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8pt;
+  margin-top: 3pt;
+  word-wrap: break-word;
+}
+
+.smiles-diagram figcaption code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7.5pt;
+}
+
+.attachment-list,
+.citation-list {
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 8.5pt;
+  margin: 7pt 0;
+  padding-left: 18pt;
+}
+
+.citation-list {
+  list-style: none;
+}
+
+.citation-heading,
+.attachment-heading {
+  color: #4d5665;
+  font-family: "Libertinus Sans", "Noto Sans", "Noto Emoji";
+  font-size: 9pt;
+  font-weight: bold;
+  margin: 8pt 0 3pt;
+}

@@ -182,13 +182,15 @@
         var readAloud = hasReadAloud
                 ? '<div class="transcript-menu-separator"></div><button data-action="read-aloud"><span class="icon ' + (readAloudActive ? 'player-stop' : 'read-aloud') + '" aria-hidden="true"></span><span class="label">' + (readAloudActive ? 'Stop' : 'Read aloud') + '</span><span class="shortcut"></span></button>'
                 : '';
+        var exportDisabled = window.chat4jPdfExportAvailable === true ? '' : ' disabled';
         menu.setAttribute('data-selected-text', selection);
         menu.innerHTML = selectedCopy
                 + diagramOpen
                 + '<button data-action="copy"><span class="icon copy" aria-hidden="true"></span><span class="label">Copy Message</span><span class="shortcut"></span></button>'
                 + readAloud
                 + '<div class="transcript-menu-separator"></div>'
-                + '<button data-action="regenerate"><span class="icon regenerate" aria-hidden="true"></span><span class="label">' + regenerateLabel + '</span><span class="shortcut"></span></button>';
+                + '<button data-action="regenerate"><span class="icon regenerate" aria-hidden="true"></span><span class="label">' + regenerateLabel + '</span><span class="shortcut"></span></button>'
+                + '<button data-action="export-pdf"' + exportDisabled + '><span class="icon open-diagram" aria-hidden="true"></span><span class="label">Export to PDF…</span><span class="shortcut"></span></button>';
         menu._chat4jDiagram = diagram || null;
         Array.prototype.forEach.call(menu.querySelectorAll('button[data-action]'), function(button) {
             button.onclick = function(clickEvent) {

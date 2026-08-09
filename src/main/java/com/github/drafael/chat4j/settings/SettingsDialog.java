@@ -242,6 +242,12 @@ public class SettingsDialog extends JDialog {
                         new AppearancePanel(settingsRepo, chatWebViewRuntimeStatus, this::requestApplicationExit)
                 ),
                 new SettingsSection(
+                        "pdf-export",
+                        "PDF Export",
+                        "/icons/settings/book-open.svg",
+                        new PdfExportPanel(settingsRepo)
+                ),
+                new SettingsSection(
                         "providers",
                         "Providers",
                         "/icons/settings/cpu.svg",
@@ -476,6 +482,8 @@ public class SettingsDialog extends JDialog {
         if (content instanceof GeneralPanel panel) {
             panel.disposePanel();
         } else if (content instanceof AppearancePanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof PdfExportPanel panel) {
             panel.disposePanel();
         } else if (content instanceof McpPanel panel) {
             panel.disposePanel();

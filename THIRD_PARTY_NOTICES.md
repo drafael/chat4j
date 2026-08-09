@@ -122,6 +122,79 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 
 Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.
 
+## OpenHTMLtoPDF 1.1.70
+
+- Project: https://github.com/openhtmltopdf/openhtmltopdf
+- Maven coordinates:
+  - `io.github.openhtmltopdf:openhtmltopdf-core`
+  - `io.github.openhtmltopdf:openhtmltopdf-pdfbox`
+- License: GNU Lesser General Public License 2.1 or later
+- Notable transitive component: `de.rototor.pdfbox:graphics2d` 3.0.1 (Apache License 2.0)
+
+Chat4J uses OpenHTMLtoPDF with Apache PDFBox for its offline, built-in conversation PDF exporter. The OpenHTMLtoPDF core and PDFBox adapter artifacts are distributed as separate sibling JARs rather than folded into Chat4J's shaded application JAR, so recipients can inspect or replace them. The LGPL 2.1 license text is included at:
+
+```text
+src/main/resources/licenses/OpenHTMLtoPDF-LGPL-2.1.txt
+```
+
+## jSVG 2.1.0
+
+- Project: https://github.com/weisJ/jsvg
+- Maven coordinates: `com.github.weisj:jsvg`
+- License: MIT
+
+Chat4J uses jSVG with external resource loading disabled to rasterize application-generated SmilesDrawer SVG diagrams for offline Standard and Publication PDF exports. The license text is included at:
+
+```text
+src/main/resources/licenses/jSVG-MIT-2.1.0.txt
+```
+
+## Libertinus fonts
+
+- Project: https://github.com/alerque/libertinus
+- Distribution source: https://github.com/google/fonts/tree/main/ofl
+- License: SIL Open Font License 1.1
+- Bundled families: Libertinus Serif and Libertinus Sans
+- Bundled assets: `src/main/resources/web/export/pdf/fonts/Libertinus*.ttf`
+
+The font license texts are included beside the font files as `OFL-libertinus*.txt`.
+
+## JetBrains Mono 2.304
+
+- Project: https://github.com/JetBrains/JetBrainsMono
+- Distribution source: https://github.com/JetBrains/JetBrainsMono/tree/v2.304/fonts/ttf
+- License: SIL Open Font License 1.1
+- Bundled styles: Regular, Bold, Italic, and Bold Italic
+- Bundled assets: `src/main/resources/web/export/pdf/fonts/JetBrainsMono-*.ttf`
+
+Chat4J uses JetBrains Mono for inline code and fenced code blocks in Standard and Publication PDF exports. The font license is included beside the font files as `OFL-JetBrainsMono.txt`.
+
+## Noto Sans
+
+- Project: https://fonts.google.com/noto
+- Source: https://github.com/google/fonts/tree/main/ofl/notosans
+- License: SIL Open Font License 1.1
+- Bundled asset: `src/main/resources/web/export/pdf/fonts/NotoSans.ttf`
+
+Noto Sans provides embedded fallback glyphs for Latin, Greek, Cyrillic, Devanagari, and other scripts covered by this font file. It does not provide complete CJK, Arabic, or emoji coverage. The font license is included at:
+
+```text
+src/main/resources/web/export/pdf/fonts/OFL-NotoSans.txt
+```
+
+## Noto Emoji
+
+- Project: https://fonts.google.com/noto/specimen/Noto+Emoji
+- Source: https://github.com/google/fonts/tree/main/ofl/notoemoji
+- License: SIL Open Font License 1.1
+- Bundled asset: `src/main/resources/web/export/pdf/fonts/NotoEmoji.ttf`
+
+Chat4J uses the monochrome Noto Emoji font to preserve emoji and pictographic symbols in Standard and Publication PDF exports. The font license is included at:
+
+```text
+src/main/resources/web/export/pdf/fonts/OFL-NotoEmoji.txt
+```
+
 ## TwelveMonkeys ImageIO WebP 3.13.0
 
 - Project: https://github.com/haraldk/TwelveMonkeys

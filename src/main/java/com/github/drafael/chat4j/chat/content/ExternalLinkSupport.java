@@ -4,6 +4,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.awt.*;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Set;
 
 public final class ExternalLinkSupport {
@@ -23,7 +24,7 @@ public final class ExternalLinkSupport {
         }
 
         try {
-            Desktop.getDesktop().browse(URI.create(link));
+            Desktop.getDesktop().browse(URI.create(link.trim()));
         } catch (Exception ignored) {
             // Ignore link open failures to keep chat interaction uninterrupted.
         }
@@ -36,7 +37,7 @@ public final class ExternalLinkSupport {
 
         try {
             URI uri = URI.create(link.trim());
-            String scheme = StringUtils.defaultString(uri.getScheme()).toLowerCase();
+            String scheme = StringUtils.defaultString(uri.getScheme()).toLowerCase(Locale.ROOT);
             if (!ALLOWED_EXTERNAL_LINK_SCHEMES.contains(scheme)) {
                 return false;
             }
