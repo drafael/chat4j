@@ -1,21 +1,19 @@
 package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.util.Fonts;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import lombok.NonNull;
 
 import javax.swing.BorderFactory;
-import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
-import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Component;
-import java.awt.Dialog;
 import java.awt.Font;
 import java.util.Objects;
+
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showOptionPane;
 
 public class ClearChatConfirmationDialog {
 
@@ -23,22 +21,7 @@ public class ClearChatConfirmationDialog {
     static final String CONFIRM_OPTION = "Yes";
 
     public boolean confirm(@NonNull Component parent) {
-        JOptionPane pane = createOptionPane();
-        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(parent), Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                    && event.getSource() == pane
-                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        ModalDialogSupport.prepareCompactModal(dialog, parent);
-        dialog.setVisible(true);
-        dialog.dispose();
-
-        return Objects.equals(pane.getValue(), CONFIRM_OPTION);
+        return Objects.equals(showOptionPane(parent, createOptionPane()), CONFIRM_OPTION);
     }
 
     JOptionPane createOptionPane() {

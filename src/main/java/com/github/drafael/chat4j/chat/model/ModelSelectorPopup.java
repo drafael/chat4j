@@ -46,6 +46,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toMap;
 
@@ -1305,10 +1306,9 @@ public class ModelSelectorPopup extends JDialog {
                 onFavoritesChanged.run();
             }
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(
+            showMessageDialog(
                     this,
                     "Failed to update favorites: %s".formatted(e.getMessage()),
-                    "Favorites",
                     JOptionPane.WARNING_MESSAGE
             );
         }

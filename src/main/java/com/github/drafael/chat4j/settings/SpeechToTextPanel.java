@@ -30,7 +30,6 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import com.github.drafael.chat4j.util.Fonts;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.*;
 import java.io.File;
 import java.nio.file.Files;
@@ -58,6 +57,7 @@ import javax.swing.table.DefaultTableModel;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showOptionPane;
 import static java.util.Collections.emptyList;
 
 public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
@@ -1733,20 +1733,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         String message = "Download %s (%s) to %s? Larger Whisper.cpp models can require substantial RAM and CPU."
                 .formatted(row.label(), row.sizeLabel(), compactPath(whisperModelManagementService.snapshot().modelRoot()));
         JOptionPane pane = new JOptionPane(message, JOptionPane.WARNING_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                    && event.getSource() == pane
-                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        ModalDialogSupport.prepareCompactModal(dialog, this);
-        dialog.setVisible(true);
-        dialog.dispose();
-        Object value = pane.getValue();
+        Object value = showOptionPane(this, pane);
         return value instanceof Integer selectedValue && selectedValue == JOptionPane.OK_OPTION;
     }
 

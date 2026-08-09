@@ -4,6 +4,8 @@ import java.awt.*;
 import javax.swing.*;
 import org.apache.commons.lang3.StringUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showOptionPane;
+
 public final class RestartRequiredDialog {
 
     private static final int MESSAGE_COLUMNS = 34;
@@ -28,16 +30,7 @@ public final class RestartRequiredDialog {
                 options[0]
         );
 
-        Window owner = SwingUtilities.getWindowAncestor(parent);
-        JDialog dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(optionPane);
-        optionPane.addPropertyChangeListener(JOptionPane.VALUE_PROPERTY, event -> dialog.dispose());
-        dialog.pack();
-        dialog.setLocationRelativeTo(owner == null ? parent : owner);
-        dialog.setVisible(true);
-
-        Object selectedValue = optionPane.getValue();
+        Object selectedValue = showOptionPane(parent, optionPane);
         if (options[0].equals(selectedValue)) {
             return Choice.EXIT_NOW;
         }

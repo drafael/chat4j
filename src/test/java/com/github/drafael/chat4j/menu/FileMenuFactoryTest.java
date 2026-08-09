@@ -46,6 +46,8 @@ class FileMenuFactoryTest {
         }));
         var exportItem = callOnEdt(() -> subject.addExportPdfItem(fileMenu, exportCalls::incrementAndGet, enabled::get));
 
+        assertThat(callOnEdt(exportItem::getParent)).isSameAs(callOnEdt(fileMenu::getPopupMenu));
+        assertThat(callOnEdt(exportItem::getParent)).isNotSameAs(fileMenu);
         assertThat(callOnEdt(exportItem::isEnabled)).isFalse();
 
         enabled.set(true);

@@ -6,7 +6,6 @@ import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.prompts.PromptVariableType;
 import com.github.drafael.chat4j.util.Fonts;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,6 +23,7 @@ import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showOptionPane;
 import static java.util.Collections.emptyList;
 
 public class PromptsPanel extends JPanel implements AsyncPendingSettingsSaveParticipant {
@@ -468,21 +468,7 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
                 JOptionPane.WARNING_MESSAGE,
                 JOptionPane.OK_CANCEL_OPTION
         );
-        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                    && event.getSource() == pane
-                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        ModalDialogSupport.prepareCompactModal(dialog, this);
-        dialog.setVisible(true);
-        dialog.dispose();
-
-        Object value = pane.getValue();
+        Object value = showOptionPane(this, pane);
         return value instanceof Integer selectedValue && selectedValue == JOptionPane.OK_OPTION;
     }
 

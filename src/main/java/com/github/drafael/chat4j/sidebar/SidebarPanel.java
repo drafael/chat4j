@@ -12,7 +12,6 @@ import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenc
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository.ConversationRecord;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.util.Fonts;
-import com.github.drafael.chat4j.util.ModalDialogSupport;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
 import java.awt.AWTEvent;
 import java.awt.BasicStroke;
@@ -20,7 +19,6 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
-import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.Font;
@@ -63,7 +61,6 @@ import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.Icon;
 import javax.swing.JButton;
-import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JMenuItem;
@@ -89,13 +86,14 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showOptionPane;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toMap;
 
 public class SidebarPanel extends JPanel {
 
-    private static final String CONVERSATIONS_TITLE = "Conversations";
     private static final String FAVORITES_TITLE = "Favorites";
     private static final String LOAD_CONVERSATIONS_ERROR = "Failed to load conversations";
     private static final String RENAME_CONVERSATION_ERROR = "Failed to rename conversation";
@@ -757,7 +755,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        int confirmation = showThemedConfirmDialog("Delete \"%s\"?".formatted(conversation.title()), "Confirm");
+        int confirmation = showThemedConfirmDialog("Delete \"%s\"?".formatted(conversation.title()));
         if (confirmation == JOptionPane.YES_OPTION) {
             deleteConversation(conversation);
         }
@@ -789,8 +787,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        int confirmation = showThemedConfirmDialog(
-                "Delete all chats in \"%s\"?".formatted(groupName), "Confirm");
+        int confirmation = showThemedConfirmDialog("Delete all chats in \"%s\"?".formatted(groupName));
         if (confirmation != JOptionPane.YES_OPTION || !conversationActionsAllowed(ids)) {
             return;
         }
@@ -816,7 +813,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        int confirmation = showThemedConfirmDialog("Delete all chats?", "Confirm");
+        int confirmation = showThemedConfirmDialog("Delete all chats?");
         if (confirmation != JOptionPane.YES_OPTION || !conversationActionsAllowed(ids)) {
             return;
         }
@@ -988,7 +985,7 @@ public class SidebarPanel extends JPanel {
             return;
         }
 
-        showOperationError(LOAD_CONVERSATIONS_ERROR, CONVERSATIONS_TITLE, e, JOptionPane.WARNING_MESSAGE);
+        showOperationError(LOAD_CONVERSATIONS_ERROR, e, JOptionPane.WARNING_MESSAGE);
     }
 
     private void applyPendingSelection() {
@@ -1105,48 +1102,22 @@ public class SidebarPanel extends JPanel {
         content.add(textField, BorderLayout.CENTER);
 
         var pane = new JOptionPane(content, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
-        var dialog = new JDialog(SwingUtilities.getWindowAncestor(this), Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                && event.getSource() == pane
-                && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        ModalDialogSupport.prepareCompactModal(dialog, this);
         SwingUtilities.invokeLater(() -> {
             textField.requestFocusInWindow();
             textField.selectAll();
         });
-        dialog.setVisible(true);
-        dialog.dispose();
-
-        Object value = pane.getValue();
+        Object value = showOptionPane(this, pane);
         if (!Objects.equals(value, JOptionPane.OK_OPTION)) {
             return null;
         }
         return textField.getText();
     }
 
-    private int showThemedConfirmDialog(String message, String title) {
-        var pane = new JOptionPane(message, JOptionPane.QUESTION_MESSAGE, JOptionPane.YES_NO_OPTION);
-        var dialog = new JDialog(SwingUtilities.getWindowAncestor(this), title, Dialog.ModalityType.APPLICATION_MODAL);
-        dialog.setUndecorated(true);
-        dialog.setContentPane(pane);
-        pane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                && event.getSource() == pane
-                && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
-        ModalDialogSupport.prepareCompactModal(dialog, this);
-        dialog.setVisible(true);
-        dialog.dispose();
-
-        Object value = pane.getValue();
+    private int showThemedConfirmDialog(String message) {
+        Object value = showOptionPane(
+                this,
+                new JOptionPane(message, JOptionPane.QUESTION_MESSAGE, JOptionPane.YES_NO_OPTION)
+        );
         return value instanceof Integer selectedValue ? selectedValue : JOptionPane.CLOSED_OPTION;
     }
 
@@ -1362,7 +1333,7 @@ public class SidebarPanel extends JPanel {
                     return;
                 }
                 Exception exception = cause instanceof Exception e ? e : new RuntimeException(cause);
-                showOperationError(errorMessage, CONVERSATIONS_TITLE, exception, JOptionPane.WARNING_MESSAGE);
+                showOperationError(errorMessage, exception, JOptionPane.WARNING_MESSAGE);
                 refresh();
             };
             if (removed) {
@@ -1373,13 +1344,8 @@ public class SidebarPanel extends JPanel {
         }));
     }
 
-    private void showOperationError(String message, String title, Exception exception, int messageType) {
-        JOptionPane.showMessageDialog(
-            this,
-            "%s: %s".formatted(message, exception.getMessage()),
-            title,
-            messageType
-        );
+    private void showOperationError(String message, Exception exception, int messageType) {
+        showMessageDialog(this, "%s: %s".formatted(message, exception.getMessage()), messageType);
     }
 
     private void withSelectionSuppressed(Runnable action) {

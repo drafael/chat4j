@@ -19,6 +19,8 @@ import javax.swing.JProgressBar;
 import javax.swing.SwingUtilities;
 import lombok.NonNull;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.configureTitlelessDialog;
+
 public final class PdfExportProgressDialog {
 
     private final JDialog dialog;
@@ -28,7 +30,8 @@ public final class PdfExportProgressDialog {
     private BooleanSupplier cancelAction = () -> true;
 
     public PdfExportProgressDialog(@NonNull Window owner) {
-        dialog = new JDialog(owner, "Export to PDF", Dialog.ModalityType.MODELESS);
+        dialog = new JDialog(owner, Dialog.ModalityType.MODELESS);
+        configureTitlelessDialog(dialog);
         dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
         dialog.addWindowListener(new WindowAdapter() {
             @Override

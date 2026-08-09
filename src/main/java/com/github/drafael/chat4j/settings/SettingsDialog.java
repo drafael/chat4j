@@ -38,6 +38,7 @@ import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.util.Collections.emptyList;
@@ -433,10 +434,9 @@ public class SettingsDialog extends JDialog {
         if (!saveResult.saved()) {
             setEnabled(true);
             if (abortCloseAfterSaveFailure(exitAfterSave, saveResult.saved())) {
-                JOptionPane.showMessageDialog(
+                showMessageDialog(
                         this,
                         "%s could not be saved:\n\n%s".formatted(saveResult.sectionName(), saveResult.message()),
-                        "Settings Not Saved",
                         JOptionPane.ERROR_MESSAGE
                 );
                 return;

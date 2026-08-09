@@ -13,10 +13,11 @@ import java.io.IOException;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
+
 public final class FileAttachmentChip extends JPanel {
 
     private static final int ARC = 10;
-    private static final String DIALOG_TITLE = "Open Attachment";
 
     public FileAttachmentChip(AttachmentRef attachmentRef) {
         setOpaque(false);
@@ -150,6 +151,6 @@ public final class FileAttachmentChip extends JPanel {
     }
 
     private void showOpenError(String message) {
-        JOptionPane.showMessageDialog(this, message, DIALOG_TITLE, JOptionPane.WARNING_MESSAGE);
+        showMessageDialog(this, message, JOptionPane.WARNING_MESSAGE);
     }
 }

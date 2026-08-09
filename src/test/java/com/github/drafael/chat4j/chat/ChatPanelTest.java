@@ -244,7 +244,6 @@ class ChatPanelTest {
                     expectedHistoryRevision,
                     conversationId,
                     "chat4j-open-action-test",
-                    "Test",
                     () -> {
                         operationRanOnEdt.set(SwingUtilities.isEventDispatchThread());
                         operationStarted.countDown();

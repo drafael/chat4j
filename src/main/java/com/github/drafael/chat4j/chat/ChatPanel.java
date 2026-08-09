@@ -138,6 +138,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.joining;
@@ -2613,7 +2614,7 @@ public class ChatPanel extends JPanel {
         }
         SwingUtilities.invokeLater(() -> {
             if (!shutdownInProgress && !removed && uiGeneration == readAloudUiGeneration.get()) {
-                JOptionPane.showMessageDialog(this, message, "Read aloud", JOptionPane.WARNING_MESSAGE);
+                showMessageDialog(this, message, JOptionPane.WARNING_MESSAGE);
             }
         });
     }
@@ -4037,7 +4038,6 @@ public class ChatPanel extends JPanel {
                 expectedHistoryRevision,
                 expectedConversationId,
                 "chat4j-open-diagram",
-                "Open Diagram",
                 () -> openHtmlFile(DiagramHtmlExporter.exportMermaidHtml(payload)),
                 this::diagramOpenError
         );
@@ -4083,7 +4083,7 @@ public class ChatPanel extends JPanel {
 
     private void openConversationAttachment(String storagePath) {
         if (StringUtils.isBlank(storagePath) || !isKnownConversationAttachment(storagePath)) {
-            showOpenActionError("Open Attachment", "Attachment file is not available on disk.");
+            showOpenActionError("Attachment file is not available on disk.");
             return;
         }
 
@@ -4093,7 +4093,6 @@ public class ChatPanel extends JPanel {
                 expectedHistoryRevision,
                 expectedConversationId,
                 "chat4j-open-attachment",
-                "Open Attachment",
                 () -> openAttachment(storagePath),
                 e -> attachmentOpenError(storagePath, e)
         );
@@ -4134,7 +4133,6 @@ public class ChatPanel extends JPanel {
             long expectedHistoryRevision,
             UUID expectedConversationId,
             String threadName,
-            String dialogTitle,
             OpenAction action,
             Function<Exception, String> errorMessage
     ) {
@@ -4152,7 +4150,7 @@ public class ChatPanel extends JPanel {
                             expectedConversationId,
                             expectedOpenActionUiGeneration
                     )) {
-                        showOpenActionError(dialogTitle, errorMessage.apply(e));
+                        showOpenActionError(errorMessage.apply(e));
                     }
                 });
             }
@@ -4180,8 +4178,8 @@ public class ChatPanel extends JPanel {
                 .anyMatch(path -> Strings.CS.equals(path, storagePath));
     }
 
-    private void showOpenActionError(String title, String message) {
-        JOptionPane.showMessageDialog(this, message, title, JOptionPane.WARNING_MESSAGE);
+    private void showOpenActionError(String message) {
+        showMessageDialog(this, message, JOptionPane.WARNING_MESSAGE);
     }
 
     private void scrollToBottom() {

@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.BooleanSupplier;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showConfirmDialog;
 import static java.util.Arrays.fill;
 import static java.util.Arrays.stream;
 
@@ -367,7 +368,7 @@ public class ApiTokenFieldPanel extends JPanel {
     }
 
     private boolean confirmRecreateVault() {
-        int result = JOptionPane.showConfirmDialog(
+        int result = showConfirmDialog(
                 SwingUtilities.getWindowAncestor(this),
                 "%s %s %s%s".formatted(
                         "Repairing/recreating the token vault will make all saved API tokens unavailable",
@@ -375,7 +376,6 @@ public class ApiTokenFieldPanel extends JPanel {
                         "Bounded backups of existing regular vault and key files will be retained.",
                         "\n\nRepair/recreate token vault?"
                 ),
-                "Repair/recreate token vault?",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE
         );

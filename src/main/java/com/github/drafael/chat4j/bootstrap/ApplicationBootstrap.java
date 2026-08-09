@@ -51,6 +51,8 @@ import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
+
 /**
  * Coordinates application startup from platform/bootstrap setup through first window display.
  */
@@ -424,7 +426,7 @@ public final class ApplicationBootstrap {
         }
 
         log.warn("Environment bootstrap could not resolve provider API keys from shell profile");
-        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(
+        SwingUtilities.invokeLater(() -> showMessageDialog(
                 null,
                 """
                     Chat4J could not load environment variables from your shell profile.
@@ -439,7 +441,6 @@ public final class ApplicationBootstrap {
                     • Use a local provider like LM Studio or Ollama (no API key required)
                     • Run diagnostics: bash "/Applications/Chat4J.app/Contents/app/tools/chat4j-doctor.sh" --app "/Applications/Chat4J.app"
                     """,
-                "Environment Warning",
                 JOptionPane.WARNING_MESSAGE
         ));
     }

@@ -73,6 +73,7 @@ import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showConfirmDialog;
 import static java.lang.Math.ceil;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -989,10 +990,9 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         if (invalidBase && !invalidReplacementConfirmed && phase == VerifyPreflightPhase.INITIAL) {
-            int answer = JOptionPane.showConfirmDialog(
+            int answer = showConfirmDialog(
                     this,
                     "The existing MCP configuration is invalid. Replace it with this draft?",
-                    "Repair MCP Configuration",
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );
@@ -1195,10 +1195,9 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
             return;
         }
         if (!replacementConfirmed) {
-            int answer = JOptionPane.showConfirmDialog(
+            int answer = showConfirmDialog(
                     this,
                     "Replace the invalid MCP configuration with the current draft?",
-                    "Repair MCP Configuration",
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );
@@ -1310,11 +1309,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     }
                 })
                 .allMatch(server -> stillCurrent.getAsBoolean()
-                        && JOptionPane.showConfirmDialog(
+                        && showConfirmDialog(
                                 this,
                                 "The MCP server named %s uses cleartext HTTP. Continue?"
                                         .formatted(settingsDisplayName(server)),
-                                "Cleartext MCP Endpoint",
                                 JOptionPane.OK_CANCEL_OPTION,
                                 JOptionPane.WARNING_MESSAGE
                         ) == JOptionPane.OK_OPTION
@@ -1327,14 +1325,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         }
         markDraftMutation();
         if (automaticBox.isSelected()) {
-            int answer = JOptionPane.showConfirmDialog(
+            int answer = showConfirmDialog(
                     this,
                     String.join(
                             " ",
                             "Chat4J is enabling automatic MCP tools for the server named %s.",
                             "Automatic tools can act with your user permissions. Enable only for trusted servers."
                     ).formatted(StringUtils.defaultIfBlank(nameField.getText(), "Unnamed server")),
-                    "Enable Automatic MCP Tools?",
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );

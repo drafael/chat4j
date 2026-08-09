@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.function.BooleanSupplier;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
+
 @Slf4j
 public class App {
 
@@ -92,12 +94,7 @@ public class App {
         }
 
         try {
-            JOptionPane.showMessageDialog(
-                    null,
-                    message,
-                    "Chat4J Startup Error",
-                    JOptionPane.ERROR_MESSAGE
-            );
+            showMessageDialog(null, message, JOptionPane.ERROR_MESSAGE);
         } catch (Exception ignored) {
             // Ignore UI errors to avoid masking startup diagnostics output.
         }

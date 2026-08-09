@@ -3,10 +3,21 @@ package com.github.drafael.chat4j.util;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.JDialog;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
 import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class ModalDialogSupportTest {
 
@@ -64,5 +75,104 @@ class ModalDialogSupportTest {
 
         assertThat(result.width).isEqualTo(128);
         assertThat(result.height).isEqualTo(140);
+    }
+
+    @Test
+    @DisplayName("Compact dialogs preserve the minimum content size")
+    void readableCompactSize_whenContentHasLargerMinimum_preservesMinimumSize() {
+        Dimension result = ModalDialogSupport.readableCompactSize(
+                new Dimension(547, 278),
+                new Dimension(547, 278),
+                new Rectangle(0, 0, 600, 600)
+        );
+
+        assertThat(result).isEqualTo(new Dimension(547, 278));
+    }
+
+    @Test
+    @DisplayName("A missing parent produces an ownerless modal")
+    void dialogOwner_whenParentIsNull_returnsNull() {
+        assertThat(ModalDialogSupport.dialogOwner(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("Plain messages wrap within a bounded transparent viewport")
+    void compactMessage_whenPlainText_wrapsWithinBoundedViewport() throws Exception {
+        MessageSnapshot snapshot = callOnEdt(() -> {
+            var scrollPane = (JScrollPane) ModalDialogSupport.compactMessage("A long message ".repeat(40));
+            var textArea = (JTextArea) scrollPane.getViewport().getView();
+            return new MessageSnapshot(
+                    textArea.getText(),
+                    textArea.getLineWrap(),
+                    textArea.getWrapStyleWord(),
+                    textArea.isEditable(),
+                    scrollPane.getPreferredSize().height
+            );
+        });
+
+        assertThat(snapshot.text()).isEqualTo("A long message ".repeat(40));
+        assertThat(snapshot.lineWrap()).isTrue();
+        assertThat(snapshot.wrapStyleWord()).isTrue();
+        assertThat(snapshot.editable()).isFalse();
+        assertThat(snapshot.preferredHeight()).isLessThanOrEqualTo(140);
+    }
+
+    @Test
+    @DisplayName("Option pane dialogs are undecorated and have no title")
+    void configureTitlelessOptionPaneDialog_whenConfigured_isUndecoratedWithoutTitle() throws Exception {
+        JDialog dialog = callOnEdt(() -> mock(JDialog.class));
+        JOptionPane optionPane = callOnEdt(() -> new JOptionPane("Message"));
+
+        runOnEdt(() -> ModalDialogSupport.configureTitlelessOptionPaneDialog(dialog, optionPane));
+
+        verify(dialog).setUndecorated(true);
+        verify(dialog).setContentPane(optionPane);
+        verify(dialog, never()).setTitle(anyString());
+    }
+
+    private void runOnEdt(ThrowingAction action) throws Exception {
+        callOnEdt(() -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private <T> T callOnEdt(Callable<T> action) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            return action.call();
+        }
+        var result = new AtomicReference<T>();
+        var error = new AtomicReference<Throwable>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                result.set(action.call());
+            } catch (Throwable t) {
+                error.set(t);
+            }
+        });
+        if (error.get() instanceof Exception e) {
+            throw e;
+        }
+        if (error.get() instanceof Error e) {
+            throw e;
+        }
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return result.get();
+    }
+
+    private record MessageSnapshot(
+            String text,
+            boolean lineWrap,
+            boolean wrapStyleWord,
+            boolean editable,
+            int preferredHeight
+    ) {
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run() throws Exception;
     }
 }

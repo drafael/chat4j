@@ -188,6 +188,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showConfirmDialog;
+import static com.github.drafael.chat4j.util.ModalDialogSupport.showMessageDialog;
 import static java.lang.Math.max;
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toMap;
@@ -801,7 +803,7 @@ public class MainFrame extends JFrame {
             if (shutdownState.shutdownInProgress() || !isDisplayable()) {
                 return;
             }
-            JOptionPane.showMessageDialog(
+            showMessageDialog(
                     this,
                     "%s could not start, so Chat4J is using %s for this session.\n\n%s"
                             .formatted(
@@ -809,7 +811,6 @@ public class MainFrame extends JFrame {
                                     chatWebViewRuntimeStatus.activeEngine().displayName(),
                                     chatWebViewRuntimeStatus.fallbackReason()
                             ),
-                    "Chat WebView Fallback",
                     JOptionPane.WARNING_MESSAGE
             );
         });
@@ -838,7 +839,7 @@ public class MainFrame extends JFrame {
                         return;
                     }
                     if (error != null) {
-                        JOptionPane.showMessageDialog(
+                        showMessageDialog(
                                 this,
                                 "Could not check the Publication tools.\n\n%s".formatted(
                                         StringUtils.defaultIfBlank(
@@ -846,7 +847,6 @@ public class MainFrame extends JFrame {
                                                 "Unknown validation error"
                                         )
                                 ),
-                                "Publication Export Unavailable",
                                 JOptionPane.ERROR_MESSAGE
                         );
                         return;
@@ -855,10 +855,9 @@ public class MainFrame extends JFrame {
                         return;
                     }
                     if (reason.isPresent()) {
-                        JOptionPane.showMessageDialog(
+                        showMessageDialog(
                                 this,
                                 "%s\n\nConfigure the executable paths in Settings → PDF Export.".formatted(reason.get()),
-                                "Publication Export Unavailable",
                                 JOptionPane.WARNING_MESSAGE
                         );
                         return;
@@ -893,10 +892,9 @@ public class MainFrame extends JFrame {
         Path destination = PdfExportFileNames.ensurePdfExtension(selectedDestination);
         // SystemFileChooser already confirms replacement. Ask only if adding .pdf changes the selected target.
         if (!destination.equals(selectedDestination) && Files.exists(destination)) {
-            int overwrite = JOptionPane.showConfirmDialog(
+            int overwrite = showConfirmDialog(
                     this,
                     "Replace the existing file?\n%s".formatted(destination),
-                    "Export to PDF",
                     JOptionPane.YES_NO_OPTION,
                     JOptionPane.WARNING_MESSAGE
             );
@@ -927,12 +925,11 @@ public class MainFrame extends JFrame {
             }
             if (error != null) {
                 Throwable cause = unwrapCompletionFailure(error);
-                JOptionPane.showMessageDialog(
+                showMessageDialog(
                         this,
                         "Could not export the conversation.\n\n%s".formatted(
                                 StringUtils.defaultIfBlank(ExceptionUtils.getRootCauseMessage(cause), "Unknown export error")
                         ),
-                        "PDF Export Failed",
                         JOptionPane.ERROR_MESSAGE
                 );
                 return;
@@ -940,10 +937,9 @@ public class MainFrame extends JFrame {
             if (result.cancelled()) {
                 return;
             }
-            JOptionPane.showMessageDialog(
+            showMessageDialog(
                     this,
                     "Exported with %s:\n%s".formatted(result.backend(), destination),
-                    "PDF Export Complete",
                     JOptionPane.INFORMATION_MESSAGE
             );
         }));
@@ -1489,10 +1485,9 @@ public class MainFrame extends JFrame {
                     chatPanel.setConversationMutationPending(false);
                     if (error != null) {
                         warnWithoutStack("Failed to clear current conversation messages", failure);
-                        JOptionPane.showMessageDialog(
+                        showMessageDialog(
                                 this,
                                 "Failed to clear chat: %s".formatted(failure.getMessage()),
-                                "Clear Chat",
                                 JOptionPane.ERROR_MESSAGE
                         );
                         return;
@@ -1926,7 +1921,7 @@ public class MainFrame extends JFrame {
                 conversationId,
                 e,
                 conversationLoadResultPlanner::shouldHandleFailure,
-                message -> JOptionPane.showMessageDialog(this, message, "Error", JOptionPane.ERROR_MESSAGE)
+                message -> showMessageDialog(this, message, JOptionPane.ERROR_MESSAGE)
         );
         if (handled) {
             pendingLoadConversationId = null;
@@ -2272,7 +2267,7 @@ public class MainFrame extends JFrame {
             chatPanel.getInputBar().setText(promptTemplateRenderer.render(promptTemplate, values));
             chatPanel.getInputBar().requestInputFocus();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this, e.getMessage(), "Prompt Error", JOptionPane.ERROR_MESSAGE);
+            showMessageDialog(this, e.getMessage(), JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -2714,7 +2709,9 @@ public class MainFrame extends JFrame {
 
     private void installPdfExportMenuItem() {
         JMenu fileMenu = topMenusState.fileMenu();
-        if (fileMenu == null || exportPdfMenuItem != null && exportPdfMenuItem.getParent() == fileMenu) {
+        if (fileMenu == null
+                || exportPdfMenuItem != null && exportPdfMenuItem.getParent() == fileMenu.getPopupMenu()
+        ) {
             return;
         }
         exportPdfMenuItem = fileMenuFactory.addExportPdfItem(
@@ -2798,7 +2795,7 @@ public class MainFrame extends JFrame {
                 boundMenusState,
                 menuItemsState,
                 fontMenuState,
-                message -> JOptionPane.showMessageDialog(this, message, "Font Error", JOptionPane.ERROR_MESSAGE)
+                message -> showMessageDialog(this, message, JOptionPane.ERROR_MESSAGE)
         );
     }
 
@@ -2809,7 +2806,7 @@ public class MainFrame extends JFrame {
                 themeMenuState,
                 this::markModelsMenuDirty,
                 this::syncFontMenuSelection,
-                message -> JOptionPane.showMessageDialog(this, message, "Theme Error", JOptionPane.ERROR_MESSAGE)
+                message -> showMessageDialog(this, message, JOptionPane.ERROR_MESSAGE)
         );
     }
 

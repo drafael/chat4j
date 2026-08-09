@@ -18,6 +18,7 @@ import com.github.drafael.chat4j.mcp.McpVerificationResult;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.McpSecretVault;
+import com.github.drafael.chat4j.util.ModalDialogSupport;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.SecondaryLoop;
@@ -508,11 +509,10 @@ class McpPanelTest {
             runOnEdt(() -> {
                 JCheckBox automatic = findCheckBox(fixture.subject(), "Run tools automatically");
                 long revision = field(fixture.subject(), "draftRevision", Long.class);
-                try (MockedStatic<JOptionPane> confirmation = mockStatic(JOptionPane.class)) {
-                    confirmation.when(() -> JOptionPane.showConfirmDialog(
+                try (MockedStatic<ModalDialogSupport> confirmation = mockStatic(ModalDialogSupport.class)) {
+                    confirmation.when(() -> ModalDialogSupport.showConfirmDialog(
                             any(Component.class),
                             any(),
-                            any(String.class),
                             anyInt(),
                             anyInt()
                     )).thenAnswer(invocation -> {
@@ -527,11 +527,10 @@ class McpPanelTest {
                 long revisionAfterCancellation = field(fixture.subject(), "draftRevision", Long.class);
                 assertThat(revisionAfterCancellation).isEqualTo(revision + 1);
 
-                try (MockedStatic<JOptionPane> confirmation = mockStatic(JOptionPane.class)) {
-                    confirmation.when(() -> JOptionPane.showConfirmDialog(
+                try (MockedStatic<ModalDialogSupport> confirmation = mockStatic(ModalDialogSupport.class)) {
+                    confirmation.when(() -> ModalDialogSupport.showConfirmDialog(
                             any(Component.class),
                             any(),
-                            any(String.class),
                             anyInt(),
                             anyInt()
                     )).thenReturn(JOptionPane.OK_OPTION);
@@ -2704,11 +2703,10 @@ class McpPanelTest {
         SecondaryLoop loop = Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
         AtomicInteger confirmationCount = new AtomicInteger();
         AtomicInteger eventTurns = new AtomicInteger();
-        try (MockedStatic<JOptionPane> confirmation = mockStatic(JOptionPane.class)) {
-            confirmation.when(() -> JOptionPane.showConfirmDialog(
+        try (MockedStatic<ModalDialogSupport> confirmation = mockStatic(ModalDialogSupport.class)) {
+            confirmation.when(() -> ModalDialogSupport.showConfirmDialog(
                     any(Component.class),
                     any(),
-                    any(String.class),
                     anyInt(),
                     anyInt()
             )).thenAnswer(invocation -> {
