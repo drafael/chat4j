@@ -69,24 +69,24 @@ local function is_default_emoji(codepoint)
       or codepoint == 0x2B55
 end
 
-function Str(value)
+local function emoji_segments(value)
   local codepoints = {}
-  for _, codepoint in utf8.codes(value.text) do
+  for _, codepoint in utf8.codes(value) do
     table.insert(codepoints, codepoint)
   end
 
-  local result = {}
+  local segments = {}
   local plain = {}
   local emoji = {}
   local function flush_plain()
     if #plain > 0 then
-      table.insert(result, pandoc.Str(table.concat(plain)))
+      table.insert(segments, { text = table.concat(plain), emoji = false })
       plain = {}
     end
   end
   local function flush_emoji()
     if #emoji > 0 then
-      table.insert(result, pandoc.RawInline('latex', '{\\chatjEmojiFont ' .. table.concat(emoji) .. '}'))
+      table.insert(segments, { text = table.concat(emoji), emoji = true })
       emoji = {}
     end
   end
@@ -94,9 +94,12 @@ function Str(value)
   for index, codepoint in ipairs(codepoints) do
     local character = utf8.char(codepoint)
     local next_codepoint = codepoints[index + 1]
+    local is_keycap_base = codepoint == 0x23
+        or codepoint == 0x2A
+        or (codepoint >= 0x30 and codepoint <= 0x39)
     local starts_emoji = is_default_emoji(codepoint)
-        or next_codepoint == 0xFE0F
-        or next_codepoint == 0x20E3
+        or (next_codepoint == 0xFE0F and (codepoint >= 0xA9 or is_keycap_base))
+        or (next_codepoint == 0x20E3 and is_keycap_base)
     local is_emoji_tag = codepoint >= 0xE0020 and codepoint <= 0xE007F
     local continues_emoji = #emoji > 0
         and (codepoint == 0xFE0F or codepoint == 0x200D or codepoint == 0x20E3 or is_emoji_tag)
@@ -110,6 +113,25 @@ function Str(value)
   end
   flush_emoji()
   flush_plain()
+  return segments
+end
+
+local function latex_emoji_sequence(sequence)
+  local symbols = {}
+  for _, codepoint in utf8.codes(sequence) do
+    table.insert(symbols, string.format("\\symbol{\"%X}", codepoint))
+  end
+  return table.concat(symbols)
+end
+
+function Str(value)
+  local result = {}
+  for _, segment in ipairs(emoji_segments(value.text)) do
+    local inline = segment.emoji
+        and pandoc.RawInline('latex', '{\\chatjEmojiFont ' .. latex_emoji_sequence(segment.text) .. '}')
+        or pandoc.Str(segment.text)
+    table.insert(result, inline)
+  end
   return #result == 1 and result[1] or result
 end
 
@@ -473,4 +495,73 @@ function Math(math)
   end
   local delimiter = math.mathtype == "DisplayMath" and "$$" or "$"
   return pandoc.Code(delimiter .. math.text .. delimiter)
+end
+
+function Pandoc(document)
+  local used_codepoints = {}
+  document:walk({
+    CodeBlock = function(block)
+      for _, codepoint in utf8.codes(block.text) do
+        used_codepoints[codepoint] = true
+      end
+    end
+  })
+
+  local sequence_placeholders = {}
+  local placeholder_sequences = {}
+  local next_placeholder = 0xF0000
+  local function placeholder_for(sequence)
+    if sequence_placeholders[sequence] then
+      return sequence_placeholders[sequence]
+    end
+    while next_placeholder <= 0xFFFFD and used_codepoints[next_placeholder] do
+      next_placeholder = next_placeholder + 1
+    end
+    if next_placeholder > 0xFFFFD then
+      return nil
+    end
+    local placeholder = utf8.char(next_placeholder)
+    sequence_placeholders[sequence] = placeholder
+    table.insert(placeholder_sequences, { placeholder = placeholder, sequence = sequence })
+    used_codepoints[next_placeholder] = true
+    next_placeholder = next_placeholder + 1
+    return placeholder
+  end
+
+  document = document:walk({
+    CodeBlock = function(block)
+      local transformed = {}
+      local replaced_emoji = false
+      for _, segment in ipairs(emoji_segments(block.text)) do
+        local replacement = segment.text
+        if segment.emoji then
+          local placeholder = placeholder_for(segment.text)
+          if placeholder then
+            replacement = placeholder
+            replaced_emoji = true
+          end
+        end
+        table.insert(transformed, replacement)
+      end
+      block.text = table.concat(transformed)
+      if replaced_emoji and #block.classes == 0 then
+        table.insert(block.classes, "text")
+      end
+      return block
+    end
+  })
+
+  local definitions = {}
+  for _, mapping in ipairs(placeholder_sequences) do
+    local definition = string.format(
+        "\\chatjActivateOneCodeEmoji{%s}{%s}",
+        mapping.placeholder,
+        latex_emoji_sequence(mapping.sequence)
+    )
+    table.insert(definitions, pandoc.RawBlock("latex", definition))
+  end
+  if #definitions > 0 then
+    document.meta.chatjcodeemoji = pandoc.MetaBlocks(definitions)
+  end
+  return document
 end

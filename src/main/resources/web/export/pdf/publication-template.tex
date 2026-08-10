@@ -22,6 +22,14 @@
   Path=fonts/,
   Renderer=HarfBuzz
 ]{NotoEmoji.ttf}
+\newcommand{\chatjActivateOneCodeEmoji}[2]{%
+  \catcode`#1=\active
+  \begingroup\lccode`\~=`#1
+  \lowercase{\endgroup\protected\def~}{{\chatjEmojiFont #2}}%
+}
+\newcommand{\chatjActivateCodeEmoji}{%
+$chatjcodeemoji$
+}
 \setmonofont[
   Path=fonts/,
   Scale=MatchLowercase,
@@ -32,6 +40,14 @@
 ]{JetBrainsMono-Regular.ttf}
 
 $common.latex()$
+\makeatletter
+\@ifundefined{Highlighting}{}{%
+  \RecustomVerbatimEnvironment{Highlighting}{Verbatim}{
+    commandchars=\\\{\},
+    codes*=\chatjActivateCodeEmoji
+  }%
+}
+\makeatother
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.7\baselineskip plus 2pt minus 1pt}
 $hypersetup.latex()$

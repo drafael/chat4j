@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.chat.export.pdf;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
@@ -633,17 +635,85 @@ class PandocConversationPdfExporterTest {
                 .contains("--from=gfm+tex_math_dollars-raw_html")
                 .contains("--lua-filter=%s".formatted(tempDirectory.resolve("publication-filter.lua")))
                 .contains("--template=%s".formatted(tempDirectory.resolve("publication-template.tex")))
+                .contains("--highlight-style=%s".formatted(
+                        tempDirectory.resolve("publication-intellij-light.theme")
+                ))
                 .contains("--pdf-engine-opt=-no-shell-escape")
                 .contains("--variable=chat4jpaper=a4paper")
                 .contains("--output=%s".formatted(output))
                 .doesNotContain("--lua-filter=%s".formatted(
                         tempDirectory.resolve("publication-math-source-filter.lua")
+                ));
+        assertThat(letterCommand)
+                .contains("--variable=chat4jpaper=letterpaper")
+                .contains("--highlight-style=%s".formatted(
+                        tempDirectory.resolve("publication-intellij-light.theme")
+                ));
+        assertThat(fallbackCommand)
+                .contains("--lua-filter=%s".formatted(
+                        tempDirectory.resolve("publication-math-source-filter.lua")
                 ))
-                .noneMatch(argument -> argument.startsWith("--highlight-style="));
-        assertThat(letterCommand).contains("--variable=chat4jpaper=letterpaper");
-        assertThat(fallbackCommand).contains("--lua-filter=%s".formatted(
-                tempDirectory.resolve("publication-math-source-filter.lua")
-        ));
+                .contains("--highlight-style=%s".formatted(
+                        tempDirectory.resolve("publication-intellij-light.theme")
+                ));
+    }
+
+    @Test
+    @DisplayName("Publication highlight theme uses the fixed IntelliJ Light palette")
+    void publicationHighlightTheme_whenLoaded_hasExpectedPaletteAndNoBackground() throws Exception {
+        try (var input = PandocConversationPdfExporter.class.getResourceAsStream(
+                "/web/export/pdf/publication-intellij-light.theme"
+        )) {
+            assertThat(input).isNotNull();
+            JsonNode theme = new ObjectMapper().readTree(input);
+            JsonNode styles = theme.path("text-styles");
+
+            assertThat(theme.path("text-color").asText()).isEqualTo("#000000");
+            assertThat(theme.path("background-color").isNull()).isTrue();
+            assertThat(styles.path("Keyword").path("text-color").asText()).isEqualTo("#0033b3");
+            assertThat(styles.path("String").path("text-color").asText()).isEqualTo("#067d17");
+            assertThat(styles.path("DecVal").path("text-color").asText()).isEqualTo("#1750eb");
+            assertThat(styles.path("Comment").path("text-color").asText()).isEqualTo("#8c8c8c");
+            assertThat(styles.path("Comment").path("italic").asBoolean()).isTrue();
+            assertThat(styles.path("Constant").path("text-color").asText()).isEqualTo("#871094");
+            assertThat(styles.path("Function").path("text-color").asText()).isEqualTo("#00627a");
+            assertThat(styles.path("Annotation").path("text-color").asText()).isEqualTo("#9e880d");
+        }
+    }
+
+    @Test
+    @DisplayName("Publication export stages the managed IntelliJ Light theme")
+    void export_whenPublicationStarts_stagesManagedHighlightTheme() throws Exception {
+        PdfExportProcessRunner processRunner = mock(PdfExportProcessRunner.class);
+        when(processRunner.run(
+                anyList(),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class)
+        )).thenAnswer(invocation -> {
+            List<String> command = invocation.getArgument(0);
+            Path workspace = invocation.getArgument(1);
+            Path theme = workspace.resolve("publication-intellij-light.theme");
+            assertThat(theme).isRegularFile().isNotEmptyFile();
+            assertThat(command).contains("--highlight-style=%s".formatted(theme));
+            return PdfExportProcessRunner.Outcome.completed(0, "");
+        });
+        var mermaidRenderer = new MermaidCliDiagramRenderer("", Map.of(), processRunner);
+        var subject = exporterWith(mermaidRenderer, processRunner);
+        var document = ConversationPdfDocument.builder()
+                .title("Publication")
+                .exportedAt(Instant.EPOCH)
+                .turns(List.of())
+                .build();
+
+        subject.export(document, tempDirectory.resolve("publication.pdf"), () -> false);
+
+        verify(processRunner).run(
+                anyList(),
+                any(Path.class),
+                anyMap(),
+                any(BooleanSupplier.class)
+        );
     }
 
     @Test
@@ -806,6 +876,20 @@ class PandocConversationPdfExporterTest {
             assertThat(input).isNotNull();
             Files.copy(input, template);
         }
+        Path highlightTheme = tempDirectory.resolve("publication-intellij-light.theme");
+        try (var input = PandocConversationPdfExporter.class.getResourceAsStream(
+                "/web/export/pdf/publication-intellij-light.theme"
+        )) {
+            assertThat(input).isNotNull();
+            Files.copy(input, highlightTheme);
+        }
+        Path filter = tempDirectory.resolve("publication-filter.lua");
+        try (var input = PandocConversationPdfExporter.class.getResourceAsStream(
+                "/web/export/pdf/publication-filter.lua"
+        )) {
+            assertThat(input).isNotNull();
+            Files.copy(input, filter);
+        }
         Path markdown = tempDirectory.resolve("template-input.md");
         Files.writeString(markdown, """
                 ---
@@ -817,7 +901,21 @@ class PandocConversationPdfExporterTest {
                 Body
 
                 ```java
-                class Example { int value = 1; }
+                // ❌ Java warning
+                // ✅ Correct
+                // ⚠️ Caution
+                // 💡 Idea
+                // 👨‍👩‍👧‍👦 Family, 👍🏽 skin tone, 1️⃣ keycap, #️⃣ hash keycap
+                class Example { String value = "one"; }
+                ```
+
+                ```python
+                def greet(name):
+                    return f"Hello, {name}"
+                ```
+
+                ```
+                // ❌ Plain code
                 ```
                 """, StandardCharsets.UTF_8);
 
@@ -829,15 +927,26 @@ class PandocConversationPdfExporterTest {
                     "--from=gfm",
                     "--to=latex",
                     "--standalone",
-                    "--template=%s".formatted(template)
+                    "--lua-filter=%s".formatted(filter),
+                    "--template=%s".formatted(template),
+                    "--highlight-style=%s".formatted(highlightTheme)
             ).redirectErrorStream(true).start();
         } catch (IOException e) {
             Assumptions.abort("Pandoc is not installed");
             return;
         }
         String latex = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String firstEmojiPlaceholder = Character.toString(0xF0000);
+        String secondEmojiPlaceholder = Character.toString(0xF0001);
+        String thirdEmojiPlaceholder = Character.toString(0xF0002);
+        String fourthEmojiPlaceholder = Character.toString(0xF0003);
+        String fifthEmojiPlaceholder = Character.toString(0xF0004);
+        String sixthEmojiPlaceholder = Character.toString(0xF0005);
+        String seventhEmojiPlaceholder = Character.toString(0xF0006);
+        String eighthEmojiPlaceholder = Character.toString(0xF0007);
 
         assertThat(process.waitFor()).isZero();
+        assertThat(countOccurrences(latex, "\\begin{Highlighting}[]")).isEqualTo(3);
         assertThat(latex)
                 .contains("LibertinusSerif-Regular.ttf")
                 .contains("JetBrainsMono-Regular.ttf")
@@ -846,12 +955,38 @@ class PandocConversationPdfExporterTest {
                 .contains("JetBrainsMono-BoldItalic.ttf")
                 .contains("NotoEmoji.ttf")
                 .contains("\\newfontfamily\\chatjEmojiFont")
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"274C}}".formatted(firstEmojiPlaceholder))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"2705}}".formatted(secondEmojiPlaceholder))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"26A0}\\symbol{\"FE0F}}".formatted(
+                        thirdEmojiPlaceholder
+                ))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"1F4A1}}".formatted(
+                        fourthEmojiPlaceholder
+                ))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"1F468}\\symbol{\"200D}\\symbol{\"1F469}"
+                        .formatted(fifthEmojiPlaceholder))
+                .contains("\\symbol{\"1F467}\\symbol{\"200D}\\symbol{\"1F466}}")
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"1F44D}\\symbol{\"1F3FD}}".formatted(
+                        sixthEmojiPlaceholder
+                ))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"31}\\symbol{\"FE0F}\\symbol{\"20E3}}"
+                        .formatted(seventhEmojiPlaceholder))
+                .contains("\\chatjActivateOneCodeEmoji{%s}{\\symbol{\"23}\\symbol{\"FE0F}\\symbol{\"20E3}}"
+                        .formatted(eighthEmojiPlaceholder))
+                .contains("codes*=\\chatjActivateCodeEmoji")
                 .contains("Scale=MatchLowercase")
                 .contains("\\usepackage{hyperref}")
                 .contains("\\setlength{\\parindent}{0pt}")
                 .contains("\\setlength{\\parskip}{0.7\\baselineskip plus 2pt minus 1pt}")
                 .contains("\\newenvironment{Shaded}{}{}")
+                .contains("\\newcommand{\\CommentTok}[1]{\\textcolor[rgb]{0.55,0.55,0.55}{\\textit{#1}}}")
+                .contains("\\newcommand{\\ConstantTok}[1]{\\textcolor[rgb]{0.53,0.06,0.58}{\\textit{#1}}}")
+                .contains("\\newcommand{\\FunctionTok}[1]{\\textcolor[rgb]{0.00,0.38,0.48}{#1}}")
+                .contains("\\newcommand{\\KeywordTok}[1]{\\textcolor[rgb]{0.00,0.20,0.70}{#1}}")
+                .contains("\\newcommand{\\StringTok}[1]{\\textcolor[rgb]{0.02,0.49,0.09}{#1}}")
                 .contains("\\KeywordTok{class}")
+                .contains("\\KeywordTok{def}")
+                .contains("\\SpecialStringTok{f\"Hello, }")
                 .contains("fancyhead[C]")
                 .contains("Conversation")
                 .contains("Provider · model")
@@ -878,7 +1013,7 @@ class PandocConversationPdfExporterTest {
         Files.writeString(markdown, """
                 [safe](https://example.com) [3](https://citation.example) [12](http://citation.example/twelve) [999](https://citation.example/999) [4](mailto:test@example.com) [2024](https://example.com/report) [unsafe](javascript:alert(1))
 
-                💡 ✅ ⚠️ 🚀 🌟 1️⃣ 2⃣ %s
+                💡 ✅ ⚠️ 🚀 🌟 1️⃣ 2⃣ #️⃣ %s
 
                 Safe inline: $\\text{CO}_2$
                 Safe bold symbol: $\\boldsymbol{\\ell}$
@@ -914,6 +1049,11 @@ class PandocConversationPdfExporterTest {
                 | short | content that must wrap within the page |
 
                 ```markdown
+                // ❌ Broken
+                // ✅ Correct
+                // ⚠️ Caution
+                // 💡 Idea
+                // 👨‍👩‍👧‍👦 Family, 👍🏽 skin tone, 1️⃣ keycap, #️⃣ hash keycap
                 ![literal](/code/example.png)
                 [literal](javascript:example)
                 ```
@@ -960,14 +1100,16 @@ class PandocConversationPdfExporterTest {
                 )
                 .contains("\"t\":\"ColWidth\",\"c\":0.5")
                 .contains("chatjEmojiFont")
-                .contains("💡")
-                .contains("✅")
-                .contains("⚠️")
-                .contains("🚀")
-                .contains("🌟")
-                .contains("1️⃣")
-                .contains("2⃣")
-                .contains(scotlandFlag)
+                .contains("chatjActivateOneCodeEmoji")
+                .contains("274C")
+                .contains("2705")
+                .contains("26A0")
+                .contains("1F4A1")
+                .contains("1F468")
+                .contains("200D")
+                .contains("1F3FD")
+                .contains("20E3")
+                .contains("23")
                 .contains("![literal](/code/example.png)")
                 .contains("[literal](javascript:example)")
                 .doesNotContain("/private/image.png")
@@ -996,14 +1138,16 @@ class PandocConversationPdfExporterTest {
                 .contains("width=0.34\\linewidth")
                 .contains("width=0.62\\linewidth")
                 .contains("textbackslash")
-                .contains("\\chatjEmojiFont 💡")
-                .contains("\\chatjEmojiFont ✅")
-                .contains("\\chatjEmojiFont ⚠️")
-                .contains("\\chatjEmojiFont 🚀")
-                .contains("\\chatjEmojiFont 🌟")
-                .contains("\\chatjEmojiFont 1️⃣")
-                .contains("\\chatjEmojiFont 2⃣")
-                .contains("\\chatjEmojiFont %s".formatted(scotlandFlag))
+                .contains("\\chatjEmojiFont \\symbol{\"1F4A1}")
+                .contains("\\chatjEmojiFont \\symbol{\"2705}")
+                .contains("\\chatjEmojiFont \\symbol{\"26A0}\\symbol{\"FE0F}")
+                .contains("\\chatjEmojiFont \\symbol{\"1F680}")
+                .contains("\\chatjEmojiFont \\symbol{\"1F31F}")
+                .contains("\\chatjEmojiFont \\symbol{\"31}\\symbol{\"FE0F}\\symbol{\"20E3}")
+                .contains("\\chatjEmojiFont \\symbol{\"32}\\symbol{\"20E3}")
+                .contains("\\chatjEmojiFont \\symbol{\"23}\\symbol{\"FE0F}\\symbol{\"20E3}")
+                .contains("\\chatjEmojiFont \\symbol{\"1F3F4}\\symbol{\"E0067}\\symbol{\"E0062}")
+                .contains("\\symbol{\"E0073}\\symbol{\"E0063}\\symbol{\"E0074}\\symbol{\"E007F}")
                 .contains("\\real{0.5000}")
                 .contains("\\textsuperscript{\\href{https://citation.example}{{[}3{]}}}")
                 .doesNotContain("\\(\\input{/etc/hosts}\\)")

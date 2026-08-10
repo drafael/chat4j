@@ -45,6 +45,7 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
     private static final String PUBLICATION_FILTER = "/web/export/pdf/publication-filter.lua";
     private static final String PUBLICATION_MATH_SOURCE_FILTER = "/web/export/pdf/publication-math-source-filter.lua";
     private static final String PUBLICATION_TEMPLATE = "/web/export/pdf/publication-template.tex";
+    private static final String PUBLICATION_HIGHLIGHT_THEME = "/web/export/pdf/publication-intellij-light.theme";
     private static final String FONT_ROOT = "/web/export/pdf/fonts/";
     private static final List<String> PUBLICATION_FONTS = List.of(
             "LibertinusSerif-Regular.ttf",
@@ -219,6 +220,7 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
         }
         command.addAll(List.of(
                 "--template=%s".formatted(workspace.resolve("publication-template.tex")),
+                "--highlight-style=%s".formatted(workspace.resolve("publication-intellij-light.theme")),
                 "--resource-path=%s".formatted(workspace),
                 "--pdf-engine=%s".formatted(latexExecutable),
                 "--pdf-engine-opt=-no-shell-escape",
@@ -657,6 +659,10 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
                 workspace.resolve("publication-math-source-filter.lua")
         );
         copyRequiredResource(PUBLICATION_TEMPLATE, workspace.resolve("publication-template.tex"));
+        copyRequiredResource(
+                PUBLICATION_HIGHLIGHT_THEME,
+                workspace.resolve("publication-intellij-light.theme")
+        );
         Path fontsDirectory = Files.createDirectories(workspace.resolve("fonts"));
         for (String font : PUBLICATION_FONTS) {
             copyRequiredResource("%s%s".formatted(FONT_ROOT, font), fontsDirectory.resolve(font));
