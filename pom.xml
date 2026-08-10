@@ -32,7 +32,7 @@
         <jlayer.version>1.0.1</jlayer.version>
         <swingwebview.version>1.0.11</swingwebview.version>
         <jna.version>5.19.1</jna.version>
-        <vosk.version>0.3.38</vosk.version>
+        <vosk.version>0.3.45</vosk.version>
         <whisper-jni.version>0.5.5</whisper-jni.version>
         <jcefmaven.version>146.0.10</jcefmaven.version>
         <graaljs.version>25.2.4</graaljs.version>
