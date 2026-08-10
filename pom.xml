@@ -48,7 +48,7 @@
         <maven.dependency.plugin.version>3.9.0</maven.dependency.plugin.version>
         <jacoco.maven.plugin.version>0.8.15</jacoco.maven.plugin.version>
         <jacoco.argLine></jacoco.argLine>
-        <junit.version>6.1.2</junit.version>
+        <junit.version>6.1.3</junit.version>
         <assertj.version>3.27.7</assertj.version>
         <mockito.version>5.23.0</mockito.version>
         <slf4j.version>2.0.18</slf4j.version>
