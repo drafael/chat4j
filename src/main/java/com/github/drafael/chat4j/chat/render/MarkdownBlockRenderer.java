@@ -6,13 +6,14 @@ import org.apache.commons.lang3.Strings;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
 final class MarkdownBlockRenderer {
 
     private static final Pattern BARE_DISPLAY_LATEX_PATTERN = Pattern.compile(
-            "^\\\\(?:ce|text|frac|sum|prod|int|iint|iiint|oint|oiint|nabla|partial|mathcal|mathbf|boldsymbol|vec|overline|underline|Phi|Delta|Omega|alpha|beta|gamma|lambda|mu|nu|theta|omega)\\b.*"
+            "^\\\\(?:ce|text|frac|sum|prod|int|iint|iiint|oint|oiint|nabla|partial|mathcal|mathbf|boldsymbol|vec|overline|underline|Phi|Delta|Omega|alpha|beta|gamma|lambda|mu|nu|theta|omega)(?:\\b|(?=[_^])).*"
     );
     private static final Pattern LATEX_OPERATOR_PATTERN = Pattern.compile(
             ".*(?:[_^=+]|\\\\(?:to|rightarrow|leftarrow|xrightarrow|frac|cdot|times|ce)\\b|->|←|→|⟶).*"
@@ -30,10 +31,13 @@ final class MarkdownBlockRenderer {
         RenderState state = new RenderState();
 
         while (cursor.hasNext()) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new CancellationException("Markdown rendering was cancelled");
+            }
             String line = cursor.next();
 
             if (state.inCodeBlock) {
-                if (line.trim().startsWith("```")) {
+                if (isClosingBacktickFence(line, state.codeFenceLength)) {
                     handleCodeFenceClose(state, palette);
                 } else {
                     handleCodeBlockBody(line, state);
@@ -43,7 +47,7 @@ final class MarkdownBlockRenderer {
             dispatch(line, cursor, state, palette);
         }
 
-        if (state.inCodeBlock && state.codeBuffer.length() > 0) {
+        if (state.inCodeBlock) {
             appendCodeBlock(state.html, state.codeBuffer.toString(), state.codeLang, palette);
         }
         state.closeListIfOpen();
@@ -53,8 +57,9 @@ final class MarkdownBlockRenderer {
 
     private static void dispatch(String line, LineCursor cursor, RenderState state, Palette palette) {
         String trimmed = line.trim();
-        if (trimmed.startsWith("```")) {
-            handleCodeFenceOpen(trimmed, state);
+        BacktickFence backtickFence = openingBacktickFence(line);
+        if (backtickFence != null) {
+            handleCodeFenceOpen(backtickFence, state);
             return;
         }
 
@@ -117,15 +122,39 @@ final class MarkdownBlockRenderer {
         handleParagraph(line, state, palette);
     }
 
-    private static void handleCodeFenceOpen(String trimmed, RenderState state) {
+    private static BacktickFence openingBacktickFence(String line) {
+        int delimiterStart = 0;
+        while (delimiterStart < line.length() && delimiterStart < 3 && line.charAt(delimiterStart) == ' ') {
+            delimiterStart++;
+        }
+        int delimiterEnd = delimiterStart;
+        while (delimiterEnd < line.length() && line.charAt(delimiterEnd) == '`') {
+            delimiterEnd++;
+        }
+        int delimiterLength = delimiterEnd - delimiterStart;
+        if (delimiterLength < 3) {
+            return null;
+        }
+        String info = line.substring(delimiterEnd).stripTrailing();
+        return info.indexOf('`') >= 0 ? null : new BacktickFence(delimiterLength, info.stripLeading());
+    }
+
+    private static boolean isClosingBacktickFence(String line, int minimumDelimiterLength) {
+        BacktickFence fence = openingBacktickFence(line);
+        return fence != null && fence.delimiterLength() >= minimumDelimiterLength && fence.info().isEmpty();
+    }
+
+    private static void handleCodeFenceOpen(BacktickFence fence, RenderState state) {
         state.closeListIfOpen();
         state.inCodeBlock = true;
-        state.codeLang = trimmed.length() > 3 ? HtmlEscaper.escape(trimmed.substring(3).trim()) : null;
+        state.codeFenceLength = fence.delimiterLength();
+        state.codeLang = StringUtils.isNotEmpty(fence.info()) ? HtmlEscaper.escape(fence.info()) : null;
         state.codeBuffer.setLength(0);
     }
 
     private static void handleCodeFenceClose(RenderState state, Palette palette) {
         state.inCodeBlock = false;
+        state.codeFenceLength = 0;
         appendCodeBlock(state.html, state.codeBuffer.toString(), state.codeLang, palette);
     }
 
@@ -196,7 +225,7 @@ final class MarkdownBlockRenderer {
         appendCodeBlock(state.html, trimmed, "latex", palette);
     }
 
-    private static boolean isBareDisplayLatexLine(String trimmed) {
+    static boolean isBareDisplayLatexLine(String trimmed) {
         return BARE_DISPLAY_LATEX_PATTERN.matcher(trimmed).matches()
                 && LATEX_OPERATOR_PATTERN.matcher(trimmed).matches();
     }
@@ -531,6 +560,9 @@ final class MarkdownBlockRenderer {
         return Character.isWhitespace(line.charAt(count)) ? count : 0;
     }
 
+    private record BacktickFence(int delimiterLength, String info) {
+    }
+
     private static final class LineCursor {
         private final String[] lines;
         private int index;
@@ -557,6 +589,7 @@ final class MarkdownBlockRenderer {
         boolean inList;
         String listType;
         boolean inCodeBlock;
+        int codeFenceLength;
         String codeLang;
         final StringBuilder codeBuffer = new StringBuilder();
 

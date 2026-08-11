@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -69,6 +70,7 @@ import org.cef.misc.StringRef;
 import org.cef.network.CefRequest;
 import org.cef.network.CefResponse;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 
 public final class JcefBrowserView {
 
@@ -93,6 +95,7 @@ public final class JcefBrowserView {
     private boolean dark;
     private boolean jumpButtonVisible;
     private boolean readAloudAvailable;
+    private Set<Integer> readAloudMessageIndexes = emptySet();
     private boolean pdfExportAvailable;
     private int activeReadAloudMessageIndex = -1;
     private boolean documentInitialized;
@@ -144,7 +147,16 @@ public final class JcefBrowserView {
             boolean jumpButtonVisible,
             boolean readAloudAvailable
     ) {
-        setTranscript(entries, renderMode, dark, scrollToBottom, jumpButtonVisible, readAloudAvailable, -1);
+        setTranscript(
+                entries,
+                renderMode,
+                dark,
+                scrollToBottom,
+                jumpButtonVisible,
+                readAloudAvailable,
+                emptySet(),
+                -1
+        );
     }
 
     public void setTranscript(
@@ -156,16 +168,43 @@ public final class JcefBrowserView {
             boolean readAloudAvailable,
             int activeReadAloudMessageIndex
     ) {
+        setTranscript(
+                entries,
+                renderMode,
+                dark,
+                scrollToBottom,
+                jumpButtonVisible,
+                readAloudAvailable,
+                emptySet(),
+                activeReadAloudMessageIndex
+        );
+    }
+
+    public void setTranscript(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean scrollToBottom,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable,
+            Set<Integer> readAloudMessageIndexes,
+            int activeReadAloudMessageIndex
+    ) {
         RenderMode nextRenderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
         boolean styleChanged = this.renderMode != nextRenderMode || this.dark != dark;
         boolean jumpButtonChanged = this.jumpButtonVisible != jumpButtonVisible;
         boolean readAloudChanged = this.readAloudAvailable != readAloudAvailable;
+        Set<Integer> nextReadAloudMessageIndexes = readAloudMessageIndexes == null
+                ? emptySet()
+                : Set.copyOf(readAloudMessageIndexes);
+        boolean readAloudMessagesChanged = !this.readAloudMessageIndexes.equals(nextReadAloudMessageIndexes);
         boolean activeReadAloudChanged = this.activeReadAloudMessageIndex != activeReadAloudMessageIndex;
         this.entries = List.copyOf(entries == null ? emptyList() : entries);
         this.renderMode = nextRenderMode;
         this.dark = dark;
         this.jumpButtonVisible = jumpButtonVisible;
         this.readAloudAvailable = readAloudAvailable;
+        this.readAloudMessageIndexes = nextReadAloudMessageIndexes;
         this.activeReadAloudMessageIndex = activeReadAloudMessageIndex;
 
         if (jumpButtonChanged) {
@@ -177,7 +216,7 @@ public final class JcefBrowserView {
             return;
         }
         if (documentLoadPending) {
-            if (activeReadAloudChanged) {
+            if (readAloudMessagesChanged || activeReadAloudChanged) {
                 reload(scrollToBottom);
             }
             return;
@@ -703,7 +742,15 @@ public final class JcefBrowserView {
     }
 
     private TranscriptRenderSnapshot transcriptRenderSnapshot() {
-        return TranscriptRenderSupport.snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, activeReadAloudMessageIndex);
+        return TranscriptRenderSupport.snapshot(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                readAloudAvailable,
+                readAloudMessageIndexes,
+                activeReadAloudMessageIndex
+        );
     }
 
 

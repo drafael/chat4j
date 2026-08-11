@@ -81,7 +81,9 @@ Read aloud appears only when all conditions are true:
 - selected TTS provider is not `Off`,
 - provider is available (credentials for cloud providers, local backend for System),
 - message is from the assistant,
-- speakable text is non-blank.
+- speakable text is non-blank after content filtering.
+
+Before synthesis, Chat4J silently excludes fenced and indented code blocks, Mermaid and SMILES diagrams, and recognized inline or display math/LaTeX formulas. Inline code remains speakable. Filtering uses the original assistant Markdown in every transcript mode and occurs off the Swing EDT before text reaches local or cloud providers. Messages containing only excluded content do not show Read aloud. Extraction failures produce no provider request rather than falling back to unfiltered Markdown.
 
 Swing transcript:
 

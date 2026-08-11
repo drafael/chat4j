@@ -5,9 +5,11 @@ import com.github.drafael.chat4j.chat.render.Palette;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 
 import java.util.List;
+import java.util.Set;
 import lombok.Builder;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 
 @Builder
 public record TranscriptRenderSnapshot(
@@ -20,11 +22,15 @@ public record TranscriptRenderSnapshot(
         int codeFontSize,
         float fontScaleFactor,
         boolean readAloudAvailable,
+        Set<Integer> readAloudMessageIndexes,
         int activeReadAloudMessageIndex
 ) {
     public TranscriptRenderSnapshot {
         entries = entries == null ? emptyList() : List.copyOf(entries);
         renderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
+        readAloudMessageIndexes = readAloudMessageIndexes == null
+                ? emptySet()
+                : Set.copyOf(readAloudMessageIndexes);
     }
 
     public TranscriptRenderSnapshot(
@@ -37,12 +43,34 @@ public record TranscriptRenderSnapshot(
             int codeFontSize,
             float fontScaleFactor
     ) {
-        this(entries, renderMode, dark, jumpButtonVisible, palette, chrome, codeFontSize, fontScaleFactor, false, -1);
+        this(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                palette,
+                chrome,
+                codeFontSize,
+                fontScaleFactor,
+                false,
+                emptySet(),
+                -1
+        );
     }
 
     @Override
     public String toString() {
-        return "TranscriptRenderSnapshot[entries=%d, renderMode=%s, dark=%s, jumpButtonVisible=%s, codeFontSize=%d, fontScaleFactor=%s, readAloudAvailable=%s, activeReadAloudMessageIndex=%d]"
-                .formatted(entries.size(), renderMode, dark, jumpButtonVisible, codeFontSize, fontScaleFactor, readAloudAvailable, activeReadAloudMessageIndex);
+        return "TranscriptRenderSnapshot[entries=%d, renderMode=%s, dark=%s, jumpButtonVisible=%s, codeFontSize=%d, fontScaleFactor=%s, readAloudAvailable=%s, readAloudMessageIndexes=%d, activeReadAloudMessageIndex=%d]"
+                .formatted(
+                        entries.size(),
+                        renderMode,
+                        dark,
+                        jumpButtonVisible,
+                        codeFontSize,
+                        fontScaleFactor,
+                        readAloudAvailable,
+                        readAloudMessageIndexes.size(),
+                        activeReadAloudMessageIndex
+                );
     }
 }

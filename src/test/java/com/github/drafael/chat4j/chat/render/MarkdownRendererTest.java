@@ -98,6 +98,51 @@ class MarkdownRendererTest {
     }
 
     @Test
+    @DisplayName("Four-space backtick markers do not interrupt a paragraph")
+    void toHtml_whenBackticksAreIndentedAsParagraphContent_preservesFollowingParagraph() {
+        String body = renderBody("Before.\n    ```\nAfter.");
+
+        assertThat(body)
+                .contains("<p>Before.</p>")
+                .contains("<p>After.</p>")
+                .doesNotContain("md-code-block");
+    }
+
+    @Test
+    @DisplayName("Longer backtick fences require a matching-length closer")
+    void toHtml_whenBacktickFenceUsesFourDelimiters_preservesShorterFenceLinesAsCode() {
+        String markdown = """
+                ````java
+                first
+                ```
+                second
+                ``` trailing
+                third
+                ````
+                After.
+                """;
+
+        String body = renderBody(markdown);
+
+        assertThat(body)
+                .contains("data-code-language=\"java\"")
+                .contains("first\n```\nsecond\n``` trailing\nthird")
+                .contains("<p>After.</p>")
+                .doesNotContain("data-code-language=\"`java\"");
+    }
+
+    @Test
+    @DisplayName("A longer backtick run can close a shorter fence")
+    void toHtml_whenClosingFenceIsLongerThanOpening_closesTheCodeBlock() {
+        String body = renderBody("```text\ncode\n````\nAfter.");
+
+        assertThat(body)
+                .contains("data-code-language=\"text\"")
+                .contains(">code</font></pre>")
+                .contains("<p>After.</p>");
+    }
+
+    @Test
     @DisplayName("Mermaid fenced blocks render with diagram marker classes")
     void toHtml_whenMarkdownContainsMermaidFence_marksDiagramBlock() {
         String body = renderBody("```mermaid\nflowchart TD\n  A --> B\n```");
@@ -169,6 +214,16 @@ class MarkdownRendererTest {
                 .contains("<i>i2</i>")
                 .contains("<code style=\"background-color:")
                 .contains(">code</font></code>");
+    }
+
+    @Test
+    @DisplayName("Matching backtick runs preserve math-like text inside inline code")
+    void toHtml_whenInlineCodeUsesMultipleBackticks_protectsCompleteCodeSpan() {
+        String body = renderBody("Inline ``a `$x$ b`` done.");
+
+        assertThat(body)
+                .contains(">a `$x$ b</font></code>")
+                .doesNotContain("md-latex-inline");
     }
 
     @Test
@@ -277,6 +332,19 @@ class MarkdownRendererTest {
                 .contains("class=\"md-code-block md-latex-block\"")
                 .contains("latex</font>")
                 .contains("\\xrightarrow{\\text{Heat}}")
+                .doesNotContain("<p>" + formula + "</p>");
+    }
+
+    @Test
+    @DisplayName("Standalone LaTeX commands followed by subscripts render as math fallback blocks")
+    void toHtml_whenBareLatexCommandHasSubscript_rendersCodeBlockFallback() {
+        String formula = "\\sum_{i=1}^{n} i = q";
+
+        String body = renderBody(formula);
+
+        assertThat(body)
+                .contains("class=\"md-code-block md-latex-block\"")
+                .contains(formula)
                 .doesNotContain("<p>" + formula + "</p>");
     }
 

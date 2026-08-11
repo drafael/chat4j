@@ -20,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
@@ -28,6 +29,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 
 public final class SystemWebView {
 
@@ -42,6 +44,7 @@ public final class SystemWebView {
     private boolean dark;
     private boolean jumpButtonVisible;
     private boolean readAloudAvailable;
+    private Set<Integer> readAloudMessageIndexes = emptySet();
     private boolean pdfExportAvailable;
     private int activeReadAloudMessageIndex = -1;
     private boolean documentInitialized;
@@ -107,7 +110,16 @@ public final class SystemWebView {
             boolean jumpButtonVisible,
             boolean readAloudAvailable
     ) {
-        setTranscript(entries, renderMode, dark, scrollToBottom, jumpButtonVisible, readAloudAvailable, -1);
+        setTranscript(
+                entries,
+                renderMode,
+                dark,
+                scrollToBottom,
+                jumpButtonVisible,
+                readAloudAvailable,
+                emptySet(),
+                -1
+        );
     }
 
     public void setTranscript(
@@ -119,16 +131,43 @@ public final class SystemWebView {
             boolean readAloudAvailable,
             int activeReadAloudMessageIndex
     ) {
+        setTranscript(
+                entries,
+                renderMode,
+                dark,
+                scrollToBottom,
+                jumpButtonVisible,
+                readAloudAvailable,
+                emptySet(),
+                activeReadAloudMessageIndex
+        );
+    }
+
+    public void setTranscript(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean scrollToBottom,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable,
+            Set<Integer> readAloudMessageIndexes,
+            int activeReadAloudMessageIndex
+    ) {
         RenderMode nextRenderMode = renderMode == null ? RenderMode.PREVIEW : renderMode;
         boolean styleChanged = this.renderMode != nextRenderMode || this.dark != dark;
         boolean jumpButtonChanged = this.jumpButtonVisible != jumpButtonVisible;
         boolean readAloudChanged = this.readAloudAvailable != readAloudAvailable;
+        Set<Integer> nextReadAloudMessageIndexes = readAloudMessageIndexes == null
+                ? emptySet()
+                : Set.copyOf(readAloudMessageIndexes);
+        boolean readAloudMessagesChanged = !this.readAloudMessageIndexes.equals(nextReadAloudMessageIndexes);
         boolean activeReadAloudChanged = this.activeReadAloudMessageIndex != activeReadAloudMessageIndex;
         this.entries = List.copyOf(entries == null ? emptyList() : entries);
         this.renderMode = nextRenderMode;
         this.dark = dark;
         this.jumpButtonVisible = jumpButtonVisible;
         this.readAloudAvailable = readAloudAvailable;
+        this.readAloudMessageIndexes = nextReadAloudMessageIndexes;
         this.activeReadAloudMessageIndex = activeReadAloudMessageIndex;
 
         if (jumpButtonChanged) {
@@ -140,7 +179,7 @@ public final class SystemWebView {
             return;
         }
         if (documentLoadPending) {
-            if (jumpButtonChanged || activeReadAloudChanged) {
+            if (jumpButtonChanged || readAloudMessagesChanged || activeReadAloudChanged) {
                 reload(scrollToBottom);
             }
             return;
@@ -298,7 +337,15 @@ public final class SystemWebView {
     }
 
     private TranscriptRenderSnapshot transcriptRenderSnapshot() {
-        return TranscriptRenderSupport.snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, activeReadAloudMessageIndex);
+        return TranscriptRenderSupport.snapshot(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                readAloudAvailable,
+                readAloudMessageIndexes,
+                activeReadAloudMessageIndex
+        );
     }
 
 

@@ -146,10 +146,11 @@ public final class TranscriptEntryRenderer {
     private String renderReadAloudAction(ConversationEntry entry, TranscriptRenderSnapshot snapshot) {
         boolean active = snapshot.activeReadAloudMessageIndex() == entry.messageIndex();
         return """
-                    <button class="message-action-button" title="%s" data-action="read-aloud" data-message-index="%d" data-read-aloud-active="%s"><span class="icon %s" aria-hidden="true"></span></button>
+                    <button class="message-action-button" title="%s" data-action="read-aloud" data-message-index="%d" data-read-aloud-token="%s" data-read-aloud-active="%s"><span class="icon %s" aria-hidden="true"></span></button>
                 """.formatted(
                 active ? "Stop" : "Read aloud",
                 entry.messageIndex(),
+                TranscriptReadAloudToken.create(entry.messageIndex(), entry.text()),
                 active ? "true" : "false",
                 active ? "player-stop" : "read-aloud"
         );
@@ -158,7 +159,7 @@ public final class TranscriptEntryRenderer {
     private boolean shouldRenderReadAloudAction(ConversationEntry entry, TranscriptRenderSnapshot snapshot) {
         return snapshot.readAloudAvailable()
                 && entry.role() == Role.ASSISTANT
-                && StringUtils.isNotBlank(entry.text());
+                && snapshot.readAloudMessageIndexes().contains(entry.messageIndex());
     }
 
     private String renderEntryContentHtml(Role role, String text, TranscriptRenderSnapshot snapshot) {

@@ -93,19 +93,6 @@
         preview.style.left = x + 'px';
         preview.style.top = y + 'px';
     }
-    function rowText(row) {
-        if (!row) {
-            return '';
-        }
-        var message = row.querySelector('.message');
-        return message ? String(message.textContent || '') : '';
-    }
-    function messageActionText(button) {
-        if (!button || button.getAttribute('data-action') !== 'read-aloud') {
-            return '';
-        }
-        return rowText(closest(button, '.row[data-message-index]'));
-    }
     function dispatchMessageActionButton(button, event) {
         if (!button) {
             return;
@@ -115,11 +102,8 @@
             event.stopPropagation();
         }
         var action = button.getAttribute('data-action');
-        dispatchTranscriptAction(
-                action,
-                Number(button.getAttribute('data-message-index')),
-                messageActionText(button)
-        );
+        var text = action === 'read-aloud' ? button.getAttribute('data-read-aloud-token') || '' : '';
+        dispatchTranscriptAction(action, Number(button.getAttribute('data-message-index')), text);
         if (action === 'copy') {
             animateCopyButton(button);
         }
@@ -206,7 +190,7 @@
                 }
                 var text = action === 'copy-selected'
                         ? menu.getAttribute('data-selected-text')
-                        : (action === 'read-aloud' ? rowText(row) : '');
+                        : (action === 'read-aloud' ? readAloudButton.getAttribute('data-read-aloud-token') || '' : '');
                 dispatchTranscriptAction(action, messageIndex, text);
                 hideTranscriptMenu();
             };

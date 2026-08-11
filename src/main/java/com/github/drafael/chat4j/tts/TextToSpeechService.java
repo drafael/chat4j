@@ -24,29 +24,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.regex.MatchResult;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
+import static com.github.drafael.chat4j.chat.render.ReadAloudTextExtractor.extract;
+
 @Slf4j
 public class TextToSpeechService {
-
-    private static final Pattern FENCED_CODE_BOUNDARY = Pattern.compile("(?m)^\\s*(```|~~~)[\\w+-]*\\s*$");
-    private static final Pattern MARKDOWN_LINK = Pattern.compile("!?\\[([^]\\n]*)]\\([^)]*\\)");
-    private static final Pattern REFERENCE_LINK = Pattern.compile("\\[([^]\\n]+)]\\[[^]\\n]*]");
-    private static final Pattern STRONG_MARKER = Pattern.compile("(\\*\\*|__)(\\S(?:.*?\\S)?)\\1");
-    private static final Pattern STRIKE_MARKER = Pattern.compile("~~(\\S(?:.*?\\S)?)~~");
-    private static final Pattern INLINE_CODE = Pattern.compile("`([^`\\n]+)`");
-    private static final Pattern ITALIC_ASTERISK = Pattern.compile("(?<!\\*)\\*(?!\\*)(\\S(?:.*?\\S)?)(?<!\\*)\\*(?!\\*)");
-    private static final Pattern HEADING_MARKER = Pattern.compile("(?m)^\\s{0,3}#{1,6}\\s+");
-    private static final Pattern LIST_MARKER = Pattern.compile("(?m)^\\s{0,3}(?:[-*+]\\s+|\\d+[.)]\\s+)");
-    private static final Pattern BLOCKQUOTE_MARKER = Pattern.compile("(?m)^\\s{0,3}>\\s?");
-    private static final Pattern HORIZONTAL_RULE = Pattern.compile("(?m)^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$");
-    private static final Pattern TABLE_SEPARATOR = Pattern.compile("(?m)^\\s*\\|?(?:\\s*:?-{3,}:?\\s*\\|)+\\s*:?-{3,}:?\\s*\\|?\\s*$");
-    private static final Pattern ESCAPED_MARKDOWN_CHARACTER = Pattern.compile("\\\\([\\\\`*_{}\\[\\]()#+\\-.!|>])");
 
     private final TextToSpeechSettings settings;
     private final AudioPlaybackService playbackService;
@@ -126,7 +111,6 @@ public class TextToSpeechService {
             report(errorHandler, "Read aloud is not available in this window. Please reopen the conversation window and try again.");
             return;
         }
-        String normalizedText = speechText(text);
         String normalizedMessageKey = StringUtils.defaultString(messageKey);
         if (isReadAloudActive(normalizedMessageKey)) {
             stop();
@@ -134,10 +118,7 @@ public class TextToSpeechService {
             report(statusHandler, "Stopped read aloud.");
             return;
         }
-        if (normalizedText.isBlank()) {
-            report(statusHandler, "No text to read aloud.");
-            return;
-        }
+        String sourceText = StringUtils.defaultString(text);
 
         TextToSpeechSettings.Selection selection;
         try {
@@ -164,7 +145,7 @@ public class TextToSpeechService {
             synthesizeAndPlay(
                     requestId,
                     normalizedMessageKey,
-                    normalizedText,
+                    sourceText,
                     selection,
                     errorHandler,
                     statusHandler,
@@ -260,12 +241,17 @@ public class TextToSpeechService {
     ) {
         String apiKey = null;
         try {
+            String normalizedText = extract(text);
+            if (normalizedText.isBlank()) {
+                report(statusHandler, "No text to read aloud.");
+                return;
+            }
             TextToSpeechProvider provider = selection.provider();
             if (StringUtils.isNotBlank(provider.requiredEnvVar())) {
                 apiKey = provider.apiKey();
             }
             String responseFormat = provider.defaultResponseFormat();
-            List<String> chunks = speechChunks(text, provider.maxInputCharacters());
+            List<String> chunks = speechChunks(normalizedText, provider.maxInputCharacters());
             SynthesisOperation audioOperation = null;
             try {
                 for (int index = 0; index < chunks.size(); index++) {
@@ -422,33 +408,6 @@ public class TextToSpeechService {
 
     private boolean isStale(long requestId, String messageKey) {
         return requestId != requestCounter.get() || !Objects.equals(activeMessageKey.get(), messageKey);
-    }
-
-    private static String speechText(String text) {
-        String speech = StringUtils.defaultString(text);
-        speech = HORIZONTAL_RULE.matcher(speech).replaceAll(" ");
-        speech = TABLE_SEPARATOR.matcher(speech).replaceAll(" ");
-        speech = FENCED_CODE_BOUNDARY.matcher(speech).replaceAll(" ");
-        speech = HEADING_MARKER.matcher(speech).replaceAll("");
-        speech = LIST_MARKER.matcher(speech).replaceAll("");
-        speech = BLOCKQUOTE_MARKER.matcher(speech).replaceAll("");
-        speech = MARKDOWN_LINK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = REFERENCE_LINK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = STRONG_MARKER.matcher(speech).replaceAll(TextToSpeechService::secondGroup);
-        speech = STRIKE_MARKER.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = INLINE_CODE.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = ITALIC_ASTERISK.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = ESCAPED_MARKDOWN_CHARACTER.matcher(speech).replaceAll(TextToSpeechService::firstGroup);
-        speech = speech.replace('|', ' ');
-        return StringUtils.normalizeSpace(speech);
-    }
-
-    private static String firstGroup(MatchResult match) {
-        return Matcher.quoteReplacement(match.group(1));
-    }
-
-    private static String secondGroup(MatchResult match) {
-        return Matcher.quoteReplacement(match.group(2));
     }
 
     private static List<String> speechChunks(String text, int maxCharacters) {

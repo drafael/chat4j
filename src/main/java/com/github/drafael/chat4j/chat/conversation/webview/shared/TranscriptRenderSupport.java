@@ -8,7 +8,10 @@ import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.util.Fonts;
 
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
+
+import static java.util.Collections.emptySet;
 
 public final class TranscriptRenderSupport {
 
@@ -31,7 +34,7 @@ public final class TranscriptRenderSupport {
             boolean jumpButtonVisible,
             boolean readAloudAvailable
     ) {
-        return snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, -1);
+        return snapshot(entries, renderMode, dark, jumpButtonVisible, readAloudAvailable, emptySet(), -1);
     }
 
     public static TranscriptRenderSnapshot snapshot(
@@ -40,6 +43,26 @@ public final class TranscriptRenderSupport {
             boolean dark,
             boolean jumpButtonVisible,
             boolean readAloudAvailable,
+            int activeReadAloudMessageIndex
+    ) {
+        return snapshot(
+                entries,
+                renderMode,
+                dark,
+                jumpButtonVisible,
+                readAloudAvailable,
+                emptySet(),
+                activeReadAloudMessageIndex
+        );
+    }
+
+    public static TranscriptRenderSnapshot snapshot(
+            List<ConversationEntry> entries,
+            RenderMode renderMode,
+            boolean dark,
+            boolean jumpButtonVisible,
+            boolean readAloudAvailable,
+            Set<Integer> readAloudMessageIndexes,
             int activeReadAloudMessageIndex
     ) {
         Palette palette = MarkdownPaletteResolver.resolve(dark);
@@ -54,6 +77,7 @@ public final class TranscriptRenderSupport {
                 .codeFontSize(codeFontSize)
                 .fontScaleFactor(Fonts.scale(Fonts.SIZE_BODY) / (float) Fonts.SIZE_BODY)
                 .readAloudAvailable(readAloudAvailable)
+                .readAloudMessageIndexes(readAloudMessageIndexes)
                 .activeReadAloudMessageIndex(activeReadAloudMessageIndex)
                 .build();
     }

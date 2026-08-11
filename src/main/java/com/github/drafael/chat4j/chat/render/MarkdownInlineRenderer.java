@@ -7,7 +7,6 @@ import java.util.regex.Pattern;
 
 final class MarkdownInlineRenderer {
 
-    private static final Pattern INLINE_CODE_PATTERN = Pattern.compile("`([^`]+?)`");
     private static final Pattern INLINE_CODE_TOKEN_PATTERN = Pattern.compile("@@INLINE_CODE_(\\d+)@@");
     private static final Pattern DISPLAY_BRACKET_MATH_PATTERN = Pattern.compile("(?s)\\\\\\[(.+?)\\\\\\]");
     private static final Pattern INLINE_PAREN_MATH_PATTERN = Pattern.compile("\\\\\\((.+?)\\\\\\)");
@@ -30,10 +29,9 @@ final class MarkdownInlineRenderer {
 
     static String render(String text, Palette palette) {
         String escaped = HtmlEscaper.escape(text == null ? "" : text);
-        escaped = normalizeMalformedFenceMarkers(escaped);
-
         CodeExtraction codeExtraction = extractInlineCode(escaped);
-        LinkExtraction linkExtraction = extractMarkdownLinks(codeExtraction.text());
+        String normalized = normalizeMalformedFenceMarkers(codeExtraction.text());
+        LinkExtraction linkExtraction = extractMarkdownLinks(normalized);
         MathExtraction mathExtraction = extractMathSegments(linkExtraction.text());
         String rendered = applyInlineFormatting(mathExtraction.text());
         rendered = renderBareUrls(rendered);
@@ -64,12 +62,49 @@ final class MarkdownInlineRenderer {
 
     private static CodeExtraction extractInlineCode(String text) {
         List<String> codeSegments = new ArrayList<>();
-        String withTokens = INLINE_CODE_PATTERN.matcher(text).replaceAll(matchResult -> {
-            codeSegments.add(matchResult.group(1));
-            return inlineCodeToken(codeSegments.size() - 1);
-        });
+        StringBuilder withTokens = new StringBuilder(text.length());
+        int cursor = 0;
+        while (cursor < text.length()) {
+            int openingStart = text.indexOf('`', cursor);
+            if (openingStart < 0) {
+                withTokens.append(text, cursor, text.length());
+                break;
+            }
+            withTokens.append(text, cursor, openingStart);
+            int openingEnd = endOfBacktickRun(text, openingStart);
+            int delimiterLength = openingEnd - openingStart;
+            int closingStart = matchingBacktickRun(text, openingEnd, delimiterLength);
+            if (closingStart < 0) {
+                withTokens.append(text, openingStart, openingEnd);
+                cursor = openingEnd;
+                continue;
+            }
+            codeSegments.add(text.substring(openingEnd, closingStart));
+            withTokens.append(inlineCodeToken(codeSegments.size() - 1));
+            cursor = closingStart + delimiterLength;
+        }
 
-        return new CodeExtraction(withTokens, List.copyOf(codeSegments));
+        return new CodeExtraction(withTokens.toString(), List.copyOf(codeSegments));
+    }
+
+    private static int matchingBacktickRun(String text, int start, int delimiterLength) {
+        int candidate = text.indexOf('`', start);
+        while (candidate >= 0) {
+            int runEnd = endOfBacktickRun(text, candidate);
+            if (runEnd - candidate == delimiterLength) {
+                return candidate;
+            }
+            candidate = text.indexOf('`', runEnd);
+        }
+        return -1;
+    }
+
+    private static int endOfBacktickRun(String text, int start) {
+        int end = start;
+        while (end < text.length() && text.charAt(end) == '`') {
+            end++;
+        }
+        return end;
     }
 
     private static LinkExtraction extractMarkdownLinks(String text) {

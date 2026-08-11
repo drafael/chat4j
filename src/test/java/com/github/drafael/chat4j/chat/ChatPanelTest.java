@@ -92,6 +92,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -106,6 +107,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
+import static com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptReadAloudToken.create;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -2668,13 +2670,21 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Read aloud action button invokes Text to Speech service")
-    void readAloudButton_whenClicked_invokesTextToSpeechService() throws Exception {
+    @DisplayName("Read aloud action passes canonical Markdown to Text to Speech")
+    void readAloudButton_whenClicked_invokesTextToSpeechServiceWithCanonicalMarkdown() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
-        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("assistant answer"))));
-        flushEdt();
+        String markdown = """
+                Intro.
+                ```java
+                CODE_SENTINEL
+                ```
+                Done.
+                """.strip();
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant(markdown))));
+        awaitReadAloudAvailability();
 
+        assertThat(readAloudMessageIndexes()).containsExactly(0);
         JButton readAloudButton = callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .filter(button -> "Read aloud".equals(button.getToolTipText()))
                 .findFirst()
@@ -2683,10 +2693,57 @@ class ChatPanelTest {
         runOnEdt(readAloudButton::doClick);
         flushEdt();
 
-        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(textToSpeechService.requestedText()).isEqualTo(markdown);
         assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
                 .map(JButton::getToolTipText)
                 .toList())).contains("Stop");
+    }
+
+    @Test
+    @DisplayName("Messages containing only excluded content have no Read aloud action")
+    void loadHistory_whenAssistantContentIsOnlyExcluded_omitsReadAloudButton() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("```smiles\nCCO\n```\n$x = y$"))));
+        awaitReadAloudAvailability();
+
+        assertThat(readAloudMessageIndexes()).isEmpty();
+        List<String> tooltips = callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .map(JButton::getToolTipText)
+                .toList());
+
+        assertThat(tooltips).doesNotContain("Read aloud", "Stop");
+    }
+
+    @Test
+    @DisplayName("Excluded-only assistant context menus hide Read aloud and its separator")
+    void contextMenu_whenAssistantContentIsOnlyExcluded_hidesReadAloudSection() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("```smiles\nCCO\n```"))));
+        awaitReadAloudAvailability();
+
+        callOnEdt(() -> {
+            JPopupMenu popup = findComponents(subject, JComponent.class).stream()
+                    .map(JComponent::getComponentPopupMenu)
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElseThrow();
+            PopupMenuEvent event = new PopupMenuEvent(popup);
+            Arrays.stream(popup.getPopupMenuListeners()).forEach(listener -> listener.popupMenuWillBecomeVisible(event));
+            JMenuItem readAloudItem = Arrays.stream(popup.getComponents())
+                    .filter(JMenuItem.class::isInstance)
+                    .map(JMenuItem.class::cast)
+                    .filter(item -> "Read aloud".equals(item.getText()))
+                    .findFirst()
+                    .orElseThrow();
+            int itemIndex = popup.getComponentIndex(readAloudItem);
+
+            assertThat(readAloudItem.isVisible()).isFalse();
+            assertThat(popup.getComponent(itemIndex - 1)).isInstanceOf(JPopupMenu.Separator.class);
+            assertThat(popup.getComponent(itemIndex - 1).isVisible()).isFalse();
+            return null;
+        });
     }
 
     @Test
@@ -2696,6 +2753,7 @@ class ChatPanelTest {
         subject = chatPanelWithTextToSpeech(textToSpeechService);
 
         runOnEdt(subject::removeNotify);
+        assertThat(textToSpeechService.stopCount()).isPositive();
         assertThat(textToSpeechService.disposed()).isFalse();
 
         textToSpeechService.dispose();
@@ -2793,7 +2851,7 @@ class ChatPanelTest {
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, ""));
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, create(1, "assistant answer")));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -2809,29 +2867,87 @@ class ChatPanelTest {
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        runOnEdt(() -> method.invoke(subject, "read-aloud", 0, "browser rendered answer"));
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 0, create(0, "stored assistant answer")));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("stored assistant answer");
     }
 
     @Test
-    @DisplayName("Read aloud web transcript action can use browser-provided text when index is unavailable")
-    void handleWebTranscriptAction_whenReadAloudIndexUnavailable_usesTextPayload() throws Exception {
+    @DisplayName("Read aloud rejects a callback from a transcript replaced at the same index")
+    void handleWebTranscriptAction_whenTranscriptChangesBeforeDispatch_rejectsStaleMessageToken() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("old assistant answer"))));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> {
+            method.invoke(subject, "read-aloud", 0, create(0, "old assistant answer"));
+            subject.loadHistory(List.of(Message.assistant("new assistant answer")));
+        });
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isBlank();
+        assertThat(textToSpeechService.requestedKey()).isBlank();
+    }
+
+    @Test
+    @DisplayName("Read aloud rejects browser text without a canonical message index")
+    void handleWebTranscriptAction_whenReadAloudIndexUnavailable_ignoresTextPayload() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        runOnEdt(() -> method.invoke(subject, "read-aloud", -1, "assistant answer"));
+        runOnEdt(() -> method.invoke(subject, "read-aloud", -1, "MERMAID_RENDERED_TEXT_SENTINEL"));
         flushEdt();
 
-        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
+        assertThat(textToSpeechService.requestedText()).isBlank();
+        assertThat(textToSpeechService.requestedKey()).isBlank();
     }
 
     @Test
-    @DisplayName("Read aloud web transcript action uses bubble history index when activity-only assistant messages are skipped")
-    void handleWebTranscriptAction_whenActivityOnlyAssistantIsSkipped_usesBubbleHistoryIndex() throws Exception {
+    @DisplayName("Read aloud rejects stale callback indexes")
+    void handleWebTranscriptAction_whenIndexIsOutsideTranscript_ignoresCallback() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("assistant answer"))));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 99, "browser text"));
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isBlank();
+        assertThat(textToSpeechService.requestedKey()).isBlank();
+    }
+
+    @Test
+    @DisplayName("Read aloud ignores callbacks resolved to user messages")
+    void handleWebTranscriptAction_whenIndexResolvesToUser_doesNotSelectEarlierAssistant() throws Exception {
+        var textToSpeechService = new RecordingTextToSpeechService();
+        subject = chatPanelWithTextToSpeech(textToSpeechService);
+        runOnEdt(() -> subject.loadHistory(List.of(
+                Message.assistant("earlier assistant answer"),
+                Message.user("user question")
+        )));
+        flushEdt();
+        Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
+        method.setAccessible(true);
+
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, "browser text"));
+        flushEdt();
+
+        assertThat(textToSpeechService.requestedText()).isBlank();
+        assertThat(textToSpeechService.requestedKey()).isBlank();
+    }
+
+    @Test
+    @DisplayName("Read aloud rejects pre-normalization indexes for merged activity-only messages")
+    void handleWebTranscriptAction_whenActivityOnlyAssistantIsMerged_rejectsStaleIndex() throws Exception {
         var textToSpeechService = new RecordingTextToSpeechService();
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Message activityOnlyAssistant = new Message(
@@ -2852,8 +2968,8 @@ class ChatPanelTest {
         runOnEdt(() -> method.invoke(subject, "read-aloud", 2, "assistant answer"));
         flushEdt();
 
-        assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
-        assertThat(textToSpeechService.requestedKey()).isEqualTo("web:1");
+        assertThat(textToSpeechService.requestedText()).isBlank();
+        assertThat(textToSpeechService.requestedKey()).isBlank();
     }
 
     @Test
@@ -2876,7 +2992,7 @@ class ChatPanelTest {
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, "assistant answer"));
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, create(1, "assistant answer")));
         flushEdt();
 
         assertThat(textToSpeechService.requestedText()).isEqualTo("assistant answer");
@@ -2899,7 +3015,7 @@ class ChatPanelTest {
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
 
-        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, ""));
+        runOnEdt(() -> method.invoke(subject, "read-aloud", 1, create(1, "assistant answer")));
         flushEdt();
 
         assertThat(callOnEdt(() -> {
@@ -6010,6 +6126,27 @@ class ChatPanelTest {
         });
     }
 
+    private void awaitReadAloudAvailability() throws Exception {
+        List<CompletableFuture<?>> futures = callOnEdt(() -> {
+            Map<?, ?> availability = (Map<?, ?>) readField(subject, "readAloudAvailability");
+            List<CompletableFuture<?>> pending = new ArrayList<>();
+            availability.values().stream()
+                    .filter(CompletableFuture.class::isInstance)
+                    .map(CompletableFuture.class::cast)
+                    .forEach(pending::add);
+            return pending;
+        });
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).get(5, TimeUnit.SECONDS);
+        flushEdt();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<Integer> readAloudMessageIndexes() throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("readAloudMessageIndexes");
+        method.setAccessible(true);
+        return callOnEdt(() -> (Set<Integer>) method.invoke(subject));
+    }
+
     private static void flushEdt() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             // flush pending UI tasks
@@ -6192,6 +6329,7 @@ class ChatPanelTest {
         private String requestedText = "";
         private String requestedKey = "";
         private String activeMessageKey = "";
+        private int stopCount;
         private boolean disposed;
 
         private RecordingTextToSpeechService() throws IOException {
@@ -6253,6 +6391,7 @@ class ChatPanelTest {
         @Override
         public void stop() {
             activeMessageKey = "";
+            stopCount++;
         }
 
         @Override
@@ -6263,6 +6402,10 @@ class ChatPanelTest {
 
         private boolean disposed() {
             return disposed;
+        }
+
+        private int stopCount() {
+            return stopCount;
         }
 
         private String requestedText() {

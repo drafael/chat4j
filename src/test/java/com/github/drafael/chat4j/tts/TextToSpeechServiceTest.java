@@ -273,6 +273,203 @@ class TextToSpeechServiceTest {
     }
 
     @Test
+    @DisplayName("Excluded blocks and formulas never reach the speech provider")
+    void readAloud_whenMarkdownContainsExcludedContent_sendsOnlySpeakableText() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
+        FakeProvider provider = new LargeInputProvider();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                executor
+        );
+        String markdown = """
+                Intro.
+                # Provider heading
+                    HEADING_CODE_SENTINEL
+                Provider setext heading
+                =======
+                    SETEXT_CODE_SENTINEL
+                * * *
+                    THEMATIC_BREAK_CODE_SENTINEL
+                | Table heading |
+                | --- |
+                    TABLE_CODE_SENTINEL
+                ```java
+                CODE_SENTINEL
+                ```
+                ~~~mermaid
+                MERMAID_SENTINEL
+                ~~~
+                ```smiles
+                SMILES_SENTINEL
+                ```
+                - ```python
+                  LIST_CODE_SENTINEL
+                  ```
+                - List prose.
+
+                    ~~~~mermaid
+                    LIST_CONTINUATION_DIAGRAM_SENTINEL
+                    ~~~~
+                - ```java
+                  FIRST_BLANK_LINE_CODE_SENTINEL
+
+                  SECOND_BLANK_LINE_CODE_SENTINEL
+                  ```
+                -     EXCESS_LIST_PADDING_CODE_SENTINEL
+                - $$
+                  FIRST_BLANK_LINE_MATH_SENTINEL = x
+
+                  SECOND_BLANK_LINE_MATH_SENTINEL = y
+                  $$
+                  - ```java
+                    NESTED_LIST_CODE_SENTINEL
+                    ```
+                  - NESTED_LIST_PROSE_SENTINEL
+                - dedented outer
+                  - dedented inner
+                  dedented outer prose
+
+                      DEDENTED_OUTER_CODE_SENTINEL
+                  DEDENTED_OUTER_PROSE_SENTINEL
+                - outer
+                  > - inner
+                  >   ~~~java
+                  >   NESTED_QUOTE_LIST_CODE_SENTINEL
+                  > ~~~
+                  > NESTED_QUOTE_LIST_LEAK_SENTINEL
+                  >   ~~~
+                  > NESTED_QUOTE_LIST_PROSE_SENTINEL
+                > ~~~smiles
+                > BLOCKQUOTE_SMILES_SENTINEL
+                > ~~~
+                > Quoted prose.
+                >
+                >     BLOCKQUOTE_CODE_SENTINEL
+                > Closing prose.
+                - > ~~~mermaid
+                  > LIST_BLOCKQUOTE_DIAGRAM_SENTINEL
+                  > ~~~
+                > - ~~~smiles
+                >   BLOCKQUOTE_LIST_DIAGRAM_SENTINEL
+                >   ~~~
+                - Padded blockquote prose.
+                  >   ~~~mermaid
+                  > PADDED_BLOCKQUOTE_CODE_SENTINEL
+                  > ~~~
+                  > Padded fence trailing prose.
+                  >   $$
+                  > PADDED_BLOCKQUOTE_MATH_SENTINEL = x
+                  > $$ Padded math trailing prose.
+                > $$
+                > BLOCKQUOTE_DISPLAY_MATH_SENTINEL = x
+                > $$ Quoted math trailing prose.
+                - \\[
+                  LIST_DISPLAY_MATH_SENTINEL = y
+                  \\] List math trailing prose.
+                Formula $INLINE_MATH_SENTINEL = x$.
+                $$
+                DISPLAY_MATH_SENTINEL = y
+                $$
+                Use `Thread.startVirtualThread()`.
+                Preserve ``a `$INLINE_CODE_MATH_SENTINEL$ b``.
+                Preserve multiline ``a
+                $MULTILINE_INLINE_CODE_MATH_SENTINEL = z$
+                b`` too.
+                Done.
+                """;
+
+        try {
+            subject.readAloud("message", markdown, error -> {
+            });
+            executor.shutdown();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(provider.requests).hasSize(1);
+            assertThat(provider.requests.getFirst().text())
+                    .contains(
+                            "Intro.",
+                            "Provider heading",
+                            "Provider setext heading",
+                            "NESTED_LIST_PROSE_SENTINEL",
+                            "DEDENTED_OUTER_PROSE_SENTINEL",
+                            "NESTED_QUOTE_LIST_PROSE_SENTINEL",
+                            "Padded fence trailing prose.",
+                            "Padded math trailing prose.",
+                            "Quoted math trailing prose.",
+                            "List math trailing prose.",
+                            "Formula",
+                            "Thread.startVirtualThread()",
+                            "$INLINE_CODE_MATH_SENTINEL$",
+                            "$MULTILINE_INLINE_CODE_MATH_SENTINEL = z$",
+                            "Done."
+                    )
+                    .doesNotContain(
+                            "HEADING_CODE_SENTINEL",
+                            "SETEXT_CODE_SENTINEL",
+                            "THEMATIC_BREAK_CODE_SENTINEL",
+                            "TABLE_CODE_SENTINEL",
+                            "CODE_SENTINEL",
+                            "MERMAID_SENTINEL",
+                            "SMILES_SENTINEL",
+                            "LIST_CODE_SENTINEL",
+                            "LIST_CONTINUATION_DIAGRAM_SENTINEL",
+                            "FIRST_BLANK_LINE_CODE_SENTINEL",
+                            "SECOND_BLANK_LINE_CODE_SENTINEL",
+                            "EXCESS_LIST_PADDING_CODE_SENTINEL",
+                            "FIRST_BLANK_LINE_MATH_SENTINEL",
+                            "SECOND_BLANK_LINE_MATH_SENTINEL",
+                            "NESTED_LIST_CODE_SENTINEL",
+                            "DEDENTED_OUTER_CODE_SENTINEL",
+                            "NESTED_QUOTE_LIST_CODE_SENTINEL",
+                            "NESTED_QUOTE_LIST_LEAK_SENTINEL",
+                            "BLOCKQUOTE_SMILES_SENTINEL",
+                            "BLOCKQUOTE_CODE_SENTINEL",
+                            "LIST_BLOCKQUOTE_DIAGRAM_SENTINEL",
+                            "BLOCKQUOTE_LIST_DIAGRAM_SENTINEL",
+                            "PADDED_BLOCKQUOTE_CODE_SENTINEL",
+                            "PADDED_BLOCKQUOTE_MATH_SENTINEL",
+                            "BLOCKQUOTE_DISPLAY_MATH_SENTINEL",
+                            "LIST_DISPLAY_MATH_SENTINEL",
+                            "INLINE_MATH_SENTINEL",
+                            "DISPLAY_MATH_SENTINEL"
+                    );
+        } finally {
+            subject.disposeAsync().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    @DisplayName("Messages containing only excluded content do not invoke the provider")
+    void readAloud_whenMarkdownContainsOnlyExcludedContent_skipsSynthesis() throws Exception {
+        var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
+        settingsRepo.put(TextToSpeechSettings.PROVIDER_KEY, "fake");
+        var provider = new FakeProvider();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        var subject = new TextToSpeechService(
+                new TextToSpeechSettings(settingsRepo, new TextToSpeechProviderRegistry(List.of(provider))),
+                new RecordingPlaybackService(),
+                executor
+        );
+        var status = new AtomicReference<String>();
+
+        try {
+            subject.readAloud("message", "```mermaid\ngraph TD\n```\n$x = y$", error -> {
+            }, status::set);
+            executor.shutdown();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(provider.requests).isEmpty();
+            assertThat(status).hasValue("No text to read aloud.");
+            assertThat(subject.isReadAloudActive("message")).isFalse();
+        } finally {
+            subject.disposeAsync().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @DisplayName("Read aloud uses provider default response format")
     void readAloud_providerDefaultResponseFormat_sendsProviderFormat() throws Exception {
         var settingsRepo = new SettingsRepository(Files.createTempFile("chat4j-tts-service", ".properties"));
