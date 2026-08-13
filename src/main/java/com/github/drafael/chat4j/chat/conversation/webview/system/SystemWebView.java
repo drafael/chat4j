@@ -217,6 +217,12 @@ public final class SystemWebView {
         webView.eval(TranscriptUpdateScripts.scrollToBottom());
     }
 
+    public void updateReadAloudChrome(int messageIndex, boolean active) {
+        if (!disposed) {
+            webView.eval(TranscriptUpdateScripts.readAloudChrome(messageIndex, active));
+        }
+    }
+
     public void setPdfExportAvailable(boolean available) {
         pdfExportAvailable = available;
         applyPdfExportAvailability();

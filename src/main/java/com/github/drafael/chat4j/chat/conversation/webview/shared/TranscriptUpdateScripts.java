@@ -35,6 +35,29 @@ public final class TranscriptUpdateScripts {
         );
     }
 
+    public static String readAloudChrome(int messageIndex, boolean active) {
+        return """
+                (function() {
+                  var buttons = document.querySelectorAll('button[data-action="read-aloud"][data-message-index="%d"]');
+                  Array.prototype.forEach.call(buttons, function(button) {
+                    button.setAttribute('data-read-aloud-active', %s);
+                    button.setAttribute('title', %s);
+                    var icon = button.querySelector('.icon');
+                    if (icon) {
+                      icon.classList.toggle('read-aloud', %s);
+                      icon.classList.toggle('player-stop', %s);
+                    }
+                  });
+                })();
+                """.formatted(
+                messageIndex,
+                jsonString(active ? "true" : "false"),
+                jsonString(active ? "Stop" : "Read aloud"),
+                active ? "false" : "true",
+                active ? "true" : "false"
+        );
+    }
+
     public static String transcriptHtmlUpdate(String entriesHtml, boolean jumpButtonVisible, boolean scrollToBottom) {
         return """
                 (function() {

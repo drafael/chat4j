@@ -369,6 +369,8 @@ class TranscriptBrowserAssetsTest {
     void transcriptUpdateScripts_whenBuilt_escapeHtmlAndToggleJumpState() {
         String script = TranscriptUpdateScripts.transcriptHtmlUpdate("<p>hello</p>", true, false);
         String jumpScript = TranscriptUpdateScripts.jumpButtonChrome(false);
+        String readAloudActiveScript = TranscriptUpdateScripts.readAloudChrome(7, true);
+        String readAloudInactiveScript = TranscriptUpdateScripts.readAloudChrome(7, false);
         String scrollScript = TranscriptUpdateScripts.scrollToBottom();
 
         assertThat(script)
@@ -380,6 +382,15 @@ class TranscriptBrowserAssetsTest {
         assertThat(jumpScript)
                 .contains("jump.setAttribute('data-streaming', \"false\")")
                 .contains("jump.classList.toggle('streaming', false)");
+        assertThat(readAloudActiveScript)
+                .contains("data-message-index=\"7\"")
+                .contains("button.setAttribute('data-read-aloud-active', \"true\")")
+                .contains("button.setAttribute('title', \"Stop\")")
+                .contains("icon.classList.toggle('player-stop', true)");
+        assertThat(readAloudInactiveScript)
+                .contains("button.setAttribute('data-read-aloud-active', \"false\")")
+                .contains("button.setAttribute('title', \"Read aloud\")")
+                .contains("icon.classList.toggle('read-aloud', true)");
         assertThat(scrollScript)
                 .contains("window.scrollTo")
                 .contains("document.documentElement.scrollHeight");

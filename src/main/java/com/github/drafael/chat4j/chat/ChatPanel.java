@@ -4126,7 +4126,7 @@ public class ChatPanel extends JPanel {
                 text,
                 message -> showReadAloudError(uiGeneration, message),
                 message -> showReadAloudStatus(uiGeneration, message),
-                () -> refreshReadAloudControls(uiGeneration)
+                () -> refreshReadAloudControls(uiGeneration, messageIndex)
         );
     }
 
@@ -4135,6 +4135,10 @@ public class ChatPanel extends JPanel {
     }
 
     private void refreshReadAloudControls(long uiGeneration) {
+        refreshReadAloudControls(uiGeneration, -1);
+    }
+
+    private void refreshReadAloudControls(long uiGeneration, int webMessageIndex) {
         if (removed || uiGeneration != readAloudUiGeneration.get()) {
             return;
         }
@@ -4143,6 +4147,14 @@ public class ChatPanel extends JPanel {
                 return;
             }
             refreshBubbleActionBars();
+            if (webMessageIndex >= 0) {
+                boolean active = textToSpeechService.isReadAloudActive(webReadAloudKey(webMessageIndex));
+                if (isSystemWebViewEnabled()) {
+                    systemWebView.updateReadAloudChrome(webMessageIndex, active);
+                } else if (isJcefBrowserViewEnabled()) {
+                    jcefBrowserView.updateReadAloudChrome(webMessageIndex, active);
+                }
+            }
             refreshWebTranscript(false);
         });
     }

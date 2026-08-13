@@ -734,6 +734,12 @@ public final class JcefBrowserView {
         });
     }
 
+    public void updateReadAloudChrome(int messageIndex, boolean active) {
+        if (!disposed) {
+            executeJavaScript(TranscriptUpdateScripts.readAloudChrome(messageIndex, active));
+        }
+    }
+
     private void clearPendingTranscriptRender(long requestId) {
         if (pendingTranscriptRenderRequestId == requestId) {
             pendingTranscriptRenderRequestId = 0L;
