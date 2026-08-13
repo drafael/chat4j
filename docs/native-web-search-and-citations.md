@@ -6,7 +6,8 @@ This document captures current provider support for native web search / groundin
 
 - Prefer provider-native search when a selected model supports it.
 - Preserve external Perplexity search as a fallback option for providers without native search.
-- Normalize provider citation metadata into `CitationRef` so the transcript renderer can show consistent clickable source markers.
+- Normalize claim-linked provider citation metadata into `CitationRef` so the transcript renderer can show consistent clickable source markers.
+- Represent structured pages consulted without a documented claim association as `WebSearchSource` and persisted Web Search activity.
 - Avoid enabling web search for APIs that cannot return source metadata.
 - Keep provider-specific request logic isolated in `provider/capability/chat/impl`.
 
@@ -26,6 +27,7 @@ This document captures current provider support for native web search / groundin
 | Provider | Native support | Citation shape | Implementation note |
 | --- | --- | --- | --- |
 | Anthropic | Claude web search tool | Streaming citation deltas, including web-search result locations | Already implemented; keep as reference design. |
+| DeepSeek | V4 models through the official Anthropic-compatible endpoint | Structured search result title/URL blocks without supported claim associations | Hybrid transport: ordinary chat remains on Chat Completions; exact supported Native requests render **Sources consulted** and never fabricate citations. |
 | Perplexity | Sonar models search by default; API exposes search controls | Top-level `citations` URL list and `search_results` objects | Text rendering is preserved; Phase 1 adds structured `CitationRef` emission. |
 | OpenAI | Responses API `web_search`; Chat Completions has specialized search models | `response.output_text.annotation.added` URL annotations with URL/title/offsets | Implemented for streaming Responses path; later expose context-size/domain controls. |
 | Google Gemini | `google_search` grounding for Gemini 2.x/3.x models | `groundingMetadata.groundingChunks[].web` plus `groundingSupports[].segment.text` | Implemented on the native generateContent path when Native web search is enabled. |
@@ -51,6 +53,7 @@ This document captures current provider support for native web search / groundin
 - Provider search should only be shown as “Native” when Chat4J can both call the provider-native API and surface citations or source metadata.
 - Search availability should be conservative. False negatives are better than a visible Native option that silently falls back to uncited answers.
 - `CitationRef` emission should not replace streamed text; it should enrich existing transcript rendering.
+- Use `CitationRef` only when provider metadata associates evidence with answer claims. Use `WebSearchSource` for unlinked searched/consulted pages and persist them under **Sources consulted**.
 - Keep citation numbering deterministic per response with `CitationAccumulator`.
 - Do not parse provider-generated Markdown citations as the only source of truth when structured metadata is available.
 - Do not route Mistral Chat Completions through websearch; its docs explicitly require Conversations/Agents API for references.

@@ -35,6 +35,35 @@ class ConversationPrintHtmlRendererTest {
 
     private final ConversationPrintHtmlRenderer subject = new ConversationPrintHtmlRenderer();
 
+    @Test
+    @DisplayName("Consulted Web Search sources render as activity rather than numbered citations")
+    void render_whenTurnHasConsultedSources_rendersSeparateWebSearchActivity() {
+        var document = ConversationPdfDocument.builder()
+                .title("Consulted source export")
+                .exportedAt(Instant.EPOCH)
+                .turns(List.of(new ConversationPdfDocument.Turn(
+                        Role.ASSISTANT,
+                        Instant.EPOCH,
+                        List.of(new TextPart("answer")),
+                        List.of(),
+                        false,
+                        "",
+                        "**Sources consulted**\n- [Docs](<https://example.test/docs>)",
+                        List.of()
+                )))
+                .build();
+
+        String html = subject.render(document);
+        Document parsed = Jsoup.parse(html);
+
+        assertThat(parsed.select(".turn-content > .attachment-heading").eachText())
+                .containsExactly("Web Search");
+        assertThat(html)
+                .contains("Sources consulted")
+                .contains("https://example.test/docs")
+                .doesNotContain("<ul class=\"citation-list\">");
+    }
+
     @TempDir
     Path tempDirectory;
 
@@ -316,6 +345,41 @@ class ConversationPrintHtmlRendererTest {
                 .contains("<ul class=\"citation-list\">")
                 .contains("4. Source")
                 .doesNotContain("<ol class=\"citation-list\">");
+    }
+
+    @Test
+    @DisplayName("Consulted sources remain separate from claim-level citations")
+    void render_whenConsultedSourcesAndCitationExist_rendersDistinctSections() {
+        CitationRef citation = CitationRef.builder()
+                .number(4)
+                .kind(CitationKind.WEB)
+                .title("Claim Source")
+                .url("https://example.com/claim")
+                .build();
+        var document = ConversationPdfDocument.builder()
+                .title("Search and citations")
+                .exportedAt(Instant.EPOCH)
+                .turns(List.of(new ConversationPdfDocument.Turn(
+                        Role.ASSISTANT,
+                        Instant.EPOCH,
+                        List.of(new TextPart("Answer")),
+                        List.of(),
+                        false,
+                        "",
+                        "**Sources consulted**\n- [Consulted Source](<https://example.com/consulted>)",
+                        List.of(citation)
+                )))
+                .build();
+
+        String html = subject.render(document);
+
+        assertThat(html)
+                .contains("Web Search")
+                .contains("Sources consulted")
+                .contains("Consulted Source")
+                .contains("4. Claim Source")
+                .doesNotContain("4. Consulted Source")
+                .doesNotContain("[4] Consulted Source");
     }
 
     @Test

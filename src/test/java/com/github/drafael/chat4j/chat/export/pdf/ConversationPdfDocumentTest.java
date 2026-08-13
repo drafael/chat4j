@@ -55,7 +55,7 @@ class ConversationPdfDocumentTest {
                                 true,
                                 "visible error",
                                 "private thinking",
-                                "private search activity",
+                                "**Sources consulted**\n- [Example](<https://example.com>)",
                                 List.of(),
                                 List.of(citation)
                         )
@@ -70,8 +70,15 @@ class ConversationPdfDocumentTest {
                         ConversationPdfDocument.Turn::fallbackNotices,
                         ConversationPdfDocument.Turn::cancelled,
                         ConversationPdfDocument.Turn::error,
+                        ConversationPdfDocument.Turn::assistantWebSearch,
                         ConversationPdfDocument.Turn::textForRendering
                 )
-                .containsExactly(List.of("Used attachment fallback"), true, "visible error", "answer");
+                .containsExactly(
+                        List.of("Used attachment fallback"),
+                        true,
+                        "visible error",
+                        "**Sources consulted**\n- [Example](<https://example.com>)",
+                        "answer"
+                );
     }
 }

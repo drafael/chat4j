@@ -43,6 +43,31 @@ class ConversationTurnFingerprintTest {
     }
 
     @Test
+    @DisplayName("Web Search metadata participates in durable turn fingerprints")
+    void create_whenWebSearchActivityChanges_returnsDifferentFingerprint() {
+        String first = ConversationTurnFingerprint.create(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                List.of(),
+                false,
+                "",
+                "**Sources consulted**\n- https://example.test/one",
+                List.of()
+        );
+        String changed = ConversationTurnFingerprint.create(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                List.of(),
+                false,
+                "",
+                "**Sources consulted**\n- https://example.test/two",
+                List.of()
+        );
+
+        assertThat(changed).isNotEqualTo(first);
+    }
+
+    @Test
     @DisplayName("Turn fingerprints preserve boundaries between parts and fallback notices")
     void create_whenValuesCrossCollectionBoundaries_returnsDifferentFingerprint() {
         String partClassName = TextPart.class.getName();

@@ -60,6 +60,35 @@ class WebSearchAvailabilityResolverTest {
     }
 
     @Test
+    @DisplayName("DeepSeek native search requires both an allowlisted model and official endpoint")
+    void resolve_whenDeepSeekConfigurationIsOfficial_includesNativeOption() {
+        ProviderRegistry.ProviderDef selected = provider(
+                "DeepSeek",
+                "https://api.deepseek.com/v1",
+                ProviderCapabilities.chatAndModels()
+        );
+
+        WebSearchAvailability availability = subject.resolve(selected, "deepseek-v4-pro", List.of(selected));
+
+        assertThat(availability.options()).extracting(WebSearchOption::id)
+                .containsExactly(WebSearchAvailabilityResolver.NATIVE_OPTION_ID);
+    }
+
+    @Test
+    @DisplayName("DeepSeek custom endpoints do not expose the native option")
+    void resolve_whenDeepSeekEndpointIsCustom_returnsNoNativeOption() {
+        ProviderRegistry.ProviderDef selected = provider(
+                "DeepSeek",
+                "https://proxy.example.test/v1",
+                ProviderCapabilities.chatAndModels()
+        );
+
+        WebSearchAvailability availability = subject.resolve(selected, "deepseek-v4-pro", List.of(selected));
+
+        assertThat(availability.options()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Perplexity is offered as an external alternative when available")
     void resolve_whenExternalPerplexityAvailable_includesPerplexityAlternative() {
         ProviderRegistry.ProviderDef selected = provider("OpenAI", ProviderCapabilities.chatAndModels());
@@ -80,10 +109,14 @@ class WebSearchAvailabilityResolverTest {
     }
 
     private ProviderRegistry.ProviderDef provider(String name, ProviderCapabilities capabilities) {
+        return provider(name, "https://example.test", capabilities);
+    }
+
+    private ProviderRegistry.ProviderDef provider(String name, String baseUrl, ProviderCapabilities capabilities) {
         return new ProviderRegistry.ProviderDef(
                 name,
                 null,
-                "https://example.test",
+                baseUrl,
                 emptyList(),
                 capabilities,
                 model -> null,

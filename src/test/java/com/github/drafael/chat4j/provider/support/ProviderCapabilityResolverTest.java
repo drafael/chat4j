@@ -901,18 +901,26 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
-    @DisplayName("DeepSeek does not expose image or native web search hints")
-    void capabilities_whenDeepSeekModelNameIsUsed_disablesImageAndNativeWebSearch() {
+    @DisplayName("DeepSeek remains text-only and requires an endpoint-aware native search check")
+    void capabilities_whenDeepSeekModelNameIsUsed_appliesExactImageAndSearchPolicy() {
         assertThat(ProviderCapabilityResolver.supportsImageInput(
                 ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
-                "deepseek-v4-pro"
+                "deepseek-v4-pro",
+                "https://api.deepseek.com"
         )).isFalse();
         assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
                 ProviderCapabilities.chatAndModels(),
                 "DeepSeek",
                 "deepseek-v4-pro"
         )).isFalse();
+        assertThat(ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
+                ProviderCapabilities.chatAndModels(),
+                "DeepSeek",
+                "deepseek-v4-pro",
+                "https://api.deepseek.com/v1",
+                null
+        )).isTrue();
     }
 
     @Test

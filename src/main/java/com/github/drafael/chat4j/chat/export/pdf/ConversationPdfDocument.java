@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.chat.render.WebSearchActivityNormalizer;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -60,6 +61,7 @@ public record ConversationPdfDocument(
             List<String> fallbackNotices,
             boolean cancelled,
             String error,
+            String assistantWebSearch,
             List<CitationRef> citations
     ) {
 
@@ -68,10 +70,23 @@ public record ConversationPdfDocument(
                 Pattern.CASE_INSENSITIVE
         );
 
+        public Turn(
+                Role role,
+                Instant timestamp,
+                List<ContentPart> parts,
+                List<String> fallbackNotices,
+                boolean cancelled,
+                String error,
+                List<CitationRef> citations
+        ) {
+            this(role, timestamp, parts, fallbackNotices, cancelled, error, "", citations);
+        }
+
         public Turn {
             parts = parts == null ? emptyList() : List.copyOf(parts);
             fallbackNotices = fallbackNotices == null ? emptyList() : List.copyOf(fallbackNotices);
             error = StringUtils.defaultString(error);
+            assistantWebSearch = WebSearchActivityNormalizer.normalize(assistantWebSearch);
             citations = citations == null ? emptyList() : List.copyOf(citations);
         }
 
@@ -83,6 +98,7 @@ public record ConversationPdfDocument(
                     message.meta().fallbackNotices(),
                     message.meta().cancelled(),
                     message.meta().error(),
+                    message.meta().assistantWebSearch(),
                     message.meta().citations()
             );
         }

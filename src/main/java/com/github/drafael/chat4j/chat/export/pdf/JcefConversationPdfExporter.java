@@ -53,6 +53,7 @@ public final class JcefConversationPdfExporter implements ConversationPdfExporte
                                 turn.fallbackNotices(),
                                 turn.cancelled(),
                                 turn.error(),
+                                turn.assistantWebSearch(),
                                 turn.citations()
                         )
                 ))

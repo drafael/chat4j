@@ -173,6 +173,41 @@ class WebSearchActivityNormalizerTest {
     }
 
     @Test
+    @DisplayName("Consulted sources remain separate from claim-linked sources")
+    void normalize_whenSameUrlAppearsInSemanticSections_keepsBothSections() {
+        String activity = """
+                **Sources**
+                - [Claim source](<https://example.test/source>)
+
+                **Sources consulted**
+                - [Search result](<https://EXAMPLE.test:443/source#fragment>)
+                """;
+
+        String normalized = WebSearchActivityNormalizer.normalize(activity);
+
+        assertThat(normalized).isEqualTo("""
+                **Sources**
+                - [Claim source](<https://example.test/source>)
+
+                **Sources consulted**
+                - [Search result](<https://EXAMPLE.test:443/source#fragment>)
+                """.trim());
+        assertThat(WebSearchActivityNormalizer.normalize(normalized)).isEqualTo(normalized);
+    }
+
+    @Test
+    @DisplayName("Non-root trailing slashes are not collapsed")
+    void normalize_whenSourcePathHasTrailingSlash_keepsBothUrls() {
+        String activity = """
+                **Sources consulted**
+                - https://example.test/path
+                - https://example.test/path/
+                """;
+
+        assertThat(WebSearchActivityNormalizer.normalize(activity)).isEqualTo(activity.trim());
+    }
+
+    @Test
     @DisplayName("Markdown link sources are de-duplicated by URL")
     void normalize_whenSourcesUseDifferentLabels_deduplicatesByUrl() {
         String activity = """
@@ -182,7 +217,7 @@ class WebSearchActivityNormalizerTest {
 
                 **Browsed pages**
                 1. [Oracle Java 25](https://example.test/java25) — excerpt
-                2. [Oracle Java 25](https://example.test/java25/) — duplicate with slash
+                2. [Oracle Java 25](https://example.test/java25#section) — duplicate with fragment
                 """;
 
         String normalized = WebSearchActivityNormalizer.normalize(activity);

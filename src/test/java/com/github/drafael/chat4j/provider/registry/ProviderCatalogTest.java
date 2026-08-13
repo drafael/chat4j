@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.provider.registry;
 
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.AuthType;
+import com.github.drafael.chat4j.provider.capability.chat.impl.DeepSeekChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
@@ -271,6 +272,13 @@ class ProviderCatalogTest {
                 );
         for (ProviderDefinition provider : catalog.allProviders()) {
             Object client = provider.module().chatCompletionClient();
+            if (client instanceof DeepSeekChatCompletionClient) {
+                Object ordinaryClient = readField(client, "ordinaryClient");
+                Object nativeSearchClient = readField(client, "nativeSearchClient");
+                assertThat(readField(ordinaryClient, "attachmentSupport")).isSameAs(attachmentAuthority);
+                assertThat(readField(nativeSearchClient, "attachmentSupport")).isSameAs(attachmentAuthority);
+                continue;
+            }
             assertThat(readField(client, "attachmentSupport")).isSameAs(attachmentAuthority);
             if (client instanceof GoogleAiGenerateContentClient) {
                 Object fallback = readField(client, "fallbackClient");

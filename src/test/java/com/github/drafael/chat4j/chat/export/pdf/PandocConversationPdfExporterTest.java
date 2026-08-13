@@ -98,6 +98,33 @@ class PandocConversationPdfExporterTest {
     }
 
     @Test
+    @DisplayName("Publication Markdown renders consulted Web Search sources outside citation appendices")
+    void renderMarkdown_whenTurnHasConsultedSources_rendersSeparateWebSearchActivity() throws Exception {
+        var subject = new PandocConversationPdfExporter("pandoc", "lualatex", Map.of());
+        var document = ConversationPdfDocument.builder()
+                .title("Consulted source export")
+                .exportedAt(Instant.EPOCH)
+                .turns(List.of(new ConversationPdfDocument.Turn(
+                        Role.ASSISTANT,
+                        Instant.EPOCH,
+                        List.of(new TextPart("answer")),
+                        List.of(),
+                        false,
+                        "",
+                        "**Sources consulted**\n- [Docs](<https://example.test/docs>)",
+                        List.of()
+                )))
+                .build();
+
+        String markdown = subject.renderMarkdown(document, tempDirectory);
+
+        assertThat(markdown)
+                .contains("### Web Search\n\n**Sources consulted**")
+                .contains("[Docs](<https://example.test/docs>)")
+                .doesNotContain("### Sources\n");
+    }
+
+    @Test
     @DisplayName("Publication rendering replaces corrupt managed images with a placeholder")
     void renderMarkdown_whenManagedImageIsCorrupt_doesNotPassItToLatex() throws Exception {
         Path corruptImage = tempDirectory.resolve("corrupt.png");

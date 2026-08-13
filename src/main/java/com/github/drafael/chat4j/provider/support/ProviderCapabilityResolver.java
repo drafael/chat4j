@@ -38,6 +38,10 @@ public final class ProviderCapabilityResolver {
         String provider = normalize(providerName);
         String model = normalize(modelId);
 
+        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)) {
+            return false;
+        }
+
         if (containsAny(model, IMAGE_MODEL_DENY_HINTS)) {
             return false;
         }
@@ -178,10 +182,22 @@ public final class ProviderCapabilityResolver {
             ProviderCapabilities capabilities,
             String providerName,
             String modelId,
+            String baseUrl
+    ) {
+        return DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)
+                ? supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, null)
+                : supportsNativeWebSearch(capabilities, providerName, modelId);
+    }
+
+    public static boolean supportsRuntimeNativeWebSearch(
+            ProviderCapabilities capabilities,
+            String providerName,
+            String modelId,
             String baseUrl,
             String apiKey
     ) {
-        if (supportsRuntimeDynamicNativeWebSearchProbe(providerName)) {
+        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)
+                || supportsRuntimeDynamicNativeWebSearchProbe(providerName)) {
             return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, apiKey);
         }
         return supportsNativeWebSearch(capabilities, providerName, modelId);
@@ -202,6 +218,9 @@ public final class ProviderCapabilityResolver {
     ) {
         String provider = normalize(providerName);
         String model = normalize(modelId);
+        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)) {
+            return DeepSeekNativeWebSearchSupport.supports(providerName, modelId, baseUrl);
+        }
         if (model.isBlank() || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
             return false;
         }

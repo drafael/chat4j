@@ -35,6 +35,7 @@ import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.api.content.WebSearchSource;
 import com.github.drafael.chat4j.mcp.McpRunProvider;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.conversation.ConversationHistoryEntry;
@@ -446,6 +447,187 @@ class ChatPanelTest {
         boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
 
         assertThat(enabled).isTrue();
+    }
+
+    @Test
+    @DisplayName("Attachment-only DeepSeek native requests still initialize consulted-source mode")
+    void prepareWebSearchContext_whenDeepSeekRequestHasNoTypedText_initializesConsultedSourceMode() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        SendJob sendJob = deepSeekWebSearchSendJob(conversationId);
+
+        List<Message> requestHistory = List.of(Message.user(""));
+        List<Message> history = invokePrepareWebSearchContext(subject, sendJob, session, requestHistory);
+
+        assertThat(history).isSameAs(requestHistory);
+        assertThat(session.consultedSourceMode).isTrue();
+        assertThat(session.webSearchQuery).isEmpty();
+    }
+
+    @Test
+    @DisplayName("DeepSeek consulted-source activity finalizes successful zero-result searches")
+    void finalizeConsultedSourceActivity_whenNoSourcesReturned_persistsZeroResultStatus() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+
+        invokeInitializeConsultedSourceActivity(subject, session, "latest DeepSeek models");
+        invokeFinalizeConsultedSourceActivity(subject, session);
+
+        assertThat(session.consultedSourceMode).isTrue();
+        assertThat(session.webSearchActivity).hasToString("""
+                **Searched**
+                - latest DeepSeek models
+
+                **Sources consulted**
+                - No source URLs returned.
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Consulted-source initialization rejects cancelled, terminal, and shutdown sessions")
+    void initializeConsultedSourceActivity_whenSessionCannotAcceptSources_doesNotMutateState() throws Exception {
+        StreamingSession cancelled = new StreamingSession(2L, UUID.randomUUID(), null);
+        cancelled.cancelled.set(true);
+        StreamingSession terminal = new StreamingSession(3L, UUID.randomUUID(), null);
+        terminal.terminalCallbackStarted.set(true);
+        StreamingSession shutdown = new StreamingSession(4L, UUID.randomUUID(), null);
+
+        invokeInitializeConsultedSourceActivity(subject, cancelled, "cancelled query");
+        invokeInitializeConsultedSourceActivity(subject, terminal, "terminal query");
+        setField(subject, "shutdownInProgress", true);
+        try {
+            invokeInitializeConsultedSourceActivity(subject, shutdown, "shutdown query");
+        } finally {
+            setField(subject, "shutdownInProgress", false);
+        }
+
+        assertThat(List.of(cancelled, terminal, shutdown)).allSatisfy(session -> {
+            assertThat(session.consultedSourceMode).isFalse();
+            assertThat(session.webSearchQuery).isEmpty();
+            assertThat(session.webSearchSources).isEmpty();
+            assertThat(session.webSearchActivity).isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("Consulted-source admission rejects cancelled, terminal, and shutdown sessions")
+    void handleAssistantWebSearchSource_whenSessionCannotAcceptSources_doesNotMutateSnapshot() throws Exception {
+        StreamingSession cancelled = initializedConsultedSourceSession(5L, "cancelled query");
+        cancelled.cancelled.set(true);
+        StreamingSession terminal = initializedConsultedSourceSession(6L, "terminal query");
+        terminal.terminalCallbackStarted.set(true);
+        StreamingSession shutdown = initializedConsultedSourceSession(7L, "shutdown query");
+
+        invokeHandleAssistantWebSearchSource(subject, cancelled, new WebSearchSource("Docs", "https://cancelled.example"));
+        invokeHandleAssistantWebSearchSource(subject, terminal, new WebSearchSource("Docs", "https://terminal.example"));
+        setField(subject, "shutdownInProgress", true);
+        try {
+            invokeHandleAssistantWebSearchSource(subject, shutdown, new WebSearchSource("Docs", "https://shutdown.example"));
+        } finally {
+            setField(subject, "shutdownInProgress", false);
+        }
+
+        assertThat(List.of(cancelled, terminal, shutdown)).allSatisfy(session -> {
+            assertThat(session.webSearchSources).isEmpty();
+            assertThat(session.webSearchActivity).hasToString("**Searched**\n- %s".formatted(session.webSearchQuery));
+        });
+    }
+
+    @Test
+    @DisplayName("A terminal transition holding the persistence lock wins over a waiting source callback")
+    void handleAssistantWebSearchSource_whenTerminalTransitionWinsLock_rejectsLateSource() throws Exception {
+        StreamingSession session = initializedConsultedSourceSession(8L, "ordered query");
+        Object terminalLock = readField(subject, "terminalPersistenceLock");
+        CountDownLatch callbackReady = new CountDownLatch(1);
+        CountDownLatch callbackFinished = new CountDownLatch(1);
+        AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+
+        Thread callback;
+        synchronized (terminalLock) {
+            callback = Thread.startVirtualThread(() -> {
+                callbackReady.countDown();
+                try {
+                    invokeHandleAssistantWebSearchSource(
+                            subject,
+                            session,
+                            new WebSearchSource("Late", "https://late.example")
+                    );
+                } catch (Throwable t) {
+                    callbackFailure.set(t);
+                } finally {
+                    callbackFinished.countDown();
+                }
+            });
+            assertThat(callbackReady.await(2, TimeUnit.SECONDS)).isTrue();
+            session.terminalCallbackStarted.set(true);
+        }
+
+        assertThat(callbackFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        callback.join();
+        assertThat(callbackFailure.get()).isNull();
+        assertThat(session.webSearchSources).isEmpty();
+        assertThat(session.webSearchActivity).hasToString("**Searched**\n- ordered query");
+    }
+
+    @Test
+    @DisplayName("DeepSeek consulted sources remain structured and do not scrape answer links")
+    void prepareAssistantResponse_whenConsultedSourceMode_doesNotScrapeAnswerLinks() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        appendAssistantResponse(session, "Answer with [model link](https://answer.example/link)");
+        invokeInitializeConsultedSourceActivity(subject, session, "latest DeepSeek models");
+        invokeHandleAssistantWebSearchSource(subject, session, new WebSearchSource("Docs", "https://docs.example/source"));
+        invokeFinalizeConsultedSourceActivity(subject, session);
+
+        Object prepared = invokePrepareAssistantResponse(subject, session, deepSeekWebSearchSendJob(conversationId));
+        ConversationHistoryEntry entry = preparedAssistantEntry(prepared);
+
+        assertThat(entry.message().content()).contains("model link").doesNotContain("Sources:");
+        assertThat(entry.message().meta().assistantWebSearch())
+                .contains("**Sources consulted**")
+                .contains("https://docs.example/source")
+                .doesNotContain("https://answer.example/link");
+        assertThat(entry.message().meta().citations()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Stale conflicting Agent Mode and Web Search state fails before provider creation")
+    void onSend_whenAgentModeAndWebSearchConflict_skipsProviderFactory() throws Exception {
+        AtomicInteger providerCreations = new AtomicInteger();
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "Conflict Provider",
+                null,
+                "https://provider.example",
+                List.of("conflict-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    providerCreations.incrementAndGet();
+                    return immediateProvider("unexpected");
+                },
+                List::of
+        );
+        var sendJob = new SendJob(
+                3L,
+                UUID.randomUUID(),
+                provider.name(),
+                "conflict-model",
+                provider,
+                provider.baseUrl(),
+                provider.capabilities(),
+                List.of(Message.user("ping")),
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                true,
+                Files.createDirectories(tempDir.resolve("conflict-project")),
+                ""
+        );
+
+        assertThatThrownBy(() -> invokeAdmitProvider(subject, sendJob))
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .hasRootCauseMessage("Agent Mode and Web Search cannot be enabled together.");
+        assertThat(providerCreations).hasValue(0);
     }
 
     @Test
@@ -1384,6 +1566,47 @@ class ChatPanelTest {
         assertThat(factoryStarted.await(100, TimeUnit.MILLISECONDS)).isFalse();
         assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("SlowProvider > slow-model");
         releaseFactory.countDown();
+    }
+
+    @Test
+    @DisplayName("Selecting a Google model keeps the UI responsive while capability probes run")
+    void setSelectedModel_whenGoogleModelSelected_doesNotRunCapabilityProbesOnEdt() throws Exception {
+        var requestStarted = new CountDownLatch(1);
+        var releaseResponse = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            requestStarted.countDown();
+            try {
+                releaseResponse.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            var provider = new ProviderRegistry.ProviderDef(
+                    "Google AI",
+                    null,
+                    "http://127.0.0.1:%d".formatted(server.getAddress().getPort()),
+                    List.of("gemini-2.5-pro"),
+                    ProviderCapabilities.chatAndModels(),
+                    model -> immediateProvider("ok"),
+                    List::of
+            );
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                subject.setSelectedModel("Google AI > gemini-2.5-pro");
+            });
+
+            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Google AI > gemini-2.5-pro");
+        } finally {
+            releaseResponse.countDown();
+            server.stop(0);
+        }
     }
 
     @Test
@@ -5988,6 +6211,99 @@ class ChatPanelTest {
         return (SpeechToTextService.Callbacks) method.invoke(chatPanel, uiGeneration);
     }
 
+    private StreamingSession initializedConsultedSourceSession(long sessionId, String query) throws Exception {
+        StreamingSession session = new StreamingSession(sessionId, UUID.randomUUID(), null);
+        invokeInitializeConsultedSourceActivity(subject, session, query);
+        return session;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Message> invokePrepareWebSearchContext(
+            ChatPanel chatPanel,
+            SendJob sendJob,
+            StreamingSession session,
+            List<Message> history
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "prepareWebSearchContext",
+                SendJob.class,
+                StreamingSession.class,
+                List.class,
+                BooleanSupplier.class
+        );
+        method.setAccessible(true);
+        return (List<Message>) method.invoke(chatPanel, sendJob, session, history, (BooleanSupplier) () -> false);
+    }
+
+    private static void invokeInitializeConsultedSourceActivity(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            String query
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "initializeConsultedSourceActivity",
+                StreamingSession.class,
+                String.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session, query);
+    }
+
+    private static void invokeHandleAssistantWebSearchSource(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            WebSearchSource source
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "handleAssistantWebSearchSource",
+                StreamingSession.class,
+                WebSearchSource.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session, source);
+    }
+
+    private static void invokeFinalizeConsultedSourceActivity(ChatPanel chatPanel, StreamingSession session) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("finalizeConsultedSourceActivity", StreamingSession.class);
+        method.setAccessible(true);
+        method.invoke(chatPanel, session);
+    }
+
+    private static Object invokePrepareAssistantResponse(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            SendJob sendJob
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "prepareAssistantResponse",
+                StreamingSession.class,
+                SendJob.class
+        );
+        method.setAccessible(true);
+        return method.invoke(chatPanel, session, sendJob);
+    }
+
+    private static ConversationHistoryEntry preparedAssistantEntry(Object preparedResponse) throws Exception {
+        Method method = preparedResponse.getClass().getDeclaredMethod("entry");
+        method.setAccessible(true);
+        return (ConversationHistoryEntry) method.invoke(preparedResponse);
+    }
+
+    private static void appendAssistantResponse(StreamingSession session, String text) {
+        synchronized (session.response) {
+            session.response.append(text);
+        }
+        synchronized (session.responseParts) {
+            session.responseParts.add(new TextPart(text));
+        }
+    }
+
+    private static void invokeAdmitProvider(ChatPanel chatPanel, SendJob sendJob) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod("admitProvider", SendJob.class);
+        method.setAccessible(true);
+        method.invoke(chatPanel, sendJob);
+    }
+
     private static boolean invokeNativeWebSearchEnabled(ChatPanel chatPanel, SendJob sendJob) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod("nativeWebSearchEnabled", SendJob.class);
         method.setAccessible(true);
@@ -6020,6 +6336,26 @@ class ChatPanelTest {
         );
         method.setAccessible(true);
         return (String) method.invoke(chatPanel, sendJob, assistantText, existingActivity, citations);
+    }
+
+    private static SendJob deepSeekWebSearchSendJob(UUID conversationId) {
+        return new SendJob(
+                2L,
+                conversationId,
+                "DeepSeek",
+                "deepseek-v4-pro",
+                testProviderDefinition("DeepSeek", ProviderCapabilities.chatAndModels()),
+                "https://api.deepseek.com",
+                ProviderCapabilities.chatAndModels(),
+                List.of(Message.user("Search")),
+                ReasoningLevel.OFF,
+                true,
+                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
+                5,
+                false,
+                null,
+                ""
+        );
     }
 
     private static SendJob webSearchSendJob() {

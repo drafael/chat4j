@@ -78,6 +78,53 @@ class InputBarValidationTest {
     }
 
     @Test
+    @DisplayName("Enabling Web Search disables Agent Mode and notifies both states")
+    void requestWebSearchEnabled_whenAgentModeEnabled_disablesAgentMode() throws Exception {
+        InputBar subject = new InputBar();
+        Path projectRoot = Files.createTempDirectory("chat4j-agent-search-exclusive");
+        AtomicReference<Boolean> agentState = new AtomicReference<>();
+        AtomicReference<Boolean> searchState = new AtomicReference<>();
+        subject.addAgentModeListener(agentState::set);
+        subject.addWebSearchEnabledListener(searchState::set);
+        subject.setAgentModeAvailable(true);
+        subject.setAgentProjectRoot(projectRoot);
+        subject.setAgentModeEnabled(true);
+        subject.setWebSearchOptions(
+                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
+                "native"
+        );
+
+        subject.requestWebSearchEnabled(true);
+
+        assertThat(subject.isAgentModeEnabled()).isFalse();
+        assertThat(subject.isWebSearchEnabled()).isTrue();
+        assertThat(agentState).hasValue(false);
+        assertThat(searchState).hasValue(true);
+    }
+
+    @Test
+    @DisplayName("Enabling Agent Mode disables Web Search and notifies both states")
+    void toggleAgentMode_whenWebSearchEnabled_disablesWebSearch() throws Exception {
+        InputBar subject = new InputBar();
+        Path projectRoot = Files.createTempDirectory("chat4j-search-agent-exclusive");
+        AtomicReference<Boolean> searchState = new AtomicReference<>();
+        subject.addWebSearchEnabledListener(searchState::set);
+        subject.setWebSearchOptions(
+                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
+                "native"
+        );
+        subject.setWebSearchEnabled(true);
+        subject.setAgentModeAvailable(true);
+        subject.setProjectRootChooserForTests(parent -> Optional.of(projectRoot));
+
+        subject.toggleAgentMode();
+
+        assertThat(subject.isAgentModeEnabled()).isTrue();
+        assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(searchState).hasValue(false);
+    }
+
+    @Test
     @DisplayName("Enabling agent mode requires selecting a project folder")
     void agentModeButtonClick_whenFolderSelectionCancelled_keepsModeDisabledAndShowsValidation() throws Exception {
         InputBar subject = new InputBar();

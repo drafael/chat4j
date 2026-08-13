@@ -145,11 +145,12 @@ public final class ConversationPrintHtmlRenderer {
         String status = includeRemainingContent ? renderMessageStatus(turn, text) : "";
         String media = includeRemainingContent ? renderMedia(turn.parts()) : "";
         String files = includeRemainingContent ? renderFiles(turn.parts()) : "";
+        String webSearch = includeRemainingContent ? renderWebSearch(turn.assistantWebSearch(), smilesCache, cancelled) : "";
         String citations = includeRemainingContent ? renderCitations(turn.citations()) : "";
         return """
                 <section class="turn %s">
                   <h2 class="turn-heading">%s%s</h2>
-                  <div class="turn-content">%s%s%s%s%s</div>
+                  <div class="turn-content">%s%s%s%s%s%s</div>
                 </section>
                 """.formatted(
                 turn.role() == Role.USER ? "user" : "assistant",
@@ -159,6 +160,7 @@ public final class ConversationPrintHtmlRenderer {
                 status,
                 media,
                 files,
+                webSearch,
                 citations
         );
     }
@@ -391,6 +393,19 @@ public final class ConversationPrintHtmlRenderer {
                 ))
                 .collect(joining());
         return "<div class=\"attachment-heading\">Attachments</div><ul class=\"attachment-list\">%s</ul>".formatted(items);
+    }
+
+    private String renderWebSearch(
+            String activity,
+            Map<String, SmilesDiagramRenderer.Result> smilesCache,
+            BooleanSupplier cancelled
+    ) {
+        if (StringUtils.isBlank(activity)) {
+            return "";
+        }
+        return "<div class=\"attachment-heading\">Web Search</div><div class=\"web-search-activity\">%s</div>".formatted(
+                renderMessage(Role.ASSISTANT, activity, smilesCache, cancelled)
+        );
     }
 
     private String renderCitations(List<CitationRef> citations) {

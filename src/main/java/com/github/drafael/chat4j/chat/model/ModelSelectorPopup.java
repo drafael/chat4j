@@ -1195,7 +1195,8 @@ public class ModelSelectorPopup extends JDialog {
         boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
                 entry.def.capabilities(),
                 entry.name(),
-                modelId
+                modelId,
+                entry.baseUrl()
         );
 
         return new ModelCapabilities(supportsImageInput, supportsReasoning, supportsNativeWebSearch);

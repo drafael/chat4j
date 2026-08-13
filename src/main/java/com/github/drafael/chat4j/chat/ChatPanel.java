@@ -62,15 +62,18 @@ import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.MessageMeta;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
+import com.github.drafael.chat4j.provider.api.content.WebSearchSource;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.DeepSeekNativeWebSearchSupport;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.provider.support.WebSearchSourceUrlNormalizer;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.util.Fonts;
@@ -1500,6 +1503,7 @@ public class ChatPanel extends JPanel {
                             return;
                         }
                         flushThinkTagParser(session, sendJob);
+                        finalizeConsultedSourceActivity(session);
                         preparedResponse = prepareAssistantResponse(session, sendJob);
                     }
                     SwingUtilities.invokeLater(() -> finishSuccessfulStream(session, sendJob, preparedResponse));
@@ -1586,6 +1590,7 @@ public class ChatPanel extends JPanel {
                         callbacks.onThinkingToken(),
                         callbacks.onPart(),
                         callbacks.onCitation(),
+                        source -> handleAssistantWebSearchSource(session, source),
                         callbacks.onComplete(),
                         callbacks.onError(),
                         session.cancelled::get,
@@ -1679,6 +1684,41 @@ public class ChatPanel extends JPanel {
                         onThinkingToken,
                         onPart,
                         onCitation,
+                        source -> {
+                        },
+                        onComplete,
+                        onError,
+                        isCancelled,
+                        session::registerActiveRequest,
+                        session::clearActiveRequest
+                );
+            }
+
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    Consumer<WebSearchSource> onWebSearchSource,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                delegate.streamCompletion(
+                        history,
+                        reasoningLevel,
+                        webSearchOptions,
+                        onToken,
+                        onThinkingToken,
+                        onPart,
+                        onCitation,
+                        onWebSearchSource,
                         onComplete,
                         onError,
                         isCancelled,
@@ -1707,14 +1747,19 @@ public class ChatPanel extends JPanel {
 
         ensureNotCancelled(isCancelled);
         String query = latestUserText(requestHistory);
-        if (StringUtils.isBlank(query)) {
-            return requestHistory;
-        }
 
         if (!Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
             if (nativeWebSearchEnabled(sendJob)) {
-                recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
+                if (DeepSeekNativeWebSearchSupport.supports(sendJob.providerName, sendJob.modelId, sendJob.baseUrl)) {
+                    initializeConsultedSourceActivity(session, query);
+                } else if (StringUtils.isNotBlank(query)) {
+                    recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
+                }
             }
+            return requestHistory;
+        }
+
+        if (StringUtils.isBlank(query)) {
             return requestHistory;
         }
 
@@ -1809,6 +1854,92 @@ public class ChatPanel extends JPanel {
         SwingUtilities.invokeLater(() -> showWebSearchActivity(session, normalizedActivity));
     }
 
+    private void initializeConsultedSourceActivity(StreamingSession session, String query) {
+        String snapshot;
+        synchronized (terminalPersistenceLock) {
+            synchronized (session.webSearchSourceLock) {
+                if (shutdownInProgress || !session.isLive() || session.terminalCallbackStarted.get()) {
+                    return;
+                }
+                session.consultedSourceMode = true;
+                session.webSearchQuery = StringUtils.normalizeSpace(query);
+                session.webSearchSources.clear();
+                snapshot = renderConsultedSourceActivity(session, false);
+                replaceWebSearchActivity(session, snapshot);
+            }
+        }
+        SwingUtilities.invokeLater(() -> showWebSearchActivity(session, snapshot));
+    }
+
+    private void handleAssistantWebSearchSource(StreamingSession session, WebSearchSource source) {
+        WebSearchSourceUrlNormalizer.normalize(source == null ? null : source.url()).ifPresent(normalized -> {
+            String snapshot;
+            synchronized (terminalPersistenceLock) {
+                synchronized (session.webSearchSourceLock) {
+                    if (shutdownInProgress
+                            || !session.isLive()
+                            || session.terminalCallbackStarted.get()
+                            || !session.consultedSourceMode
+                    ) {
+                        return;
+                    }
+                    String title = StringUtils.defaultIfBlank(StringUtils.normalizeSpace(source.title()), normalized.host());
+                    session.webSearchSources.putIfAbsent(
+                            normalized.key(),
+                            new WebSearchSource(title, normalized.displayUrl())
+                    );
+                    snapshot = renderConsultedSourceActivity(session, false);
+                    replaceWebSearchActivity(session, snapshot);
+                }
+            }
+            SwingUtilities.invokeLater(() -> {
+                if (session.isLive() && !session.terminalCallbackStarted.get() && isVisibleSession(session)) {
+                    showWebSearchActivity(session, snapshot);
+                }
+            });
+        });
+    }
+
+    private void finalizeConsultedSourceActivity(StreamingSession session) {
+        synchronized (session.webSearchSourceLock) {
+            if (!session.consultedSourceMode) {
+                return;
+            }
+            replaceWebSearchActivity(session, renderConsultedSourceActivity(session, true));
+        }
+    }
+
+    private String renderConsultedSourceActivity(StreamingSession session, boolean completed) {
+        StringBuilder activity = new StringBuilder();
+        if (StringUtils.isNotBlank(session.webSearchQuery)) {
+            activity.append("**Searched**\n- ").append(session.webSearchQuery).append("\n");
+        }
+        if (!session.webSearchSources.isEmpty() || completed) {
+            if (!activity.isEmpty()) {
+                activity.append("\n");
+            }
+            activity.append("**Sources consulted**\n");
+            if (session.webSearchSources.isEmpty()) {
+                activity.append("- No source URLs returned.\n");
+            } else {
+                session.webSearchSources.values().forEach(source -> activity
+                        .append("- [")
+                        .append(escapeMarkdownLinkLabel(source.title()))
+                        .append("](<")
+                        .append(source.url())
+                        .append(">)\n"));
+            }
+        }
+        return normalizeWebSearchActivity(activity.toString());
+    }
+
+    private void replaceWebSearchActivity(StreamingSession session, String activity) {
+        synchronized (session.webSearchActivity) {
+            session.webSearchActivity.setLength(0);
+            session.webSearchActivity.append(StringUtils.defaultString(activity));
+        }
+    }
+
     private String formatNativeWebSearchActivity(SendJob sendJob, String query) {
         String provider = StringUtils.defaultIfBlank(sendJob.providerName, "Selected provider");
         String model = StringUtils.defaultIfBlank(sendJob.modelId, "selected model");
@@ -1893,8 +2024,15 @@ public class ChatPanel extends JPanel {
     }
 
     private void showWebSearchActivity(StreamingSession session, String webSearchActivity) {
+        showWebSearchActivity(session, webSearchActivity, false);
+    }
+
+    private void showWebSearchActivity(StreamingSession session, String webSearchActivity, boolean terminalSnapshot) {
         String normalizedActivity = normalizeWebSearchActivity(webSearchActivity);
-        if (!session.isLive() || !isVisibleSession(session) || StringUtils.isBlank(normalizedActivity)) {
+        boolean currentSession = terminalSnapshot
+                ? session != null && isVisibleConversation(session.conversationId)
+                : session != null && session.isLive() && isVisibleSession(session);
+        if (!currentSession || StringUtils.isBlank(normalizedActivity)) {
             return;
         }
 
@@ -2317,6 +2455,15 @@ public class ChatPanel extends JPanel {
 
     private void admitProvider(SendJob sendJob) {
         ensureNotCancelled(sendJob.cancelled::get);
+        if (sendJob.agentModeEnabled && sendJob.webSearchEnabled) {
+            throw new IllegalArgumentException("Agent Mode and Web Search cannot be enabled together.");
+        }
+        if (sendJob.webSearchEnabled
+                && Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)
+                && !nativeWebSearchSupported(sendJob)
+        ) {
+            throw new IllegalArgumentException("Native Web Search is no longer available for the selected provider configuration.");
+        }
         ProviderRegistry.ProviderDef providerDefinition = sendJob.providerDefinition;
         try {
             sendJob.provider = providerDefinition.factory().create(sendJob.modelId);
@@ -5691,10 +5838,25 @@ public class ChatPanel extends JPanel {
             }
             currentAssistantBubble.component().putClientProperty(
                     MESSAGE_META_PROPERTY,
-                    new MessageMeta(emptyList(), emptyList(), false, "", "", "", emptyList(), citations)
+                    new MessageMeta(
+                            emptyList(),
+                            emptyList(),
+                            false,
+                            "",
+                            "",
+                            currentSessionWebSearchActivity(session),
+                            emptyList(),
+                            citations
+                    )
             );
             refreshWebTranscript(true);
         });
+    }
+
+    private String currentSessionWebSearchActivity(StreamingSession session) {
+        synchronized (session.webSearchActivity) {
+            return normalizeWebSearchActivity(session.webSearchActivity.toString());
+        }
     }
 
     private void handleAssistantThinkingToken(StreamingSession session, SendJob sendJob, String thinkingToken) {
@@ -5840,10 +6002,20 @@ public class ChatPanel extends JPanel {
         }
         List<AgentToolActivityMeta> agentToolActivities = snapshotAgentToolActivities(session);
         List<CitationRef> citations = snapshotCitations(session);
-        assistantText = appendCitationSourcesIfNeeded(assistantText, citations);
-        assistantWebSearch = normalizeWebSearchActivity(
-                mergeAssistantWebSearchWithAnswerSources(sendJob, assistantText, assistantWebSearch, citations)
-        );
+        boolean consultedSourceMode;
+        synchronized (session.webSearchSourceLock) {
+            consultedSourceMode = session.consultedSourceMode;
+        }
+        if (!consultedSourceMode) {
+            assistantText = appendCitationSourcesIfNeeded(assistantText, citations);
+            assistantWebSearch = mergeAssistantWebSearchWithAnswerSources(
+                    sendJob,
+                    assistantText,
+                    assistantWebSearch,
+                    citations
+            );
+        }
+        assistantWebSearch = normalizeWebSearchActivity(assistantWebSearch);
         List<ContentPart> assistantParts = assistantResponseParts(session, assistantText);
         boolean hasContent = StringUtils.isNotBlank(assistantText)
                 || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart))
@@ -5890,7 +6062,7 @@ public class ChatPanel extends JPanel {
             return;
         }
         if (StringUtils.isNotBlank(preparedResponse.webSearchActivity())) {
-            showWebSearchActivity(session, preparedResponse.webSearchActivity());
+            showWebSearchActivity(session, preparedResponse.webSearchActivity(), true);
         }
         Message assistantMessage = preparedResponse.entry().message();
         history.add(assistantMessage);
@@ -6402,7 +6574,13 @@ public class ChatPanel extends JPanel {
             }
             if (session != null) {
                 session.cancelled.set(true);
-                if (!markAsCancelled) {
+                if (markAsCancelled) {
+                    synchronized (session.webSearchSourceLock) {
+                        if (session.consultedSourceMode) {
+                            replaceWebSearchActivity(session, renderConsultedSourceActivity(session, false));
+                        }
+                    }
+                } else {
                     discardStreamingResponseAttachments(session);
                 }
             }

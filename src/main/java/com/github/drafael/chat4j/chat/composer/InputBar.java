@@ -799,6 +799,9 @@ public class InputBar extends JPanel {
             return;
         }
 
+        if (enabled && agentModeEnabled) {
+            setAgentModeEnabled(false);
+        }
         boolean previous = webSearchEnabled;
         setWebSearchEnabled(enabled);
         if (previous != webSearchEnabled) {
@@ -1143,6 +1146,10 @@ public class InputBar extends JPanel {
         }
 
         clearValidationMessage();
+        if (webSearchEnabled) {
+            setWebSearchEnabled(false);
+            notifyWebSearchEnabledChanged(false);
+        }
         setAgentModeEnabled(true);
     }
 

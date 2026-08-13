@@ -296,10 +296,18 @@ public final class PandocConversationPdfExporter implements ConversationPdfExpor
                 return markdown.toString();
             }
             appendFiles(markdown, turn.parts());
+            appendWebSearch(markdown, turn.assistantWebSearch());
             appendCitations(markdown, turn.citations());
             markdown.append("\n---\n\n");
         }
         return markdown.toString();
+    }
+
+    private void appendWebSearch(StringBuilder markdown, String activity) {
+        if (StringUtils.isBlank(activity)) {
+            return;
+        }
+        markdown.append("### Web Search\n\n").append(activity.trim()).append("\n\n");
     }
 
     private DiagramMarkdown renderDiagramBlocks(

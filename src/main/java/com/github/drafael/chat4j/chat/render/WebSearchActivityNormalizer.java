@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.render;
 
+import com.github.drafael.chat4j.provider.support.WebSearchSourceUrlNormalizer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -22,6 +23,7 @@ public final class WebSearchActivityNormalizer {
 
         LinkedHashSet<String> searched = new LinkedHashSet<>();
         LinkedHashMap<String, String> sources = new LinkedHashMap<>();
+        LinkedHashMap<String, String> consultedSources = new LinkedHashMap<>();
         WebActivitySection section = WebActivitySection.NONE;
         for (String rawLine : activity.split("\\R")) {
             String line = rawLine.trim();
@@ -33,12 +35,11 @@ public final class WebSearchActivityNormalizer {
             if (StringUtils.isBlank(line)) {
                 continue;
             }
-
-            addLine(searched, sources, section, line);
+            addLine(searched, sources, consultedSources, section, line);
         }
 
         removeNativePlaceholders(sources);
-        return render(searched, sources);
+        return render(searched, sources, consultedSources);
     }
 
     private static WebActivitySection sectionFromHeading(String line) {
@@ -47,23 +48,17 @@ public final class WebSearchActivityNormalizer {
         heading = Strings.CS.removeEnd(Strings.CS.removeStart(heading, "**"), "**").trim();
         heading = Strings.CS.removeEnd(heading, ":").trim();
         return switch (heading.toLowerCase()) {
-            case "searched" -> {
-                yield WebActivitySection.SEARCHED;
-            }
-            // Older metadata used separate UI sections: "Visited sources" for provider search results and
-            // "Browsed pages" for pages Chat4J fetched. New UI merges both into one Sources section.
-            case "sources", "visited sources", "browsed pages" -> {
-                yield WebActivitySection.SOURCES;
-            }
-            default -> {
-                yield WebActivitySection.NONE;
-            }
+            case "searched" -> WebActivitySection.SEARCHED;
+            case "sources", "visited sources", "browsed pages" -> WebActivitySection.SOURCES;
+            case "sources consulted" -> WebActivitySection.SOURCES_CONSULTED;
+            default -> WebActivitySection.NONE;
         };
     }
 
     private static void addLine(
             LinkedHashSet<String> searched,
             LinkedHashMap<String, String> sources,
+            LinkedHashMap<String, String> consultedSources,
             WebActivitySection section,
             String line
     ) {
@@ -73,16 +68,17 @@ public final class WebSearchActivityNormalizer {
         }
 
         switch (section) {
-            case SEARCHED -> {
-                searched.add(item);
-            }
-            case SOURCES -> {
-                sources.merge(dedupeKey(item), "- %s".formatted(item), WebSearchActivityNormalizer::preferSourceLine);
-            }
+            case SEARCHED -> searched.add(item);
+            case SOURCES -> addSource(sources, item);
+            case SOURCES_CONSULTED -> addSource(consultedSources, item);
             case NONE -> {
                 // Ignore stray markdown outside known sections.
             }
         }
+    }
+
+    private static void addSource(LinkedHashMap<String, String> target, String item) {
+        target.merge(dedupeKey(item), "- %s".formatted(item), WebSearchActivityNormalizer::preferSourceLine);
     }
 
     private static String preferSourceLine(String existing, String candidate) {
@@ -109,8 +105,10 @@ public final class WebSearchActivityNormalizer {
     private static String dedupeKey(String item) {
         Matcher matcher = SOURCE_URL_PATTERN.matcher(item);
         if (matcher.find()) {
-            String url = normalizeUrl(matchedSourceUrl(matcher));
-            return "url:%s".formatted(url);
+            String rawUrl = matchedSourceUrl(matcher).replaceAll("[.,;:]+$", "");
+            return WebSearchSourceUrlNormalizer.normalize(rawUrl)
+                    .map(normalized -> "url:%s".formatted(normalized.key()))
+                    .orElseGet(() -> "text:%s".formatted(item.toLowerCase()));
         }
         return "text:%s".formatted(item.toLowerCase());
     }
@@ -125,26 +123,23 @@ public final class WebSearchActivityNormalizer {
         return "";
     }
 
-    private static String normalizeUrl(String url) {
-        String normalized = StringUtils.defaultString(url).replaceAll("[.,;:]+$", "");
-        while (normalized.endsWith("/") || normalized.endsWith("#")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        return normalized;
-    }
-
     private static void removeNativePlaceholders(LinkedHashMap<String, String> sources) {
         sources.entrySet().removeIf(entry -> !entry.getKey().startsWith("url:")
                 && entry.getValue().contains("Native web search is handled"));
     }
 
-    private static String render(LinkedHashSet<String> searched, LinkedHashMap<String, String> sources) {
+    private static String render(
+            LinkedHashSet<String> searched,
+            LinkedHashMap<String, String> sources,
+            LinkedHashMap<String, String> consultedSources
+    ) {
         StringBuilder normalized = new StringBuilder();
         if (!searched.isEmpty()) {
             normalized.append("**Searched**\n");
             searched.forEach(query -> normalized.append("- ").append(query).append("\n"));
         }
         appendSection(normalized, "Sources", sources);
+        appendSection(normalized, "Sources consulted", consultedSources);
         return normalized.toString().trim();
     }
 
@@ -169,6 +164,7 @@ public final class WebSearchActivityNormalizer {
     private enum WebActivitySection {
         NONE,
         SEARCHED,
-        SOURCES
+        SOURCES,
+        SOURCES_CONSULTED
     }
 }

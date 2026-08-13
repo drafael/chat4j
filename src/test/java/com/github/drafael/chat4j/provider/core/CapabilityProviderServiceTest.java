@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
+import com.github.drafael.chat4j.provider.api.content.WebSearchSource;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -286,6 +287,73 @@ class CapabilityProviderServiceTest {
         assertThat(observedCitation.get()).isEqualTo(expectedCitation);
         assertThat(completed.get()).isTrue();
         assertThat(error.get()).isNull();
+    }
+
+    @Test
+    @DisplayName("Structured Web Search sources are forwarded independently from citations")
+    void streamCompletion_whenClientEmitsWebSearchSource_forwardsSourceAndCompletes() {
+        WebSearchSource expectedSource = new WebSearchSource("Docs", "https://example.test/docs");
+        AtomicReference<WebSearchSource> observedSource = new AtomicReference<>();
+        AtomicBoolean completed = new AtomicBoolean();
+        ChatCompletionClient client = new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+            }
+
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    Consumer<WebSearchSource> onWebSearchSource,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                onWebSearchSource.accept(expectedSource);
+            }
+        };
+        var subject = new CapabilityProviderService(runtime(), client);
+
+        subject.streamCompletion(
+                List.of(Message.user("research")),
+                ReasoningLevel.OFF,
+                new WebSearchRequestOptions(true, "native"),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                observedSource::set,
+                () -> completed.set(true),
+                ignored -> {
+                },
+                () -> false,
+                ignored -> {
+                },
+                () -> {
+                }
+        );
+
+        assertThat(observedSource).hasValue(expectedSource);
+        assertThat(completed).isTrue();
     }
 
     private static ProviderRuntime runtime() {

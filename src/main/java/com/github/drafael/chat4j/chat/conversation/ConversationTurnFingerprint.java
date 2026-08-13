@@ -29,6 +29,18 @@ public final class ConversationTurnFingerprint {
             String error,
             List<CitationRef> citations
     ) {
+        return create(role, parts, fallbackNotices, cancelled, error, "", citations);
+    }
+
+    public static String create(
+            Role role,
+            List<ContentPart> parts,
+            List<String> fallbackNotices,
+            boolean cancelled,
+            String error,
+            String assistantWebSearch,
+            List<CitationRef> citations
+    ) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             List<ContentPart> safeParts = parts == null ? emptyList() : parts;
@@ -41,6 +53,7 @@ public final class ConversationTurnFingerprint {
             safeFallbackNotices.forEach(notice -> addField(digest, "fallback-notice", notice));
             addField(digest, "cancelled", cancelled);
             addField(digest, "error", error);
+            addField(digest, "assistant-web-search", assistantWebSearch);
             addField(digest, "citations-count", safeCitations.size());
             safeCitations.forEach(citation -> addCitation(digest, citation));
             return HexFormat.of().formatHex(digest.digest());

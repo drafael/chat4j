@@ -410,6 +410,7 @@ public final class JcefBrowserView {
                     entry.meta().fallbackNotices(),
                     entry.meta().cancelled(),
                     entry.meta().error(),
+                    entry.meta().assistantWebSearch(),
                     entry.meta().citations()
             );
             return Strings.CS.equals(fingerprint, expected.fingerprint());

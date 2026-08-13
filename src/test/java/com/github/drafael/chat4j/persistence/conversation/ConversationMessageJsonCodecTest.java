@@ -72,6 +72,24 @@ class ConversationMessageJsonCodecTest {
     }
 
     @Test
+    @DisplayName("Consulted-source activity round-trips through meta JSON")
+    void deserializeMessage_whenWebSearchActivitySerialized_restoresActivity() {
+        String activity = """
+                **Searched**
+                - latest models
+
+                **Sources consulted**
+                - [DeepSeek Docs](<https://api-docs.deepseek.com/>)
+                """.trim();
+        var meta = new MessageMeta(List.of(), List.of(), false, "", "", activity, List.of(), List.of());
+
+        String metaJson = subject.serializeMeta(meta);
+        Message restored = subject.deserializeMessage(Role.ASSISTANT.name(), "Answer", "", metaJson, Instant.now());
+
+        assertThat(restored.meta().assistantWebSearch()).isEqualTo(activity);
+    }
+
+    @Test
     @DisplayName("Missing and malformed citations load as empty metadata")
     void deserializeMessage_whenCitationMetaMissingOrMalformed_ignoresInvalidEntries() {
         String metaJson = """
