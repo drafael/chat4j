@@ -4,6 +4,7 @@
  */
 package com.github.drafael.chat4j.mcp;
 
+import com.github.drafael.chat4j.provider.support.ProcessHandleSupport;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.spec.McpClientTransport;
@@ -326,7 +327,7 @@ public final class Chat4jStdioClientTransport implements McpClientTransport {
         destroyDescendants(descendants, false);
         current.destroy();
         settleProcessTree(current, descendants, false, GRACE_PERIOD);
-        if (current.isAlive() || descendants.stream().anyMatch(ProcessHandle::isAlive)) {
+        if (current.isAlive() || descendants.stream().anyMatch(ProcessHandleSupport::isRunning)) {
             captureDescendants(current, descendants);
             destroyDescendants(descendants, true);
             if (current.isAlive()) {
@@ -335,7 +336,7 @@ public final class Chat4jStdioClientTransport implements McpClientTransport {
             settleProcessTree(current, descendants, true, GRACE_PERIOD);
         }
         captureDescendants(current, descendants);
-        if (current.isAlive() || descendants.stream().anyMatch(ProcessHandle::isAlive)) {
+        if (current.isAlive() || descendants.stream().anyMatch(ProcessHandleSupport::isRunning)) {
             throw new IllegalStateException("MCP stdio process tree did not terminate.");
         }
     }
@@ -353,7 +354,7 @@ public final class Chat4jStdioClientTransport implements McpClientTransport {
             if (force && current.isAlive()) {
                 current.destroyForcibly();
             }
-            if (!current.isAlive() && descendants.stream().noneMatch(ProcessHandle::isAlive)) {
+            if (!current.isAlive() && descendants.stream().noneMatch(ProcessHandleSupport::isRunning)) {
                 return;
             }
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
@@ -366,7 +367,7 @@ public final class Chat4jStdioClientTransport implements McpClientTransport {
         if (current.isAlive()) {
             roots.add(current.toHandle());
         }
-        descendants.stream().filter(ProcessHandle::isAlive).forEach(roots::add);
+        descendants.stream().filter(ProcessHandleSupport::isRunning).forEach(roots::add);
         roots.forEach(root -> {
             try {
                 descendants.addAll(root.descendants().toList());
@@ -377,7 +378,7 @@ public final class Chat4jStdioClientTransport implements McpClientTransport {
 
     private void destroyDescendants(Set<ProcessHandle> descendants, boolean force) {
         new ArrayList<>(descendants).reversed().stream()
-                .filter(ProcessHandle::isAlive)
+                .filter(ProcessHandleSupport::isRunning)
                 .forEach(descendant -> {
                     if (force) {
                         descendant.destroyForcibly();

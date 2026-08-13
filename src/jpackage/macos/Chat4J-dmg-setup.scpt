@@ -43,9 +43,7 @@ tell application "Finder"
     set background picture of theViewOptions to POSIX file backgroundFile
   end try
 
-  if not (exists item installDisplayName of theDisk) then
-    make new alias file at POSIX file volumePath to POSIX file installLocation with properties {name:installDisplayName}
-  end if
+  make new alias file at POSIX file volumePath to POSIX file installLocation with properties {name:installDisplayName}
 
   delay 0.5
 

@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.chat.agent.ToolInvocationRequest;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.McpSecretVault;
+import com.github.drafael.chat4j.provider.support.ProcessHandleSupport;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -124,7 +125,7 @@ class McpManagerStdioIntegrationTest {
         }
 
         assertThat(childPid).isPositive();
-        assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+        assertThat(ProcessHandle.of(childPid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
     }
 
     @Test

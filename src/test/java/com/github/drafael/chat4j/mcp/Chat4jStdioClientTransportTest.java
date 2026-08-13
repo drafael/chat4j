@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.provider.support.ProcessHandleSupport;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.ByteArrayInputStream;
@@ -56,7 +57,7 @@ class Chat4jStdioClientTransportTest {
 
             write.cancel(true);
 
-            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(pid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             try {
                 subject.closeNow();
@@ -103,7 +104,7 @@ class Chat4jStdioClientTransportTest {
             closing.get(5, TimeUnit.SECONDS);
 
             assertThat(launchedProcess.get()).isNotNull();
-            assertThat(launchedProcess.get().isAlive()).isFalse();
+            assertThat(ProcessHandleSupport.isRunning(launchedProcess.get().toHandle())).isFalse();
         } finally {
             releaseLauncher.countDown();
             try {
@@ -137,7 +138,7 @@ class Chat4jStdioClientTransportTest {
             start.countDown();
             CompletableFuture.allOf(first, second).get(5, TimeUnit.SECONDS);
 
-            assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(childPid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             try {
                 subject.closeNow();
@@ -167,7 +168,7 @@ class Chat4jStdioClientTransportTest {
             subject.closeNow();
             childPid = awaitPid(childPidFile);
 
-            assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(childPid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             try {
                 subject.retryCleanup();
@@ -222,16 +223,26 @@ class Chat4jStdioClientTransportTest {
             return;
         }
         ProcessHandle process = ProcessHandle.of(pid).orElse(null);
-        if (process != null && process.isAlive()) {
+        if (ProcessHandleSupport.isRunning(process)) {
             process.destroyForcibly();
-            process.onExit().get(5, TimeUnit.SECONDS);
+            awaitNotRunning(process);
         }
     }
 
     private void destroyForciblyAndAwait(Process process) throws Exception {
-        if (process != null && process.isAlive()) {
+        if (process != null && ProcessHandleSupport.isRunning(process.toHandle())) {
             process.destroyForcibly();
-            process.onExit().get(5, TimeUnit.SECONDS);
+            awaitNotRunning(process.toHandle());
+        }
+    }
+
+    private void awaitNotRunning(ProcessHandle process) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (ProcessHandleSupport.isRunning(process)) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("Fixture process did not terminate.");
+            }
+            Thread.sleep(10);
         }
     }
 

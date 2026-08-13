@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.export.pdf;
 
+import com.github.drafael.chat4j.provider.support.ProcessHandleSupport;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
@@ -75,7 +76,7 @@ class PdfExportProcessRunnerTest {
             pid = Long.parseLong(Files.readString(pidFile));
 
             assertThat(outcome.status()).isEqualTo(PdfExportProcessRunner.Status.CANCELLED);
-            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(pid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             if (pid > 0) {
                 ProcessHandle.of(pid).filter(ProcessHandle::isAlive).ifPresent(ProcessHandle::destroyForcibly);
@@ -99,7 +100,7 @@ class PdfExportProcessRunnerTest {
             childPid = Long.parseLong(Files.readString(pidFile));
 
             assertThat(outcome.completedSuccessfully()).isTrue();
-            assertThat(ProcessHandle.of(childPid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(childPid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             if (childPid > 0) {
                 ProcessHandle.of(childPid).filter(ProcessHandle::isAlive).ifPresent(ProcessHandle::destroyForcibly);
@@ -134,7 +135,7 @@ class PdfExportProcessRunnerTest {
             long pid = Long.parseLong(Files.readString(started));
             assertThat(worker.isAlive()).isFalse();
             assertThat(failure.get()).isInstanceOf(InterruptedException.class);
-            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)).isFalse();
+            assertThat(ProcessHandle.of(pid).map(ProcessHandleSupport::isRunning).orElse(false)).isFalse();
         } finally {
             if (worker.isAlive()) {
                 worker.interrupt();

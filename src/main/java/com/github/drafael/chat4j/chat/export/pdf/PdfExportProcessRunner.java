@@ -1,6 +1,9 @@
 package com.github.drafael.chat4j.chat.export.pdf;
 
+import com.github.drafael.chat4j.provider.support.ProcessHandleSupport;
+
 import static com.github.drafael.chat4j.provider.support.ProcessCommandSupport.applyEnvironment;
+import static com.github.drafael.chat4j.provider.support.ProcessHandleSupport.isRunning;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -154,12 +157,12 @@ final class PdfExportProcessRunner {
 
     private void destroyHandles(List<ProcessHandle> handles) {
         List<ProcessHandle> running = handles.stream()
-                .filter(ProcessHandle::isAlive)
+                .filter(ProcessHandleSupport::isRunning)
                 .distinct()
                 .toList();
         running.forEach(ProcessHandle::destroy);
         awaitExit(running);
-        List<ProcessHandle> survivors = running.stream().filter(ProcessHandle::isAlive).toList();
+        List<ProcessHandle> survivors = running.stream().filter(ProcessHandleSupport::isRunning).toList();
         survivors.forEach(ProcessHandle::destroyForcibly);
         awaitExit(survivors);
     }
@@ -167,7 +170,10 @@ final class PdfExportProcessRunner {
     private void awaitExit(List<ProcessHandle> handles) {
         try {
             CompletableFuture.allOf(
-                    handles.stream().map(ProcessHandle::onExit).toArray(CompletableFuture<?>[]::new)
+                    handles.stream()
+                            .filter(ProcessHandleSupport::isRunning)
+                            .map(ProcessHandle::onExit)
+                            .toArray(CompletableFuture<?>[]::new)
             ).get(PROCESS_STOP_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
