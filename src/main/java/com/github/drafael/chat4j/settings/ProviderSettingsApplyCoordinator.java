@@ -33,11 +33,13 @@ public class ProviderSettingsApplyCoordinator {
 
     public void apply(
             @NonNull List<ProviderRegistry.ProviderDef> providers,
+            @NonNull java.util.function.Consumer<Map<String, ProviderRegistry.ProviderRuntimeConfig>> beforeApply,
             @NonNull Runnable refreshProviders,
             @NonNull Runnable markModelsMenuDirty
     ) {
         Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider =
                 runtimeSettingsResolver.resolve(providers);
+        beforeApply.accept(runtimeConfigByProvider);
         runtimeConfigApplier.apply(runtimeConfigByProvider);
         long enabledCount = runtimeConfigByProvider.values().stream()
                 .filter(ProviderRegistry.ProviderRuntimeConfig::enabled)

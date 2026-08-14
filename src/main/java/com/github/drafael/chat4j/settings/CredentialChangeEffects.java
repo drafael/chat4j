@@ -1,8 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.provider.support.CredentialTokenIds;
-import org.apache.commons.lang3.StringUtils;
-
 import java.util.List;
 import java.util.Map;
 
@@ -21,7 +19,7 @@ public final class CredentialChangeEffects {
             Map.entry("DEEPSEEK_API_KEY", CredentialChangeEffect.chat(List.of("DeepSeek"))),
             Map.entry("MISTRAL_API_KEY", CredentialChangeEffect.chat(List.of("Mistral"))),
             Map.entry("XAI_API_KEY", CredentialChangeEffect.chat(List.of("xAI"))),
-            Map.entry("PERPLEXITY_API_KEY", CredentialChangeEffect.none()),
+            Map.entry("PERPLEXITY_API_KEY", CredentialChangeEffect.chat(List.of("Perplexity"))),
             Map.entry("GEMINI_API_KEY", CredentialChangeEffect.chat(List.of("Google AI"))),
             Map.entry("GOOGLEAI_API_KEY", CredentialChangeEffect.chat(List.of("Google AI")))
     );
@@ -48,10 +46,6 @@ public final class CredentialChangeEffects {
 
         static CredentialChangeEffect none() {
             return new CredentialChangeEffect(emptyList(), emptyList(), emptyList());
-        }
-
-        public boolean affectsChatProvider(String providerName) {
-            return chatProviders.stream().anyMatch(provider -> StringUtils.equals(provider, providerName));
         }
     }
 }

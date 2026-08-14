@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.persistence.conversation;
 
 import com.github.drafael.chat4j.provider.api.Message;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -27,18 +28,29 @@ class ConversationLoadApplyCoordinatorTest {
         var loadedRecords = new AtomicReference<List<ConversationRepository.MessageRecord>>();
         var selectedModel = new AtomicReference<String>();
         var selectedConversation = new AtomicReference<UUID>();
+        var applicationOrder = new ArrayList<String>();
 
         boolean applied = subject.apply(
                 ConversationLoadResultPlanner.LoadedConversationPlan.applyPlan(conversationId, records, "OpenAI:gpt-4o"),
-                loadedRecords::set,
-                selectedModel::set,
-                selectedConversation::set
+                loaded -> {
+                    applicationOrder.add("history");
+                    loadedRecords.set(loaded);
+                },
+                model -> {
+                    applicationOrder.add("model");
+                    selectedModel.set(model);
+                },
+                selected -> {
+                    applicationOrder.add("conversation");
+                    selectedConversation.set(selected);
+                }
         );
 
         assertThat(applied).isTrue();
         assertThat(loadedRecords.get()).isEqualTo(records);
         assertThat(selectedModel.get()).isEqualTo("OpenAI:gpt-4o");
         assertThat(selectedConversation.get()).isEqualTo(conversationId);
+        assertThat(applicationOrder).containsExactly("conversation", "model", "history");
     }
 
     @Test

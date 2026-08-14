@@ -401,7 +401,7 @@ class GoogleAiGenerateContentClientTest {
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-2.5-flash"),
                     List.of(Message.user("Search Google")),
                     ReasoningLevel.OFF,
-                    new WebSearchRequestOptions(true, "native"),
+                    new WebSearchRequestOptions(true),
                     tokens::add,
                     token -> {
                     },
@@ -432,156 +432,7 @@ class GoogleAiGenerateContentClientTest {
         }
     }
 
-    @Test
-    @DisplayName("Google native web search retries the same projection when Gemini returns only thinking content")
-    void streamCompletion_whenGoogleWebSearchReturnsNoAnswerContent_reusesProjectionWithoutWebSearch() throws Exception {
-        String emptySearchResponse = """
-                {
-                  "candidates": [{
-                    "finishReason": "STOP",
-                    "content": {"parts": [{"thought": true, "text": "I should search first."}]}
-                  }],
-                  "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 4, "thoughtsTokenCount": 4, "totalTokenCount": 20}
-                }
-                """;
-        String retryResponse = """
-                {"candidates":[{"content":{"parts":[{"text":"Fallback answer"}]}}]}
-                """;
-        var authority = ProviderAttachmentTestSupport.authority();
-        Path attachmentFile = ProviderAttachmentTestSupport.managedRoot(authority)
-                .resolve(UUID.randomUUID().toString());
-        Files.writeString(attachmentFile, "attachment contents");
-        var attachment = new AttachmentRef(
-                UUID.randomUUID(),
-                attachmentFile.toString(),
-                "notes.txt",
-                "text/plain",
-                Files.size(attachmentFile),
-                "sha"
-        );
-        Message message = new Message(
-                Role.USER,
-                List.of(new TextPart("Search Google"), new FilePart(attachment)),
-                Instant.now()
-        );
-        List<String> requestBodies = new ArrayList<>();
-        AtomicInteger requests = new AtomicInteger();
-        AtomicInteger registrations = new AtomicInteger();
-        AtomicInteger clears = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/v1beta/models/gemini-3.5-flash:generateContent", exchange -> {
-            requestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            int requestIndex = requests.getAndIncrement();
-            if (requestIndex == 0) {
-                Files.delete(attachmentFile);
-            }
-            String responseBody = requestIndex == 0 ? emptySearchResponse : retryResponse;
-            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
-            exchange.close();
-        });
-        server.start();
-        try {
-            var subject = new GoogleAiGenerateContentClient(
-                    failingFallbackClient(),
-                    HttpClient.newHttpClient(),
-                    authority,
-                    mock(GeneratedImageAttachmentWriter.class)
-            );
-            List<String> tokens = new ArrayList<>();
-            List<String> thinkingTokens = new ArrayList<>();
 
-            subject.streamCompletion(
-                    runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-3.5-flash"),
-                    List.of(message),
-                    ReasoningLevel.OFF,
-                    new WebSearchRequestOptions(true, "native"),
-                    tokens::add,
-                    thinkingTokens::add,
-                    part -> {
-                    },
-                    citation -> {
-                    },
-                    () -> false,
-                    stream -> registrations.incrementAndGet(),
-                    clears::incrementAndGet
-            );
-
-            assertThat(tokens).containsExactly("Fallback answer");
-            assertThat(thinkingTokens).isEmpty();
-            assertThat(requestBodies).hasSize(2);
-            assertThat(registrations).hasValue(2);
-            assertThat(clears).hasValue(2);
-            assertThat(requestBodies.getFirst())
-                    .contains("\"google_search\":{}", "attachment contents");
-            assertThat(requestBodies.getLast())
-                    .contains("attachment contents")
-                    .doesNotContain("\"google_search\":{}");
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    @DisplayName("Google native web search retries without search when Gemini filters content for recitation")
-    void streamCompletion_whenGoogleWebSearchResponseIsRecitationFiltered_retriesWithoutWebSearch() throws Exception {
-        String recitationResponse = """
-                {
-                  "candidates": [{
-                    "finishReason": "RECITATION",
-                    "finishMessage": "The generated content was filtered because it may contain material that resembles existing copyrighted works."
-                  }],
-                  "usageMetadata": {"promptTokenCount": 143, "candidatesTokenCount": 0, "thoughtsTokenCount": 1517, "totalTokenCount": 1660}
-                }
-                """;
-        String retryResponse = """
-                {"candidates":[{"content":{"parts":[{"text":"Fallback answer"}]}}]}
-                """;
-        AtomicInteger requests = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/v1beta/models/gemini-3.1-pro-preview:generateContent", exchange -> {
-            String responseBody = requests.getAndIncrement() == 0 ? recitationResponse : retryResponse;
-            byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, bytes.length);
-            exchange.getResponseBody().write(bytes);
-            exchange.close();
-        });
-        server.start();
-        try {
-            var subject = new GoogleAiGenerateContentClient(
-                    failingFallbackClient(),
-                    HttpClient.newHttpClient(),
-                    ProviderAttachmentTestSupport.authority(),
-                    mock(GeneratedImageAttachmentWriter.class)
-            );
-            List<String> tokens = new ArrayList<>();
-
-            subject.streamCompletion(
-                    runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-3.1-pro-preview"),
-                    List.of(Message.user("real examples how to use JNA for java desktop apps")),
-                    ReasoningLevel.OFF,
-                    new WebSearchRequestOptions(true, "native"),
-                    tokens::add,
-                    token -> {
-                    },
-                    part -> {
-                    },
-                    citation -> {
-                    },
-                    () -> false,
-                    stream -> {
-                    },
-                    () -> {
-                    }
-            );
-
-            assertThat(tokens).containsExactly("Fallback answer");
-            assertThat(requests).hasValue(2);
-        } finally {
-            server.stop(0);
-        }
-    }
 
     @Test
     @DisplayName("Google native web search reports blocked empty responses without fallback")
@@ -606,7 +457,7 @@ class GoogleAiGenerateContentClientTest {
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-2.5-flash"),
                     List.of(Message.user("Search Google")),
                     ReasoningLevel.OFF,
-                    new WebSearchRequestOptions(true, "native"),
+                    new WebSearchRequestOptions(true),
                     token -> {
                     },
                     token -> {
@@ -728,6 +579,14 @@ class GoogleAiGenerateContentClientTest {
                 ProviderCapabilities.chatAndModels(),
                 value -> value
         );
-        return new ProviderRuntime(descriptor, "GEMINI_API_KEY", baseUrl, "test-key", model);
+        return new ProviderRuntime(
+                descriptor,
+                "GEMINI_API_KEY",
+                baseUrl,
+                "test-key",
+                model,
+                List.of(),
+                baseUrl
+        );
     }
 }

@@ -2,227 +2,59 @@ package com.github.drafael.chat4j;
 
 import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenceCoordinator;
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
-import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
-import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
-import com.github.drafael.chat4j.web.WebSearchSettings;
-import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MainFrameConversationRuntimeSettingsCoordinatorTest {
 
     private final ConversationPersistenceCoordinator persistenceCoordinator = mock(ConversationPersistenceCoordinator.class);
-    private final SettingsRepository settingsRepo = mock(SettingsRepository.class);
-    private final AgentModeSettings agentModeSettings = mock(AgentModeSettings.class);
     private final MainFrameConversationRuntimeSettingsCoordinator subject = new MainFrameConversationRuntimeSettingsCoordinator(
             persistenceCoordinator,
-            agentModeSettings,
-            new WebSearchSettings(settingsRepo)
+            mock(AgentModeSettings.class)
     );
 
-    @TempDir
-    Path tempDir;
-
     @Test
-    @DisplayName("Loaded conversation settings apply reasoning, web search, and valid agent root")
-    void applyLoadedConversationSettings_whenConversationHasRuntimeSettings_appliesAllSettings() {
-        var target = new RecordingRuntimeSettingsTarget();
-        ConversationRepository.ConversationRecord conversation = conversationRecord(
-                "high",
-                true,
-                tempDir.toString(),
-                true,
-                "browse"
-        );
-
-        subject.applyLoadedConversationSettings(conversation, target.target());
-
-        assertThat(target.reasoningLevel.get()).isEqualTo(ReasoningLevel.HIGH);
-        assertThat(target.webSearchEnabled.get()).isTrue();
-        assertThat(target.webSearchOptionId.get()).isEqualTo("browse");
-        assertThat(target.agentProjectRoot.get()).isEqualTo(tempDir.toAbsolutePath().normalize());
-        assertThat(target.agentModeEnabled.get()).isTrue();
-        assertThat(target.agentCalls).containsExactly("mode:true", "root:%s".formatted(tempDir.toAbsolutePath().normalize()));
-    }
-
-    @Test
-    @DisplayName("Loaded conversation settings ignore invalid agent root and reset disabled values")
-    void applyLoadedConversationSettings_whenConversationMissingRuntimeSettings_resetsRuntimeState() {
-        var target = new RecordingRuntimeSettingsTarget();
-        target.webSearchOptionId.set("stale-option");
-        ConversationRepository.ConversationRecord conversation = conversationRecord(
-                null,
-                true,
-                tempDir.resolve("missing").toString(),
-                false,
-                null
-        );
-
-        subject.applyLoadedConversationSettings(conversation, target.target());
-
-        assertThat(target.reasoningLevel.get()).isEqualTo(ReasoningLevel.OFF);
-        assertThat(target.webSearchEnabled.get()).isFalse();
-        assertThat(target.webSearchOptionId.get()).isNull();
-        assertThat(target.agentProjectRoot.get()).isNull();
-        assertThat(target.agentModeEnabled.get()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Reset runtime state clears conversation-scoped runtime settings")
-    void resetRuntimeState_whenCalled_appliesDefaults() {
-        var target = new RecordingRuntimeSettingsTarget();
-        target.webSearchOptionId.set("stale-option");
-
-        subject.resetRuntimeState(target.target());
-
-        assertThat(target.reasoningLevel.get()).isEqualTo(ReasoningLevel.OFF);
-        assertThat(target.webSearchOptionId.get()).isNull();
-        assertThat(target.webSearchEnabled.get()).isFalse();
-        assertThat(target.agentProjectRoot.get()).isNull();
-        assertThat(target.agentModeEnabled.get()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Web search settings use stored browse-top value")
-    void applyWebSearchSettings_whenStoredValueExists_appliesStoredTopN() throws Exception {
-        var appliedTopN = new AtomicReference<Integer>();
-        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3")).thenReturn("7");
-
-        subject.applyWebSearchSettings(appliedTopN::set);
-
-        assertThat(appliedTopN).hasValue(7);
-    }
-
-    @Test
-    @DisplayName("Invalid web search settings fall back to default browse-top value")
-    void applyWebSearchSettings_whenStoredValueInvalid_appliesDefaultTopN() throws Exception {
-        var appliedTopN = new AtomicReference<Integer>();
-        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3")).thenReturn("invalid");
-
-        subject.applyWebSearchSettings(appliedTopN::set);
-
-        assertThat(appliedTopN).hasValue(3);
-    }
-
-    @Test
-    @DisplayName("Web search settings read failures fall back to default browse-top value")
-    void applyWebSearchSettings_whenRepositoryReadFails_appliesDefaultTopN() throws Exception {
-        var appliedTopN = new AtomicReference<Integer>();
-        when(settingsRepo.get("chat4j.web.autoBrowseTopN", "3"))
-                .thenThrow(new IllegalStateException("forced failure"));
-
-        subject.applyWebSearchSettings(appliedTopN::set);
-
-        assertThat(appliedTopN).hasValue(3);
-    }
-
-    @Test
-    @DisplayName("Conversation runtime changes use the serialized persistence coordinator")
-    void persistConversationRuntimeSettings_whenConversationExists_submitsDesiredValues() {
-        UUID conversationId = UUID.randomUUID();
-        when(persistenceCoordinator.submitReasoningLevel(conversationId, ReasoningLevel.HIGH))
-                .thenReturn(CompletableFuture.completedFuture(null));
-        when(persistenceCoordinator.submitWebSearchSettings(conversationId, true, "browse"))
-                .thenReturn(CompletableFuture.completedFuture(null));
-        when(persistenceCoordinator.submitAgentSettings(conversationId, true, tempDir))
-                .thenReturn(CompletableFuture.completedFuture(null));
-
-        subject.persistReasoningLevel(conversationId, ReasoningLevel.HIGH);
-        subject.persistWebSearchSettings(conversationId, true, "browse");
-        subject.persistAgentSettings(conversationId, true, tempDir);
-
-        verify(persistenceCoordinator).submitReasoningLevel(conversationId, ReasoningLevel.HIGH);
-        verify(persistenceCoordinator).submitWebSearchSettings(conversationId, true, "browse");
-        verify(persistenceCoordinator).submitAgentSettings(conversationId, true, tempDir);
-    }
-
-    @Test
-    @DisplayName("Web search browse-top write failures are best effort")
-    void persistWebBrowseTopN_whenRepositoryWriteFails_doesNotThrow() {
-        doThrow(new IllegalStateException("forced failure"))
-                .when(settingsRepo)
-                .put("chat4j.web.autoBrowseTopN", "9");
-
-        assertThatCode(() -> subject.persistWebBrowseTopN(9))
-                .doesNotThrowAnyException();
-        verify(settingsRepo, timeout(1000)).put("chat4j.web.autoBrowseTopN", "9");
-    }
-
-    @Test
-    @DisplayName("Web search browse-top writes preserve admission order and drain when sealed")
-    void persistWebBrowseTopN_whenChangedRapidly_persistsInOrderBeforeSealCompletes() {
-        subject.persistWebBrowseTopN(4);
-        subject.persistWebBrowseTopN(8);
-
-        subject.sealWebBrowsePersistence().join();
-
-        var ordered = inOrder(settingsRepo);
-        ordered.verify(settingsRepo).put("chat4j.web.autoBrowseTopN", "4");
-        ordered.verify(settingsRepo).put("chat4j.web.autoBrowseTopN", "8");
-    }
-
-    private ConversationRepository.ConversationRecord conversationRecord(
-            String reasoningLevel,
-            boolean agentModeEnabled,
-            String agentProjectRoot,
-            boolean webSearchEnabled,
-            String webSearchOption
-    ) {
-        return new ConversationRepository.ConversationRecord(
+    void loadedRuntimeSettings_whenEnabledAgentRootIsInvalid_requestsCanonicalCorrection() {
+        LocalDateTime now = LocalDateTime.now();
+        var conversation = new ConversationRepository.ConversationRecord(
                 UUID.randomUUID(),
-                "Title",
+                "Conversation",
                 "OpenAI",
-                "gpt-4.1",
+                "gpt-5",
                 false,
-                reasoningLevel,
-                agentModeEnabled,
-                agentProjectRoot,
-                webSearchEnabled,
-                webSearchOption,
-                LocalDateTime.now(),
-                LocalDateTime.now()
+                "OFF",
+                true,
+                "missing-agent-project",
+                false,
+                now,
+                now
         );
+
+        MainFrameConversationRuntimeSettingsCoordinator.LoadedRuntimeSettings settings =
+                subject.loadedRuntimeSettings(conversation);
+
+        assertThat(settings.agentModeEnabled()).isFalse();
+        assertThat(settings.agentProjectRoot()).isNull();
+        assertThat(settings.agentCorrectionRequired()).isTrue();
     }
 
-    private static class RecordingRuntimeSettingsTarget {
-        private final AtomicReference<ReasoningLevel> reasoningLevel = new AtomicReference<>();
-        private final AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
-        private final AtomicReference<String> webSearchOptionId = new AtomicReference<>();
-        private final AtomicReference<Path> agentProjectRoot = new AtomicReference<>();
-        private final AtomicReference<Boolean> agentModeEnabled = new AtomicReference<>();
-        private final List<String> agentCalls = new ArrayList<>();
+    @Test
+    void persistWebSearchSettings_whenConversationExists_submitsBooleanOnly() {
+        UUID conversationId = UUID.randomUUID();
+        when(persistenceCoordinator.submitWebSearchSettings(conversationId, true))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
-        private MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget target() {
-            return new MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget(
-                    reasoningLevel::set,
-                    webSearchEnabled::set,
-                    webSearchOptionId::set,
-                    path -> {
-                        agentProjectRoot.set(path);
-                        agentCalls.add("root:%s".formatted(path));
-                    },
-                    enabled -> {
-                        agentModeEnabled.set(enabled);
-                        agentCalls.add("mode:%s".formatted(enabled));
-                    }
-            );
-        }
+        subject.persistWebSearchSettings(conversationId, true);
+
+        verify(persistenceCoordinator).submitWebSearchSettings(conversationId, true);
     }
 }

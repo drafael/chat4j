@@ -22,6 +22,7 @@ public class ProviderRegistry {
             String name,
             String envVar,
             String baseUrl,
+            String defaultBaseUrl,
             List<String> seedModels,
             ProviderCapabilities capabilities,
             ProviderFactory factory,
@@ -29,10 +30,11 @@ public class ProviderRegistry {
     ) {
         @Override
         public String toString() {
-            return "ProviderDef[name=%s, envVar=%s, baseUrl=%s, seedModels=%s, capabilities=%s]".formatted(
+            return "ProviderDef[name=%s, envVar=%s, baseUrl=%s, defaultBaseUrl=%s, seedModels=%s, capabilities=%s]".formatted(
                     name,
                     envVar,
                     ProviderDiagnosticSanitizer.safeOrigin(baseUrl),
+                    ProviderDiagnosticSanitizer.safeOrigin(defaultBaseUrl),
                     seedModels,
                     capabilities
             );
@@ -117,6 +119,25 @@ public class ProviderRegistry {
                 .toList();
     }
 
+    public boolean matchesRuntimeConfig(ProviderDef installed, ProviderRuntimeConfig proposed) {
+        if (installed == null) {
+            return false;
+        }
+        ProviderDefinition definition = catalog.allProviders().stream()
+                .filter(candidate -> candidate.name().equals(installed.name()))
+                .findFirst()
+                .orElse(null);
+        if (definition == null) {
+            return false;
+        }
+        boolean enabled = proposed == null || proposed.enabled();
+        String configuredBaseUrl = proposed == null || proposed.baseUrl() == null || proposed.baseUrl().isBlank()
+                ? definition.baseUrl()
+                : proposed.baseUrl().trim();
+        String effectiveBaseUrl = definition.descriptor().normalizeBaseUrl(configuredBaseUrl);
+        return enabled && installed.baseUrl().equals(effectiveBaseUrl);
+    }
+
     public void invalidateAuthStatus(String providerName) {
         runtimePolicy.invalidateAuthStatus(providerName);
     }
@@ -149,6 +170,7 @@ public class ProviderRegistry {
                 providerDefinition.name(),
                 providerDefinition.envVar(),
                 effectiveBaseUrl,
+                normalizedDefaultBaseUrl(providerDefinition),
                 providerDefinition.seedModels(),
                 providerDefinition.descriptor().capabilities(),
                 catalog.createFactory(providerDefinition.name(), providerDefinition.envVar(), effectiveBaseUrl),
@@ -156,11 +178,16 @@ public class ProviderRegistry {
         );
     }
 
+    private String normalizedDefaultBaseUrl(ProviderDefinition providerDefinition) {
+        return providerDefinition.descriptor().normalizeBaseUrl(providerDefinition.descriptor().defaultBaseUrl());
+    }
+
     private ProviderDef toProviderDef(ProviderDefinition providerDefinition) {
         return new ProviderDef(
                 providerDefinition.name(),
                 providerDefinition.envVar(),
                 providerDefinition.baseUrl(),
+                normalizedDefaultBaseUrl(providerDefinition),
                 providerDefinition.seedModels(),
                 providerDefinition.descriptor().capabilities(),
                 catalog.createFactory(

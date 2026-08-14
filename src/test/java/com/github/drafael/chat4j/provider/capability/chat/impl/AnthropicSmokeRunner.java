@@ -181,7 +181,7 @@ final class AnthropicSmokeRunner {
                 model,
                 List.of(Message.user("Use web search if needed. In one short sentence, say what chat4j anthropic web search smoke is.")),
                 ReasoningLevel.OFF,
-                new WebSearchRequestOptions(true, "anthropic-smoke")
+                new WebSearchRequestOptions(true)
         );
         require(StringUtils.isNotBlank(text), "web search smoke produced no streamed text");
         return "web search: %d character(s)".formatted(text.length());

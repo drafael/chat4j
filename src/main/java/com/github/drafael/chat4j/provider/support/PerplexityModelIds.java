@@ -3,6 +3,7 @@ package com.github.drafael.chat4j.provider.support;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public final class PerplexityModelIds {
@@ -29,17 +30,17 @@ public final class PerplexityModelIds {
     }
 
     public static boolean isNamespacedSonarModel(String modelId) {
-        return StringUtils.trimToEmpty(modelId).toLowerCase().startsWith("perplexity/")
+        return StringUtils.trimToEmpty(modelId).toLowerCase(Locale.ROOT).startsWith("perplexity/")
             && isSonarModel(modelId);
     }
 
     public static boolean isNamespacedReasoningSonarModel(String modelId) {
-        return StringUtils.trimToEmpty(modelId).toLowerCase().startsWith("perplexity/")
+        return StringUtils.trimToEmpty(modelId).toLowerCase(Locale.ROOT).startsWith("perplexity/")
             && isReasoningSonarModel(modelId);
     }
 
     private static String normalizeDirectModelId(String modelId) {
-        String normalized = StringUtils.trimToEmpty(modelId).toLowerCase();
+        String normalized = StringUtils.trimToEmpty(modelId).toLowerCase(Locale.ROOT);
         return normalized.startsWith("perplexity/")
                 ? normalized.substring("perplexity/".length()).trim()
                 : normalized;

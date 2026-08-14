@@ -65,7 +65,7 @@ class DeepSeekChatCompletionClientTest {
                 runtime("deepseek-v4-pro", "https://api.deepseek.com/v1"),
                 List.of(Message.user("latest news")),
                 ReasoningLevel.OFF,
-                new WebSearchRequestOptions(true, "native"),
+                new WebSearchRequestOptions(true),
                 ignored -> {
                 },
                 ignored -> {
@@ -98,7 +98,7 @@ class DeepSeekChatCompletionClientTest {
                 runtime("deepseek-chat", "https://api.deepseek.com"),
                 List.of(Message.user("latest news")),
                 ReasoningLevel.OFF,
-                new WebSearchRequestOptions(true, "native"),
+                new WebSearchRequestOptions(true),
                 ignored -> {
                 },
                 ignored -> {

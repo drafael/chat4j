@@ -422,14 +422,14 @@ public class ConversationPersistenceCoordinator implements AutoCloseable {
         );
     }
 
-    public CompletableFuture<Void> submitWebSearchSettings(UUID conversationId, boolean enabled, String optionId) {
-        var desired = new WebSearchSettingsRecovery(enabled, optionId);
+    public CompletableFuture<Void> submitWebSearchSettings(UUID conversationId, boolean enabled) {
+        var desired = new WebSearchSettingsRecovery(enabled);
         return submitRecoverable(
                 conversationId,
                 webSearchSettingsRecovery,
                 desired,
-                () -> conversationRepo.updateWebSearchSettings(conversationId, desired.enabled(), desired.optionId()),
-                () -> conversationRepo.hasWebSearchSettings(conversationId, desired.enabled(), desired.optionId())
+                () -> conversationRepo.updateWebSearchSettings(conversationId, desired.enabled()),
+                () -> conversationRepo.hasWebSearchSettings(conversationId, desired.enabled())
         );
     }
 
@@ -1079,13 +1079,11 @@ public class ConversationPersistenceCoordinator implements AutoCloseable {
                     webSearchSettingsRecovery,
                     () -> conversationRepo.updateWebSearchSettings(
                             conversationId,
-                            webSearchSettings.enabled(),
-                            webSearchSettings.optionId()
+                            webSearchSettings.enabled()
                     ),
                     () -> conversationRepo.hasWebSearchSettings(
                             conversationId,
-                            webSearchSettings.enabled(),
-                            webSearchSettings.optionId()
+                            webSearchSettings.enabled()
                     )
             );
             throwIfIndeterminate(conversationId, failure);
@@ -1224,13 +1222,11 @@ public class ConversationPersistenceCoordinator implements AutoCloseable {
                     webSearchSettingsRecovery,
                     () -> conversationRepo.updateWebSearchSettings(
                             recovery.getKey(),
-                            desired.enabled(),
-                            desired.optionId()
+                            desired.enabled()
                     ),
                     () -> conversationRepo.hasWebSearchSettings(
                             recovery.getKey(),
-                            desired.enabled(),
-                            desired.optionId()
+                            desired.enabled()
                     )
             );
         }
@@ -1701,7 +1697,7 @@ public class ConversationPersistenceCoordinator implements AutoCloseable {
         }
     }
 
-    private record WebSearchSettingsRecovery(boolean enabled, String optionId) {
+    private record WebSearchSettingsRecovery(boolean enabled) {
     }
 
     private record AssistantRecoveryKey(UUID conversationId, UUID messageId) {

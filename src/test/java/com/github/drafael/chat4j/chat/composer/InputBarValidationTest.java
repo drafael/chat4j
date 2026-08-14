@@ -1,8 +1,6 @@
 package com.github.drafael.chat4j.chat.composer;
 
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
-import com.github.drafael.chat4j.web.WebSearchMode;
-import com.github.drafael.chat4j.web.WebSearchOption;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -77,52 +75,7 @@ class InputBarValidationTest {
         assertThat(subject.isAgentModeEnabled()).isTrue();
     }
 
-    @Test
-    @DisplayName("Enabling Web Search disables Agent Mode and notifies both states")
-    void requestWebSearchEnabled_whenAgentModeEnabled_disablesAgentMode() throws Exception {
-        InputBar subject = new InputBar();
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-search-exclusive");
-        AtomicReference<Boolean> agentState = new AtomicReference<>();
-        AtomicReference<Boolean> searchState = new AtomicReference<>();
-        subject.addAgentModeListener(agentState::set);
-        subject.addWebSearchEnabledListener(searchState::set);
-        subject.setAgentModeAvailable(true);
-        subject.setAgentProjectRoot(projectRoot);
-        subject.setAgentModeEnabled(true);
-        subject.setWebSearchOptions(
-                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
-                "native"
-        );
 
-        subject.requestWebSearchEnabled(true);
-
-        assertThat(subject.isAgentModeEnabled()).isFalse();
-        assertThat(subject.isWebSearchEnabled()).isTrue();
-        assertThat(agentState).hasValue(false);
-        assertThat(searchState).hasValue(true);
-    }
-
-    @Test
-    @DisplayName("Enabling Agent Mode disables Web Search and notifies both states")
-    void toggleAgentMode_whenWebSearchEnabled_disablesWebSearch() throws Exception {
-        InputBar subject = new InputBar();
-        Path projectRoot = Files.createTempDirectory("chat4j-search-agent-exclusive");
-        AtomicReference<Boolean> searchState = new AtomicReference<>();
-        subject.addWebSearchEnabledListener(searchState::set);
-        subject.setWebSearchOptions(
-                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
-                "native"
-        );
-        subject.setWebSearchEnabled(true);
-        subject.setAgentModeAvailable(true);
-        subject.setProjectRootChooserForTests(parent -> Optional.of(projectRoot));
-
-        subject.toggleAgentMode();
-
-        assertThat(subject.isAgentModeEnabled()).isTrue();
-        assertThat(subject.isWebSearchEnabled()).isFalse();
-        assertThat(searchState).hasValue(false);
-    }
 
     @Test
     @DisplayName("Enabling agent mode requires selecting a project folder")
@@ -354,162 +307,15 @@ class InputBarValidationTest {
 
         runOnEdt(() -> subject.requestWebSearchEnabled(true));
 
-        assertThat(subject.isWebSearchEnabled()).isFalse();
+        assertThat(readWebSearchButton(subject).isSelected()).isFalse();
         assertThat(readValidationLabel(subject).getText()).isEqualTo("Web Search is not available for the selected model.");
     }
 
-    @Test
-    @DisplayName("Web search button click toggles enabled state and notifies listener")
-    void webSearchButtonClick_whenAvailable_togglesEnabledState() throws Exception {
-        InputBar subject = new InputBar();
-        JToggleButton webSearchButton = readWebSearchButton(subject);
-        AtomicReference<Boolean> notified = new AtomicReference<>();
 
-        subject.addWebSearchEnabledListener(notified::set);
-        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
 
-        runOnEdt(webSearchButton::doClick);
 
-        assertThat(subject.isWebSearchEnabled()).isTrue();
-        assertThat(webSearchButton.isSelected()).isTrue();
-        assertThat(webSearchButton.isContentAreaFilled()).isFalse();
-        assertThat(webSearchButton.isOpaque()).isFalse();
-        assertThat(notified.get()).isTrue();
 
-        runOnEdt(webSearchButton::doClick);
 
-        assertThat(subject.isWebSearchEnabled()).isFalse();
-        assertThat(webSearchButton.isSelected()).isFalse();
-        assertThat(webSearchButton.isContentAreaFilled()).isFalse();
-        assertThat(notified.get()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Default-enabled web search can be toggled off from the input button")
-    void webSearchButtonClick_whenDefaultEnabled_togglesOff() throws Exception {
-        InputBar subject = new InputBar();
-        JToggleButton webSearchButton = readWebSearchButton(subject);
-        AtomicReference<Boolean> notified = new AtomicReference<>();
-
-        subject.addWebSearchEnabledListener(notified::set);
-        subject.setWebSearchLockedEnabled(true);
-        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
-
-        assertThat(subject.isWebSearchEnabled()).isTrue();
-
-        runOnEdt(webSearchButton::doClick);
-
-        assertThat(subject.isWebSearchEnabled()).isFalse();
-        assertThat(webSearchButton.isSelected()).isFalse();
-        assertThat(webSearchButton.getToolTipText()).contains("click to toggle");
-        assertThat(notified.get()).isFalse();
-    }
-
-    @Test
-    @DisplayName("Clearing persisted web search option removes the previous selection")
-    void setWebSearchOptionId_whenValueIsBlank_clearsSelection() throws Exception {
-        AtomicReference<String> selectedOption = new AtomicReference<>();
-
-        runOnEdt(() -> {
-            InputBar subject = new InputBar();
-            subject.setWebSearchOptions(List.of(
-                    new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
-                    new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
-            ), "native");
-            subject.setWebSearchOptionId("perplexity");
-            subject.setWebSearchOptionId(null);
-            selectedOption.set(subject.getWebSearchOptionId());
-        });
-
-        assertThat(selectedOption.get()).isEqualTo("native");
-    }
-
-    @Test
-    @DisplayName("Persisted web search state is restored after options become available")
-    void setWebSearchOptions_whenPersistedStateAppliedFirst_restoresEnabledToggle() throws Exception {
-        AtomicReference<InputBar> subjectRef = new AtomicReference<>();
-        AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
-
-        runOnEdt(() -> {
-            try {
-                InputBar subject = new InputBar();
-                subject.setWebSearchOptionId("perplexity");
-                subject.setWebSearchEnabled(true);
-                subject.setWebSearchOptions(List.of(
-                        new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
-                        new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
-                ), "native");
-                subjectRef.set(subject);
-                buttonRef.set(readWebSearchButton(subject));
-            } catch (Exception e) {
-                throw new AssertionError(e);
-            }
-        });
-
-        AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
-        AtomicReference<String> webSearchOptionId = new AtomicReference<>();
-        AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
-        runOnEdt(() -> {
-            webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
-            webSearchOptionId.set(subjectRef.get().getWebSearchOptionId());
-            buttonSelected.set(buttonRef.get().isSelected());
-        });
-
-        assertThat(webSearchEnabled.get()).isTrue();
-        assertThat(webSearchOptionId.get()).isEqualTo("perplexity");
-        assertThat(buttonSelected.get()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Web search button keeps selected state while input bar is disabled")
-    void setEnabled_whenWebSearchEnabled_displaysSelectedState() throws Exception {
-        AtomicReference<InputBar> subjectRef = new AtomicReference<>();
-        AtomicReference<JToggleButton> buttonRef = new AtomicReference<>();
-
-        runOnEdt(() -> {
-            try {
-                InputBar subject = new InputBar();
-                subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
-                subject.setWebSearchEnabled(true);
-                subject.setEnabled(false);
-                subjectRef.set(subject);
-                buttonRef.set(readWebSearchButton(subject));
-            } catch (Exception e) {
-                throw new AssertionError(e);
-            }
-        });
-
-        AtomicReference<Boolean> webSearchEnabled = new AtomicReference<>();
-        AtomicReference<Boolean> buttonSelected = new AtomicReference<>();
-        runOnEdt(() -> {
-            webSearchEnabled.set(subjectRef.get().isWebSearchEnabled());
-            buttonSelected.set(buttonRef.get().isSelected());
-        });
-
-        assertThat(webSearchEnabled.get()).isTrue();
-        assertThat(buttonSelected.get()).isTrue();
-    }
-
-    @Test
-    @DisplayName("Web search context menu omits enabled item and separators")
-    void rebuildWebSearchMenu_whenOptionsAvailable_omitsToggleItemAndSeparators() throws Exception {
-        InputBar subject = new InputBar();
-        JPopupMenu webSearchMenu = readWebSearchMenu(subject);
-
-        subject.setWebSearchOptions(List.of(
-                new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true),
-                new WebSearchOption("perplexity", "Perplexity", WebSearchMode.EXTERNAL, true)
-        ), "native");
-
-        assertThat(webSearchMenu.getComponentCount()).isEqualTo(2);
-        assertThat(webSearchMenu.getComponent(0)).isInstanceOf(JMenu.class);
-        assertThat(((JMenu) webSearchMenu.getComponent(0)).getText()).isEqualTo("Search with");
-        assertThat(webSearchMenu.getComponent(1)).isInstanceOf(JMenu.class);
-        assertThat(((JMenu) webSearchMenu.getComponent(1)).getText()).isEqualTo("Browse top");
-        assertThat(List.of(webSearchMenu.getComponents()))
-                .noneMatch(component -> component instanceof JSeparator)
-                .noneMatch(component -> component instanceof JCheckBoxMenuItem);
-    }
 
     @Test
     @DisplayName("Block YAML skill descriptions are flattened for popup display")
@@ -549,19 +355,51 @@ class InputBarValidationTest {
     }
 
     @Test
-    @DisplayName("Input popups use heavyweight windows so they appear above native WebView")
-    void configurePopupMenus_whenInputBarCreated_disablesLightweightPopups() throws Exception {
-        InputBar subject = new InputBar();
+    @DisplayName("Optional native Web Search is visible and directly toggleable")
+    void setWebSearchPresentation_whenOptional_showsDirectToggle() throws Exception {
+        var subject = new InputBar();
+        var notifications = new AtomicReference<Boolean>();
+        subject.addWebSearchEnabledListener(notifications::set);
 
-        subject.setWebSearchOptions(List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)), "native");
+        subject.setWebSearchPresentation(true, false, false);
+        JToggleButton button = readWebSearchButton(subject);
+        button.doClick();
 
-        assertThat(readSlashPopupMenu(subject).isLightWeightPopupEnabled()).isFalse();
-        assertThat(readReasoningLevelMenu(subject).isLightWeightPopupEnabled()).isFalse();
-        assertThat(readWebSearchMenu(subject).isLightWeightPopupEnabled()).isFalse();
-        assertThat(readWebSearchSubmenus(subject))
-                .extracting(menu -> menu.getPopupMenu().isLightWeightPopupEnabled())
-                .containsOnly(false);
-        assertThat(readInputTextArea(subject).getComponentPopupMenu().isLightWeightPopupEnabled()).isFalse();
+        assertThat(button.isVisible()).isTrue();
+        assertThat(button.isSelected()).isTrue();
+        assertThat(notifications).hasValue(true);
+        assertThat(button.getToolTipText()).contains("Toggle native Web Search");
+    }
+
+    @Test
+    @DisplayName("Required native Web Search is selected and locked")
+    void setWebSearchPresentation_whenRequired_showsLockedSelection() throws Exception {
+        var subject = new InputBar();
+
+        subject.setWebSearchPresentation(true, true, true);
+        JToggleButton button = readWebSearchButton(subject);
+
+        assertThat(button.isVisible()).isTrue();
+        assertThat(button.isSelected()).isTrue();
+        assertThat(button.isEnabled()).isFalse();
+        assertThat(button.getAccessibleContext().getAccessibleName()).contains("required");
+
+        subject.setEnabled(false);
+        subject.setEnabled(true);
+        subject.setConversationBusy(true);
+        subject.setConversationBusy(false);
+
+        assertThat(button.isEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Unsupported native Web Search is hidden")
+    void setWebSearchPresentation_whenUnsupported_hidesControl() throws Exception {
+        var subject = new InputBar();
+
+        subject.setWebSearchPresentation(false, false, false);
+
+        assertThat(readWebSearchButton(subject).isVisible()).isFalse();
     }
 
     @SuppressWarnings("unchecked")
@@ -635,31 +473,6 @@ class InputBarValidationTest {
         Field field = InputBar.class.getDeclaredField("webSearchButton");
         field.setAccessible(true);
         return (JToggleButton) field.get(inputBar);
-    }
-
-    private JPopupMenu readWebSearchMenu(InputBar inputBar) throws Exception {
-        Field field = InputBar.class.getDeclaredField("webSearchMenu");
-        field.setAccessible(true);
-        return (JPopupMenu) field.get(inputBar);
-    }
-
-    private JPopupMenu readReasoningLevelMenu(InputBar inputBar) throws Exception {
-        Field field = InputBar.class.getDeclaredField("reasoningLevelMenu");
-        field.setAccessible(true);
-        return (JPopupMenu) field.get(inputBar);
-    }
-
-    private JPopupMenu readSlashPopupMenu(InputBar inputBar) throws Exception {
-        Field field = InputBar.class.getDeclaredField("slashPopupMenu");
-        field.setAccessible(true);
-        return (JPopupMenu) field.get(inputBar);
-    }
-
-    private List<JMenu> readWebSearchSubmenus(InputBar inputBar) throws Exception {
-        return List.of(readWebSearchMenu(inputBar).getComponents()).stream()
-                .filter(JMenu.class::isInstance)
-                .map(JMenu.class::cast)
-                .toList();
     }
 
     private JList<?> readSlashSuggestionsList(InputBar inputBar) throws Exception {

@@ -16,7 +16,6 @@ import com.github.drafael.chat4j.chat.ui.InputIconToggleButton;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
-import com.github.drafael.chat4j.web.WebSearchOption;
 import java.awt.*;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
@@ -88,8 +87,6 @@ public class InputBar extends JPanel {
     private final JButton commandCenterButton;
     private final JButton thinkingButton;
     private final JToggleButton webSearchButton;
-    private final JPopupMenu webSearchMenu = PopupMenuSupport.configureNativeSafePopup(new JPopupMenu());
-    private final Map<String, JRadioButtonMenuItem> webSearchOptionItems = new LinkedHashMap<>();
     private final JToggleButton agentModeButton;
     private final JButton clearChatButton;
     private final JButton micButton;
@@ -140,8 +137,6 @@ public class InputBar extends JPanel {
     private final List<ActionListener> sttCancelListeners = new ArrayList<>();
     private final List<Consumer<ReasoningLevel>> reasoningLevelListeners = new ArrayList<>();
     private final List<Consumer<Boolean>> webSearchEnabledListeners = new ArrayList<>();
-    private final List<Consumer<String>> webSearchOptionListeners = new ArrayList<>();
-    private final List<Consumer<Integer>> webBrowseTopNListeners = new ArrayList<>();
     private final List<Consumer<Boolean>> agentModeListeners = new ArrayList<>();
     private final List<Consumer<Path>> agentProjectRootListeners = new ArrayList<>();
     private boolean sendOnEnter = true;
@@ -150,10 +145,6 @@ public class InputBar extends JPanel {
     private boolean webSearchAvailable = false;
     private boolean webSearchEnabled = false;
     private boolean webSearchLockedEnabled = false;
-    private String defaultWebSearchOptionId;
-    private String webSearchOptionId;
-    private int webBrowseTopN = 3;
-    private List<WebSearchOption> webSearchOptions = emptyList();
     private boolean agentModeAvailable = false;
     private boolean agentModeEnabled = false;
     private boolean agentModeRequested = false;
@@ -258,18 +249,6 @@ public class InputBar extends JPanel {
         webSearchButton.setToolTipText("Web Search");
         webSearchButton.setVisible(false);
         webSearchButton.addActionListener(e -> onWebSearchButtonClicked());
-        webSearchButton.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                maybeShowWebSearchMenu(e);
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                maybeShowWebSearchMenu(e);
-            }
-        });
-        rebuildWebSearchMenu();
 
         agentModeButton = new InputIconToggleButton(this::paintInputIconButtonBackground);
         configureInputIconButton(agentModeButton);
@@ -364,6 +343,12 @@ public class InputBar extends JPanel {
         Fonts.apply(validationLabel, Font.PLAIN, Fonts.SIZE_SMALL);
         validationLabel.setVisible(false);
         validationLabel.setAlignmentX(LEFT_ALIGNMENT);
+        validationLabel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                activateValidationAction();
+            }
+        });
 
         composerBottomPanel = new JPanel();
         composerBottomPanel.setOpaque(false);
@@ -488,12 +473,6 @@ public class InputBar extends JPanel {
         return new ComposerState(textArea.getText(), attachments, activeSkills);
     }
 
-    public ComposerState consumeComposerState() {
-        ComposerState state = getComposerState();
-        clear();
-        return state;
-    }
-
     public void setComposerState(ComposerState state) {
         ComposerState safeState = state == null ? ComposerState.empty() : state;
         textArea.setText(safeState.text());
@@ -521,19 +500,40 @@ public class InputBar extends JPanel {
     }
 
     public void showValidationMessage(String message) {
+        showValidationMessage(message, null, null);
+    }
+
+    public void showValidationMessage(String message, String actionLabel, Runnable action) {
         if (StringUtils.isBlank(message)) {
             clearValidationMessage();
             return;
         }
 
-        validationLabel.setText(message);
+        if (StringUtils.isNotBlank(actionLabel) && action != null) {
+            validationLabel.setText("<html>%s <a href='action'>%s</a></html>".formatted(message, actionLabel));
+            validationLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            validationLabel.putClientProperty("chat4j.validationAction", action);
+        } else {
+            validationLabel.setText(message);
+            validationLabel.setCursor(Cursor.getDefaultCursor());
+            validationLabel.putClientProperty("chat4j.validationAction", null);
+        }
         validationLabel.setVisible(true);
         revalidate();
         repaint();
     }
 
+    public void activateValidationAction() {
+        Object action = validationLabel.getClientProperty("chat4j.validationAction");
+        if (action instanceof Runnable runnable) {
+            runnable.run();
+        }
+    }
+
     public void clearValidationMessage() {
         validationLabel.setText("");
+        validationLabel.putClientProperty("chat4j.validationAction", null);
+        validationLabel.setCursor(Cursor.getDefaultCursor());
         validationLabel.setVisible(false);
     }
 
@@ -544,7 +544,7 @@ public class InputBar extends JPanel {
         attachButton.setEnabled(enabled);
         commandCenterButton.setEnabled(enabled);
         thinkingButton.setEnabled(enabled);
-        webSearchButton.setEnabled(enabled && webSearchAvailable);
+        webSearchButton.setEnabled(enabled && webSearchAvailable && !webSearchLockedEnabled);
         agentModeButton.setEnabled(enabled && agentModeAvailable);
         clearChatButton.setEnabled(enabled);
         applyClearChatVisibility();
@@ -655,7 +655,6 @@ public class InputBar extends JPanel {
     }
 
     private void hideDetachedPopups() {
-        webSearchMenu.setVisible(false);
         reasoningLevelMenu.setVisible(false);
     }
 
@@ -696,7 +695,9 @@ public class InputBar extends JPanel {
         attachButton.setEnabled(isEnabled() && isComposerMutable());
         commandCenterButton.setEnabled(isEnabled() && isComposerMutable());
         thinkingButton.setEnabled(isEnabled() && isComposerMutable());
-        webSearchButton.setEnabled(isEnabled() && isComposerMutable() && webSearchAvailable);
+        webSearchButton.setEnabled(
+                isEnabled() && isComposerMutable() && webSearchAvailable && !webSearchLockedEnabled
+        );
         agentModeButton.setEnabled(isEnabled() && isComposerMutable() && agentModeAvailable);
         clearChatButton.setEnabled(isEnabled() && isComposerMutable());
         updateProjectRootPresentation();
@@ -714,18 +715,6 @@ public class InputBar extends JPanel {
     public void addWebSearchEnabledListener(Consumer<Boolean> listener) {
         if (listener != null) {
             webSearchEnabledListeners.add(listener);
-        }
-    }
-
-    public void addWebSearchOptionListener(Consumer<String> listener) {
-        if (listener != null) {
-            webSearchOptionListeners.add(listener);
-        }
-    }
-
-    public void addWebBrowseTopNListener(Consumer<Integer> listener) {
-        if (listener != null) {
-            webBrowseTopNListeners.add(listener);
         }
     }
 
@@ -768,26 +757,7 @@ public class InputBar extends JPanel {
         return webSearchAvailable;
     }
 
-    public boolean isWebSearchEnabled() {
-        return webSearchAvailable && webSearchEnabled;
-    }
-
-    public String getWebSearchOptionId() {
-        return webSearchOptionId;
-    }
-
-    public void setWebSearchOptionId(String optionId) {
-        webSearchOptionId = resolveAvailableWebSearchOptionId(StringUtils.trimToNull(optionId));
-        webSearchOptionItems.forEach((id, item) -> item.setSelected(Strings.CS.equals(id, webSearchOptionId)));
-        updateWebSearchPresentation();
-    }
-
-    public void setWebSearchEnabled(boolean enabled) {
-        if (webSearchEnabled == enabled) {
-            updateWebSearchPresentation();
-            return;
-        }
-
+    private void setWebSearchEnabled(boolean enabled) {
         webSearchEnabled = enabled;
         updateWebSearchPresentation();
     }
@@ -798,9 +768,9 @@ public class InputBar extends JPanel {
             updateWebSearchPresentation();
             return;
         }
-
-        if (enabled && agentModeEnabled) {
-            setAgentModeEnabled(false);
+        if (webSearchLockedEnabled) {
+            updateWebSearchPresentation();
+            return;
         }
         boolean previous = webSearchEnabled;
         setWebSearchEnabled(enabled);
@@ -809,47 +779,10 @@ public class InputBar extends JPanel {
         }
     }
 
-    public void setWebSearchLockedEnabled(boolean lockedEnabled) {
-        if (webSearchLockedEnabled == lockedEnabled) {
-            if (webSearchLockedEnabled && webSearchAvailable && !webSearchEnabled) {
-                webSearchEnabled = true;
-            }
-            updateWebSearchPresentation();
-            return;
-        }
-
-        webSearchLockedEnabled = lockedEnabled;
-        if (webSearchLockedEnabled && webSearchAvailable) {
-            webSearchEnabled = true;
-        }
-        updateWebSearchPresentation();
-    }
-
-    public void setWebBrowseTopN(int topN) {
-        webBrowseTopN = switch (topN) {
-            case 1, 2, 3, 5, 10 -> topN;
-            default -> 3;
-        };
-        rebuildWebSearchMenu();
-    }
-
-    public int getWebBrowseTopN() {
-        return webBrowseTopN;
-    }
-
-    public void setWebSearchOptions(List<WebSearchOption> options, String defaultOptionId) {
-        webSearchOptions = options == null ? emptyList() : List.copyOf(options);
-        defaultWebSearchOptionId = StringUtils.trimToNull(defaultOptionId);
-        webSearchAvailable = webSearchOptions.stream().anyMatch(WebSearchOption::available);
-        webSearchOptionId = resolveAvailableWebSearchOptionId(webSearchOptionId);
-
-        if (!webSearchAvailable) {
-            webSearchEnabled = false;
-        } else if (webSearchLockedEnabled) {
-            webSearchEnabled = true;
-        }
-
-        rebuildWebSearchMenu();
+    public void setWebSearchPresentation(boolean available, boolean effectiveEnabled, boolean required) {
+        webSearchAvailable = available;
+        webSearchLockedEnabled = required;
+        webSearchEnabled = available && effectiveEnabled;
         updateWebSearchPresentation();
     }
 
@@ -872,10 +805,6 @@ public class InputBar extends JPanel {
 
     public boolean isAgentModeRequested() {
         return agentModeRequested;
-    }
-
-    public void toggleAgentMode() {
-        onAgentModeButtonClicked();
     }
 
     public void requestAgentModeEnabled(boolean enabled) {
@@ -991,129 +920,28 @@ public class InputBar extends JPanel {
     }
 
     private void onWebSearchButtonClicked() {
-        if (!webSearchAvailable) {
-            setWebSearchEnabled(false);
+        if (!webSearchAvailable || webSearchLockedEnabled) {
+            updateWebSearchPresentation();
             return;
         }
-
         requestWebSearchEnabled(!webSearchEnabled);
-        webSearchMenu.setVisible(false);
-    }
-
-    private void maybeShowWebSearchMenu(MouseEvent e) {
-        if (e == null || !e.isPopupTrigger()) {
-            return;
-        }
-
-        e.consume();
-        showWebSearchMenu();
-    }
-
-    private void showWebSearchMenu() {
-        updateWebSearchPresentation();
-        if (!webSearchAvailable) {
-            setWebSearchEnabled(false);
-            return;
-        }
-
-        rebuildWebSearchMenu();
-        if (!webSearchButton.isShowing()) {
-            return;
-        }
-        if (!webSearchMenu.isVisible()) {
-            webSearchMenu.show(webSearchButton, 0, -webSearchMenu.getPreferredSize().height - 4);
-        }
-    }
-
-    private void rebuildWebSearchMenu() {
-        if (webSearchMenu == null) {
-            return;
-        }
-
-        webSearchMenu.removeAll();
-
-        if (!webSearchOptions.isEmpty()) {
-            JMenu searchWithMenu = PopupMenuSupport.configureNativeSafeMenu(new JMenu("Search with"));
-            ButtonGroup optionGroup = new ButtonGroup();
-            webSearchOptionItems.clear();
-            webSearchOptions.stream()
-                    .filter(WebSearchOption::available)
-                    .forEach(option -> {
-                        JRadioButtonMenuItem item = new JRadioButtonMenuItem(option.label());
-                        item.setSelected(Strings.CS.equals(option.id(), webSearchOptionId));
-                        item.addActionListener(e -> selectWebSearchOption(option.id(), true));
-                        optionGroup.add(item);
-                        webSearchOptionItems.put(option.id(), item);
-                        searchWithMenu.add(item);
-                    });
-            webSearchMenu.add(searchWithMenu);
-        }
-
-        JMenu browseTopMenu = PopupMenuSupport.configureNativeSafeMenu(new JMenu("Browse top"));
-        ButtonGroup browseGroup = new ButtonGroup();
-        for (int topN : List.of(1, 2, 3, 5, 10)) {
-            JRadioButtonMenuItem item = new JRadioButtonMenuItem(String.valueOf(topN));
-            item.setSelected(webBrowseTopN == topN);
-            item.addActionListener(e -> {
-                setWebBrowseTopN(topN);
-                notifyWebBrowseTopNChanged(topN);
-            });
-            browseGroup.add(item);
-            browseTopMenu.add(item);
-        }
-        webSearchMenu.add(browseTopMenu);
-    }
-
-    private void selectWebSearchOption(String optionId, boolean notify) {
-        if (Strings.CS.equals(webSearchOptionId, optionId)) {
-            return;
-        }
-
-        webSearchOptionId = optionId;
-        webSearchOptionItems.forEach((id, item) -> item.setSelected(Strings.CS.equals(id, optionId)));
-        updateWebSearchPresentation();
-        if (notify) {
-            notifyWebSearchOptionChanged(optionId);
-        }
-    }
-
-    private String resolveAvailableWebSearchOptionId(String requestedOptionId) {
-        if (webSearchOptions.isEmpty()) {
-            return requestedOptionId;
-        }
-        return webSearchOptions.stream()
-                .filter(WebSearchOption::available)
-                .filter(option -> Strings.CS.equals(option.id(), requestedOptionId))
-                .findFirst()
-                .or(() -> webSearchOptions.stream()
-                        .filter(WebSearchOption::available)
-                        .filter(option -> Strings.CS.equals(option.id(), defaultWebSearchOptionId))
-                        .findFirst())
-                .or(() -> webSearchOptions.stream().filter(WebSearchOption::available).findFirst())
-                .map(WebSearchOption::id)
-                .orElse(null);
     }
 
     private void updateWebSearchPresentation() {
         if (webSearchButton == null) {
             return;
         }
-
         boolean selected = webSearchAvailable && webSearchEnabled;
         webSearchButton.setVisible(webSearchAvailable && !isRecordingOrTranscribing());
-        webSearchButton.setEnabled(isEnabled() && webSearchAvailable && isComposerMutable());
+        webSearchButton.setEnabled(isEnabled() && webSearchAvailable && !webSearchLockedEnabled && isComposerMutable());
         webSearchButton.setSelected(selected);
         applyToolbarToggleSelection(webSearchButton, selected);
-        webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(isWebSearchEnabled())));
-        String optionLabel = webSearchOptions.stream()
-                .filter(option -> Strings.CS.equals(option.id(), webSearchOptionId))
-                .findFirst()
-                .map(WebSearchOption::label)
-                .orElse("Web Search");
-        String toggleHint = "click to toggle, right-click for options";
-        webSearchButton.setToolTipText(webSearchAvailable
-                ? "Web Search: %s (%s)".formatted(optionLabel, toggleHint)
-                : null);
+        webSearchButton.setIcon(webSearchIcon(resolveInputIconTint(selected)));
+        String description = webSearchLockedEnabled
+                ? "Web Search is required by the selected model"
+                : "Toggle native Web Search for the selected model";
+        webSearchButton.setToolTipText(webSearchAvailable ? description : null);
+        webSearchButton.getAccessibleContext().setAccessibleName(webSearchAvailable ? description : "Web Search unavailable");
         revalidate();
         repaint();
     }
@@ -1146,10 +974,6 @@ public class InputBar extends JPanel {
         }
 
         clearValidationMessage();
-        if (webSearchEnabled) {
-            setWebSearchEnabled(false);
-            notifyWebSearchEnabledChanged(false);
-        }
         setAgentModeEnabled(true);
     }
 
@@ -1473,18 +1297,6 @@ public class InputBar extends JPanel {
     private void notifyWebSearchEnabledChanged(boolean enabled) {
         for (Consumer<Boolean> listener : webSearchEnabledListeners) {
             listener.accept(enabled);
-        }
-    }
-
-    private void notifyWebSearchOptionChanged(String optionId) {
-        for (Consumer<String> listener : webSearchOptionListeners) {
-            listener.accept(optionId);
-        }
-    }
-
-    private void notifyWebBrowseTopNChanged(int topN) {
-        for (Consumer<Integer> listener : webBrowseTopNListeners) {
-            listener.accept(topN);
         }
     }
 
@@ -2344,7 +2156,6 @@ public class InputBar extends JPanel {
 
     private void refreshDetachedPopupUis() {
         refreshDetachedPopupUi(reasoningLevelMenu);
-        refreshDetachedPopupUi(webSearchMenu);
         refreshSlashPopupUi();
         if (textArea != null) {
             refreshDetachedPopupUi(textArea.getComponentPopupMenu());

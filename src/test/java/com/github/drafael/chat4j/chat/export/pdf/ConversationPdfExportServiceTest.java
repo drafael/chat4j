@@ -380,6 +380,7 @@ class ConversationPdfExportServiceTest {
                 "off",
                 false,
                 null,
+                false,
                 LocalDateTime.of(2026, 8, 8, 9, 0),
                 LocalDateTime.of(2026, 8, 8, 10, 0)
         );

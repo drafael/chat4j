@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -367,12 +369,12 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Perplexity reasoning Sonar models expose reasoning capability")
     void supportsReasoning_whenPerplexityReasoningSonarModelSelected_returnsTrue() {
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-reasoning-pro"
         )).isTrue();
         assertThat(ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-deep-research"
         )).isTrue();
@@ -382,7 +384,7 @@ class ProviderCapabilityResolverTest {
     @DisplayName("Perplexity non-reasoning Sonar models keep reasoning disabled")
     void supportsReasoning_whenPerplexitySearchSonarModelSelected_returnsFalse() {
         boolean supported = ProviderCapabilityResolver.supportsReasoning(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                ProviderCapabilities.chatAndModels(),
                 "Perplexity",
                 "sonar-pro"
         );
@@ -909,18 +911,18 @@ class ProviderCapabilityResolverTest {
                 "deepseek-v4-pro",
                 "https://api.deepseek.com"
         )).isFalse();
-        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
-                "deepseek-v4-pro"
-        )).isFalse();
-        assertThat(ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
+                "deepseek-v4-pro",
+                null,
+                "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 "DeepSeek",
                 "deepseek-v4-pro",
                 "https://api.deepseek.com/v1",
-                null
-        )).isTrue();
+                "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
     }
 
     @Test
@@ -1201,167 +1203,18 @@ class ProviderCapabilityResolverTest {
         }
     }
 
-    @Test
-    @DisplayName("Anthropic Claude models expose native web search capability")
-    void supportsNativeWebSearch_whenAnthropicClaudeModel_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "Anthropic",
-                "claude-haiku-4-5-20251001"
-        );
 
-        assertThat(supported).isTrue();
-    }
 
-    @Test
-    @DisplayName("OpenAI web-search-capable model hints expose native web search capability")
-    void supportsNativeWebSearch_whenOpenAiModelMatchesWebSearchHints_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenAI",
-                "gpt-4.1-mini"
-        );
 
-        assertThat(supported).isTrue();
-    }
 
-    @Test
-    @DisplayName("xAI Grok web-capable models expose native web search capability")
-    void supportsNativeWebSearch_whenXaiGrokModelMatchesWebSearchHints_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "xAI",
-                "grok-4"
-        );
 
-        assertThat(supported).isTrue();
-    }
 
-    @Test
-    @DisplayName("Groq Compound models expose native web search capability")
-    void supportsNativeWebSearch_whenGroqCompoundModelSelected_returnsTrue() {
-        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "Groq",
-                "compound"
-        )).isTrue();
-        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "Groq",
-                "compound-mini"
-        )).isTrue();
-    }
 
-    @Test
-    @DisplayName("Ordinary Groq models do not expose native web search capability")
-    void supportsNativeWebSearch_whenGroqModelIsNotCompound_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "Groq",
-                "llama-3.3-70b-versatile"
-        );
 
-        assertThat(supported).isFalse();
-    }
 
-    @Test
-    @DisplayName("Supported Google Gemini models expose native web search capability")
-    void supportsNativeWebSearch_whenGoogleAiSupportedGeminiModelSelected_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "Google AI",
-                "gemini-2.5-flash"
-        );
 
-        assertThat(supported).isTrue();
-    }
 
-    @Test
-    @DisplayName("Unsupported Google Gemini versions do not expose native web search capability")
-    void supportsNativeWebSearch_whenGoogleAiUnsupportedGeminiVersionSelected_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "Google AI",
-                "gemini-1.5-flash"
-        );
 
-        assertThat(supported).isFalse();
-    }
-
-    @Test
-    @DisplayName("Perplexity Sonar models expose native web search capability")
-    void supportsNativeWebSearch_whenPerplexitySonarModelSelected_returnsTrue() {
-        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
-                "Perplexity",
-                "sonar"
-        )).isTrue();
-        assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
-                "Perplexity",
-                "sonar-deep-research"
-        )).isTrue();
-    }
-
-    @Test
-    @DisplayName("Perplexity native web search is limited to the static Sonar model list")
-    void supportsNativeWebSearch_whenPerplexityNonSonarModelSelected_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndNativeWebSearch(),
-                "Perplexity",
-                "openai/gpt-5"
-        );
-
-        assertThat(supported).isFalse();
-    }
-
-    @Test
-    @DisplayName("OpenRouter online model ids expose native web search capability")
-    void supportsNativeWebSearch_whenOpenRouterOnlineModel_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenRouter",
-                "anthropic/claude-haiku-4-5-20251001:online"
-        );
-
-        assertThat(supported).isTrue();
-    }
-
-    @Test
-    @DisplayName("OpenRouter Perplexity Sonar models expose native web search capability")
-    void supportsNativeWebSearch_whenOpenRouterPerplexitySonarModelSelected_returnsTrue() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenRouter",
-                "perplexity/sonar-reasoning-pro"
-        );
-
-        assertThat(supported).isTrue();
-    }
-
-    @Test
-    @DisplayName("OpenRouter regular namespaced models do not expose native web search")
-    void supportsNativeWebSearch_whenOpenRouterRegularNamespacedModel_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenRouter",
-                "openai/gpt-5-mini"
-        );
-
-        assertThat(supported).isFalse();
-    }
-
-    @Test
-    @DisplayName("OpenRouter deprecated Perplexity Sonar model ids are not enabled by prefix alone")
-    void supportsNativeWebSearch_whenOpenRouterDeprecatedPerplexitySonarModelSelected_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenRouter",
-                "perplexity/sonar-reasoning"
-        );
-
-        assertThat(supported).isFalse();
-    }
 
     @Test
     @DisplayName("OpenRouter model family hints resolve image, reasoning, and tool capabilities")
@@ -1383,130 +1236,10 @@ class ProviderCapabilityResolverTest {
         )).isTrue();
     }
 
-    @Test
-    @DisplayName("OpenAI Codex does not inherit OpenAI native web search hints")
-    void supportsNativeWebSearch_whenOpenAiCodexProviderSelected_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatAndModels(),
-                "OpenAI Codex",
-                "gpt-5"
-        );
 
-        assertThat(supported).isFalse();
-    }
 
-    @Test
-    @DisplayName("Non-chat model hints disable native web search capability")
-    void supportsNativeWebSearch_whenModelMatchesDenyHints_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                ProviderCapabilities.chatModelsAndImages(),
-                "OpenAI",
-                "text-embedding-3-small"
-        );
 
-        assertThat(supported).isFalse();
-    }
 
-    @Test
-    @DisplayName("Model endpoint metadata enables native web search capability")
-    void supportsNativeWebSearch_whenModelEndpointDeclaresWebSearch_returnsTrue() throws Exception {
-        HttpServer server = createOpenAiModelServer(
-                "web-model",
-                200,
-                """
-                        {
-                          "id": "web-model",
-                          "capabilities": {
-                            "web_search": true
-                          }
-                        }
-                        """,
-                "{\"data\": []}"
-        );
-
-        try {
-            int port = server.getAddress().getPort();
-            boolean supported = ProviderCapabilityResolver.supportsNativeWebSearch(
-                    ProviderCapabilities.chatAndModels(),
-                    "Custom Provider",
-                    "web-model",
-                    "http://127.0.0.1:%d/v1".formatted(port)
-            );
-
-            assertThat(supported).isTrue();
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    @DisplayName("Runtime native web search lets dynamic metadata disable fallback OpenAI hints")
-    void supportsRuntimeNativeWebSearch_whenOpenAiMetadataDeclaresWebSearchFalse_returnsFalse() throws Exception {
-        HttpServer server = createOpenAiModelServer(
-                "gpt-5",
-                200,
-                """
-                        {
-                          "id": "gpt-5",
-                          "capabilities": {
-                            "web_search": false
-                          }
-                        }
-                        """,
-                "{\"data\": []}"
-        );
-
-        try {
-            boolean supported = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                    ProviderCapabilities.chatAndModels(),
-                    "OpenAI",
-                    "gpt-5",
-                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
-                    null
-            );
-
-            assertThat(supported).isFalse();
-        } finally {
-            server.stop(0);
-        }
-    }
-
-    @Test
-    @DisplayName("Runtime native web search ignores dynamic metadata for providers without an implemented native path")
-    void supportsRuntimeNativeWebSearch_whenCustomProviderMetadataDeclaresWebSearch_returnsFalse() throws Exception {
-        HttpServer server = createOpenAiModelServer(
-                "web-model-runtime",
-                200,
-                """
-                        {
-                          "id": "web-model-runtime",
-                          "capabilities": {
-                            "web_search": true
-                          }
-                        }
-                        """,
-                "{\"data\": []}"
-        );
-
-        try {
-            String baseUrl = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
-            assertThat(ProviderCapabilityResolver.supportsNativeWebSearch(
-                    ProviderCapabilities.chatAndModels(),
-                    "Custom Provider",
-                    "web-model-runtime",
-                    baseUrl
-            )).isTrue();
-            assertThat(ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                    ProviderCapabilities.chatAndModels(),
-                    "Custom Provider",
-                    "web-model-runtime",
-                    baseUrl,
-                    null
-            )).isFalse();
-        } finally {
-            server.stop(0);
-        }
-    }
 
     @Test
     @DisplayName("Oversized capability responses are rejected without parsing")
@@ -1592,11 +1325,7 @@ class ProviderCapabilityResolverTest {
     @Test
     @DisplayName("File input support remains disabled unless explicitly declared")
     void supportsFileInput_whenCapabilitiesDoNotDeclareSupport_returnsFalse() {
-        boolean supported = ProviderCapabilityResolver.supportsFileInput(
-                ProviderCapabilities.chatAndModels(),
-                "OpenAI",
-                "gpt-4o"
-        );
+        boolean supported = ProviderCapabilityResolver.supportsFileInput(ProviderCapabilities.chatAndModels());
 
         assertThat(supported).isFalse();
     }
@@ -1785,6 +1514,219 @@ class ProviderCapabilityResolverTest {
     private boolean hasApiKeyQuery(HttpExchange exchange) {
         String query = exchange.getRequestURI().getRawQuery();
         return query != null && query.contains("key=");
+    }
+
+    @Test
+    @DisplayName("Dynamic evidence promotes an unknown OpenAI model only on its documented endpoint")
+    void nativeWebSearchOutcome_whenOfficialOpenAiModelMetadataDeclaresWebSearch_returnsOptional() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "future-model",
+                200,
+                """
+                        {
+                          "id": "future-model",
+                          "capabilities": {
+                            "web_search": true
+                          }
+                        }
+                        """,
+                "{\"data\": []}"
+        );
+
+        try {
+            String endpoint = endpoint(server);
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "OpenAI",
+                    "future-model",
+                    endpoint,
+                    endpoint
+            )).isEqualTo(NativeWebSearchOutcome.PENDING);
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "OpenAI",
+                    "future-model",
+                    endpoint,
+                    endpoint,
+                    TEST_API_KEY
+            )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Inconclusive dynamic evidence remains pending")
+    void nativeWebSearchOutcome_whenOfficialOpenAiMetadataIsInconclusive_remainsPending() throws Exception {
+        HttpServer server = createOpenAiModelServer(
+                "future-inconclusive",
+                200,
+                "{\"id\": \"future-inconclusive\"}",
+                "{\"data\": []}"
+        );
+
+        try {
+            String endpoint = endpoint(server);
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "OpenAI",
+                    "future-inconclusive",
+                    endpoint,
+                    endpoint,
+                    TEST_API_KEY
+            )).isEqualTo(NativeWebSearchOutcome.PENDING);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Provider-name substrings cannot inherit native Web Search transports")
+    void nativeWebSearchOutcome_whenProviderNameOnlyContainsKnownName_returnsUnsupported() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Perplexity Proxy",
+                "sonar-pro",
+                "https://api.perplexity.ai",
+                "https://api.perplexity.ai"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Google Proxy",
+                "gemini-2.5-flash",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Namespaced Sonar classification is independent of the default locale")
+    void nativeWebSearchOutcome_whenLocaleIsTurkish_stillRecognizesNamespacedSonar() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "OpenRouter",
+                    "PERPLEXITY/SONAR-PRO",
+                    "https://openrouter.ai/api/v1",
+                    "https://openrouter.ai/api/v1"
+            )).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
+
+    @Test
+    @DisplayName("Standalone Perplexity Sonar requires Web Search on custom endpoints")
+    void nativeWebSearchOutcome_whenPerplexitySonarUsesCustomEndpoint_returnsRequired() {
+        NativeWebSearchOutcome outcome = ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Perplexity",
+                "sonar-pro",
+                "https://proxy.example/v1",
+                "https://api.perplexity.ai"
+        );
+
+        assertThat(outcome).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+    }
+
+    @Test
+    @DisplayName("Groq Compound requires Web Search only on its documented endpoint")
+    void nativeWebSearchOutcome_whenGroqCompoundEndpointChanges_returnsUnsupported() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Groq",
+                "compound",
+                "https://api.groq.com/openai/v1",
+                "https://api.groq.com/openai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Groq",
+                "compound",
+                "https://proxy.example/v1",
+                "https://api.groq.com/openai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Every Groq Compound model id requires Web Search on the documented endpoint")
+    void nativeWebSearchOutcome_whenGroqCompoundIdIsAccepted_returnsRequired() {
+        assertThat(List.of("compound", "compound-mini", "groq/compound", "groq/compound-mini"))
+                .allSatisfy(modelId -> assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                        "Groq",
+                        modelId,
+                        "https://api.groq.com/openai/v1",
+                        "https://api.groq.com/openai/v1"
+                )).isEqualTo(NativeWebSearchOutcome.REQUIRED));
+    }
+
+    @Test
+    @DisplayName("OpenRouter online and namespaced Sonar models require Web Search only on the documented endpoint")
+    void nativeWebSearchOutcome_whenOpenRouterModelRequiresSearch_returnsRequiredOnlyOnDefaultEndpoint() {
+        assertThat(List.of("anthropic/claude-haiku:online", "perplexity/sonar-pro"))
+                .allSatisfy(modelId -> assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                        "OpenRouter",
+                        modelId,
+                        "https://openrouter.ai/api/v1",
+                        "https://openrouter.ai/api/v1"
+                )).isEqualTo(NativeWebSearchOutcome.REQUIRED));
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenRouter",
+                "anthropic/claude-haiku:online",
+                "https://proxy.example/v1",
+                "https://openrouter.ai/api/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenRouter",
+                "anthropic/claude-haiku:online-preview",
+                "https://openrouter.ai/api/v1",
+                "https://openrouter.ai/api/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("xAI native search uses the same exact model family as request routing")
+    void nativeWebSearchOutcome_whenXaiModelOnlyContainsGrokFamily_returnsUnsupported() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "xAI",
+                "vendor-grok-4",
+                "https://api.x.ai/v1",
+                "https://api.x.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "xAI",
+                "grok-4-fast",
+                "https://api.x.ai/v1",
+                "https://api.x.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+    }
+
+    @Test
+    @DisplayName("OpenAI search-preview snapshots use exact required-search matching")
+    void nativeWebSearchOutcome_whenOpenAiSearchPreviewSnapshotIsExact_returnsRequired() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI",
+                "gpt-4o-mini-search-preview-2026-08-13",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI",
+                "vendor-gpt-4o-search-preview",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.PENDING);
+    }
+
+    @Test
+    @DisplayName("DeepSeek native search requires its official endpoint")
+    void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "DeepSeek",
+                "deepseek-v4-pro",
+                "https://api.deepseek.com/v1",
+                "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "DeepSeek",
+                "deepseek-v4-pro",
+                "https://proxy.example/v1",
+                "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
     }
 
     private HttpServer createLmStudioModelsServer(String responseJson) throws Exception {

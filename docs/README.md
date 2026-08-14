@@ -8,7 +8,7 @@ Use this page as the canonical entry point for implementation and operational de
   - Provider subsystem architecture, module/capability design, and extension guidance.
 
 - [native-web-search-and-citations.md](native-web-search-and-citations.md)
-  - Provider-native web search/citation findings and phased implementation plan.
+  - Current native-only Web Search behavior, provider support, and citation/source semantics.
 
 - [provider-auth-runtime.md](provider-auth-runtime.md)
   - Copilot and Codex authentication, runtime routing, token storage, and provider-specific troubleshooting.

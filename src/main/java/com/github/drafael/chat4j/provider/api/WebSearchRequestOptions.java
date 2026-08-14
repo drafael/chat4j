@@ -1,12 +1,8 @@
 package com.github.drafael.chat4j.provider.api;
 
-public record WebSearchRequestOptions(boolean enabled, String optionId) {
-
-    public WebSearchRequestOptions {
-        optionId = optionId == null ? "" : optionId;
-    }
+public record WebSearchRequestOptions(boolean enabled) {
 
     public static WebSearchRequestOptions disabled() {
-        return new WebSearchRequestOptions(false, "");
+        return new WebSearchRequestOptions(false);
     }
 }

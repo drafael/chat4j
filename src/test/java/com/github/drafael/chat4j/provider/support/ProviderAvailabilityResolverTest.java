@@ -145,6 +145,7 @@ class ProviderAvailabilityResolverTest {
                 name,
                 "API_KEY",
                 baseUrl,
+                baseUrl,
                 emptyList(),
                 ProviderCapabilities.chatAndModels(),
                 model -> null,

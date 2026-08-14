@@ -112,19 +112,7 @@ final class ProviderCapabilityProbes {
             String apiKey
     ) {
         return resolveGoogleAiModelNode(normalizedBaseUrl, modelId, provider, apiKey)
-                .flatMap(modelNode -> {
-                    Optional<Boolean> resolved = ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(modelNode);
-                    if (resolved.isPresent()) {
-                        return resolved;
-                    }
-
-                    String description = normalize(modelNode.path("description").asText(""));
-                    if (containsAny(description, DYNAMIC_NATIVE_WEB_SEARCH_HINTS)) {
-                        return Optional.of(true);
-                    }
-
-                    return Optional.empty();
-                });
+                .flatMap(ProviderCapabilityJsonParser::resolveNativeWebSearchSupportFromNode);
     }
 
     static Optional<Boolean> probeOllamaToolSupport(

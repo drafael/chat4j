@@ -1162,6 +1162,7 @@ class SidebarPanelTest {
                 "off",
                 false,
                 null,
+                false,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );

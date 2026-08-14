@@ -18,16 +18,20 @@ import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import com.openai.models.ReasoningEffort;
 import com.openai.models.responses.EasyInputMessage;
 import com.openai.models.responses.ResponseInputItem;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.UnaryOperator;
 
 import static java.util.Collections.emptyList;
@@ -184,10 +188,93 @@ class OpenAiChatCompletionClientTest {
     @Test
     @DisplayName("Responses-native web search is enabled only for supported OpenAI and xAI models")
     void shouldUseResponsesNativeWebSearch_whenProviderAndModelSupportResponsesSearch_returnsExpectedValue() throws Exception {
-        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenAI", "gpt-5"), new WebSearchRequestOptions(true, "native"))).isTrue();
-        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "grok-4"), new WebSearchRequestOptions(true, "native"))).isTrue();
-        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "gpt-5"), new WebSearchRequestOptions(true, "native"))).isFalse();
-        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenRouter", "openai/gpt-5:online"), new WebSearchRequestOptions(true, "native"))).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenAI", "gpt-5"), new WebSearchRequestOptions(true))).isTrue();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "grok-4"), new WebSearchRequestOptions(true))).isTrue();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "grok-4-fast"), new WebSearchRequestOptions(true))).isTrue();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "vendor-grok-4"), new WebSearchRequestOptions(true))).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("xAI", "gpt-5"), new WebSearchRequestOptions(true))).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(runtime("OpenRouter", "openai/gpt-5:online"), new WebSearchRequestOptions(true))).isFalse();
+    }
+
+    @Test
+    @DisplayName("Required Chat Completions search transports are recognized without Responses rerouting")
+    void usesRequiredChatCompletionsSearchTransport_whenRequiredModelIsSelected_returnsTrue() throws Exception {
+        assertThat(invokeUsesRequiredChatCompletionsSearchTransport(runtime("Groq", "compound"))).isTrue();
+        assertThat(invokeUsesRequiredChatCompletionsSearchTransport(
+                runtime("OpenRouter", "anthropic/claude-haiku:online")
+        )).isTrue();
+        assertThat(invokeUsesRequiredChatCompletionsSearchTransport(
+                runtime("OpenRouter", "perplexity/sonar-pro")
+        )).isTrue();
+        assertThat(invokeUsesRequiredChatCompletionsSearchTransport(
+                runtime("OpenAI", "gpt-4o-search-preview")
+        )).isFalse();
+        assertThat(invokeShouldUseResponsesNativeWebSearch(
+                runtime("OpenAI", "gpt-4o-search-preview"),
+                new WebSearchRequestOptions(true)
+        )).isFalse();
+    }
+
+    @Test
+    @DisplayName("Required Web Search models send through Chat Completions instead of Responses")
+    void streamCompletion_whenSearchIsRequired_usesChatCompletionsTransport() throws Exception {
+        var chatRequests = new AtomicInteger();
+        var responsesRequests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            chatRequests.incrementAndGet();
+            byte[] body = """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext("/v1/responses", exchange -> {
+            responsesRequests.incrementAndGet();
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            for (ProviderRuntime runtime : List.of(
+                    runtime("Groq", "compound", endpoint),
+                    runtime("OpenRouter", "anthropic/claude-haiku:online", endpoint),
+                    runtime("OpenRouter", "perplexity/sonar-pro", endpoint),
+                    runtime("OpenAI", "gpt-4o-search-preview", endpoint)
+            )) {
+                subject.streamCompletion(
+                        runtime,
+                        List.of(Message.user("question")),
+                        ReasoningLevel.OFF,
+                        new WebSearchRequestOptions(true),
+                        ignored -> {
+                        },
+                        ignored -> {
+                        },
+                        ignored -> {
+                        },
+                        ignored -> {
+                        },
+                        () -> false,
+                        ignored -> {
+                        },
+                        () -> {
+                        }
+                );
+            }
+
+            assertThat(chatRequests).hasValue(4);
+            assertThat(responsesRequests).hasValue(0);
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -266,20 +353,33 @@ class OpenAiChatCompletionClientTest {
         return (boolean) method.invoke(subject, runtime, webSearchOptions);
     }
 
+    private boolean invokeUsesRequiredChatCompletionsSearchTransport(ProviderRuntime runtime) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "usesRequiredChatCompletionsSearchTransport",
+                ProviderRuntime.class
+        );
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, runtime);
+    }
+
     private ProviderRuntime runtime(String providerName, String modelId) {
+        return runtime(providerName, modelId, "https://example.test/v1");
+    }
+
+    private ProviderRuntime runtime(String providerName, String modelId, String baseUrl) {
         return new ProviderRuntime(
                 new ProviderDescriptor(
                         providerName,
                         AuthType.ENV_VAR,
                         null,
                         null,
-                        "https://example.test/v1",
+                        baseUrl,
                         emptyList(),
                         ProviderCapabilities.chatAndModels(),
                         UnaryOperator.identity()
                 ),
                 null,
-                "https://example.test/v1",
+                baseUrl,
                 "test-token",
                 modelId,
                 emptyList()

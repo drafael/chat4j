@@ -304,7 +304,7 @@ class DeepSeekAnthropicWebSearchClientTest {
     }
 
     private WebSearchRequestOptions nativeSearch() {
-        return new WebSearchRequestOptions(true, "native");
+        return new WebSearchRequestOptions(true);
     }
 
     private ProviderRuntime runtime() {

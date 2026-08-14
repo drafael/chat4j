@@ -37,7 +37,7 @@ class PerplexityModelCatalogClientTest {
                         null,
                         "https://api.perplexity.ai",
                         List.of("sonar", "sonar-pro"),
-                        ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                        ProviderCapabilities.chatAndModels(),
                         value -> value
                 ),
                 "PERPLEXITY_API_KEY",

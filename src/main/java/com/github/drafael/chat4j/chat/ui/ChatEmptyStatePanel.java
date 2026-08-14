@@ -35,15 +35,19 @@ public final class ChatEmptyStatePanel extends JPanel {
     private final List<ChatPanel.PromptQuickAction> promptQuickActions;
     private final EmptyStateActions actions;
 
-    public ChatEmptyStatePanel(List<ChatPanel.PromptQuickAction> promptQuickActions, EmptyStateActions actions) {
+    public ChatEmptyStatePanel(
+            List<ChatPanel.PromptQuickAction> promptQuickActions,
+            EmptyStateActions actions,
+            boolean webSearchAvailable
+    ) {
         this.promptQuickActions = List.copyOf(promptQuickActions);
         this.actions = actions;
         setLayout(new GridBagLayout());
         setOpaque(false);
-        add(createContent());
+        add(createContent(webSearchAvailable));
     }
 
-    private JPanel createContent() {
+    private JPanel createContent(boolean webSearchAvailable) {
         JPanel content = new JPanel();
         content.setOpaque(false);
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
@@ -82,7 +86,9 @@ public final class ChatEmptyStatePanel extends JPanel {
         suggestions.add(createSuggestionChip("Review codebase", actions.enableAgentMode()));
         suggestions.add(createSuggestionChip("Explain selected file", actions.openAttachmentPicker()));
         suggestions.add(createSuggestionChip("Draft commit message", actions.enableAgentMode()));
-        suggestions.add(createSuggestionChip("Search the web", actions.enableWebSearch()));
+        if (webSearchAvailable) {
+            suggestions.add(createSuggestionChip("Search the web", actions.enableWebSearch()));
+        }
         promptQuickActions.stream()
                 .map(this::createPromptActionChip)
                 .forEach(suggestions::add);

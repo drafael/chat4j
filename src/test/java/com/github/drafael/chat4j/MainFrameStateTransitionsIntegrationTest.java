@@ -105,7 +105,6 @@ class MainFrameStateTransitionsIntegrationTest {
                 () -> calls.add("clear-active"),
                 () -> calls.add("clear-selection"),
                 () -> calls.add("clear-view"),
-                () -> calls.add("reset-runtime"),
                 () -> calls.add("focus")
         );
 
@@ -115,7 +114,6 @@ class MainFrameStateTransitionsIntegrationTest {
                 "clear-active",
                 "clear-selection",
                 "clear-view",
-                "reset-runtime",
                 "focus"
         );
     }

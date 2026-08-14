@@ -13,7 +13,8 @@ public record ProviderRuntime(
     String baseUrl,
     String apiKey,
     String selectedModel,
-    List<String> selectedModelSupportedEndpoints
+    List<String> selectedModelSupportedEndpoints,
+    String normalizedDefaultBaseUrl
 ) {
 
     public ProviderRuntime(
@@ -23,7 +24,34 @@ public record ProviderRuntime(
             String apiKey,
             String selectedModel
     ) {
-        this(descriptor, credentialEnvVar, baseUrl, apiKey, selectedModel, emptyList());
+        this(
+                descriptor,
+                credentialEnvVar,
+                baseUrl,
+                apiKey,
+                selectedModel,
+                emptyList(),
+                descriptor == null ? null : descriptor.normalizeBaseUrl(descriptor.defaultBaseUrl())
+        );
+    }
+
+    public ProviderRuntime(
+            ProviderDescriptor descriptor,
+            String credentialEnvVar,
+            String baseUrl,
+            String apiKey,
+            String selectedModel,
+            List<String> selectedModelSupportedEndpoints
+    ) {
+        this(
+                descriptor,
+                credentialEnvVar,
+                baseUrl,
+                apiKey,
+                selectedModel,
+                selectedModelSupportedEndpoints,
+                descriptor == null ? null : descriptor.normalizeBaseUrl(descriptor.defaultBaseUrl())
+        );
     }
 
     public ProviderRuntime {
@@ -34,13 +62,14 @@ public record ProviderRuntime(
 
     @Override
     public String toString() {
-        return "ProviderRuntime[descriptor=%s, credentialEnvVar=%s, baseUrl=%s, apiKey=<masked>, selectedModel=%s, selectedModelSupportedEndpoints=%s]"
+        return "ProviderRuntime[descriptor=%s, credentialEnvVar=%s, baseUrl=%s, apiKey=<masked>, selectedModel=%s, selectedModelSupportedEndpoints=%s, normalizedDefaultBaseUrl=%s]"
                 .formatted(
                         descriptor,
                         credentialEnvVar,
                         ProviderDiagnosticSanitizer.safeOrigin(baseUrl),
                         selectedModel,
-                        selectedModelSupportedEndpoints
+                        selectedModelSupportedEndpoints,
+                        ProviderDiagnosticSanitizer.safeOrigin(normalizedDefaultBaseUrl)
                 );
     }
 }

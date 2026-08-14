@@ -70,6 +70,7 @@ import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.DeepSeekNativeWebSearchSupport;
 import com.github.drafael.chat4j.provider.support.ModelSelectionCodec;
+import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
@@ -78,15 +79,6 @@ import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
-import com.github.drafael.chat4j.web.BrowsedPage;
-import com.github.drafael.chat4j.web.ModelWebQueryPlanner;
-import com.github.drafael.chat4j.web.PerplexityWebSearchProvider;
-import com.github.drafael.chat4j.web.WebSearchAvailability;
-import com.github.drafael.chat4j.web.WebSearchAvailabilityResolver;
-import com.github.drafael.chat4j.web.WebSearchContext;
-import com.github.drafael.chat4j.web.WebSearchCoordinator;
-import com.github.drafael.chat4j.web.WebSearchResponse;
-import com.github.drafael.chat4j.web.WebSearchResult;
 import java.awt.*;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
@@ -207,8 +199,6 @@ public class ChatPanel extends JPanel {
     private final ModelFavoritesService modelFavoritesService;
     private final ProviderRegistry providerRegistry;
     private final AttachmentStager attachmentStager;
-    private final WebSearchAvailabilityResolver webSearchAvailabilityResolver = new WebSearchAvailabilityResolver();
-    private final WebSearchCoordinator webSearchCoordinator;
     private final ChatMessageViewFactory messageViewFactory;
     private final WebViewEngine webViewEngine;
     private final SystemWebView systemWebView;
@@ -243,6 +233,8 @@ public class ChatPanel extends JPanel {
     private Consumer<HistoryMutationEvent> durableHistoryMutationFailureDeliveredListener;
     private Consumer<ConversationStreamingEvent> conversationStreamingListener;
     private Consumer<Boolean> visibleStreamingChangedListener;
+    private Consumer<WebSearchSettingsEvent> webSearchSettingsChangedListener;
+    private Consumer<AgentSettingsEvent> agentSettingsChangedListener;
     private Supplier<UUID> conversationIdSupplier;
     private ModelSelectorPopup modelPopup;
     private EditingUserMessage editingUserMessage;
@@ -269,12 +261,18 @@ public class ChatPanel extends JPanel {
     private final AtomicLong streamSessionCounter = new AtomicLong();
     private final Object terminalPersistenceLock = new Object();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
+    private final AtomicLong credentialSettlementCounter = new AtomicLong();
     private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final AtomicReference<Thread> capabilityRefreshThread = new AtomicReference<>();
     private final AtomicLong readAloudUiGeneration = new AtomicLong();
     private final AtomicLong speechToTextUiGeneration = new AtomicLong();
     private final AtomicLong openActionUiGeneration = new AtomicLong();
     private long providerScopeVersion;
+    private long installedProviderScope = -1L;
+    private NativeWebSearchOutcome nativeWebSearchOutcome = NativeWebSearchOutcome.UNSUPPORTED;
+    private boolean requestedWebSearch;
+    private StagedRuntimeLoad stagedRuntimeLoad;
+    private Runnable pendingWebSearchOptOut;
     private final Map<Long, SendJob> activeSendJobs = new ConcurrentHashMap<>();
     private final Map<Long, StreamingSession> activeSessions = new ConcurrentHashMap<>();
     private final Set<Thread> shutdownPreparationWorkers = ConcurrentHashMap.newKeySet();
@@ -336,6 +334,16 @@ public class ChatPanel extends JPanel {
     }
 
     private record PendingHistoryFailureDelivery(HistoryMutationEvent event, String message) {
+    }
+
+    private record StagedRuntimeLoad(
+            UUID conversationId,
+            long loadRequestId,
+            boolean webSearchEnabled,
+            Path agentProjectRoot,
+            boolean agentModeEnabled,
+            boolean agentCorrectionRequired
+    ) {
     }
 
     private record PreparedAssistantResponse(
@@ -406,9 +414,6 @@ public class ChatPanel extends JPanel {
         this.codexAuthResolver = codexAuthResolver;
         this.credentialResolver = credentialResolver;
         this.attachmentStager = new AttachmentStager(storagePaths);
-        this.webSearchCoordinator = new WebSearchCoordinator(
-                List.of(new PerplexityWebSearchProvider(credentialResolver))
-        );
         this.messageViewFactory = messageViewFactory;
         this.webViewEngine = webViewEngine;
         this.textToSpeechService = textToSpeechService;
@@ -467,6 +472,13 @@ public class ChatPanel extends JPanel {
         inputBar.addSpeechToTextStartListener(e -> startSpeechToTextRecording());
         inputBar.addSpeechToTextStopListener(e -> speechToTextService.stopRecordingAndTranscribe());
         inputBar.addSpeechToTextCancelListener(e -> cancelSpeechToText());
+        inputBar.addWebSearchEnabledListener(this::handleWebSearchIntent);
+        inputBar.addAgentModeListener(this::handleAgentModeIntent);
+        inputBar.addAgentProjectRootListener(ignored -> {
+            if (stagedRuntimeLoad == null) {
+                emitAgentSettingsEvent();
+            }
+        });
         reloadSpeechToTextSettings();
         updateClearChatButtonVisibility();
 
@@ -654,6 +666,7 @@ public class ChatPanel extends JPanel {
         } else if (!historyFailureDelivered && hasFailedAssistantRecovery(activeConversationId)) {
             inputBar.showValidationMessage("The assistant response could not be saved and will be retried.");
         }
+        refreshProviders();
         SwingUtilities.invokeLater(this::preloadModelPopup);
     }
 
@@ -666,6 +679,10 @@ public class ChatPanel extends JPanel {
         speechToTextUiGeneration.incrementAndGet();
         openActionUiGeneration.incrementAndGet();
         cancelCapabilityRefresh();
+        installedProviderScope = -1L;
+        nativeWebSearchOutcome = NativeWebSearchOutcome.PENDING;
+        inputBar.setWebSearchPresentation(false, false, false);
+        inputBar.setProviderReady(false);
         modelCacheService.cancelScopeVersion(providerScopeVersion);
         if (modelPopup != null) {
             modelPopup.dispose();
@@ -818,6 +835,7 @@ public class ChatPanel extends JPanel {
         if (!updateProviderMap(providers, scopeVersion)) {
             return false;
         }
+        installedProviderScope = scopeVersion;
         if (providerModelsChanged(previousProviderMap, providers)) {
             notifyModelCatalogChanged();
         }
@@ -864,7 +882,7 @@ public class ChatPanel extends JPanel {
         selectedModelId = null;
         modelSelectorBtn.setSelection("", "");
         inputBar.setThinkingAvailable(false);
-        inputBar.setWebSearchOptions(emptyList(), null);
+        inputBar.setWebSearchPresentation(false, false, false);
         inputBar.setAgentModeAvailable(false);
         refreshComposerAvailability();
         if (selectionChanged && selectedModelChangedListener != null) {
@@ -993,39 +1011,34 @@ public class ChatPanel extends JPanel {
             discardFailedUserSend(failedUserSend);
         }
 
-        ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
-        if (providerDefinition == null || StringUtils.isBlank(selectedModelId)) {
+        if (!preflightWebSearchSend()) {
+            return;
+        }
+        SendRuntimeSnapshot runtime = captureSendRuntime();
+        if (runtime == null) {
             inputBar.showValidationMessage("Select a model/provider before sending.");
             return;
         }
 
-        boolean agentModeEnabled = inputBar.isAgentModeEnabled();
-        Path agentProjectRoot = inputBar.getAgentProjectRoot();
-        if (agentModeEnabled && (agentProjectRoot == null || !Files.isDirectory(agentProjectRoot))) {
-            inputBar.showValidationMessage("Select a valid project folder to enable Agent Mode.");
+        if (!validateAgentProjectRoot()) {
             return;
         }
+        boolean agentModeEnabled = inputBar.isAgentModeEnabled();
+        Path agentProjectRoot = inputBar.getAgentProjectRoot();
 
-        ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
-
+        UUID conversationId = resolveConversationId();
         long sendJobId = sendJobCounter.incrementAndGet();
         SendJob sendJob = new SendJob(
                 sendJobId,
-                resolveConversationId(),
-                selectedProviderName,
-                selectedModelId,
-                providerDefinition,
-                providerSnapshot.baseUrl(),
-                providerSnapshot.capabilities(),
+                conversationId,
+                runtime,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
-                inputBar.isWebSearchEnabled(),
-                inputBar.getWebSearchOptionId(),
-                inputBar.getWebBrowseTopN(),
+                requestedWebSearch,
                 agentModeEnabled,
                 agentProjectRoot,
                 agentSystemPromptAppend,
-                true
+                conversationId == null
         );
         sendJob.userMessageOrdinal = nextMessageOrdinal;
         sendJob.assistantMessageOrdinal = sendJob.userMessageOrdinal + 1;
@@ -1069,6 +1082,18 @@ public class ChatPanel extends JPanel {
         });
     }
 
+    private boolean validateAgentProjectRoot() {
+        if (!inputBar.isAgentModeEnabled()) {
+            return true;
+        }
+        Path projectRoot = inputBar.getAgentProjectRoot();
+        if (projectRoot != null && Files.isDirectory(projectRoot)) {
+            return true;
+        }
+        inputBar.showValidationMessage("Select a valid project folder to enable Agent Mode.");
+        return false;
+    }
+
     private FailedUserSend failedUserSendForCurrentView() {
         if (activeConversationId != null) {
             return failedUserSends.get(activeConversationId);
@@ -1091,7 +1116,33 @@ public class ChatPanel extends JPanel {
         if (!originCurrent || original.preparedUserMessage == null) {
             return false;
         }
-        var retry = new SendJob(sendJobCounter.incrementAndGet(), original);
+        if (!preflightWebSearchSend() || !validateAgentProjectRoot()) {
+            return true;
+        }
+        SendRuntimeSnapshot runtime = captureSendRuntime();
+        if (runtime == null) {
+            inputBar.showValidationMessage("Select a model/provider before retrying.");
+            return true;
+        }
+        var retry = new SendJob(
+                sendJobCounter.incrementAndGet(),
+                original.conversationId,
+                runtime,
+                original.historySnapshot,
+                inputBar.getEffectiveReasoningLevel(),
+                requestedWebSearch,
+                inputBar.isAgentModeEnabled(),
+                inputBar.getAgentProjectRoot(),
+                agentSystemPromptAppend,
+                original.createsConversation
+        );
+        retry.userMessageId = original.userMessageId;
+        retry.userMessageTimestamp = original.userMessageTimestamp;
+        retry.userMessageOrdinal = original.userMessageOrdinal;
+        retry.assistantMessageOrdinal = original.assistantMessageOrdinal;
+        retry.composerState = original.composerState;
+        retry.preparedUserMessage = original.preparedUserMessage;
+        retry.persistenceAlreadyCanonical = original.persistenceAlreadyCanonical;
         retry.providerContinuationCancelled = false;
         if (retry.createsConversation) {
             activeConversationId = retry.conversationId;
@@ -1240,13 +1291,12 @@ public class ChatPanel extends JPanel {
                 sendJob.userMessageOrdinal,
                 sendJob.createsConversation,
                 userMessage,
-                sendJob.providerName,
-                sendJob.modelId,
+                sendJob.runtime.providerName(),
+                sendJob.runtime.modelId(),
                 sendJob.reasoningLevel,
                 sendJob.agentModeEnabled,
                 sendJob.agentProjectRoot,
-                sendJob.webSearchEnabled,
-                sendJob.webSearchOptionId,
+                sendJob.requestedWebSearch,
                 visibleConversation
         );
     }
@@ -1327,25 +1377,21 @@ public class ChatPanel extends JPanel {
             HistoryMutationEvent mutationEvent,
             Runnable commitRegeneration
     ) {
-        ProviderRegistry.ProviderDef providerDefinition = selectedProviderDef();
-        if (providerDefinition == null || StringUtils.isBlank(selectedModelId)) {
+        if (!preflightWebSearchSend() || !validateAgentProjectRoot()) {
+            return;
+        }
+        SendRuntimeSnapshot runtime = captureSendRuntime();
+        if (runtime == null) {
             inputBar.showValidationMessage("Select a model/provider before regenerating.");
             return;
         }
-        ProviderSelectionSnapshot providerSnapshot = captureProviderSelection();
         SendJob sendJob = new SendJob(
                 sendJobCounter.incrementAndGet(),
                 conversationId,
-                selectedProviderName,
-                selectedModelId,
-                providerDefinition,
-                providerSnapshot.baseUrl(),
-                providerSnapshot.capabilities(),
+                runtime,
                 new ArrayList<>(history),
                 inputBar.getEffectiveReasoningLevel(),
-                inputBar.isWebSearchEnabled(),
-                inputBar.getWebSearchOptionId(),
-                inputBar.getWebBrowseTopN(),
+                requestedWebSearch,
                 inputBar.isAgentModeEnabled(),
                 inputBar.getAgentProjectRoot(),
                 agentSystemPromptAppend
@@ -1518,8 +1564,8 @@ public class ChatPanel extends JPanel {
                         Exception safeError = ProviderExceptionMapper.map(error, sendJob.apiKey);
                         String details = StringUtils.defaultIfBlank(ExceptionUtils.getMessage(safeError), "Unknown error");
                         log.warn("Assistant stream failed for provider={} model={} conversationId={}: {}",
-                                sendJob.providerName,
-                                sendJob.modelId,
+                                sendJob.runtime.providerName(),
+                                sendJob.runtime.modelId(),
                                 session.conversationId,
                                 details);
                         errorText = "\n\n[Error: %s]".formatted(details);
@@ -1569,9 +1615,9 @@ public class ChatPanel extends JPanel {
                             session.cancelled::get
                     );
                     agentOrchestrator.streamCompletion(
-                            sendJob.providerName,
-                            sendJob.modelId,
-                            sendJob.baseUrl,
+                            sendJob.runtime.providerName(),
+                            sendJob.runtime.modelId(),
+                            sendJob.runtime.baseUrl(),
                             sendJob.apiKey,
                             sendJob.agentSystemPromptAppend,
                             sessionScopedProvider(session),
@@ -1581,11 +1627,11 @@ public class ChatPanel extends JPanel {
                     return;
                 }
 
-                List<Message> effectiveHistory = prepareWebSearchContext(sendJob, session, requestHistory, session.cancelled::get);
+                List<Message> effectiveHistory = prepareNativeWebSearchActivity(sendJob, session, requestHistory, session.cancelled::get);
                 session.provider.streamCompletion(
                         effectiveHistory,
                         sendJob.reasoningLevel,
-                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob), sendJob.webSearchOptionId),
+                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob)),
                         callbacks.onToken(),
                         callbacks.onThinkingToken(),
                         callbacks.onPart(),
@@ -1735,102 +1781,27 @@ public class ChatPanel extends JPanel {
         };
     }
 
-    private List<Message> prepareWebSearchContext(
+    private List<Message> prepareNativeWebSearchActivity(
             SendJob sendJob,
             StreamingSession session,
             List<Message> requestHistory,
             BooleanSupplier isCancelled
-    ) throws Exception {
+    ) {
         if (!sendJob.webSearchEnabled) {
             return requestHistory;
         }
-
         ensureNotCancelled(isCancelled);
         String query = latestUserText(requestHistory);
-
-        if (!Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.PERPLEXITY_OPTION_ID)) {
-            if (nativeWebSearchEnabled(sendJob)) {
-                if (DeepSeekNativeWebSearchSupport.supports(sendJob.providerName, sendJob.modelId, sendJob.baseUrl)) {
-                    initializeConsultedSourceActivity(session, query);
-                } else if (StringUtils.isNotBlank(query)) {
-                    recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
-                }
-            }
-            return requestHistory;
+        if (DeepSeekNativeWebSearchSupport.supports(sendJob.runtime.providerName(), sendJob.runtime.modelId(), sendJob.runtime.baseUrl())) {
+            initializeConsultedSourceActivity(session, query);
+        } else if (StringUtils.isNotBlank(query)) {
+            recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
         }
-
-        if (StringUtils.isBlank(query)) {
-            return requestHistory;
-        }
-
-        WebSearchContext webSearchContext;
-        try {
-            webSearchContext = webSearchCoordinator.buildExternalContextDetails(
-                    sendJob.webSearchOptionId,
-                    query,
-                    Math.max(1, sendJob.webBrowseTopN),
-                    isCancelled,
-                    new ModelWebQueryPlanner(sessionScopedProvider(session), requestHistory)
-            );
-        } catch (Exception e) {
-            ensureNotCancelled(isCancelled);
-            log.warn("Web search failed for provider={} query={}: {}",
-                    sendJob.webSearchOptionId,
-                    query,
-                    ExceptionUtils.getMessage(e));
-            return requestHistory;
-        }
-        ensureNotCancelled(isCancelled);
-        String context = webSearchContext.promptContext();
-        if (StringUtils.isBlank(context)) {
-            return requestHistory;
-        }
-
-        recordWebSearchActivity(session, formatWebSearchActivity(webSearchContext));
-
-        return withWebContextMessage(requestHistory, context);
+        return requestHistory;
     }
 
     private boolean nativeWebSearchEnabled(SendJob sendJob) {
-        if (!sendJob.webSearchEnabled || !Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)) {
-            return false;
-        }
-        return nativeWebSearchSupported(sendJob);
-    }
-
-    private boolean nativeWebSearchSupported(SendJob sendJob) {
-        return ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                sendJob.capabilities,
-                sendJob.providerName,
-                sendJob.modelId,
-                sendJob.baseUrl,
-                sendJob.apiKey
-        );
-    }
-
-    private List<Message> withWebContextMessage(List<Message> requestHistory, String context) {
-        int latestUserIndex = latestUserIndex(requestHistory);
-        if (latestUserIndex < 0) {
-            return requestHistory;
-        }
-
-        List<Message> effectiveHistory = new ArrayList<>(requestHistory);
-        effectiveHistory.set(latestUserIndex, mergeWebContextIntoUserMessage(requestHistory.get(latestUserIndex), context));
-        return effectiveHistory;
-    }
-
-    private Message mergeWebContextIntoUserMessage(Message userMessage, String context) {
-        List<ContentPart> parts = new ArrayList<>(userMessage.parts().size() + 1);
-        parts.add(new TextPart(context));
-        parts.addAll(userMessage.parts());
-        return new Message(userMessage.role(), parts, userMessage.timestamp(), userMessage.meta());
-    }
-
-    private int latestUserIndex(List<Message> requestHistory) {
-        return IntStream.range(0, requestHistory.size())
-                .filter(index -> requestHistory.get(index).role() == Role.USER)
-                .reduce((first, second) -> second)
-                .orElse(-1);
+        return sendJob.webSearchEnabled && sendJob.runtime.webSearchOutcome().supported();
     }
 
     private String latestUserText(List<Message> requestHistory) {
@@ -1941,8 +1912,8 @@ public class ChatPanel extends JPanel {
     }
 
     private String formatNativeWebSearchActivity(SendJob sendJob, String query) {
-        String provider = StringUtils.defaultIfBlank(sendJob.providerName, "Selected provider");
-        String model = StringUtils.defaultIfBlank(sendJob.modelId, "selected model");
+        String provider = StringUtils.defaultIfBlank(sendJob.runtime.providerName(), "Selected provider");
+        String model = StringUtils.defaultIfBlank(sendJob.runtime.modelId(), "selected model");
         return """
                 **Searched**
                 - %s
@@ -1950,73 +1921,6 @@ public class ChatPanel extends JPanel {
                 **Sources**
                 - Native web search is handled by %s (%s). Source URLs will appear here if the provider returns citation metadata in the answer.
                 """.formatted(query, provider, model).trim();
-    }
-
-    private String formatWebSearchActivity(WebSearchContext context) {
-        if (context == null || (context.responses().isEmpty() && context.browsedPages().isEmpty())) {
-            return "";
-        }
-
-        // Internally, search results and browsed pages remain separate on WebSearchContext:
-        // responses are URLs returned by the search provider.
-        // browsedPages are URLs Chat4J fetched and parsed.
-        // The bubble merges both into one Sources section because users mainly need one de-duplicated citation list.
-        StringBuilder activity = new StringBuilder();
-        context.responses().stream()
-                .filter(Objects::nonNull)
-                .forEach(response -> appendWebSearchResponseActivity(activity, response));
-        appendBrowsedPageActivity(activity, context.browsedPages());
-        return activity.toString().trim();
-    }
-
-    private void appendWebSearchResponseActivity(StringBuilder activity, WebSearchResponse response) {
-        if (activity.length() > 0) {
-            activity.append("\n\n");
-        }
-
-        activity.append("**Searched**\n");
-        activity.append("- ").append(StringUtils.defaultIfBlank(response.query(), "latest information")).append("\n\n");
-        activity.append("**Sources**\n");
-        if (response.results().isEmpty()) {
-            activity.append("- No source URLs returned.");
-            return;
-        }
-
-        for (int i = 0; i < response.results().size(); i++) {
-            appendWebSearchResultActivity(activity, i + 1, response.results().get(i));
-        }
-    }
-
-    private void appendWebSearchResultActivity(StringBuilder activity, int index, WebSearchResult result) {
-        String url = StringUtils.defaultString(result.url());
-        String title = StringUtils.defaultIfBlank(result.title(), StringUtils.defaultIfBlank(result.domain(), url));
-        activity.append("%d. [%s](%s)".formatted(index, escapeMarkdownLinkLabel(title), url));
-        if (StringUtils.isNotBlank(result.snippet())) {
-            activity.append(" — ").append(result.snippet().trim());
-        }
-        activity.append("\n");
-    }
-
-    private void appendBrowsedPageActivity(StringBuilder activity, List<BrowsedPage> pages) {
-        if (ObjectUtils.isEmpty(pages)) {
-            return;
-        }
-
-        if (activity.length() > 0) {
-            activity.append("\n");
-        }
-        activity.append("\n**Sources**\n");
-        for (int i = 0; i < pages.size(); i++) {
-            BrowsedPage page = pages.get(i);
-            String label = StringUtils.defaultIfBlank(page.title(), StringUtils.defaultIfBlank(page.domain(), page.url()));
-            activity.append("%d. [%s](%s)".formatted(i + 1, escapeMarkdownLinkLabel(label), page.url()));
-            if (!page.success()) {
-                activity.append(" — failed: ").append(StringUtils.defaultIfBlank(page.error(), "unknown error"));
-            } else if (StringUtils.isNotBlank(page.excerpt())) {
-                activity.append(" — ").append(StringUtils.abbreviate(page.excerpt(), 220));
-            }
-            activity.append("\n");
-        }
     }
 
     private String escapeMarkdownLinkLabel(String value) {
@@ -2264,11 +2168,7 @@ public class ChatPanel extends JPanel {
         );
         ensureNotCancelled(isCancelled);
 
-        boolean supportsFileInput = ProviderCapabilityResolver.supportsFileInput(
-                providerSnapshot.capabilities(),
-                providerSnapshot.providerName(),
-                providerSnapshot.modelId()
-        );
+        boolean supportsFileInput = ProviderCapabilityResolver.supportsFileInput(providerSnapshot.capabilities());
 
         if (hasImage && !supportsImageInput) {
             notices.add(buildImageFallbackNotice(providerSnapshot));
@@ -2309,9 +2209,9 @@ public class ChatPanel extends JPanel {
         cancelCapabilityRefresh();
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || StringUtils.isBlank(selectedModelId)) {
+            nativeWebSearchOutcome = NativeWebSearchOutcome.UNSUPPORTED;
             inputBar.setThinkingAvailable(false);
-            inputBar.setWebSearchLockedEnabled(false);
-            inputBar.setWebSearchOptions(emptyList(), null);
+            applyWebSearchPresentation();
             inputBar.setAgentModeAvailable(false);
             return;
         }
@@ -2319,39 +2219,34 @@ public class ChatPanel extends JPanel {
         String providerName = providerDef.name();
         String modelId = selectedModelId;
         ProviderCapabilities capabilities = providerDef.capabilities();
-        inputBar.setThinkingAvailable(ProviderCapabilityResolver.supportsReasoning(
-                capabilities,
+        inputBar.setThinkingAvailable(ProviderCapabilityResolver.supportsReasoning(capabilities, providerName, modelId));
+        applyNativeWebSearchOutcome(ProviderCapabilityResolver.nativeWebSearchOutcome(
                 providerName,
-                modelId
-        ));
-        WebSearchAvailability fallbackWebSearch = webSearchAvailabilityResolver.resolve(
-                providerDef,
                 modelId,
-                new ArrayList<>(providerMap.values())
-        );
-        inputBar.setWebSearchLockedEnabled(Strings.CS.equals(providerName, "Perplexity"));
-        inputBar.setWebSearchOptions(fallbackWebSearch.options(), fallbackWebSearch.defaultOptionId());
-        inputBar.setAgentModeAvailable(ProviderCapabilityResolver.supportsToolInvocation(
-                capabilities,
-                providerName,
-                modelId
+                providerDef.baseUrl(),
+                providerDef.defaultBaseUrl()
         ));
+        inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required()
+                && ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId));
 
-        if (StringUtils.isBlank(providerDef.baseUrl())) {
+        if (StringUtils.isBlank(providerDef.baseUrl()) || nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING) {
             return;
         }
 
         String baseUrl = providerDef.baseUrl();
-        List<ProviderRegistry.ProviderDef> providers = new ArrayList<>(providerMap.values());
         Thread refreshThread = Thread.ofVirtual().name("chat4j-provider-capabilities").unstarted(() -> {
             try {
                 if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
                     return;
                 }
                 String apiKey = resolveProviderApiKey(providerDef);
-                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
-                    return;
-                }
+                NativeWebSearchOutcome resolved = ProviderCapabilityResolver.nativeWebSearchOutcome(
+                        providerName,
+                        modelId,
+                        baseUrl,
+                        providerDef.defaultBaseUrl(),
+                        apiKey
+                );
                 boolean supportsThinking = ProviderCapabilityResolver.supportsReasoning(
                         capabilities,
                         providerName,
@@ -2359,19 +2254,6 @@ public class ChatPanel extends JPanel {
                         baseUrl,
                         apiKey
                 );
-                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
-                    return;
-                }
-                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                        capabilities,
-                        providerName,
-                        modelId,
-                        baseUrl,
-                        apiKey
-                );
-                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
-                    return;
-                }
                 boolean supportsTools = ProviderCapabilityResolver.supportsToolInvocation(
                         capabilities,
                         providerName,
@@ -2379,23 +2261,13 @@ public class ChatPanel extends JPanel {
                         baseUrl,
                         apiKey
                 );
-                if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
-                    return;
-                }
-                WebSearchAvailability resolvedWebSearch = webSearchAvailabilityResolver.resolve(
-                        providerDef,
-                        modelId,
-                        providers,
-                        supportsNativeWebSearch
-                );
-
                 SwingUtilities.invokeLater(() -> {
                     if (!capabilityRefreshCurrent(selectionId, providerName, modelId)) {
                         return;
                     }
+                    applyNativeWebSearchOutcome(resolved);
                     inputBar.setThinkingAvailable(supportsThinking);
-                    inputBar.setWebSearchOptions(resolvedWebSearch.options(), resolvedWebSearch.defaultOptionId());
-                    inputBar.setAgentModeAvailable(supportsTools);
+                    inputBar.setAgentModeAvailable(!resolved.required() && supportsTools);
                 });
             } catch (Exception e) {
                 if (!Thread.currentThread().isInterrupted()) {
@@ -2409,11 +2281,247 @@ public class ChatPanel extends JPanel {
         refreshThread.start();
     }
 
+    private void handleWebSearchIntent(boolean enabled) {
+        if (stagedRuntimeLoad == null) {
+            setRequestedWebSearch(enabled, true);
+        }
+    }
+
+    private void handleAgentModeIntent(boolean enabled) {
+        if (stagedRuntimeLoad == null) {
+            if (enabled && requestedWebSearch) {
+                setRequestedWebSearch(false, true);
+            }
+            emitAgentSettingsEvent();
+        }
+    }
+
+    private void setRequestedWebSearch(boolean enabled, boolean notify) {
+        boolean changed = requestedWebSearch != enabled;
+        requestedWebSearch = enabled;
+        pendingWebSearchOptOut = null;
+        if (enabled && inputBar.isAgentModeRequested()) {
+            boolean agentWasEffectivelyEnabled = inputBar.isAgentModeEnabled();
+            inputBar.setAgentModeEnabled(false);
+            if (!agentWasEffectivelyEnabled) {
+                emitAgentSettingsEvent();
+            }
+        }
+        applyWebSearchPresentation();
+        if (notify && changed && stagedRuntimeLoad == null
+                && webSearchSettingsChangedListener != null && persistedConversationId != null) {
+            webSearchSettingsChangedListener.accept(new WebSearchSettingsEvent(persistedConversationId, enabled));
+        }
+    }
+
+    void setRequestedWebSearch(boolean enabled) {
+        setRequestedWebSearch(enabled, false);
+    }
+
+    private boolean preflightWebSearchSend() {
+        if (installedProviderScope < 0L) {
+            inputBar.showValidationMessage("Provider configuration is still loading. Try again in a moment.");
+            return false;
+        }
+        if (requestedWebSearch && nativeWebSearchOutcome == NativeWebSearchOutcome.PENDING) {
+            UUID conversationId = persistedConversationId;
+            long selectionId = providerSelectionCounter.get();
+            pendingWebSearchOptOut = () -> {
+                if (Objects.equals(conversationId, persistedConversationId)
+                        && providerSelectionCounter.get() == selectionId
+                        && requestedWebSearch
+                        && nativeWebSearchOutcome == NativeWebSearchOutcome.PENDING) {
+                    handleWebSearchIntent(false);
+                }
+            };
+            inputBar.showValidationMessage(
+                    "Web Search support could not be confirmed.",
+                    "Turn off Web Search",
+                    this::turnOffPendingWebSearch
+            );
+            return false;
+        }
+        return true;
+    }
+
+    void turnOffPendingWebSearch() {
+        if (pendingWebSearchOptOut != null) {
+            pendingWebSearchOptOut.run();
+        }
+    }
+
+    public void setOnWebSearchSettingsChanged(Consumer<WebSearchSettingsEvent> listener) {
+        webSearchSettingsChangedListener = listener;
+    }
+
+    public void setOnAgentSettingsChanged(Consumer<AgentSettingsEvent> listener) {
+        agentSettingsChangedListener = listener;
+    }
+
+    private void emitAgentSettingsEvent() {
+        if (stagedRuntimeLoad == null && agentSettingsChangedListener != null && persistedConversationId != null) {
+            agentSettingsChangedListener.accept(new AgentSettingsEvent(
+                    persistedConversationId,
+                    inputBar.isAgentModeRequested(),
+                    inputBar.getAgentProjectRoot()
+            ));
+        }
+    }
+
+    private void applyWebSearchPresentation() {
+        boolean effective = nativeWebSearchOutcome.required()
+                || nativeWebSearchOutcome.optional() && requestedWebSearch;
+        boolean availabilityChanged = inputBar.isWebSearchAvailable() != nativeWebSearchOutcome.supported();
+        inputBar.setWebSearchPresentation(nativeWebSearchOutcome.supported(), effective, nativeWebSearchOutcome.required());
+        if (availabilityChanged) {
+            refreshEmptyStatePanel();
+        }
+    }
+
+    private void applyNativeWebSearchOutcome(NativeWebSearchOutcome outcome) {
+        if (stagedRuntimeLoad != null) {
+            pendingWebSearchOptOut = null;
+            nativeWebSearchOutcome = outcome;
+            applyWebSearchPresentation();
+            return;
+        }
+        pendingWebSearchOptOut = null;
+        nativeWebSearchOutcome = outcome;
+        boolean agentRequestMustBeCleared = inputBar.isAgentModeRequested()
+                && (outcome.required() || outcome.optional() && requestedWebSearch);
+        if (agentRequestMustBeCleared) {
+            boolean agentWasEffectivelyEnabled = inputBar.isAgentModeEnabled();
+            inputBar.setAgentModeEnabled(false);
+            if (!agentWasEffectivelyEnabled) {
+                emitAgentSettingsEvent();
+            }
+        }
+        if (outcome == NativeWebSearchOutcome.UNSUPPORTED && requestedWebSearch) {
+            setRequestedWebSearch(false, true);
+        } else {
+            applyWebSearchPresentation();
+        }
+    }
+
     private boolean capabilityRefreshCurrent(long selectionId, String providerName, String modelId) {
         return !removed
                 && !shutdownInProgress
                 && !Thread.currentThread().isInterrupted()
                 && isSelectedModel(selectionId, providerName, modelId);
+    }
+
+    public void invalidateSelectedProviderRuntimeIfChanged(
+            Map<String, ProviderRegistry.ProviderRuntimeConfig> runtimeConfigByProvider
+    ) {
+        runSynchronouslyOnEdt(() -> {
+            ProviderRegistry.ProviderDef selected = selectedProviderDef();
+            if (selected != null && !providerRegistry.matchesRuntimeConfig(
+                    selected,
+                    runtimeConfigByProvider.get(selected.name())
+            )) {
+                invalidateSelectedProviderRuntimeOnEdt();
+            }
+        });
+    }
+
+    public void invalidateSelectedProviderCapabilityEvidence(Collection<String> providerNames) {
+        runSynchronouslyOnEdt(() -> {
+            if (providerNames != null && !providerNames.isEmpty() && modelPopup != null) {
+                modelPopup.invalidateModelList();
+            }
+            if (!selectedProviderAffected(providerNames)) {
+                return;
+            }
+            credentialSettlementCounter.incrementAndGet();
+            providerSelectionCounter.incrementAndGet();
+            pendingWebSearchOptOut = null;
+            inputBar.clearValidationMessage();
+            cancelCapabilityRefresh();
+            ProviderRegistry.ProviderDef selected = selectedProviderDef();
+            nativeWebSearchOutcome = selected == null
+                    ? NativeWebSearchOutcome.PENDING
+                    : ProviderCapabilityResolver.nativeWebSearchOutcome(
+                            selected.name(),
+                            selectedModelId,
+                            selected.baseUrl(),
+                            selected.defaultBaseUrl()
+                    );
+            applyWebSearchPresentation();
+        });
+    }
+
+    public void settleSelectedProviderCredentialChange(Collection<String> providerNames) {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> settleSelectedProviderCredentialChange(providerNames));
+            return;
+        }
+        if (!selectedProviderAffected(providerNames)) {
+            return;
+        }
+        String providerName = selectedProviderName;
+        String modelId = selectedModelId;
+        long selectionId = providerSelectionCounter.get();
+        long settlementId = credentialSettlementCounter.incrementAndGet();
+        Thread.startVirtualThread(() -> {
+            ProviderRegistry.ProviderDef settledProvider = providerRegistry.availableProviders().stream()
+                    .filter(provider -> Strings.CS.equals(provider.name(), providerName))
+                    .findFirst()
+                    .orElse(null);
+            SwingUtilities.invokeLater(() -> {
+                if (credentialSettlementCounter.get() != settlementId
+                        || !isSelectedModel(selectionId, providerName, modelId)) {
+                    return;
+                }
+                if (settledProvider == null) {
+                    invalidateSelectedProviderRuntimeOnEdt();
+                    return;
+                }
+                Map<String, ProviderRegistry.ProviderDef> settledProviders = new LinkedHashMap<>(providerMap);
+                settledProviders.put(providerName, settledProvider);
+                providerMap = settledProviders;
+                updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
+                if (modelPopup != null) {
+                    modelPopup.invalidateModelList();
+                }
+            });
+        });
+    }
+
+    private boolean selectedProviderAffected(Collection<String> providerNames) {
+        return providerNames != null && providerNames.contains(selectedProviderName);
+    }
+
+    private void invalidateSelectedProviderRuntimeOnEdt() {
+        invalidateSelectedProviderRuntimeOnEdt(true);
+    }
+
+    private void invalidateSelectedProviderRuntimeOnEdt(boolean clearValidation) {
+        providerSelectionCounter.incrementAndGet();
+        pendingWebSearchOptOut = null;
+        if (clearValidation) {
+            inputBar.clearValidationMessage();
+        }
+        cancelCapabilityRefresh();
+        installedProviderScope = -1L;
+        providerMap = emptyMap();
+        nativeWebSearchOutcome = NativeWebSearchOutcome.PENDING;
+        inputBar.setWebSearchPresentation(false, false, false);
+        inputBar.setProviderReady(false);
+        if (modelPopup != null) {
+            modelPopup.invalidateModelList();
+        }
+    }
+
+    private void runSynchronouslyOnEdt(Runnable action) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            action.run();
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(action);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to update provider runtime state on the EDT", e);
+        }
     }
 
     private void cancelCapabilityRefresh() {
@@ -2429,44 +2537,36 @@ public class ChatPanel extends JPanel {
                 && Strings.CS.equals(selectedModelId, modelId);
     }
 
-    private ProviderSelectionSnapshot captureProviderSelection() {
+    private SendRuntimeSnapshot captureSendRuntime() {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
-        ProviderCapabilities capabilities = providerDef == null ? null : providerDef.capabilities();
-        String baseUrl = providerDef == null ? null : providerDef.baseUrl();
-
-        return new ProviderSelectionSnapshot(
-                selectedProviderName,
-                selectedModelId,
-                capabilities,
-                baseUrl,
-                null
-        );
+        if (providerDef == null || installedProviderScope < 0L || StringUtils.isBlank(selectedModelId)) {
+            return null;
+        }
+        return new SendRuntimeSnapshot(providerDef, selectedModelId, nativeWebSearchOutcome);
     }
 
     private ProviderSelectionSnapshot providerSelectionSnapshot(SendJob sendJob) {
         return new ProviderSelectionSnapshot(
-                sendJob.providerName,
-                sendJob.modelId,
-                sendJob.capabilities,
-                sendJob.baseUrl,
+                sendJob.runtime.providerName(),
+                sendJob.runtime.modelId(),
+                sendJob.runtime.capabilities(),
+                sendJob.runtime.baseUrl(),
                 sendJob.apiKey
         );
     }
 
     private void admitProvider(SendJob sendJob) {
         ensureNotCancelled(sendJob.cancelled::get);
-        if (sendJob.agentModeEnabled && sendJob.webSearchEnabled) {
+        if (sendJob.agentModeEnabled && (sendJob.webSearchEnabled || sendJob.runtime.webSearchOutcome().required())) {
             throw new IllegalArgumentException("Agent Mode and Web Search cannot be enabled together.");
         }
-        if (sendJob.webSearchEnabled
-                && Strings.CS.equals(sendJob.webSearchOptionId, WebSearchAvailabilityResolver.NATIVE_OPTION_ID)
-                && !nativeWebSearchSupported(sendJob)
-        ) {
+        if ((sendJob.requestedWebSearch || sendJob.webSearchEnabled)
+                && !sendJob.runtime.webSearchOutcome().supported()) {
             throw new IllegalArgumentException("Native Web Search is no longer available for the selected provider configuration.");
         }
-        ProviderRegistry.ProviderDef providerDefinition = sendJob.providerDefinition;
+        ProviderRegistry.ProviderDef providerDefinition = sendJob.runtime.providerDefinition();
         try {
-            sendJob.provider = providerDefinition.factory().create(sendJob.modelId);
+            sendJob.provider = providerDefinition.factory().create(sendJob.runtime.modelId());
             sendJob.apiKey = sendJob.provider.apiKey();
             ensureNotCancelled(sendJob.cancelled::get);
         } catch (RuntimeException | Error e) {
@@ -3391,7 +3491,8 @@ public class ChatPanel extends JPanel {
     }
 
     private void prepareRegenerationBubbles() {
-        if (inputBar.isWebSearchEnabled()) {
+        SendJob preparingJob = visiblePreparingJob();
+        if (preparingJob != null && preparingJob.webSearchEnabled) {
             currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
             currentAssistantActivityBubble.setStreaming(true);
             currentAssistantActivityBubble.setVisible(false);
@@ -3855,7 +3956,8 @@ public class ChatPanel extends JPanel {
                         () -> runEmptyStateAction(() -> inputBar.requestAttachmentPicker()),
                         () -> runEmptyStateAction(() -> inputBar.requestWebSearchEnabled(true)),
                         () -> runEmptyStateAction(inputBar::requestInputFocus)
-                )
+                ),
+                nativeWebSearchOutcome.supported()
         );
     }
 
@@ -4548,7 +4650,17 @@ public class ChatPanel extends JPanel {
     }
 
     public void clearChatView() {
+        resetConversationRuntimeState();
         clearChat(false);
+    }
+
+    public void resetConversationRuntimeState() {
+        stagedRuntimeLoad = null;
+        pendingWebSearchOptOut = null;
+        requestedWebSearch = false;
+        inputBar.setAgentModeEnabled(false);
+        inputBar.setAgentProjectRoot(null);
+        applyWebSearchPresentation();
     }
 
     public void cancelConversationsForDeletion(Collection<UUID> conversationIds) {
@@ -4629,7 +4741,7 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        SendJob continuation = new SendJob(sendJobCounter.incrementAndGet(), failed.sendJob());
+        SendJob continuation = SendJob.admittedContinuation(sendJobCounter.incrementAndGet(), failed.sendJob());
         continuation.persistenceAlreadyCanonical = true;
         activeSendJobs.put(continuation.jobId, continuation);
         beginPreparing(continuation);
@@ -5016,8 +5128,7 @@ public class ChatPanel extends JPanel {
             List<ConversationRepository.MessageRecord> records
     ) {
         if (speechToTextService.active()) {
-            inputBar.showValidationMessage("Finish or cancel transcription before switching conversations.");
-            return;
+            throw new IllegalStateException("Cannot switch conversations while Speech to Text is active.");
         }
         setActiveConversationId(conversationId);
         List<PendingAssistantRecovery> recoveries = pendingCompletedAssistantRecoveries.get(conversationId);
@@ -5370,6 +5481,7 @@ public class ChatPanel extends JPanel {
     public void beginShutdown() {
         synchronized (terminalPersistenceLock) {
             shutdownInProgress = true;
+        stagedRuntimeLoad = null;
         }
         activeSendJobs.values().stream()
                 .filter(sendJob -> !sendJob.durableUserMessageSubmissionStarted)
@@ -5733,6 +5845,61 @@ public class ChatPanel extends JPanel {
             visibleStreamingChangedListener.accept(streaming);
         } catch (RuntimeException e) {
             log.warn("Visible streaming listener failed: {}", ExceptionUtils.getMessage(e));
+        }
+    }
+
+    public void beginConversationRuntimeLoad(
+            UUID conversationId,
+            long loadRequestId,
+            boolean webSearchEnabled,
+            Path agentProjectRoot,
+            boolean agentModeEnabled,
+            boolean agentCorrectionRequired
+    ) {
+        pendingWebSearchOptOut = null;
+        stagedRuntimeLoad = new StagedRuntimeLoad(
+                conversationId,
+                loadRequestId,
+                webSearchEnabled,
+                agentProjectRoot,
+                agentModeEnabled,
+                agentCorrectionRequired
+        );
+    }
+
+    public void commitConversationRuntimeLoad(UUID conversationId, long loadRequestId) {
+        StagedRuntimeLoad staged = stagedRuntimeLoad;
+        if (staged == null
+                || staged.loadRequestId() != loadRequestId
+                || !Objects.equals(staged.conversationId(), conversationId)) {
+            return;
+        }
+        persistedConversationId = conversationId;
+        requestedWebSearch = staged.webSearchEnabled();
+        inputBar.setAgentProjectRoot(staged.agentProjectRoot());
+        inputBar.setAgentModeEnabled(staged.agentModeEnabled());
+        stagedRuntimeLoad = null;
+        if (staged.agentCorrectionRequired()) {
+            emitAgentSettingsEvent();
+        }
+
+        boolean conflictingAgentRequest = inputBar.isAgentModeRequested()
+                && (nativeWebSearchOutcome.required()
+                || nativeWebSearchOutcome.optional() && requestedWebSearch);
+        if (conflictingAgentRequest) {
+            boolean agentWasEffectivelyEnabled = inputBar.isAgentModeEnabled();
+            inputBar.setAgentModeEnabled(false);
+            if (!agentWasEffectivelyEnabled) {
+                emitAgentSettingsEvent();
+            }
+        }
+        applyNativeWebSearchOutcome(nativeWebSearchOutcome);
+    }
+
+    public void cancelConversationRuntimeLoad(long loadRequestId) {
+        if (stagedRuntimeLoad != null && stagedRuntimeLoad.loadRequestId() == loadRequestId) {
+            stagedRuntimeLoad = null;
+            applyNativeWebSearchOutcome(nativeWebSearchOutcome);
         }
     }
 
@@ -6490,9 +6657,14 @@ public class ChatPanel extends JPanel {
 
 
     public void refreshProviders() {
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(this::refreshProviders);
+            return;
+        }
         if (shutdownInProgress || removed) {
             return;
         }
+        invalidateSelectedProviderRuntimeOnEdt(false);
         long refreshId = providerRefreshCounter.incrementAndGet();
         long scopeVersion = modelCacheService.nextScopeVersion();
         providerScopeVersion = scopeVersion;
@@ -6513,6 +6685,9 @@ public class ChatPanel extends JPanel {
                     }
 
                     boolean applied = applyProviderModels(providers, scopeVersion);
+                    if (applied) {
+                        installedProviderScope = scopeVersion;
+                    }
                     if (applied && modelPopup != null) {
                         modelPopup.invalidateModelList();
                         SwingUtilities.invokeLater(this::preloadModelPopup);
@@ -6882,12 +7057,11 @@ public class ChatPanel extends JPanel {
             boolean agentModeEnabled,
             Path agentProjectRoot,
             boolean webSearchEnabled,
-            String webSearchOptionId,
             boolean visibleConversation
     ) {
         @Override
         public String toString() {
-            return "UserMessageEvent[conversationId=%s, messageId=%s, ordinal=%d, createsConversation=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, webSearchEnabled=%s, webSearchOptionId=%s, visibleConversation=%s]"
+            return "UserMessageEvent[conversationId=%s, messageId=%s, ordinal=%d, createsConversation=%s, message=<masked>, providerName=%s, modelId=%s, reasoningLevel=%s, agentModeEnabled=%s, agentProjectRoot=<masked>, webSearchEnabled=%s, visibleConversation=%s]"
                     .formatted(
                             conversationId,
                             messageId,
@@ -6898,10 +7072,15 @@ public class ChatPanel extends JPanel {
                             reasoningLevel,
                             agentModeEnabled,
                             webSearchEnabled,
-                            webSearchOptionId,
                             visibleConversation
                     );
         }
+    }
+
+    public record WebSearchSettingsEvent(UUID conversationId, boolean requestedEnabled) {
+    }
+
+    public record AgentSettingsEvent(UUID conversationId, boolean requestedEnabled, Path projectRoot) {
     }
 
     public record AssistantMessageEvent(UUID conversationId, UUID messageId, int ordinal, Message message) {

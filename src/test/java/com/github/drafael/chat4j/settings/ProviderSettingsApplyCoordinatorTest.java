@@ -39,11 +39,18 @@ class ProviderSettingsApplyCoordinatorTest {
 
         subject.apply(
                 providers,
+                config -> calls.add("before-apply"),
                 () -> calls.add("refresh-providers"),
                 () -> calls.add("mark-models-dirty")
         );
 
-        assertThat(calls).containsExactly("resolve", "apply-config", "refresh-providers", "mark-models-dirty");
+        assertThat(calls).containsExactly(
+                "resolve",
+                "before-apply",
+                "apply-config",
+                "refresh-providers",
+                "mark-models-dirty"
+        );
     }
 
     @Test
@@ -55,18 +62,27 @@ class ProviderSettingsApplyCoordinatorTest {
                 }
         );
 
-        assertThatThrownBy(() -> subject.apply(null, () -> {
+        assertThatThrownBy(() -> subject.apply(null, ignored -> {
+        }, () -> {
         }, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("providers is marked non-null");
 
         assertThatThrownBy(() -> subject.apply(emptyList(), null, () -> {
+        }, () -> {
+        }))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("beforeApply is marked non-null");
+
+        assertThatThrownBy(() -> subject.apply(emptyList(), ignored -> {
+        }, null, () -> {
         }))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("refreshProviders is marked non-null");
 
-        assertThatThrownBy(() -> subject.apply(emptyList(), () -> {
+        assertThatThrownBy(() -> subject.apply(emptyList(), ignored -> {
+        }, () -> {
         }, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("markModelsMenuDirty is marked non-null");
@@ -76,6 +92,7 @@ class ProviderSettingsApplyCoordinatorTest {
         return new ProviderRegistry.ProviderDef(
                 name,
                 "API_KEY",
+                "https://example.invalid",
                 "https://example.invalid",
                 emptyList(),
                 ProviderCapabilities.chatAndModels(),

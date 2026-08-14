@@ -55,6 +55,7 @@ class ProviderFavoritesResolverTest {
                 name,
                 "API_KEY",
                 "https://example.invalid",
+                "https://example.invalid",
                 emptyList(),
                 ProviderCapabilities.chatAndModels(),
                 model -> null,

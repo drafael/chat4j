@@ -334,7 +334,9 @@ public class ApiTokenFieldPanel extends JPanel {
         }
         try {
             registry.broadcastCredentialChanging(canonicalTokenId);
+            credentialChangeListener.credentialChanging(canonicalTokenId);
         } catch (Exception e) {
+            notifyCredentialChangeCompletedSafely();
             return failedCompletion(e);
         }
         char[] password = tokenField.getPassword();
@@ -356,7 +358,10 @@ public class ApiTokenFieldPanel extends JPanel {
             }
         }).thenCompose(this::completeSaveOutcomeAsync);
         saveInFlight = operation;
-        operation.whenComplete((ignored, error) -> clearSaveInFlight(operation));
+        operation.whenComplete((ignored, error) -> {
+            notifyCredentialChangeCompletedSafely();
+            clearSaveInFlight(operation);
+        });
         return operation;
     }
 
@@ -385,7 +390,9 @@ public class ApiTokenFieldPanel extends JPanel {
     private CompletableFuture<Boolean> recreateVaultAsync() {
         try {
             registry.broadcastAllCredentialsChanging();
+            credentialChangeListener.allCredentialsChanging();
         } catch (Exception e) {
+            notifyAllCredentialsChangeCompletedSafely();
             return failedCompletion(e);
         }
         pendingCompletions++;
@@ -393,7 +400,22 @@ public class ApiTokenFieldPanel extends JPanel {
         setInfo("Recreating token vault...");
         return CompletableFuture.supplyAsync(() -> credentialMutationService.recreateVault(
                 this::notifyCredentialMutation
-        )).thenCompose(this::completeVaultRecreationAsync);
+        )).thenCompose(this::completeVaultRecreationAsync)
+                .whenComplete((ignored, error) -> notifyAllCredentialsChangeCompletedSafely());
+    }
+
+    private void notifyCredentialChangeCompletedSafely() {
+        try {
+            credentialChangeListener.credentialChangeCompleted(canonicalTokenId);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private void notifyAllCredentialsChangeCompletedSafely() {
+        try {
+            credentialChangeListener.allCredentialsChangeCompleted();
+        } catch (RuntimeException ignored) {
+        }
     }
 
     private CompletableFuture<Boolean> failedCompletion(Throwable error) {

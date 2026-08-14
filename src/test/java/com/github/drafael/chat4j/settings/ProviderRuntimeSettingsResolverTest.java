@@ -112,6 +112,7 @@ class ProviderRuntimeSettingsResolverTest {
                 name,
                 "API_KEY",
                 baseUrl,
+                baseUrl,
                 emptyList(),
                 ProviderCapabilities.chatAndModels(),
                 model -> null,

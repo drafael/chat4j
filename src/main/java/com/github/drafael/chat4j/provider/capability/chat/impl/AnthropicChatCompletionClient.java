@@ -317,11 +317,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
     }
 
     private boolean supportsNativeDocuments(ProviderRuntime runtime) {
-        return ProviderCapabilityResolver.supportsFileInput(
-                runtime.descriptor().capabilities(),
-                runtime.descriptor().name(),
-                runtime.selectedModel()
-        );
+        return ProviderCapabilityResolver.supportsFileInput(runtime.descriptor().capabilities());
     }
 
     int completionTokenLimit(ReasoningLevel reasoningLevel, boolean reasoningEnabled) {
@@ -342,9 +338,7 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         return ProviderCapabilityResolver.supportsReasoning(
                 runtime.descriptor().capabilities(),
                 runtime.descriptor().name(),
-                runtime.selectedModel(),
-                runtime.baseUrl(),
-                runtime.apiKey()
+                runtime.selectedModel()
         );
     }
 

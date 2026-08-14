@@ -290,7 +290,6 @@ class ConversationRepositoryTest {
                 false,
                 null,
                 false,
-                null,
                 entry
         );
         subject.createConversation(original);
@@ -303,7 +302,6 @@ class ConversationRepositoryTest {
                 false,
                 null,
                 false,
-                null,
                 entry
         );
 
@@ -311,6 +309,40 @@ class ConversationRepositoryTest {
                 .isInstanceOf(SQLException.class);
         assertThat(countRows(dataSource, "conversations")).isEqualTo(1);
         assertThat(countRows(dataSource, "messages")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("New conversations leave the legacy Web Search option unset")
+    void createConversation_whenWebSearchIsRequested_leavesLegacyOptionNull() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-new-web-search");
+        createSchema(dataSource);
+        UUID conversationId = UUID.randomUUID();
+        var command = new ConversationRepository.CreateConversationCommand(
+                conversationId,
+                "Search",
+                "OpenAI",
+                "gpt-5",
+                ReasoningLevel.OFF,
+                false,
+                null,
+                true,
+                new ConversationHistoryEntry(UUID.randomUUID(), 1, Message.user("hello"))
+        );
+        var subject = new ConversationRepository(dataSource);
+
+        subject.createConversation(command);
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT web_search_enabled, web_search_option FROM conversations WHERE id = ?"
+             )) {
+            statement.setObject(1, conversationId);
+            try (ResultSet rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getBoolean("web_search_enabled")).isTrue();
+                assertThat(rows.getString("web_search_option")).isNull();
+            }
+        }
     }
 
     @Test
@@ -328,7 +360,6 @@ class ConversationRepositoryTest {
                 false,
                 null,
                 false,
-                null,
                 new ConversationHistoryEntry(UUID.randomUUID(), 1, Message.user("hello"))
         );
         var subject = new ConversationRepository(dataSource);
@@ -462,6 +493,37 @@ class ConversationRepositoryTest {
     }
 
     @Test
+    @DisplayName("Web Search updates preserve opaque legacy option values")
+    void updateWebSearchSettings_whenLegacyOptionExists_preservesOption() throws Exception {
+        DataSource dataSource = createDataSource("conversation-repo-web-search-legacy-option");
+        createSchema(dataSource);
+        UUID conversationId = insertConversation(dataSource);
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "UPDATE conversations SET web_search_option = ? WHERE id = ?"
+             )) {
+            statement.setString(1, "perplexity");
+            statement.setObject(2, conversationId);
+            statement.executeUpdate();
+        }
+        var subject = new ConversationRepository(dataSource);
+
+        subject.updateWebSearchSettings(conversationId, true);
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT web_search_enabled, web_search_option FROM conversations WHERE id = ?"
+             )) {
+            statement.setObject(1, conversationId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                assertThat(resultSet.next()).isTrue();
+                assertThat(resultSet.getBoolean("web_search_enabled")).isTrue();
+                assertThat(resultSet.getString("web_search_option")).isEqualTo("perplexity");
+            }
+        }
+    }
+
+    @Test
     @DisplayName("Nullable boolean metadata does not satisfy an explicit false postcondition")
     void metadataPostconditions_whenStoredBooleansAreNull_rejectFalseDesiredValues() throws Exception {
         DataSource dataSource = createDataSource("conversation-repo-null-booleans");
@@ -479,7 +541,7 @@ class ConversationRepositoryTest {
 
         assertThat(subject.hasFavorite(conversationId, false)).isFalse();
         assertThat(subject.hasAgentSettings(conversationId, false, null)).isFalse();
-        assertThat(subject.hasWebSearchSettings(conversationId, false, null)).isFalse();
+        assertThat(subject.hasWebSearchSettings(conversationId, false)).isFalse();
     }
 
     @Test

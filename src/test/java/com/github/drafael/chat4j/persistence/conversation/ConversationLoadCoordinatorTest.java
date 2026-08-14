@@ -41,6 +41,7 @@ class ConversationLoadCoordinatorTest {
                 "off",
                 false,
                 null,
+                false,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
@@ -310,6 +311,7 @@ class ConversationLoadCoordinatorTest {
                 "off",
                 false,
                 null,
+                false,
                 null,
                 null
         );

@@ -10,6 +10,7 @@ import com.github.drafael.chat4j.provider.registry.ProviderRegistry;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.LocalServiceHealth;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
+import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.util.Fonts;
@@ -130,10 +131,20 @@ public class ModelSelectorPopup extends JDialog {
     private record ProviderGroup(JLabel header, List<ModelRowComponent> rows) {
     }
 
-    private record ModelCapabilityKey(String providerName, String modelId) {
+    private record ModelCapabilityKey(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String defaultBaseUrl,
+            long providerScope
+    ) {
     }
 
-    private record ModelCapabilities(boolean supportsImageInput, boolean supportsReasoning, boolean supportsNativeWebSearch) {
+    private record ModelCapabilities(
+            boolean supportsImageInput,
+            boolean supportsReasoning,
+            NativeWebSearchOutcome nativeWebSearchOutcome
+    ) {
     }
 
     private static final class ProviderEntry {
@@ -1133,7 +1144,7 @@ public class ModelSelectorPopup extends JDialog {
                 modelFavoritesService.isFavorite(entry.name(), modelId),
                 initialCapabilities.supportsImageInput(),
                 initialCapabilities.supportsReasoning(),
-                initialCapabilities.supportsNativeWebSearch(),
+                initialCapabilities.nativeWebSearchOutcome().supported(),
                 new ModelRowComponent.Listener() {
                     @Override
                     public void onSelect(String p, String m) {
@@ -1169,7 +1180,7 @@ public class ModelSelectorPopup extends JDialog {
     }
 
     private ModelCapabilities resolveCachedCapabilities(ProviderEntry entry, String modelId) {
-        ModelCapabilityKey key = new ModelCapabilityKey(entry.name(), modelId);
+        ModelCapabilityKey key = capabilityKey(entry, modelId);
         ModelCapabilities cached = capabilityCache.get(key);
         if (cached != null) {
             return cached;
@@ -1192,14 +1203,14 @@ public class ModelSelectorPopup extends JDialog {
                 modelId
         );
 
-        boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                entry.def.capabilities(),
+        NativeWebSearchOutcome nativeWebSearchOutcome = ProviderCapabilityResolver.nativeWebSearchOutcome(
                 entry.name(),
                 modelId,
-                entry.baseUrl()
+                entry.baseUrl(),
+                entry.def.defaultBaseUrl()
         );
 
-        return new ModelCapabilities(supportsImageInput, supportsReasoning, supportsNativeWebSearch);
+        return new ModelCapabilities(supportsImageInput, supportsReasoning, nativeWebSearchOutcome);
     }
 
     private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
@@ -1207,7 +1218,7 @@ public class ModelSelectorPopup extends JDialog {
             return;
         }
 
-        ModelCapabilityKey key = new ModelCapabilityKey(entry.name(), modelId);
+        ModelCapabilityKey key = capabilityKey(entry, modelId);
         long providerGeneration;
         synchronized (capabilityRefreshLock) {
             providerGeneration = providerLoadCounter.get();
@@ -1247,18 +1258,18 @@ public class ModelSelectorPopup extends JDialog {
                     return;
                 }
 
-                boolean supportsNativeWebSearch = ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                        entry.def.capabilities(),
+                NativeWebSearchOutcome nativeWebSearchOutcome = ProviderCapabilityResolver.nativeWebSearchOutcome(
                         entry.name(),
                         modelId,
                         entry.baseUrl(),
+                        entry.def.defaultBaseUrl(),
                         apiKey
                 );
 
                 ModelCapabilities resolved = new ModelCapabilities(
                         supportsImageInput,
                         supportsReasoning,
-                        supportsNativeWebSearch
+                        nativeWebSearchOutcome
                 );
                 synchronized (capabilityRefreshLock) {
                     if (!isCurrentProviderLoad(providerGeneration)) {
@@ -1286,13 +1297,23 @@ public class ModelSelectorPopup extends JDialog {
         }
     }
 
+    private ModelCapabilityKey capabilityKey(ProviderEntry entry, String modelId) {
+        return new ModelCapabilityKey(
+                entry.name(),
+                modelId,
+                entry.baseUrl(),
+                entry.def.defaultBaseUrl(),
+                providerLoadCounter.get()
+        );
+    }
+
     private void applyCapabilitiesToVisibleRows(ModelCapabilityKey key, ModelCapabilities capabilities) {
         groups.forEach(group -> group.rows().forEach(row -> {
             if (row.providerName().equals(key.providerName()) && row.modelId().equals(key.modelId())) {
                 row.updateCapabilities(
                         capabilities.supportsImageInput(),
                         capabilities.supportsReasoning(),
-                        capabilities.supportsNativeWebSearch()
+                        capabilities.nativeWebSearchOutcome().supported()
                 );
             }
         }));

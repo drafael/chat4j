@@ -21,7 +21,6 @@ class NewChatCoordinatorTest {
                 () -> calls.add("clear-active"),
                 () -> calls.add("clear-selection"),
                 () -> calls.add("clear-view"),
-                () -> calls.add("reset-runtime"),
                 () -> calls.add("focus")
         );
 
@@ -30,7 +29,6 @@ class NewChatCoordinatorTest {
                 "clear-active",
                 "clear-selection",
                 "clear-view",
-                "reset-runtime",
                 "focus"
         );
     }
@@ -40,7 +38,7 @@ class NewChatCoordinatorTest {
     void start_whenRequiredArgumentMissing_throwsException() {
         var subject = new NewChatCoordinator();
 
-        assertThatThrownBy(() -> subject.start(null, () -> {}, () -> {}, () -> {}, () -> {}, () -> {}))
+        assertThatThrownBy(() -> subject.start(null, () -> {}, () -> {}, () -> {}, () -> {}))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("clearCurrentConversationId");
     }

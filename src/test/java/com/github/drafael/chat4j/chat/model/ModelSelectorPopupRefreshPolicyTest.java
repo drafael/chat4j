@@ -64,6 +64,7 @@ class ModelSelectorPopupRefreshPolicyTest {
                 "OpenAI",
                 "OPENAI_API_KEY",
                 "https://old.example.com/v1",
+                "https://old.example.com/v1",
                 List.of("seed-model"),
                 ProviderCapabilities.chatAndModels(),
                 model -> null,

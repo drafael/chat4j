@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
 import java.util.Locale;
 import java.util.Set;
@@ -35,7 +36,7 @@ final class ProviderCapabilityHints {
     static final Set<String> OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("openai");
     static final Set<String> XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("xai");
     static final Set<String> GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("groq");
-    static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
+    static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS = Set.of("google ai");
     static final Set<String> OPENROUTER_PROVIDER_HINTS = Set.of("openrouter");
     static final Set<String> NATIVE_WEB_SEARCH_MODEL_DENY_HINTS = Set.of(
             "embedding",
@@ -48,22 +49,15 @@ final class ProviderCapabilityHints {
     );
     static final Set<String> ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of("claude");
     static final Set<String> OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
-            "search-preview",
-            "gpt-4o-search",
             "gpt-4.1",
             "gpt-5",
             "o3",
             "o4"
     );
-    static final Set<String> XAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
-            "grok-3",
-            "grok-4"
-    );
     static final Set<String> GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(
             "gemini-2",
             "gemini-3"
     );
-    static final Set<String> OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS = Set.of(":online");
     static final Set<String> OLLAMA_PROVIDER_HINTS = Set.of("ollama");
     static final Set<String> LM_STUDIO_PROVIDER_HINTS = Set.of("lm studio", "lmstudio");
     static final Set<String> GOOGLE_AI_PROVIDER_HINTS = Set.of("google ai", "google", "gemini");
@@ -326,13 +320,17 @@ final class ProviderCapabilityHints {
     static final Set<String> OLLAMA_MODELINFO_TEXT_VISION_HINTS = Set.of("projector", "vision encoder");
 
 
+    static boolean supportsXaiNativeWebSearch(String model) {
+        return Strings.CI.startsWith(model, "grok-3") || Strings.CI.startsWith(model, "grok-4");
+    }
+
     static boolean supportsOpenRouterNativeWebSearch(String model) {
-        return containsAny(model, OPENROUTER_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
+        return StringUtils.defaultString(model).endsWith(":online")
                 || PerplexityModelIds.isNamespacedSonarModel(model);
     }
 
     static boolean supportsGroqNativeWebSearch(String model) {
-        return StringUtils.equalsAny(model, "compound", "compound-mini", "groq/compound", "groq/compound-mini");
+        return Strings.CS.equalsAny(model, "compound", "compound-mini", "groq/compound", "groq/compound-mini");
     }
 
     static boolean supportsDeepSeekReasoning(String model) {

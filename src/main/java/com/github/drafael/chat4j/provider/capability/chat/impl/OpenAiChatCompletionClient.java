@@ -169,9 +169,26 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 return;
             }
 
-            if (shouldUseResponsesNativeWebSearch(runtime, webSearchOptions)) {
-                streamWithResponses(runtime, projectionPlan, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+            if (isOpenAiSearchPreviewModel(runtime)) {
+                if (webSearchOptions != null && webSearchOptions.enabled()
+                        && !Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())) {
+                    throw new IllegalArgumentException("Native Web Search is unavailable for this provider endpoint.");
+                }
+                streamWithChatCompletions(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
+            }
+
+            if (webSearchOptions != null && webSearchOptions.enabled()) {
+                if (usesResponsesNativeWebSearchTransport(runtime)) {
+                    if (!shouldUseResponsesNativeWebSearch(runtime, webSearchOptions)) {
+                        throw new IllegalArgumentException("Native Web Search is unavailable for this provider endpoint.");
+                    }
+                    streamWithResponses(runtime, projectionPlan, client, normalizedReasoningLevel, true, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+                    return;
+                }
+                if (!usesRequiredChatCompletionsSearchTransport(runtime)) {
+                    throw new IllegalArgumentException("Native Web Search is unavailable for this provider transport.");
+                }
             }
 
             streamWithChatCompletions(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
@@ -180,21 +197,49 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         }
     }
 
+    private boolean usesResponsesNativeWebSearchTransport(ProviderRuntime runtime) {
+        if (runtime == null || runtime.descriptor() == null) {
+            return false;
+        }
+        String providerName = runtime.descriptor().name();
+        return Strings.CS.equals(providerName, "OpenAI") || Strings.CS.equals(providerName, "xAI");
+    }
+
+    private boolean usesRequiredChatCompletionsSearchTransport(ProviderRuntime runtime) {
+        if (runtime == null || runtime.descriptor() == null) {
+            return false;
+        }
+        String providerName = runtime.descriptor().name();
+        if (!Strings.CS.equals(providerName, "Groq") && !Strings.CS.equals(providerName, "OpenRouter")) {
+            return false;
+        }
+        return ProviderCapabilityResolver.nativeWebSearchOutcome(
+                providerName,
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.normalizedDefaultBaseUrl()
+        ).required();
+    }
+
     private boolean shouldUseResponsesNativeWebSearch(ProviderRuntime runtime, WebSearchRequestOptions webSearchOptions) {
         if (runtime == null || runtime.descriptor() == null || webSearchOptions == null || !webSearchOptions.enabled()) {
             return false;
         }
         String providerName = runtime.descriptor().name();
-        if (!Strings.CS.equals(providerName, "OpenAI") && !Strings.CS.equals(providerName, "xAI")) {
-            return false;
+        if (Strings.CS.equals(providerName, "OpenAI")) {
+            return Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
+                    && !isOpenAiSearchPreviewModel(runtime);
         }
-        return ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                runtime.descriptor().capabilities(),
-                providerName,
-                runtime.selectedModel(),
-                runtime.baseUrl(),
-                runtime.apiKey()
-        );
+        return Strings.CS.equals(providerName, "xAI")
+                && Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
+                && ProviderCapabilityResolver.supportsXaiNativeWebSearch(runtime.selectedModel());
+    }
+
+    private boolean isOpenAiSearchPreviewModel(ProviderRuntime runtime) {
+        return runtime != null
+                && runtime.descriptor() != null
+                && Strings.CS.equals(runtime.descriptor().name(), "OpenAI")
+                && ProviderCapabilityResolver.isOpenAiSearchPreviewModel(runtime.selectedModel());
     }
 
     private Consumer<CitationRef> noOpIfNull(Consumer<CitationRef> onCitation) {

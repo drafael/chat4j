@@ -155,14 +155,18 @@ final class DynamicCapabilityResolver {
         String normalizedBaseUrl = key.baseUrl();
         String resolvedModelId = modelId.trim();
         Optional<Boolean> resolvedSupport = containsAny(provider, GOOGLE_AI_PROVIDER_HINTS)
-                ? ProviderCapabilityProbes.probeGoogleAiNativeWebSearchSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey)
-                        .or(() -> ProviderCapabilityProbes.probeModelCatalogNativeWebSearchSupport(
-                                normalizedBaseUrl,
-                                resolvedModelId,
-                                provider,
-                                apiKey
-                        ))
-                : ProviderCapabilityProbes.probeModelCatalogNativeWebSearchSupport(normalizedBaseUrl, resolvedModelId, provider, apiKey);
+                ? ProviderCapabilityProbes.probeGoogleAiNativeWebSearchSupport(
+                        normalizedBaseUrl,
+                        resolvedModelId,
+                        provider,
+                        apiKey
+                )
+                : ProviderCapabilityProbes.probeModelCatalogNativeWebSearchSupport(
+                        normalizedBaseUrl,
+                        resolvedModelId,
+                        provider,
+                        apiKey
+                );
 
         resolvedSupport.ifPresent(value -> cache(DYNAMIC_NATIVE_WEB_SEARCH_SUPPORT_CACHE, key, value));
         return resolvedSupport;

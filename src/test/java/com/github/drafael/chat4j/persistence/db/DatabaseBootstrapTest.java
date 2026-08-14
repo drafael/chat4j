@@ -107,7 +107,6 @@ class DatabaseBootstrapTest {
                 false,
                 null,
                 false,
-                null,
                 new ConversationHistoryEntry(UUID.randomUUID(), 1, Message.user("hello"))
         ));
         var conversation = conversationRepo.loadConversation(conversationId).map(ConversationRepository.LoadedConversation::conversation);

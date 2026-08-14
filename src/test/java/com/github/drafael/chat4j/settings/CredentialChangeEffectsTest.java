@@ -55,9 +55,10 @@ class CredentialChangeEffectsTest {
     }
 
     @Test
-    @DisplayName("Perplexity token does not invalidate fixed seed model cache")
-    void forTokenId_whenPerplexity_returnsNoModelCacheTargets() {
-        assertThat(CredentialChangeEffects.forTokenId("PERPLEXITY_API_KEY").chatProviders()).isEmpty();
+    @DisplayName("Perplexity token invalidates the standalone chat provider")
+    void forTokenId_whenPerplexity_returnsStandaloneProvider() {
+        assertThat(CredentialChangeEffects.forTokenId("PERPLEXITY_API_KEY").chatProviders())
+                .containsExactly("Perplexity");
     }
 
     @Test

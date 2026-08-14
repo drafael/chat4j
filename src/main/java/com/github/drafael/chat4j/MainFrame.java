@@ -159,7 +159,6 @@ import com.github.drafael.chat4j.sidebar.SidebarToggleStateApplyCoordinator;
 import com.github.drafael.chat4j.util.LookAndFeelMenuRefreshCoordinator;
 import com.github.drafael.chat4j.util.MenuPopupVisibleRunner;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
-import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.WindowAdapter;
@@ -580,8 +579,7 @@ public class MainFrame extends JFrame {
         this.conversationPersistenceCoordinator = conversationWiring.conversationPersistenceCoordinator();
         this.conversationRuntimeSettingsCoordinator = new MainFrameConversationRuntimeSettingsCoordinator(
                 conversationPersistenceCoordinator,
-                new AgentModeSettings(settingsRepo),
-                new WebSearchSettings(settingsRepo)
+                new AgentModeSettings(settingsRepo)
         );
 
         configureWindowChrome();
@@ -771,6 +769,15 @@ public class MainFrame extends JFrame {
         panel.setOnModelFavoritesChanged(this::onModelFavoritesChanged);
         panel.setOnModelCatalogChanged(this::onModelCatalogChanged);
         panel.setOnDurableUserMessageSubmitted(this::onUserMessageSubmitted);
+        panel.setOnWebSearchSettingsChanged(event -> conversationRuntimeSettingsCoordinator.persistWebSearchSettings(
+                event.conversationId(),
+                event.requestedEnabled()
+        ).whenComplete((ignored, error) -> handleRuntimeSettingsPersistenceFailure(event.conversationId(), error)));
+        panel.setOnAgentSettingsChanged(event -> conversationRuntimeSettingsCoordinator.persistAgentSettings(
+                event.conversationId(),
+                event.requestedEnabled(),
+                event.projectRoot()
+        ).whenComplete((ignored, error) -> handleRuntimeSettingsPersistenceFailure(event.conversationId(), error)));
         panel.setOnDurableUserMessageFailureDelivered(
                 conversationPersistenceCoordinator::markUserMessageFailureDelivered
         );
@@ -779,11 +786,6 @@ public class MainFrame extends JFrame {
         panel.setPromptQuickActions(promptQuickActions(BuiltInPromptCatalog.prompts()));
         panel.getInputBar().addCommandCenterListener(e -> openCommandCenter());
         panel.getInputBar().addReasoningLevelListener(this::onReasoningLevelChanged);
-        panel.getInputBar().addWebSearchEnabledListener(this::onWebSearchEnabledChanged);
-        panel.getInputBar().addWebSearchOptionListener(this::onWebSearchOptionChanged);
-        panel.getInputBar().addWebBrowseTopNListener(this::persistWebBrowseTopN);
-        panel.getInputBar().addAgentModeListener(this::onAgentModeChanged);
-        panel.getInputBar().addAgentProjectRootListener(this::onAgentProjectRootChanged);
         panel.setConversationIdSupplier(conversationState::currentConversationId);
         panel.setOnDurableAssistantMessageCompleted(this::onAssistantMessageCompleted);
         panel.setOnDurableHistoryMutation(this::onHistoryMutation);
@@ -1072,6 +1074,31 @@ public class MainFrame extends JFrame {
         return true;
     }
 
+    private void handleRuntimeSettingsPersistenceFailure(UUID conversationId, Throwable error) {
+        if (error == null || conversationId == null) {
+            return;
+        }
+        Throwable failure = error instanceof CompletionException && error.getCause() != null
+                ? error.getCause()
+                : error;
+        SwingUtilities.invokeLater(() -> {
+            if (shutdownState.shutdownInProgress()) {
+                return;
+            }
+            warnWithoutStack("Failed to persist conversation runtime settings", failure);
+            if (failure instanceof ConversationPersistenceIndeterminateException
+                    || failure instanceof ConversationPersistencePrerequisiteIndeterminateException) {
+                chatPanel.setConversationPersistenceBlocked(conversationId, true);
+                reconcileBlockedConversation(conversationId);
+                return;
+            }
+            chatPanel.setConversationPersistenceBlocked(conversationId, false);
+            if (Objects.equals(conversationState.currentConversationId(), conversationId)) {
+                chatPanel.getInputBar().showValidationMessage("Failed to save conversation settings. Try again.");
+            }
+        });
+    }
+
     private void reconcileBlockedConversation(UUID conversationId) {
         if (conversationId == null) {
             return;
@@ -1340,7 +1367,6 @@ public class MainFrame extends JFrame {
                 () -> chatPanel.setActiveConversationId(null),
                 sidebarPanel::clearSelection,
                 chatPanel::clearChatView,
-                this::resetConversationRuntimeState,
                 () -> chatPanel.getInputBar().requestInputFocus()
         );
         applyCurrentRenderMode();
@@ -1644,7 +1670,6 @@ public class MainFrame extends JFrame {
                 branches.add(cleanupStage(chatPanel::cancelAllRequestsAsync));
             }
             branches.add(disposeSpeechServicesAsync());
-            branches.add(cleanupStage(conversationRuntimeSettingsCoordinator::sealWebBrowsePersistence));
             if (sharedServiceOwnershipAccepted) {
                 branches.add(cleanupStage(() -> closeMcpServicesAfterRuntimeSettlement(
                         mcpRuntimeShutdownFuture,
@@ -1843,17 +1868,55 @@ public class MainFrame extends JFrame {
             List<MessageRecord> records,
             ConversationRepository.ConversationRecord conversation
     ) {
-        boolean applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
-                requestId,
-                pendingLoadConversationId,
+        if (chatPanel.isSpeechToTextActive()) {
+            pendingLoadConversationId = null;
+            chatPanel.setConversationLoading(false);
+            chatPanel.getInputBar().showValidationMessage(
+                    "Conversation reload was postponed because Speech to Text is active. Reopen it after transcription finishes."
+            );
+            return;
+        }
+        MainFrameConversationRuntimeSettingsCoordinator.LoadedRuntimeSettings runtimeSettings =
+                conversationRuntimeSettingsCoordinator.loadedRuntimeSettings(conversation);
+        chatPanel.beginConversationRuntimeLoad(
                 conversationId,
-                records,
-                conversation,
-                loadedRecords -> chatPanel.loadConversationHistoryEntries(conversationId, loadedRecords),
-                chatPanel::setSelectedModel,
-                sidebarPanel::selectConversation
+                requestId,
+                runtimeSettings.webSearchEnabled(),
+                runtimeSettings.agentProjectRoot(),
+                runtimeSettings.agentModeEnabled(),
+                runtimeSettings.agentCorrectionRequired()
         );
+        UUID previousConversationId = conversationState.currentConversationId();
+        boolean applied;
+        try {
+            applied = conversationLoadApplyDispatchCoordinator.applyLoaded(
+                    requestId,
+                    pendingLoadConversationId,
+                    conversationId,
+                    records,
+                    conversation,
+                    loadedRecords -> chatPanel.loadConversationHistoryEntries(conversationId, loadedRecords),
+                    chatPanel::setSelectedModel,
+                    loadedConversationId -> {
+                        conversationState.setCurrentConversationId(loadedConversationId);
+                        sidebarPanel.selectConversation(loadedConversationId);
+                    }
+            );
+        } catch (RuntimeException | Error e) {
+            chatPanel.cancelConversationRuntimeLoad(requestId);
+            conversationState.setCurrentConversationId(previousConversationId);
+            chatPanel.setActiveConversationId(previousConversationId);
+            if (previousConversationId != null) {
+                sidebarPanel.selectConversation(previousConversationId);
+            } else {
+                sidebarPanel.clearSelection();
+            }
+            throw e;
+        }
 
+        if (!applied) {
+            chatPanel.cancelConversationRuntimeLoad(requestId);
+        }
         if (!applied && conversationLoadCoordinator.mutationChangedSinceRead(requestId, conversationId)) {
             conversationLoadDispatchCoordinator.dispatch(
                     conversationId,
@@ -1867,17 +1930,17 @@ public class MainFrame extends JFrame {
         if (applied) {
             pendingLoadConversationId = null;
             chatPanel.setConversationLoading(false);
-            conversationState.setCurrentConversationId(conversationId);
+            chatPanel.commitConversationRuntimeLoad(conversationId, requestId);
             if (records.isEmpty()) {
                 clearedConversationIds.add(conversationId);
             } else {
                 clearedConversationIds.remove(conversationId);
             }
             applyCurrentRenderMode();
-            conversationRuntimeSettingsCoordinator.applyLoadedConversationSettings(
-                    conversation,
-                    runtimeSettingsTarget()
-            );
+            chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.fromSettingValue(
+                    conversation.reasoningLevel(),
+                    ReasoningLevel.OFF
+            ));
             finishSidebarRecoveryDelivery(conversationId);
         }
     }
@@ -1888,17 +1951,8 @@ public class MainFrame extends JFrame {
     }
 
     private void resetConversationRuntimeState() {
-        conversationRuntimeSettingsCoordinator.resetRuntimeState(runtimeSettingsTarget());
-    }
-
-    private MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget runtimeSettingsTarget() {
-        return new MainFrameConversationRuntimeSettingsCoordinator.RuntimeSettingsTarget(
-                chatPanel.getInputBar()::setReasoningLevel,
-                chatPanel.getInputBar()::setWebSearchEnabled,
-                chatPanel.getInputBar()::setWebSearchOptionId,
-                chatPanel.getInputBar()::setAgentProjectRoot,
-                chatPanel.getInputBar()::setAgentModeEnabled
-        );
+        chatPanel.resetConversationRuntimeState();
+        chatPanel.getInputBar().setReasoningLevel(ReasoningLevel.OFF);
     }
 
     private void handleConversationLoadFailure(long requestId, UUID conversationId, Exception e) {
@@ -1963,7 +2017,6 @@ public class MainFrame extends JFrame {
                             event.agentModeEnabled(),
                             event.agentProjectRoot(),
                             event.webSearchEnabled(),
-                            event.webSearchOptionId(),
                             entry
                     )
             );
@@ -2221,7 +2274,9 @@ public class MainFrame extends JFrame {
                 new CommandCenterAction("Toggle sidebar", this::toggleSidebar, this::canUseCommandCenterAction, "%sB".formatted(shortcut)),
                 new CommandCenterAction(
                         "Toggle agent mode",
-                        chatPanel.getInputBar()::toggleAgentMode,
+                        () -> chatPanel.getInputBar().requestAgentModeEnabled(
+                                !chatPanel.getInputBar().isAgentModeEnabled()
+                        ),
                         () -> canUseCommandCenterAction() && chatPanel.getInputBar().isAgentModeAvailable()
                 ),
                 new CommandCenterAction(
@@ -2339,16 +2394,54 @@ public class MainFrame extends JFrame {
             }
 
             @Override
+            public void credentialChanging(String canonicalTokenId) {
+                CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
+                chatPanel.invalidateSelectedProviderCapabilityEvidence(effect.chatProviders());
+            }
+
+            @Override
+            public void credentialChangeCompleted(String canonicalTokenId) {
+                CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
+                chatPanel.settleSelectedProviderCredentialChange(effect.chatProviders());
+            }
+
+            @Override
+            public void allCredentialsChanging() {
+                chatPanel.invalidateSelectedProviderCapabilityEvidence(
+                        providerRegistry.allProviders().stream().map(ProviderRegistry.ProviderDef::name).toList()
+                );
+            }
+
+            @Override
+            public void allCredentialsChangeCompleted() {
+                chatPanel.settleSelectedProviderCredentialChange(
+                        providerRegistry.allProviders().stream().map(ProviderRegistry.ProviderDef::name).toList()
+                );
+            }
+
+            @Override
+            public void providerAuthChanging(String providerName) {
+                chatPanel.invalidateSelectedProviderCapabilityEvidence(List.of(providerName));
+            }
+
+            @Override
             public void providerAuthChanged(String providerName) {
                 onProviderAuthChanged(providerName);
+            }
+
+            @Override
+            public void providerAuthChangeCompleted(String providerName) {
+                chatPanel.settleSelectedProviderCredentialChange(List.of(providerName));
             }
         };
     }
 
     private void onSettingsCredentialChanged(String canonicalTokenId) {
+        CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
+        chatPanel.invalidateSelectedProviderCapabilityEvidence(effect.chatProviders());
         applyCredentialChangeAsync(
-                () -> invalidateCredentialBackedCaches(canonicalTokenId),
-                this::refreshCredentialBackedUi,
+                () -> invalidateCredentialBackedCaches(effect),
+                () -> refreshCredentialBackedUi(effect),
                 canonicalTokenId
         );
     }
@@ -2399,8 +2492,7 @@ public class MainFrame extends JFrame {
         invalidateAndRefresh.run();
     }
 
-    private void invalidateCredentialBackedCaches(String canonicalTokenId) {
-        CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
+    private void invalidateCredentialBackedCaches(CredentialChangeEffects.CredentialChangeEffect effect) {
         List<Runnable> invalidations = new ArrayList<>();
         effect.chatProviders().forEach(provider -> invalidations.add(() -> modelCacheService.invalidate(provider)));
         effect.speechToTextProviderIds().forEach(
@@ -2412,10 +2504,16 @@ public class MainFrame extends JFrame {
         CredentialInvalidationSupport.runAll(invalidations);
     }
 
-    private void refreshCredentialBackedUi() {
-        applyProviderSettings();
-        chatPanel.reloadTextToSpeechSettings();
-        chatPanel.reloadSpeechToTextSettings();
+    private void refreshCredentialBackedUi(CredentialChangeEffects.CredentialChangeEffect effect) {
+        if (!effect.chatProviders().isEmpty()) {
+            applyProviderSettings();
+        }
+        if (!effect.textToSpeechProviderIds().isEmpty()) {
+            chatPanel.reloadTextToSpeechSettings();
+        }
+        if (!effect.speechToTextProviderIds().isEmpty()) {
+            chatPanel.reloadSpeechToTextSettings();
+        }
     }
 
     private void applyProviderSettings() {
@@ -2424,6 +2522,7 @@ public class MainFrame extends JFrame {
         try {
             providerSettingsApplyCoordinator.apply(
                     allProviders,
+                    chatPanel::invalidateSelectedProviderRuntimeIfChanged,
                     chatPanel::refreshProviders,
                     this::markModelsMenuDirty
             );
@@ -2593,7 +2692,6 @@ public class MainFrame extends JFrame {
         );
 
         applyAgentModeSettings();
-        applyWebSearchSettings();
     }
 
     private void onReasoningLevelChanged(ReasoningLevel reasoningLevel) {
@@ -2604,51 +2702,10 @@ public class MainFrame extends JFrame {
         conversationRuntimeSettingsCoordinator.applyAgentModeSettings(chatPanel::setAgentSystemPromptAppend);
     }
 
-    private void applyWebSearchSettings() {
-        conversationRuntimeSettingsCoordinator.applyWebSearchSettings(chatPanel.getInputBar()::setWebBrowseTopN);
-    }
-
     private void persistCurrentConversationReasoningLevel(ReasoningLevel reasoningLevel) {
-        conversationRuntimeSettingsCoordinator.persistReasoningLevel(
-                conversationState.currentConversationId(),
-                reasoningLevel
-        );
-    }
-
-    private void onWebSearchEnabledChanged(boolean enabled) {
-        persistCurrentConversationWebSearchSettings();
-    }
-
-    private void onWebSearchOptionChanged(String optionId) {
-        persistCurrentConversationWebSearchSettings();
-    }
-
-    private void persistWebBrowseTopN(int topN) {
-        conversationRuntimeSettingsCoordinator.persistWebBrowseTopN(topN);
-    }
-
-    private void persistCurrentConversationWebSearchSettings() {
-        conversationRuntimeSettingsCoordinator.persistWebSearchSettings(
-                conversationState.currentConversationId(),
-                chatPanel.getInputBar().isWebSearchEnabled(),
-                chatPanel.getInputBar().getWebSearchOptionId()
-        );
-    }
-
-    private void onAgentModeChanged(boolean enabled) {
-        persistCurrentConversationAgentSettings();
-    }
-
-    private void onAgentProjectRootChanged(Path projectRoot) {
-        persistCurrentConversationAgentSettings();
-    }
-
-    private void persistCurrentConversationAgentSettings() {
-        conversationRuntimeSettingsCoordinator.persistAgentSettings(
-                conversationState.currentConversationId(),
-                chatPanel.getInputBar().isAgentModeRequested(),
-                chatPanel.getInputBar().getAgentProjectRoot()
-        );
+        UUID conversationId = conversationState.currentConversationId();
+        conversationRuntimeSettingsCoordinator.persistReasoningLevel(conversationId, reasoningLevel)
+                .whenComplete((ignored, error) -> handleRuntimeSettingsPersistenceFailure(conversationId, error));
     }
 
     private void applyMenuBarSetting(boolean enabled) {

@@ -9,7 +9,6 @@ public class NewChatCoordinator {
             @NonNull Runnable clearActiveConversationId,
             @NonNull Runnable clearSidebarSelection,
             @NonNull Runnable clearChatView,
-            @NonNull Runnable resetAgentModeState,
             @NonNull Runnable requestInputFocus
     ) {
 
@@ -17,7 +16,6 @@ public class NewChatCoordinator {
         clearActiveConversationId.run();
         clearSidebarSelection.run();
         clearChatView.run();
-        resetAgentModeState.run();
         requestInputFocus.run();
     }
 }

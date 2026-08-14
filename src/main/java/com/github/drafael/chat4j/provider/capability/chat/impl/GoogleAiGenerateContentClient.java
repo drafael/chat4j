@@ -22,7 +22,6 @@ import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.Proje
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedPart;
 import com.github.drafael.chat4j.provider.support.GeneratedImageAttachmentWriter;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
-import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -172,7 +171,11 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             Runnable clearActiveStream
     ) throws Exception {
         boolean imageOutputModel = isGoogleImageOutputModel(runtime);
+        boolean webSearchRequested = webSearchOptions != null && webSearchOptions.enabled();
         boolean nativeWebSearch = shouldUseGoogleNativeWebSearch(runtime, webSearchOptions);
+        if (webSearchRequested && !nativeWebSearch) {
+            throw new IllegalArgumentException("Native Web Search is unavailable for this Google AI endpoint.");
+        }
         if (!imageOutputModel && !nativeWebSearch) {
             fallbackClient.streamCompletion(
                     runtime,
@@ -264,7 +267,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                         errorMessage(responseBody)
                 ));
             }
-            try {
+            {
                 JsonNode root = JSON.readTree(responseBody);
                 List<GoogleAiEmission> emissions = materializeGeneratedImages(
                         responseEmissions(root, isCancelled),
@@ -282,32 +285,6 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                         onCitation.accept(citation);
                     }
                 }
-            } catch (EmptyGoogleAiOutputException e) {
-                if (nativeWebSearch && !imageOutputModel && e.retryableWithoutNativeWebSearch()) {
-                    if (shouldStop(isCancelled)) {
-                        return;
-                    }
-                    log.warn(
-                            "Google AI native web search returned no answer for model {}; retrying without native web search: {}",
-                            runtime.selectedModel(),
-                            ProviderExceptionMapper.sanitizeMessage(e, runtime.apiKey())
-                    );
-                    streamNativeCompletion(
-                            runtime,
-                            projectionPlan,
-                            false,
-                            false,
-                            onToken,
-                            onThinkingToken,
-                            onPart,
-                            onCitation,
-                            isCancelled,
-                            registerActiveStream,
-                            clearActiveStream
-                    );
-                    return;
-                }
-                throw e;
             }
         } finally {
             if (!future.isDone()) {
@@ -381,19 +358,9 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         return runtime != null
                 && runtime.descriptor() != null
                 && GOOGLE_AI_PROVIDER_NAME.equals(runtime.descriptor().name())
+                && Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
                 && webSearchOptions != null
-                && webSearchOptions.enabled()
-                && supportsGoogleNativeWebSearchModel(runtime);
-    }
-
-    private boolean supportsGoogleNativeWebSearchModel(ProviderRuntime runtime) {
-        return ProviderCapabilityResolver.supportsRuntimeNativeWebSearch(
-                runtime.descriptor().capabilities(),
-                runtime.descriptor().name(),
-                runtime.selectedModel(),
-                runtime.baseUrl(),
-                runtime.apiKey()
-        );
+                && webSearchOptions.enabled();
     }
 
     static boolean isImageOutputModelId(String modelId) {
@@ -720,11 +687,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
 
     private EmptyGoogleAiOutputException emptyOutput(JsonNode root, String reason) {
         return new EmptyGoogleAiOutputException(
-                "Google AI returned no generateContent output (%s%s).".formatted(
-                        reason,
-                        outputDiagnostics(root)
-                ),
-                canRetryWithoutNativeWebSearch(root)
+                "Google AI returned no generateContent output (%s%s).".formatted(reason, outputDiagnostics(root))
         );
     }
 
@@ -756,15 +719,6 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         if (StringUtils.isNotBlank(normalized)) {
             diagnostics.add("%s=%s".formatted(label, normalized));
         }
-    }
-
-    private boolean canRetryWithoutNativeWebSearch(JsonNode root) {
-        if (StringUtils.isNotBlank(root.path("promptFeedback").path("blockReason").asText(""))) {
-            return false;
-        }
-
-        String finishReason = root.path("candidates").path(0).path("finishReason").asText("");
-        return StringUtils.isBlank(finishReason) || "STOP".equals(finishReason) || "RECITATION".equals(finishReason);
     }
 
     private JsonNode inlineData(JsonNode part) {
@@ -961,15 +915,9 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
     }
 
     private static class EmptyGoogleAiOutputException extends IllegalStateException {
-        private final boolean retryableWithoutNativeWebSearch;
-
-        EmptyGoogleAiOutputException(String message, boolean retryableWithoutNativeWebSearch) {
+        EmptyGoogleAiOutputException(String message) {
             super(message);
-            this.retryableWithoutNativeWebSearch = retryableWithoutNativeWebSearch;
-        }
-
-        boolean retryableWithoutNativeWebSearch() {
-            return retryableWithoutNativeWebSearch;
         }
     }
+
 }

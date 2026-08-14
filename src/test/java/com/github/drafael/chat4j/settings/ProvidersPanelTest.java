@@ -11,6 +11,7 @@ import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Component;
 import java.awt.Container;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,6 +24,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -117,6 +119,39 @@ class ProvidersPanelTest {
             callOnEdt(() -> {
                 assertThat(statusLabel.getText()).contains("Saved token configured");
                 assertThat(missingTokenInfoPanel.isVisible()).isFalse();
+                return null;
+            });
+        } finally {
+            runOnEdt(subject::removeNotify);
+            runOnEdt(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("OpenRouter credential refresh invalidates in-flight usage results")
+    void refreshProviderCredentialUi_whenOpenRouterTokenChanges_advancesUsageGeneration() throws Exception {
+        ProvidersPanel subject = callOnEdt(() -> newPanel(
+                new SettingsRepository(tempDir.resolve("providers.properties"))
+        ));
+        try {
+            long before = readAtomicLong(subject, "openRouterUsageGeneration").get();
+
+            runOnEdt(() -> subject.refreshProviderCredentialUi(
+                    new JLabel(),
+                    "OpenRouter",
+                    ProvidersPanel.ProviderInfo.envVar("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+                    new JPanel()
+            ));
+
+            assertThat(readAtomicLong(subject, "openRouterUsageGeneration")).hasValue(before + 1);
+            callOnEdt(() -> {
+                assertThat(readButton(subject, "openRouterUsageRefreshButton").isEnabled()).isTrue();
+                assertThat(readButton(subject, "openRouterUsageRefreshButton").getText()).isEqualTo("Refresh usage");
+                Object usageComponents = readField(subject, "openRouterUsageComponents");
+                assertThat(readLabel(usageComponents, "summaryLabel").getText()).isEqualTo("Updated n/a");
+                assertThat(readLabel(usageComponents, "usedLabel").getText()).isEqualTo("Used: n/a");
+                assertThat(readLabel(usageComponents, "balanceLabel").getText()).isEqualTo("Balance: n/a");
                 return null;
             });
         } finally {
@@ -918,6 +953,30 @@ class ProvidersPanelTest {
             Thread.sleep(10);
         }
         assertThat(condition.getAsBoolean()).isTrue();
+    }
+
+    private static JLabel readLabel(Object subject, String fieldName) throws Exception {
+        Field field = subject.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (JLabel) field.get(subject);
+    }
+
+    private static Object readField(ProvidersPanel subject, String fieldName) throws Exception {
+        Field field = ProvidersPanel.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(subject);
+    }
+
+    private static JButton readButton(ProvidersPanel subject, String fieldName) throws Exception {
+        Field field = ProvidersPanel.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (JButton) field.get(subject);
+    }
+
+    private static AtomicLong readAtomicLong(ProvidersPanel subject, String fieldName) throws Exception {
+        Field field = ProvidersPanel.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (AtomicLong) field.get(subject);
     }
 
     private static void runOnEdt(ThrowingAction action) throws Exception {

@@ -332,7 +332,7 @@ class CapabilityProviderServiceTest {
         subject.streamCompletion(
                 List.of(Message.user("research")),
                 ReasoningLevel.OFF,
-                new WebSearchRequestOptions(true, "native"),
+                new WebSearchRequestOptions(true),
                 ignored -> {
                 },
                 ignored -> {

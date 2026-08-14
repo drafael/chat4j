@@ -4,13 +4,12 @@ import com.github.drafael.chat4j.persistence.conversation.ConversationPersistenc
 import com.github.drafael.chat4j.persistence.conversation.ConversationRepository;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.settings.AgentModeSettings;
-import com.github.drafael.chat4j.web.WebSearchSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
-import java.util.function.IntConsumer;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -18,40 +17,15 @@ import org.apache.commons.lang3.StringUtils;
 @Slf4j
 public class MainFrameConversationRuntimeSettingsCoordinator {
 
-    private static final int DEFAULT_WEB_BROWSE_TOP_N = 3;
-
     private final ConversationPersistenceCoordinator persistenceCoordinator;
     private final AgentModeSettings agentModeSettings;
-    private final WebSearchSettings webSearchSettings;
-    private final Object webBrowsePersistenceLock = new Object();
-    private CompletableFuture<Void> webBrowsePersistence = CompletableFuture.completedFuture(null);
-    private boolean webBrowsePersistenceSealed;
 
     public MainFrameConversationRuntimeSettingsCoordinator(
             @NonNull ConversationPersistenceCoordinator persistenceCoordinator,
-            @NonNull AgentModeSettings agentModeSettings,
-            @NonNull WebSearchSettings webSearchSettings
+            @NonNull AgentModeSettings agentModeSettings
     ) {
         this.persistenceCoordinator = persistenceCoordinator;
         this.agentModeSettings = agentModeSettings;
-        this.webSearchSettings = webSearchSettings;
-    }
-
-    public void applyLoadedConversationSettings(
-            ConversationRepository.ConversationRecord conversation,
-            @NonNull RuntimeSettingsTarget target
-    ) {
-        applyLoadedConversationReasoningSettings(conversation, target);
-        applyLoadedConversationWebSearchSettings(conversation, target);
-        applyLoadedConversationAgentSettings(conversation, target);
-    }
-
-    public void resetRuntimeState(@NonNull RuntimeSettingsTarget target) {
-        target.setAgentProjectRoot().accept(null);
-        target.setAgentModeEnabled().accept(false);
-        target.setReasoningLevel().accept(ReasoningLevel.OFF);
-        target.setWebSearchOptionId().accept(null);
-        target.setWebSearchEnabled().accept(false);
     }
 
     public void applyAgentModeSettings(@NonNull Consumer<String> setAgentSystemPromptAppend) {
@@ -62,123 +36,58 @@ public class MainFrameConversationRuntimeSettingsCoordinator {
         }
     }
 
-    public void applyWebSearchSettings(@NonNull IntConsumer setWebBrowseTopN) {
-        try {
-            setWebBrowseTopN.accept(webSearchSettings.autoBrowseTopN());
-        } catch (Exception e) {
-            log.debug("Failed to resolve Web Search settings", e);
-            setWebBrowseTopN.accept(DEFAULT_WEB_BROWSE_TOP_N);
-        }
+    public CompletionStage<Void> persistReasoningLevel(UUID conversationId, ReasoningLevel reasoningLevel) {
+        return conversationId == null
+                ? CompletableFuture.completedFuture(null)
+                : persistenceCoordinator.submitReasoningLevel(conversationId, reasoningLevel);
     }
 
-    public void persistReasoningLevel(UUID currentConversationId, ReasoningLevel reasoningLevel) {
-        if (currentConversationId == null) {
-            return;
-        }
-
-        persistenceCoordinator.submitReasoningLevel(currentConversationId, reasoningLevel)
-                .exceptionally(error -> {
-                    log.debug("Failed to persist conversation reasoning level for {}", currentConversationId, error);
-                    return null;
-                });
+    public CompletionStage<Void> persistWebSearchSettings(UUID conversationId, boolean enabled) {
+        return conversationId == null
+                ? CompletableFuture.completedFuture(null)
+                : persistenceCoordinator.submitWebSearchSettings(conversationId, enabled);
     }
 
-    public void persistWebBrowseTopN(int topN) {
-        synchronized (webBrowsePersistenceLock) {
-            if (webBrowsePersistenceSealed) {
-                return;
-            }
-            webBrowsePersistence = webBrowsePersistence.handle((ignored, error) -> null).thenRunAsync(() -> {
-                try {
-                    webSearchSettings.persistAutoBrowseTopN(topN);
-                } catch (Exception e) {
-                    log.debug("Failed to persist Web Search browse-top setting", e);
-                }
-            }, command -> Thread.ofVirtual().name("chat4j-web-browse-settings").start(command));
-        }
-    }
-
-    public CompletableFuture<Void> sealWebBrowsePersistence() {
-        synchronized (webBrowsePersistenceLock) {
-            webBrowsePersistenceSealed = true;
-            return webBrowsePersistence;
-        }
-    }
-
-    public void persistWebSearchSettings(UUID currentConversationId, boolean webSearchEnabled, String webSearchOptionId) {
-        if (currentConversationId == null) {
-            return;
-        }
-
-        persistenceCoordinator.submitWebSearchSettings(currentConversationId, webSearchEnabled, webSearchOptionId)
-                .exceptionally(error -> {
-                    log.debug("Failed to persist conversation Web Search settings for {}", currentConversationId, error);
-                    return null;
-                });
-    }
-
-    public void persistAgentSettings(UUID currentConversationId, boolean agentModeRequested, Path agentProjectRoot) {
-        if (currentConversationId == null) {
-            return;
-        }
-
-        persistenceCoordinator.submitAgentSettings(currentConversationId, agentModeRequested, agentProjectRoot)
-                .exceptionally(error -> {
-                    log.debug("Failed to persist conversation Agent Mode settings for {}", currentConversationId, error);
-                    return null;
-                });
-    }
-
-    private void applyLoadedConversationReasoningSettings(
-            ConversationRepository.ConversationRecord conversation,
-            RuntimeSettingsTarget target
+    public CompletionStage<Void> persistAgentSettings(
+            UUID conversationId,
+            boolean agentModeRequested,
+            Path agentProjectRoot
     ) {
-        ReasoningLevel level = conversation == null
-                ? ReasoningLevel.OFF
-                : ReasoningLevel.fromSettingValue(conversation.reasoningLevel(), ReasoningLevel.OFF);
-        target.setReasoningLevel().accept(level);
+        return conversationId == null
+                ? CompletableFuture.completedFuture(null)
+                : persistenceCoordinator.submitAgentSettings(conversationId, agentModeRequested, agentProjectRoot);
     }
 
-    private void applyLoadedConversationWebSearchSettings(
-            ConversationRepository.ConversationRecord conversation,
-            RuntimeSettingsTarget target
-    ) {
-        boolean enabled = conversation != null && conversation.webSearchEnabled();
-        String option = conversation == null ? null : conversation.webSearchOption();
-
-        target.setWebSearchOptionId().accept(StringUtils.trimToNull(option));
-        target.setWebSearchEnabled().accept(enabled);
-    }
-
-    private void applyLoadedConversationAgentSettings(
-            ConversationRepository.ConversationRecord conversation,
-            RuntimeSettingsTarget target
-    ) {
+    public LoadedRuntimeSettings loadedRuntimeSettings(ConversationRepository.ConversationRecord conversation) {
         Path projectRoot = null;
-        boolean enabled = false;
+        boolean agentEnabled = false;
         if (conversation != null && StringUtils.isNotBlank(conversation.agentProjectRoot())) {
             try {
                 Path normalized = Path.of(conversation.agentProjectRoot()).toAbsolutePath().normalize();
                 if (Files.isDirectory(normalized)) {
                     projectRoot = normalized;
-                    enabled = conversation.agentModeEnabled();
+                    agentEnabled = conversation.agentModeEnabled();
                 }
             } catch (Exception e) {
                 log.debug("Ignoring invalid persisted Agent project root: {}", conversation.agentProjectRoot(), e);
-                projectRoot = null;
             }
         }
-
-        target.setAgentModeEnabled().accept(enabled);
-        target.setAgentProjectRoot().accept(projectRoot);
+        boolean agentCorrectionRequired = conversation != null
+                && (conversation.agentModeEnabled() != agentEnabled
+                || StringUtils.isNotBlank(conversation.agentProjectRoot()) && projectRoot == null);
+        return new LoadedRuntimeSettings(
+                conversation != null && conversation.webSearchEnabled(),
+                projectRoot,
+                agentEnabled,
+                agentCorrectionRequired
+        );
     }
 
-    public record RuntimeSettingsTarget(
-            @NonNull Consumer<ReasoningLevel> setReasoningLevel,
-            @NonNull Consumer<Boolean> setWebSearchEnabled,
-            @NonNull Consumer<String> setWebSearchOptionId,
-            @NonNull Consumer<Path> setAgentProjectRoot,
-            @NonNull Consumer<Boolean> setAgentModeEnabled
+    public record LoadedRuntimeSettings(
+            boolean webSearchEnabled,
+            Path agentProjectRoot,
+            boolean agentModeEnabled,
+            boolean agentCorrectionRequired
     ) {
     }
 }

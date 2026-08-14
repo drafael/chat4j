@@ -98,7 +98,7 @@ final class ProviderCatalog {
                         "https://api.perplexity.ai",
                         copilotModelMetadataStore,
                         PerplexityModelIds.SONAR_MODELS,
-                        ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                        ProviderCapabilities.chatAndModels(),
                         attachmentSupport
                 ),
                 new OpenAiCompatibleModule(

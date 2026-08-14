@@ -91,7 +91,6 @@ class ConversationPersistenceFlowIntegrationTest {
                 false,
                 null,
                 false,
-                null,
                 firstEntry
         );
     }

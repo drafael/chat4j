@@ -471,14 +471,25 @@ class ApiTokenFieldPanelTest {
     }
 
     @Test
-    @DisplayName("API token field reports pre-invalidation callback failures instead of continuing")
-    void savePendingChangesAsync_whenPreInvalidationCallbackFails_completesFalse() throws Exception {
+    @DisplayName("API token field settles application invalidation when a pre-mutation callback fails")
+    void savePendingChangesAsync_whenPreInvalidationCallbackFails_settlesApplicationInvalidation() throws Exception {
+        var completions = new AtomicInteger();
+        SettingsCredentialChangeListener listener = new SettingsCredentialChangeListener() {
+            @Override
+            public void credentialChanged(String canonicalTokenId) {
+            }
+
+            @Override
+            public void credentialChangeCompleted(String canonicalTokenId) {
+                completions.incrementAndGet();
+            }
+        };
         ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 new ApiTokenFieldRegistry(),
                 credentialResolver,
                 credentialMutationService,
-                null,
+                listener,
                 () -> {
                     throw new IllegalStateException("cancel failed");
                 },
@@ -500,6 +511,51 @@ class ApiTokenFieldPanelTest {
         });
         assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.MISSING);
+        assertThat(completions).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Completion-listener failure does not retain the completed save lifecycle")
+    void savePendingChangesAsync_whenCompletionListenerFails_allowsNextSave() throws Exception {
+        var completionCalls = new AtomicInteger();
+        SettingsCredentialChangeListener listener = new SettingsCredentialChangeListener() {
+            @Override
+            public void credentialChanged(String canonicalTokenId) {
+            }
+
+            @Override
+            public void credentialChangeCompleted(String canonicalTokenId) {
+                completionCalls.incrementAndGet();
+                throw new IllegalStateException("completion failed");
+            }
+        };
+        ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
+                listener,
+                () -> {
+                },
+                () -> {
+                }
+        ));
+        JPasswordField tokenField = onEdt(() -> findPasswordField(subject));
+
+        CompletableFuture<Boolean> firstSave = onEdt(() -> {
+            tokenField.setText("first-token");
+            return subject.savePendingChangesAsync();
+        });
+        assertThat(firstSave.get(2, TimeUnit.SECONDS)).isTrue();
+        onEdt(() -> {
+            tokenField.setText("second-token");
+            return null;
+        });
+
+        CompletableFuture<Boolean> secondSave = onEdt(subject::savePendingChangesAsync);
+
+        assertThat(secondSave.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(completionCalls).hasValue(2);
     }
 
     @Test
@@ -612,16 +668,27 @@ class ApiTokenFieldPanelTest {
     }
 
     @Test
-    @DisplayName("Vault recreation reports pre-invalidation callback failures instead of recreating")
-    void requestVaultRecreation_whenPreInvalidationCallbackFails_doesNotRecreateVault() throws Exception {
+    @DisplayName("Vault recreation settles application invalidation when a pre-mutation callback fails")
+    void requestVaultRecreation_whenPreInvalidationCallbackFails_settlesApplicationInvalidation() throws Exception {
         makeVaultCorrupt();
+        var completions = new AtomicInteger();
+        SettingsCredentialChangeListener listener = new SettingsCredentialChangeListener() {
+            @Override
+            public void credentialChanged(String canonicalTokenId) {
+            }
+
+            @Override
+            public void allCredentialsChangeCompleted() {
+                completions.incrementAndGet();
+            }
+        };
         var registry = new ApiTokenFieldRegistry();
         ApiTokenFieldPanel source = onEdt(() -> new ApiTokenFieldPanel(
                 "OPENAI_API_KEY",
                 registry,
                 credentialResolver,
                 credentialMutationService,
-                null,
+                listener,
                 () -> {
                 },
                 () -> true
@@ -649,6 +716,7 @@ class ApiTokenFieldPanelTest {
         });
         assertThat(credentialResolver.resolveCredentialStatus("OPENAI_API_KEY", null).source())
                 .isEqualTo(ApiCredentialSource.ERROR);
+        assertThat(completions).hasValue(1);
     }
 
     @Test

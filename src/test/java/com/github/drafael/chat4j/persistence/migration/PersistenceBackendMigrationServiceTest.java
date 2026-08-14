@@ -91,7 +91,6 @@ class PersistenceBackendMigrationServiceTest {
                 false,
                 null,
                 false,
-                null,
                 initialEntry
         );
         subject.createConversation(create);
@@ -367,7 +366,6 @@ class PersistenceBackendMigrationServiceTest {
                 false,
                 null,
                 false,
-                null,
                 new ConversationHistoryEntry(firstMessageId, 1, firstMessage)
         ));
         repository.appendMessage(
@@ -381,7 +379,8 @@ class PersistenceBackendMigrationServiceTest {
              var conversationStatement = connection.prepareStatement(
                      """
                      UPDATE conversations
-                     SET is_favorite = NULL, agent_mode_enabled = NULL, web_search_enabled = NULL
+                     SET is_favorite = NULL, agent_mode_enabled = NULL, web_search_enabled = NULL,
+                         web_search_option = 'legacy-perplexity'
                      WHERE id = ?
                      """
              )) {
@@ -427,7 +426,7 @@ class PersistenceBackendMigrationServiceTest {
              );
              var conversationStatement = connection.prepareStatement(
                      """
-                     SELECT is_favorite, agent_mode_enabled, web_search_enabled
+                     SELECT is_favorite, agent_mode_enabled, web_search_enabled, web_search_option
                      FROM conversations
                      WHERE id = ?
                      """
@@ -444,6 +443,7 @@ class PersistenceBackendMigrationServiceTest {
                 assertNullableBoolean(rows, "is_favorite");
                 assertNullableBoolean(rows, "agent_mode_enabled");
                 assertNullableBoolean(rows, "web_search_enabled");
+                assertThat(rows.getString("web_search_option")).isEqualTo("legacy-perplexity");
             }
         }
     }
@@ -476,7 +476,6 @@ class PersistenceBackendMigrationServiceTest {
                 false,
                 null,
                 false,
-                null,
                 entry
         ));
         return conversationId;

@@ -687,7 +687,7 @@ class PerplexityChatCompletionClientTest {
                         null,
                         "https://api.perplexity.ai",
                         List.of("sonar", "sonar-deep-research"),
-                        ProviderCapabilities.chatModelsAndNativeWebSearch(),
+                        ProviderCapabilities.chatAndModels(),
                         value -> value
                 ),
                 "PERPLEXITY_API_KEY",

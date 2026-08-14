@@ -33,6 +33,7 @@ class ConversationPdfDocumentTest {
                 "off",
                 false,
                 null,
+                false,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );

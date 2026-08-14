@@ -142,6 +142,7 @@ class ProviderModelsResolverTest {
                 name,
                 "API_KEY",
                 baseUrl,
+                baseUrl,
                 seedModels,
                 ProviderCapabilities.chatAndModels(),
                 model -> null,

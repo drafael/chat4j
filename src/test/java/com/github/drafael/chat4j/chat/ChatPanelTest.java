@@ -54,15 +54,13 @@ import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
+import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.audio.AudioPlaybackService;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
-import com.github.drafael.chat4j.web.WebSearchAvailabilityResolver;
-import com.github.drafael.chat4j.web.WebSearchMode;
-import com.github.drafael.chat4j.web.WebSearchOption;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -117,6 +115,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class ChatPanelTest {
 
@@ -168,9 +167,7 @@ class ChatPanelTest {
         runOnEdt(() -> {
             subject = newChatPanel(cacheService, ModelFavoritesService.createInMemory());
             initializeProviderModels(subject);
-            subject.getInputBar().setWebSearchLockedEnabled(false);
-            subject.getInputBar().setWebSearchOptions(emptyList(), null);
-            subject.getInputBar().setWebSearchEnabled(false);
+            subject.getInputBar().setWebSearchPresentation(false, false, false);
             subject.setOnDurableUserMessageSubmitted(event ->
                     CompletableFuture.completedFuture(event.conversationId())
             );
@@ -275,48 +272,49 @@ class ChatPanelTest {
     @Test
     @DisplayName("Activity bubble uses status title color for failed tool cards")
     void setTitle_whenFailedStatus_usesErrorTitleColor() throws Exception {
-        ActivityBubble bubble = new ActivityBubble();
         Color errorColor = new Color(210, 70, 70);
         UIManager.put("Component.error.focusedBorderColor", errorColor);
 
-        SwingUtilities.invokeAndWait(() -> bubble.setTitle("✗ write file — denied"));
-
-        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
-                .filter(label -> "✗ write file — denied".equals(label.getText()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(titleLabel.getForeground()).isEqualTo(errorColor);
+        JLabel titleLabel = callOnEdt(() -> {
+            ActivityBubble bubble = new ActivityBubble();
+            bubble.setTitle("✗ write file — denied");
+            return findComponents(bubble, JLabel.class).stream()
+                    .filter(label -> "✗ write file — denied".equals(label.getText()))
+                    .findFirst()
+                    .orElseThrow();
+        });
+        assertThat(callOnEdt(titleLabel::getForeground)).isEqualTo(errorColor);
     }
 
     @Test
     @DisplayName("Activity bubble uses accent title color while streaming")
     void setStreaming_whenEnabled_usesAccentTitleColor() throws Exception {
-        ActivityBubble bubble = new ActivityBubble();
         Color accent = new Color(80, 120, 240);
         UIManager.put("Component.accentColor", accent);
 
-        SwingUtilities.invokeAndWait(() -> bubble.setStreaming(true));
-
-        JLabel titleLabel = findComponents(bubble, JLabel.class).stream()
-                .filter(label -> "Thinking".equals(label.getText()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(titleLabel.getForeground()).isEqualTo(accent);
+        JLabel titleLabel = callOnEdt(() -> {
+            ActivityBubble bubble = new ActivityBubble();
+            bubble.setStreaming(true);
+            return findComponents(bubble, JLabel.class).stream()
+                    .filter(label -> "Thinking".equals(label.getText()))
+                    .findFirst()
+                    .orElseThrow();
+        });
+        assertThat(callOnEdt(titleLabel::getForeground)).isEqualTo(accent);
     }
 
     @Test
     @DisplayName("Activity bubble disposes its embedded message renderer")
     void dispose_whenCalled_disposesRenderedMessageView() throws Exception {
-        ActivityBubble bubble = new ActivityBubble();
-
-        SwingUtilities.invokeAndWait(() -> {
+        boolean[] disposed = callOnEdt(() -> {
+            ActivityBubble bubble = new ActivityBubble();
             bubble.setText("thinking");
+            MessageBubble renderedBubble = findComponents(bubble, MessageBubble.class).getFirst();
             bubble.dispose();
+            return new boolean[]{bubble.isDisposed(), renderedBubble.isDisposed()};
         });
 
-        MessageBubble renderedBubble = findComponents(bubble, MessageBubble.class).getFirst();
-        assertThat(bubble.isDisposed()).isTrue();
-        assertThat(renderedBubble.isDisposed()).isTrue();
+        assertThat(disposed).containsExactly(true, true);
     }
 
     @Test
@@ -360,109 +358,9 @@ class ChatPanelTest {
         assertThat(observedStates).containsSubsequence(true, false);
     }
 
-    @Test
-    @DisplayName("xAI native web search remains enabled when attachments degrade through projection")
-    void nativeWebSearchEnabled_whenXaiRequestContainsAttachment_returnsTrue() throws Exception {
-        List<Message> history = List.of(new Message(
-                Role.USER,
-                List.of(
-                        new TextPart("Describe this image"),
-                        new ImagePart(new AttachmentRef(UUID.randomUUID(), "/tmp/image.png", "image.png", "image/png", 128L, "sha"), 64, 64)
-                ),
-                Instant.now()
-        ));
-        var sendJob = new SendJob(
-                1L,
-                UUID.randomUUID(),
-                "xAI",
-                "grok-4",
-                testProviderDefinition("xAI", ProviderCapabilities.chatAndModels()),
-                "https://api.x.ai/v1",
-                ProviderCapabilities.chatAndModels(),
-                history,
-                ReasoningLevel.OFF,
-                true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
-                false,
-                null,
-                ""
-        );
 
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
 
-        assertThat(enabled).isTrue();
-    }
 
-    @Test
-    @DisplayName("Native web search activity is disabled for unsupported xAI models")
-    void nativeWebSearchEnabled_whenXaiModelDoesNotSupportNativeSearch_returnsFalse() throws Exception {
-        List<Message> history = List.of(Message.user("Search with unsupported xAI model"));
-        var sendJob = new SendJob(
-                1L,
-                UUID.randomUUID(),
-                "xAI",
-                "gpt-5",
-                testProviderDefinition("xAI", ProviderCapabilities.chatAndModels()),
-                "https://api.x.ai/v1",
-                ProviderCapabilities.chatAndModels(),
-                history,
-                ReasoningLevel.OFF,
-                true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
-                false,
-                null,
-                ""
-        );
-
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
-
-        assertThat(enabled).isFalse();
-    }
-
-    @Test
-    @DisplayName("Native web search honors explicit provider capability declarations")
-    void nativeWebSearchEnabled_whenProviderCapabilitiesDeclareNativeSearch_returnsTrue() throws Exception {
-        List<Message> history = List.of(Message.user("Search with custom native provider"));
-        ProviderCapabilities capabilities = new ProviderCapabilities(true, true, false, false, true, false);
-        var sendJob = new SendJob(
-                1L,
-                UUID.randomUUID(),
-                "Custom Provider",
-                "custom-web-model",
-                testProviderDefinition("Custom Provider", capabilities),
-                "https://provider.example/v1",
-                capabilities,
-                history,
-                ReasoningLevel.OFF,
-                true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
-                false,
-                null,
-                ""
-        );
-
-        boolean enabled = invokeNativeWebSearchEnabled(subject, sendJob);
-
-        assertThat(enabled).isTrue();
-    }
-
-    @Test
-    @DisplayName("Attachment-only DeepSeek native requests still initialize consulted-source mode")
-    void prepareWebSearchContext_whenDeepSeekRequestHasNoTypedText_initializesConsultedSourceMode() throws Exception {
-        UUID conversationId = UUID.randomUUID();
-        StreamingSession session = new StreamingSession(1L, conversationId, null);
-        SendJob sendJob = deepSeekWebSearchSendJob(conversationId);
-
-        List<Message> requestHistory = List.of(Message.user(""));
-        List<Message> history = invokePrepareWebSearchContext(subject, sendJob, session, requestHistory);
-
-        assertThat(history).isSameAs(requestHistory);
-        assertThat(session.consultedSourceMode).isTrue();
-        assertThat(session.webSearchQuery).isEmpty();
-    }
 
     @Test
     @DisplayName("DeepSeek consulted-source activity finalizes successful zero-result searches")
@@ -590,45 +488,6 @@ class ChatPanelTest {
         assertThat(entry.message().meta().citations()).isEmpty();
     }
 
-    @Test
-    @DisplayName("Stale conflicting Agent Mode and Web Search state fails before provider creation")
-    void onSend_whenAgentModeAndWebSearchConflict_skipsProviderFactory() throws Exception {
-        AtomicInteger providerCreations = new AtomicInteger();
-        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
-                "Conflict Provider",
-                null,
-                "https://provider.example",
-                List.of("conflict-model"),
-                ProviderCapabilities.chatAndModels(),
-                model -> {
-                    providerCreations.incrementAndGet();
-                    return immediateProvider("unexpected");
-                },
-                List::of
-        );
-        var sendJob = new SendJob(
-                3L,
-                UUID.randomUUID(),
-                provider.name(),
-                "conflict-model",
-                provider,
-                provider.baseUrl(),
-                provider.capabilities(),
-                List.of(Message.user("ping")),
-                ReasoningLevel.OFF,
-                true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
-                true,
-                Files.createDirectories(tempDir.resolve("conflict-project")),
-                ""
-        );
-
-        assertThatThrownBy(() -> invokeAdmitProvider(subject, sendJob))
-                .hasRootCauseInstanceOf(IllegalArgumentException.class)
-                .hasRootCauseMessage("Agent Mode and Web Search cannot be enabled together.");
-        assertThat(providerCreations).hasValue(0);
-    }
 
     @Test
     @DisplayName("Structured web citations append a Sources section when answer has no source references")
@@ -663,68 +522,9 @@ class ChatPanelTest {
         assertThat(text).contains("Sources:\n[1] [example.com](<https://www.example.com/articles/jna>)");
     }
 
-    @Test
-    @DisplayName("Web search activity uses readable structured citation labels")
-    void mergeAssistantWebSearchWithAnswerSources_whenCitationsAreAvailable_usesReadableLabels() throws Exception {
-        List<CitationRef> citations = List.of(CitationRef.builder()
-                .number(1)
-                .kind(CitationKind.WEB)
-                .title("Wikipedia Source")
-                .url("https://example.com/Foo_(bar)")
-                .build());
 
-        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
-                subject,
-                webSearchSendJob(),
-                "Answer\n\nSources:\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)",
-                "",
-                citations
-        );
 
-        assertThat(activity).isEqualTo("**Sources**\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)");
-    }
 
-    @Test
-    @DisplayName("Web search activity preserves readable source labels from answer text")
-    void mergeAssistantWebSearchWithAnswerSources_whenAnswerHasLabeledSourceLink_preservesLabel() throws Exception {
-        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
-                subject,
-                webSearchSendJob(),
-                "Answer\n\nSources:\n[1] [Wikipedia Source](<https://example.com/Foo_(bar)>)",
-                "",
-                emptyList()
-        );
-
-        assertThat(activity).isEqualTo("**Sources**\n- [Wikipedia Source](<https://example.com/Foo_(bar)>)");
-    }
-
-    @Test
-    @DisplayName("Web search activity preserves parenthesized URLs in non-angle markdown links")
-    void mergeAssistantWebSearchWithAnswerSources_whenNonAngleSourceUrlContainsParentheses_preservesFullLink() throws Exception {
-        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
-                subject,
-                webSearchSendJob(),
-                "Answer\n\nSources:\n[1] [Wikipedia Source](https://example.com/Foo_(bar))",
-                "",
-                emptyList()
-        );
-
-        assertThat(activity).isEqualTo("**Sources**\n- [Wikipedia Source](https://example.com/Foo_(bar))");
-    }
-
-    @Test
-    @DisplayName("Web search activity preserves parenthesized raw source URLs")
-    void mergeAssistantWebSearchWithAnswerSources_whenRawSourceUrlContainsParentheses_preservesFullUrl() throws Exception {
-        String activity = invokeMergeAssistantWebSearchWithAnswerSources(
-                subject,
-                webSearchSendJob(),
-                "Answer\n\nSources:\nhttps://example.com/Foo_(bar)",
-                "",
-                emptyList()
-        );
-
-        assertThat(activity).isEqualTo("**Sources**\n- <https://example.com/Foo_(bar)>");
-    }
 
     @Test
     @DisplayName("Structured web citation sources are ordered by citation number")
@@ -925,27 +725,6 @@ class ChatPanelTest {
                 .doesNotContain("New chat");
     }
 
-    @Test
-    @DisplayName("Search the web suggestion enables web search toggle")
-    void searchTheWebSuggestion_whenClicked_enablesWebSearch() throws Exception {
-        AtomicReference<Boolean> notified = new AtomicReference<>();
-        subject.getInputBar().addWebSearchEnabledListener(notified::set);
-        subject.getInputBar().setWebSearchOptions(
-                List.of(new WebSearchOption("native", "Native", WebSearchMode.NATIVE, true)),
-                "native"
-        );
-
-        JButton searchSuggestion = findComponents(subject, JButton.class).stream()
-                .filter(button -> Strings.CS.equals(button.getText(), "Search the web"))
-                .findFirst()
-                .orElseThrow();
-
-        SwingUtilities.invokeAndWait(searchSuggestion::doClick);
-
-        assertThat(subject.getInputBar().getRawText()).isEqualTo("Search the web");
-        assertThat(subject.getInputBar().isWebSearchEnabled()).isTrue();
-        assertThat(notified.get()).isTrue();
-    }
 
     @Test
     @DisplayName("Prompt quick action buttons invoke command center prompt actions")
@@ -1220,6 +999,7 @@ class ChatPanelTest {
                 "EmptySeed",
                 "EMPTY_SEED_API_KEY",
                 null,
+                null,
                 emptyList(),
                 ProviderCapabilities.chatAndModels(),
                 model -> immediateProvider("ok"),
@@ -1251,6 +1031,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
                 "Ollama",
                 null,
+                "http://localhost:11434/v1",
                 "http://localhost:11434/v1",
                 List.of("llama3.2:latest"),
                 ProviderCapabilities.chatAndModels(),
@@ -1314,6 +1095,7 @@ class ChatPanelTest {
                 "OpenAI",
                 "OPENAI_API_KEY",
                 "https://api.openai.com/v1",
+                "https://api.openai.com/v1",
                 List.of("gpt-test"),
                 ProviderCapabilities.chatAndModels(),
                 model -> {
@@ -1326,6 +1108,7 @@ class ChatPanelTest {
         );
         runOnEdt(() -> {
             setField(subject, "providerMap", Map.of(provider.name(), provider));
+            setField(subject, "installedProviderScope", 1L);
             subject.setSelectedModel("OpenAI > gpt-test");
             subject.getInputBar().setText("hello");
         });
@@ -1380,6 +1163,7 @@ class ChatPanelTest {
                 "OpenAI",
                 "OPENAI_API_KEY",
                 "https://api.openai.com/v1",
+                "https://api.openai.com/v1",
                 List.of("gpt-test"),
                 ProviderCapabilities.chatAndModels(),
                 model -> requestProvider,
@@ -1387,6 +1171,7 @@ class ChatPanelTest {
         );
         runOnEdt(() -> {
             setField(subject, "providerMap", Map.of(provider.name(), provider));
+            setField(subject, "installedProviderScope", 1L);
             subject.setSelectedModel("OpenAI > gpt-test");
             subject.getInputBar().setText("hello");
         });
@@ -1452,6 +1237,7 @@ class ChatPanelTest {
                 "LateProvider",
                 null,
                 "https://example.invalid/v1",
+                "https://example.invalid/v1",
                 List.of("late-model"),
                 ProviderCapabilities.chatAndModels(),
                 model -> immediateProvider("ok"),
@@ -1472,6 +1258,7 @@ class ChatPanelTest {
                 "NewerProvider",
                 null,
                 null,
+                null,
                 List.of("newer-model"),
                 ProviderCapabilities.chatAndModels(),
                 model -> immediateProvider("ok"),
@@ -1479,6 +1266,7 @@ class ChatPanelTest {
         );
         ProviderRegistry.ProviderDef staleProvider = new ProviderRegistry.ProviderDef(
                 "StaleProvider",
+                null,
                 null,
                 null,
                 List.of("stale-model"),
@@ -1510,6 +1298,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
                 "ChangedProvider",
                 null,
+                "https://new.example.invalid/v1",
                 "https://new.example.invalid/v1",
                 List.of("changed-model"),
                 ProviderCapabilities.chatAndModels(),
@@ -1545,6 +1334,7 @@ class ChatPanelTest {
                 "SlowProvider",
                 null,
                 null,
+                null,
                 List.of("slow-model"),
                 ProviderCapabilities.chatAndModels(),
                 model -> {
@@ -1568,84 +1358,7 @@ class ChatPanelTest {
         releaseFactory.countDown();
     }
 
-    @Test
-    @DisplayName("Selecting a Google model keeps the UI responsive while capability probes run")
-    void setSelectedModel_whenGoogleModelSelected_doesNotRunCapabilityProbesOnEdt() throws Exception {
-        var requestStarted = new CountDownLatch(1);
-        var releaseResponse = new CountDownLatch(1);
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/", exchange -> {
-            requestStarted.countDown();
-            try {
-                releaseResponse.await(2, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            exchange.sendResponseHeaders(204, -1);
-            exchange.close();
-        });
-        server.start();
 
-        try {
-            var provider = new ProviderRegistry.ProviderDef(
-                    "Google AI",
-                    null,
-                    "http://127.0.0.1:%d".formatted(server.getAddress().getPort()),
-                    List.of("gemini-2.5-pro"),
-                    ProviderCapabilities.chatAndModels(),
-                    model -> immediateProvider("ok"),
-                    List::of
-            );
-            runOnEdt(() -> {
-                setField(subject, "providerMap", Map.of(provider.name(), provider));
-                subject.setSelectedModel("Google AI > gemini-2.5-pro");
-            });
-
-            assertThat(requestStarted.await(2, TimeUnit.SECONDS)).isTrue();
-            assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Google AI > gemini-2.5-pro");
-        } finally {
-            releaseResponse.countDown();
-            server.stop(0);
-        }
-    }
-
-    @Test
-    @DisplayName("Selecting an LM Studio model keeps the UI responsive while local probes run")
-    void setSelectedModel_whenLmStudioModelSelected_runsLocalProbesOffEdt() throws Exception {
-        var requestCount = new AtomicInteger();
-        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/", exchange -> {
-            requestCount.incrementAndGet();
-            try {
-                TimeUnit.MILLISECONDS.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            exchange.sendResponseHeaders(204, -1);
-            exchange.close();
-        });
-        server.start();
-
-        try {
-            var provider = new ProviderRegistry.ProviderDef(
-                    "LM Studio",
-                    null,
-                    "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort()),
-                    List.of("local-model"),
-                    ProviderCapabilities.chatAndModels(),
-                    model -> immediateProvider("ok"),
-                    List::of
-            );
-            runOnEdt(() -> {
-                setField(subject, "providerMap", Map.of(provider.name(), provider));
-                subject.setSelectedModel("LM Studio > local-model");
-            });
-
-            awaitCondition(2, TimeUnit.SECONDS, () -> requestCount.get() > 0);
-        } finally {
-            server.stop(0);
-        }
-    }
 
     @Test
     @DisplayName("Thinking toggle is visible only for models with reasoning capability")
@@ -1653,6 +1366,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef reasoningProvider = new ProviderRegistry.ProviderDef(
                 "OpenRouter",
                 "OPENROUTER_API_KEY",
+                null,
                 null,
                 List.of("claude-3.7-sonnet"),
                 ProviderCapabilities.chatAndModels(),
@@ -1662,6 +1376,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
                 "LocalTest",
                 "LOCAL_TEST_API_KEY",
+                null,
                 null,
                 List.of("basic-model"),
                 ProviderCapabilities.chatAndModels(),
@@ -1695,6 +1410,7 @@ class ChatPanelTest {
                 "OpenRouter",
                 "OPENROUTER_API_KEY",
                 null,
+                null,
                 List.of("claude-3.7-sonnet"),
                 ProviderCapabilities.chatAndModels(),
                 model -> immediateProvider("ok"),
@@ -1703,6 +1419,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
                 "LocalTest",
                 "LOCAL_TEST_API_KEY",
+                null,
                 null,
                 List.of("basic-model"),
                 ProviderCapabilities.chatAndModels(),
@@ -1744,6 +1461,7 @@ class ChatPanelTest {
                 "OpenRouter",
                 "OPENROUTER_API_KEY",
                 null,
+                null,
                 List.of("gpt-5-mini"),
                 ProviderCapabilities.chatAndModels(),
                 model -> immediateProvider("ok"),
@@ -1752,6 +1470,7 @@ class ChatPanelTest {
         ProviderRegistry.ProviderDef plainProvider = new ProviderRegistry.ProviderDef(
                 "LocalTest",
                 "LOCAL_TEST_API_KEY",
+                null,
                 null,
                 List.of("basic-model"),
                 ProviderCapabilities.chatAndModels(),
@@ -1778,6 +1497,326 @@ class ChatPanelTest {
             assertThat(agentModeButton.isVisible()).isFalse();
             assertThat(subject.getInputBar().isAgentModeEnabled()).isFalse();
         });
+    }
+
+    @Test
+    @DisplayName("Removing the panel invalidates provider send authority")
+    void removeNotify_whenProviderWasInstalled_blocksSendUntilRefresh() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        runOnEdt(() -> {
+            subject.getInputBar().setText("message");
+            subject.removeNotify();
+            subject.getInputBar().setEnabled(true);
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("Provider configuration is still loading");
+    }
+
+    @Test
+    @DisplayName("Provider refresh immediately revokes the installed send runtime")
+    void refreshProviders_whenProviderWasInstalled_blocksSendUntilRefreshCompletes() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        runOnEdt(() -> {
+            subject.refreshProviders();
+            subject.getInputBar().setEnabled(true);
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .satisfiesAnyOf(
+                        message -> assertThat(message).contains("Provider configuration is still loading"),
+                        message -> assertThat(message).contains("Select a model/provider")
+                );
+    }
+
+    @Test
+    @DisplayName("Empty-state Web Search action is hidden until native search is supported")
+    void applyNativeWebSearchOutcome_whenSupportChanges_updatesEmptyStateSearchAction() throws Exception {
+        assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .map(AbstractButton::getText)
+                .noneMatch("Search the web"::equals))).isTrue();
+
+        runOnEdt(() -> {
+            Method method = ChatPanel.class.getDeclaredMethod(
+                    "applyNativeWebSearchOutcome",
+                    NativeWebSearchOutcome.class
+            );
+            method.setAccessible(true);
+            method.invoke(subject, NativeWebSearchOutcome.OPTIONAL);
+        });
+
+        assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
+                .map(AbstractButton::getText)
+                .anyMatch("Search the web"::equals))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Conversation history load fails before identity changes while Speech to Text is active")
+    void loadConversationHistoryEntries_whenSpeechToTextIsActive_keepsCurrentConversation() throws Exception {
+        UUID currentConversationId = UUID.randomUUID();
+        UUID incomingConversationId = UUID.randomUUID();
+        SpeechToTextService speechToTextService = mock(SpeechToTextService.class);
+        when(speechToTextService.active()).thenReturn(true);
+        setField(subject, "speechToTextService", speechToTextService);
+        runOnEdt(() -> subject.setActiveConversationId(currentConversationId));
+
+        assertThatThrownBy(() -> runOnEdt(() -> subject.loadConversationHistoryEntries(
+                incomingConversationId,
+                List.of()
+        ))).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Speech to Text");
+
+        assertThat(callOnEdt(() -> readField(subject, "activeConversationId"))).isEqualTo(currentConversationId);
+        assertThat(callOnEdt(() -> readField(subject, "persistedConversationId"))).isEqualTo(currentConversationId);
+    }
+
+    @Test
+    @DisplayName("Pending requested Web Search blocks send before provisional conversation creation")
+    void onSend_whenRequestedWebSearchIsPending_blocksBeforeCreatingJob() throws Exception {
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("answer", providerCalls));
+        runOnEdt(() -> {
+            subject.setRequestedWebSearch(true);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.PENDING);
+            subject.getInputBar().setText("search");
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(callOnEdt(() -> (UUID) readField(subject, "activeConversationId"))).isNull();
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("Turn off Web Search");
+
+        runOnEdt(subject.getInputBar()::activateValidationAction);
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isFalse();
+    }
+
+    @Test
+    @DisplayName("Enabling Agent Mode clears a pending Web Search request")
+    void requestAgentModeEnabled_whenWebSearchRequestIsPending_clearsSearchPreference() throws Exception {
+        Path projectRoot = Files.createDirectories(tempDir.resolve("pending-agent"));
+        runOnEdt(() -> {
+            subject.setRequestedWebSearch(true);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.PENDING);
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().requestAgentModeEnabled(true);
+        });
+
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isFalse();
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeEnabled)).isTrue();
+    }
+
+    @Test
+    @DisplayName("Staged load suppresses Web Search persistence until commit")
+    void applyNativeWebSearchOutcome_whenConversationLoadIsStaged_doesNotEmitPrematureEvent() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var events = new ArrayList<ChatPanel.WebSearchSettingsEvent>();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setRequestedWebSearch(true);
+            subject.setOnWebSearchSettingsChanged(events::add);
+            subject.beginConversationRuntimeLoad(conversationId, 7L, true, null, false, false);
+            Method method = ChatPanel.class.getDeclaredMethod(
+                    "applyNativeWebSearchOutcome",
+                    NativeWebSearchOutcome.class
+            );
+            method.setAccessible(true);
+            method.invoke(subject, NativeWebSearchOutcome.UNSUPPORTED);
+        });
+
+        assertThat(events).isEmpty();
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isTrue();
+    }
+
+    @Test
+    @DisplayName("Cancelling a staged load reconciles required-search evidence with outgoing Agent Mode")
+    void cancelConversationRuntimeLoad_whenRequiredCapabilityCompletes_clearsOutgoingAgentRequest() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        Path projectRoot = Files.createDirectories(tempDir.resolve("outgoing-agent"));
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setRequestedWebSearch(false);
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.beginConversationRuntimeLoad(UUID.randomUUID(), 9L, true, null, false, false);
+            Method method = ChatPanel.class.getDeclaredMethod(
+                    "applyNativeWebSearchOutcome",
+                    NativeWebSearchOutcome.class
+            );
+            method.setAccessible(true);
+            method.invoke(subject, NativeWebSearchOutcome.REQUIRED);
+            subject.cancelConversationRuntimeLoad(9L);
+        });
+
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isFalse();
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeRequested)).isFalse();
+        assertThat(callOnEdt(subject.getInputBar()::getAgentProjectRoot)).isEqualTo(projectRoot);
+    }
+
+    @Test
+    @DisplayName("Committing conflicting loaded settings retains Web Search and canonically disables Agent Mode")
+    void commitConversationRuntimeLoad_whenLoadedSearchAndAgentConflict_retainsSearchPreference() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        Path projectRoot = Files.createDirectories(tempDir.resolve("loaded-conflict-agent"));
+        var searchEvents = new ArrayList<ChatPanel.WebSearchSettingsEvent>();
+        var agentEvents = new ArrayList<ChatPanel.AgentSettingsEvent>();
+        runOnEdt(() -> {
+            subject.setOnWebSearchSettingsChanged(searchEvents::add);
+            subject.setOnAgentSettingsChanged(agentEvents::add);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.OPTIONAL);
+            subject.beginConversationRuntimeLoad(conversationId, 11L, true, projectRoot, true, false);
+            subject.commitConversationRuntimeLoad(conversationId, 11L);
+        });
+
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isTrue();
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeRequested)).isFalse();
+        assertThat(searchEvents).isEmpty();
+        assertThat(agentEvents).containsExactly(new ChatPanel.AgentSettingsEvent(conversationId, false, projectRoot));
+    }
+
+    @Test
+    @DisplayName("Cancelling a staged load reconciles capability evidence against the outgoing conversation")
+    void cancelConversationRuntimeLoad_whenCapabilityBecomesUnsupported_clearsOutgoingSearchPreference() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var events = new ArrayList<ChatPanel.WebSearchSettingsEvent>();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setRequestedWebSearch(true);
+            subject.setOnWebSearchSettingsChanged(events::add);
+            subject.beginConversationRuntimeLoad(UUID.randomUUID(), 12L, false, null, false, false);
+            Method method = ChatPanel.class.getDeclaredMethod(
+                    "applyNativeWebSearchOutcome",
+                    NativeWebSearchOutcome.class
+            );
+            method.setAccessible(true);
+            method.invoke(subject, NativeWebSearchOutcome.UNSUPPORTED);
+            subject.cancelConversationRuntimeLoad(12L);
+        });
+
+        assertThat((boolean) readField(subject, "requestedWebSearch")).isFalse();
+        assertThat(events).containsExactly(new ChatPanel.WebSearchSettingsEvent(conversationId, false));
+    }
+
+    @Test
+    @DisplayName("Committing an invalid loaded Agent configuration emits one canonical correction")
+    void commitConversationRuntimeLoad_whenAgentCorrectionIsRequired_emitsDisabledAgentSettings() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var agentEvents = new ArrayList<ChatPanel.AgentSettingsEvent>();
+        runOnEdt(() -> {
+            subject.setOnAgentSettingsChanged(agentEvents::add);
+            subject.beginConversationRuntimeLoad(conversationId, 13L, false, null, false, true);
+            subject.commitConversationRuntimeLoad(conversationId, 13L);
+        });
+
+        assertThat(agentEvents).containsExactly(new ChatPanel.AgentSettingsEvent(conversationId, false, null));
+    }
+
+    @Test
+    @DisplayName("Enabling optional Web Search clears a retained unavailable Agent request")
+    void setRequestedWebSearch_whenUnavailableAgentWasRequested_clearsAndPersistsAgentRequest() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var agentEvents = new ArrayList<ChatPanel.AgentSettingsEvent>();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setOnAgentSettingsChanged(agentEvents::add);
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.getInputBar().setAgentModeAvailable(false);
+            subject.setRequestedWebSearch(true);
+        });
+
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeRequested)).isFalse();
+        assertThat(agentEvents).containsExactly(new ChatPanel.AgentSettingsEvent(conversationId, false, null));
+    }
+
+    @Test
+    @DisplayName("Late optional Web Search support clears a conflicting Agent request")
+    void applyNativeWebSearchOutcome_whenOptionalSearchResolvesAfterLoad_clearsAgentRequest() throws Exception {
+        Path projectRoot = Files.createDirectories(tempDir.resolve("late-optional-agent"));
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setRequestedWebSearch(true);
+            Method method = ChatPanel.class.getDeclaredMethod(
+                    "applyNativeWebSearchOutcome",
+                    NativeWebSearchOutcome.class
+            );
+            method.setAccessible(true);
+            method.invoke(subject, NativeWebSearchOutcome.OPTIONAL);
+        });
+
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeRequested)).isFalse();
+        assertThat(callOnEdt(subject.getInputBar()::isAgentModeEnabled)).isFalse();
+        assertThat((boolean) readInputBarField(subject.getInputBar(), "webSearchEnabled")).isTrue();
+    }
+
+    @Test
+    @DisplayName("Required Web Search accepts a retained true optional preference")
+    void onSend_whenWebSearchIsRequiredAndPreferenceIsTrue_startsProvider() throws Exception {
+        var providerInvoked = new CountDownLatch(1);
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                providerInvoked.countDown();
+                onComplete.run();
+            }
+        });
+        runOnEdt(() -> {
+            subject.setRequestedWebSearch(true);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.REQUIRED);
+            subject.getInputBar().setText("search");
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(providerInvoked.await(2, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    @DisplayName("Required Web Search preserves the optional preference in the send snapshot")
+    void onSend_whenWebSearchIsRequired_preservesRequestedPreferenceAndEnablesEffectiveSearch() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        runOnEdt(() -> {
+            subject.setRequestedWebSearch(false);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.REQUIRED);
+            subject.getInputBar().setText("search");
+        });
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+        runOnEdt(() -> setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.REQUIRED));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            SendJob job = callOnEdt(() -> ((Map<Long, SendJob>) readField(subject, "activeSendJobs"))
+                    .values().iterator().next());
+            assertThat(job.requestedWebSearch).isFalse();
+            assertThat(job.webSearchEnabled).isTrue();
+            assertThat(job.runtime.webSearchOutcome()).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        } finally {
+            releaseAdmission.countDown();
+        }
     }
 
     @Test
@@ -5783,56 +5822,6 @@ class ChatPanelTest {
                 .containsExactly("ping", "background answer");
     }
 
-    @Test
-    @DisplayName("Switching conversations while streaming re-enables input in the newly visible chat")
-    void setActiveConversationId_whenSwitchingAwayFromStreamingConversation_reEnablesInputBar() throws Exception {
-        var originalConversationId = UUID.randomUUID();
-        var visibleConversationId = UUID.randomUUID();
-        var tokenDelivered = new CountDownLatch(1);
-        var continueStream = new CountDownLatch(1);
-
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
-
-        setCurrentProvider(subject, new ProviderService() {
-            @Override
-            public void streamCompletion(
-                    List<Message> history,
-                    ReasoningLevel reasoningLevel,
-                    Consumer<String> onToken,
-                    Consumer<String> onThinkingToken,
-                    Runnable onComplete,
-                    Consumer<Exception> onError,
-                    BooleanSupplier isCancelled
-            ) {
-                onToken.accept("pong");
-                tokenDelivered.countDown();
-                try {
-                    continueStream.await(2, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                onComplete.run();
-            }
-
-        });
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
-        invokeOnSend(subject);
-
-        assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
-        assertThat(subject.getInputBar().isEnabled()).isFalse();
-
-        SwingUtilities.invokeAndWait(() -> subject.setActiveConversationId(visibleConversationId));
-
-        assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat((boolean) readField(subject, "streaming")).isFalse();
-
-        continueStream.countDown();
-        flushEdt();
-    }
 
     private static ProviderService immediateProvider(String responseText) {
         return new ProviderService() {
@@ -5950,6 +5939,7 @@ class ChatPanelTest {
                     providerName,
                     existing == null ? null : existing.envVar(),
                     existing == null ? null : existing.baseUrl(),
+                    existing == null ? null : existing.defaultBaseUrl(),
                     existing == null ? List.of(modelId) : existing.seedModels(),
                     existing == null ? ProviderCapabilities.chatAndModels() : existing.capabilities(),
                     ignored -> provider,
@@ -5958,6 +5948,8 @@ class ChatPanelTest {
             Map<String, ProviderRegistry.ProviderDef> updated = new LinkedHashMap<>(providers);
             updated.put(providerName, replacement);
             setField(chatPanel, "providerMap", Map.copyOf(updated));
+            setField(chatPanel, "installedProviderScope", 1L);
+            setField(chatPanel, "nativeWebSearchOutcome", NativeWebSearchOutcome.OPTIONAL);
         });
     }
 
@@ -5965,6 +5957,12 @@ class ChatPanelTest {
         Field field = InputBar.class.getDeclaredField("conversationBusy");
         field.setAccessible(true);
         return field.getBoolean(chatPanel.getInputBar());
+    }
+
+    private static Object readInputBarField(InputBar inputBar, String fieldName) throws Exception {
+        Field field = InputBar.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(inputBar);
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
@@ -6039,6 +6037,7 @@ class ChatPanelTest {
                 "Failing Provider",
                 null,
                 null,
+                null,
                 List.of("failing-model"),
                 ProviderCapabilities.chatAndModels(),
                 model -> {
@@ -6048,6 +6047,7 @@ class ChatPanelTest {
         );
         runOnEdt(() -> {
             setField(chatPanel, "providerMap", Map.of(provider.name(), provider));
+            setField(chatPanel, "installedProviderScope", 1L);
             chatPanel.setSelectedModel("Failing Provider > failing-model");
         });
     }
@@ -6059,6 +6059,7 @@ class ChatPanelTest {
     ) throws Exception {
         ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
                 "Blocking Provider",
+                null,
                 null,
                 null,
                 List.of("blocking-model"),
@@ -6077,6 +6078,7 @@ class ChatPanelTest {
         );
         runOnEdt(() -> {
             setField(chatPanel, "providerMap", Map.of(provider.name(), provider));
+            setField(chatPanel, "installedProviderScope", 1L);
             chatPanel.setSelectedModel("Blocking Provider > blocking-model");
         });
     }
@@ -6087,6 +6089,7 @@ class ChatPanelTest {
     ) {
         return new ProviderRegistry.ProviderDef(
                 name,
+                null,
                 null,
                 null,
                 List.of("test-model"),
@@ -6100,6 +6103,7 @@ class ChatPanelTest {
         return new ProviderRegistry.ProviderDef(
                 "OpenAI",
                 "OPENAI_API_KEY",
+                baseUrl,
                 baseUrl,
                 List.of("seed-model"),
                 ProviderCapabilities.chatAndModels(),
@@ -6339,39 +6343,38 @@ class ChatPanelTest {
     }
 
     private static SendJob deepSeekWebSearchSendJob(UUID conversationId) {
-        return new SendJob(
+        return webSearchSendJob(
                 2L,
                 conversationId,
                 "DeepSeek",
                 "deepseek-v4-pro",
-                testProviderDefinition("DeepSeek", ProviderCapabilities.chatAndModels()),
-                "https://api.deepseek.com",
-                ProviderCapabilities.chatAndModels(),
-                List.of(Message.user("Search")),
-                ReasoningLevel.OFF,
-                true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
-                false,
-                null,
-                ""
+                "https://api.deepseek.com"
         );
     }
 
-    private static SendJob webSearchSendJob() {
+    private static SendJob webSearchSendJob(long jobId, UUID conversationId, String providerName, String modelId, String baseUrl) {
+        ProviderCapabilities capabilities = ProviderCapabilities.chatAndModels();
+        ProviderRegistry.ProviderDef providerDefinition = testProviderDefinition(providerName, capabilities);
         return new SendJob(
-                1L,
-                UUID.randomUUID(),
-                "Google AI",
-                "gemini-3.5-flash",
-                testProviderDefinition("Google AI", ProviderCapabilities.chatAndModels()),
-                "https://generativelanguage.googleapis.com/v1beta/openai",
-                ProviderCapabilities.chatAndModels(),
+                jobId,
+                conversationId,
+                new SendRuntimeSnapshot(
+                        new ProviderRegistry.ProviderDef(
+                                providerDefinition.name(),
+                                providerDefinition.envVar(),
+                                baseUrl,
+                                providerDefinition.defaultBaseUrl(),
+                                providerDefinition.seedModels(),
+                                capabilities,
+                                providerDefinition.factory(),
+                                providerDefinition.fetcher()
+                        ),
+                        modelId,
+                        NativeWebSearchOutcome.OPTIONAL
+                ),
                 List.of(Message.user("Search")),
                 ReasoningLevel.OFF,
                 true,
-                WebSearchAvailabilityResolver.NATIVE_OPTION_ID,
-                5,
                 false,
                 null,
                 ""

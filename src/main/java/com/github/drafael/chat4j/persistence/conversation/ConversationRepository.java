@@ -23,7 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import javax.sql.DataSource;
-import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toCollection;
@@ -278,21 +277,18 @@ public class ConversationRepository {
         }
     }
 
-    public boolean hasWebSearchSettings(UUID id, boolean enabled, String optionId) throws SQLException {
-        try (Connection connection = dataSource.getConnection()) {
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "SELECT web_search_enabled, web_search_option FROM conversations WHERE id = ?"
-            )) {
-                sqlDialect.bindUuid(ps, 1, id);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) {
-                        return false;
-                    }
-                    boolean storedEnabled = rs.getBoolean("web_search_enabled");
-                    return !rs.wasNull()
-                            && storedEnabled == enabled
-                            && Objects.equals(rs.getString("web_search_option"), StringUtils.trimToNull(optionId));
+    public boolean hasWebSearchSettings(UUID id, boolean enabled) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "SELECT web_search_enabled FROM conversations WHERE id = ?"
+             )) {
+            sqlDialect.bindUuid(ps, 1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return false;
                 }
+                boolean storedEnabled = rs.getBoolean(1);
+                return !rs.wasNull() && storedEnabled == enabled;
             }
         }
     }
@@ -316,16 +312,14 @@ public class ConversationRepository {
         updateConversation(id, "UPDATE conversations SET reasoning_level = ? WHERE id = ?", ps -> ps.setString(1, normalized.toSettingValue()));
     }
 
-    public void updateWebSearchSettings(UUID id, boolean enabled, String optionId) throws SQLException {
-        try (Connection connection = dataSource.getConnection()) {
-            try (PreparedStatement ps = connection.prepareStatement(
-                    "UPDATE conversations SET web_search_enabled = ?, web_search_option = ? WHERE id = ?"
-            )) {
-                ps.setBoolean(1, enabled);
-                ps.setString(2, StringUtils.trimToNull(optionId));
-                sqlDialect.bindUuid(ps, 3, id);
-                requireOneRow(ps.executeUpdate(), "web search settings", id);
-            }
+    public void updateWebSearchSettings(UUID id, boolean enabled) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "UPDATE conversations SET web_search_enabled = ? WHERE id = ?"
+             )) {
+            ps.setBoolean(1, enabled);
+            sqlDialect.bindUuid(ps, 2, id);
+            requireOneRow(ps.executeUpdate(), "web search settings", id);
         }
     }
 
@@ -386,7 +380,7 @@ public class ConversationRepository {
             try (PreparedStatement ps = connection.prepareStatement(
                     """
                     SELECT c.id AS c_id, c.title, c.provider, c.model, c.is_favorite, c.reasoning_level,
-                           c.agent_mode_enabled, c.agent_project_root, c.web_search_enabled, c.web_search_option,
+                           c.agent_mode_enabled, c.agent_project_root, c.web_search_enabled,
                            c.created_at AS c_created_at, c.updated_at AS c_updated_at,
                            m.id AS m_id, m.role, m.content, m.content_json, m.meta_json, m.created_at AS m_created_at,
                            m.ordinal
@@ -425,7 +419,7 @@ public class ConversationRepository {
         grouped.put("Favorites", new ArrayList<>());
         try (Connection connection = dataSource.getConnection()) {
             try (PreparedStatement ps = connection.prepareStatement(
-                    "SELECT id AS c_id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, web_search_enabled, web_search_option, created_at AS c_created_at, updated_at AS c_updated_at FROM conversations ORDER BY updated_at DESC"
+                    "SELECT id AS c_id, title, provider, model, is_favorite, reasoning_level, agent_mode_enabled, agent_project_root, web_search_enabled, created_at AS c_created_at, updated_at AS c_updated_at FROM conversations ORDER BY updated_at DESC"
             ); ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     ConversationRecord record = readConversation(rs);
@@ -538,8 +532,8 @@ public class ConversationRepository {
                 """
                 INSERT INTO conversations (
                     id, title, provider, model, reasoning_level, agent_mode_enabled,
-                    agent_project_root, web_search_enabled, web_search_option
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    agent_project_root, web_search_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """
         )) {
             sqlDialect.bindUuid(ps, 1, command.conversationId());
@@ -551,7 +545,6 @@ public class ConversationRepository {
             ps.setBoolean(6, command.agentModeEnabled() && root != null);
             ps.setString(7, root == null ? null : root.toString());
             ps.setBoolean(8, command.webSearchEnabled());
-            ps.setString(9, StringUtils.trimToNull(command.webSearchOptionId()));
             ps.executeUpdate();
         }
     }
@@ -691,7 +684,7 @@ public class ConversationRepository {
         try (PreparedStatement ps = connection.prepareStatement(
                 """
                 SELECT title, provider, model, reasoning_level, agent_mode_enabled, agent_project_root,
-                       web_search_enabled, web_search_option
+                       web_search_enabled
                 FROM conversations
                 WHERE id = ?
                 """
@@ -717,8 +710,7 @@ public class ConversationRepository {
                         && storedAgentEnabled == agentEnabled
                         && Objects.equals(rs.getString("agent_project_root"), root == null ? null : root.toString())
                         && storedWebSearchEnabledPresent
-                        && storedWebSearchEnabled == command.webSearchEnabled()
-                        && Objects.equals(rs.getString("web_search_option"), StringUtils.trimToNull(command.webSearchOptionId()));
+                        && storedWebSearchEnabled == command.webSearchEnabled();
             }
         }
     }
@@ -827,7 +819,7 @@ public class ConversationRepository {
         return new ConversationRecord(
                 sqlDialect.readUuid(rs, "c_id"), rs.getString("title"), rs.getString("provider"), rs.getString("model"),
                 rs.getBoolean("is_favorite"), rs.getString("reasoning_level"), rs.getBoolean("agent_mode_enabled"),
-                rs.getString("agent_project_root"), rs.getBoolean("web_search_enabled"), rs.getString("web_search_option"),
+                rs.getString("agent_project_root"), rs.getBoolean("web_search_enabled"),
                 rs.getTimestamp("c_created_at").toLocalDateTime(), rs.getTimestamp("c_updated_at").toLocalDateTime());
     }
 
@@ -938,7 +930,6 @@ public class ConversationRepository {
             boolean agentModeEnabled,
             Path agentProjectRoot,
             boolean webSearchEnabled,
-            String webSearchOptionId,
             ConversationHistoryEntry firstEntry
     ) {
         public CreateConversationCommand {
@@ -980,25 +971,9 @@ public class ConversationRepository {
             boolean agentModeEnabled,
             String agentProjectRoot,
             boolean webSearchEnabled,
-            String webSearchOption,
             LocalDateTime createdAt,
             LocalDateTime updatedAt
     ) {
-        public ConversationRecord(
-                UUID id,
-                String title,
-                String provider,
-                String model,
-                boolean isFavorite,
-                String reasoningLevel,
-                boolean agentModeEnabled,
-                String agentProjectRoot,
-                LocalDateTime createdAt,
-                LocalDateTime updatedAt
-        ) {
-            this(id, title, provider, model, isFavorite, reasoningLevel, agentModeEnabled, agentProjectRoot,
-                    false, null, createdAt, updatedAt);
-        }
     }
 
     public record MessageRecord(UUID id, int ordinal, Message message) {

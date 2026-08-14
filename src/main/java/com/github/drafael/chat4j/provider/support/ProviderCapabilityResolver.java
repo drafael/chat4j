@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.Optional;
 
@@ -161,116 +162,113 @@ public final class ProviderCapabilityResolver {
         return !model.isBlank() && containsAny(model, TOOL_MODEL_ALLOW_HINTS);
     }
 
-    public static boolean supportsNativeWebSearch(ProviderCapabilities capabilities, String providerName, String modelId) {
-        return supportsNativeWebSearch(capabilities, providerName, modelId, null, null);
-    }
-
-    public static boolean supportsNativeWebSearch(
-            ProviderCapabilities capabilities,
-            String providerName,
-            String modelId,
-            String baseUrl
-    ) {
-        return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, null);
-    }
-
-    public static boolean supportsRuntimeNativeWebSearch(ProviderCapabilities capabilities, String providerName, String modelId) {
-        return supportsNativeWebSearch(capabilities, providerName, modelId);
-    }
-
-    public static boolean supportsRuntimeNativeWebSearch(
-            ProviderCapabilities capabilities,
-            String providerName,
-            String modelId,
-            String baseUrl
-    ) {
-        return DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)
-                ? supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, null)
-                : supportsNativeWebSearch(capabilities, providerName, modelId);
-    }
-
-    public static boolean supportsRuntimeNativeWebSearch(
-            ProviderCapabilities capabilities,
+    public static NativeWebSearchOutcome nativeWebSearchOutcome(
             String providerName,
             String modelId,
             String baseUrl,
+            String defaultBaseUrl
+    ) {
+        return staticNativeWebSearchOutcome(providerName, modelId, baseUrl, defaultBaseUrl);
+    }
+
+    public static NativeWebSearchOutcome nativeWebSearchOutcome(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String defaultBaseUrl,
             String apiKey
     ) {
-        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)
-                || supportsRuntimeDynamicNativeWebSearchProbe(providerName)) {
-            return supportsNativeWebSearch(capabilities, providerName, modelId, baseUrl, apiKey);
+        NativeWebSearchOutcome staticOutcome = staticNativeWebSearchOutcome(
+                providerName,
+                modelId,
+                baseUrl,
+                defaultBaseUrl
+        );
+        if (staticOutcome != NativeWebSearchOutcome.PENDING) {
+            return staticOutcome;
         }
-        return supportsNativeWebSearch(capabilities, providerName, modelId);
+        return resolveDynamicNativeWebSearchSupport(providerName, modelId, baseUrl, apiKey)
+                .map(supported -> supported ? NativeWebSearchOutcome.OPTIONAL : NativeWebSearchOutcome.UNSUPPORTED)
+                .orElse(NativeWebSearchOutcome.PENDING);
+    }
+
+    private static NativeWebSearchOutcome staticNativeWebSearchOutcome(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String defaultBaseUrl
+    ) {
+        String provider = normalize(providerName);
+        String model = normalize(modelId);
+        if (model.isBlank() || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
+            return NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (PERPLEXITY_PROVIDER_HINTS.contains(provider)) {
+            return PerplexityModelIds.isSonarModel(modelId)
+                    ? NativeWebSearchOutcome.REQUIRED
+                    : NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)) {
+            return DeepSeekNativeWebSearchSupport.supports(providerName, modelId, baseUrl)
+                    ? NativeWebSearchOutcome.OPTIONAL
+                    : NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (!sameEndpoint(baseUrl, defaultBaseUrl)) {
+            return NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && supportsGroqNativeWebSearch(model)
+                || OPENROUTER_PROVIDER_HINTS.contains(provider) && supportsOpenRouterNativeWebSearch(model)
+                || OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isOpenAiSearchPreviewModel(model)) {
+            return NativeWebSearchOutcome.REQUIRED;
+        }
+
+        NativeWebSearchOutcome staticOutcome = staticOptionalOutcome(provider, model);
+        if (staticOutcome == NativeWebSearchOutcome.OPTIONAL) {
+            return staticOutcome;
+        }
+        return supportsRuntimeDynamicNativeWebSearchProbe(providerName)
+                ? NativeWebSearchOutcome.PENDING
+                : NativeWebSearchOutcome.UNSUPPORTED;
+    }
+
+    private static NativeWebSearchOutcome staticOptionalOutcome(
+            String provider,
+            String model
+    ) {
+        if (ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && containsAny(model, ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
+                || OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
+                || XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && supportsXaiNativeWebSearch(model)
+                || GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && containsAny(model, GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)) {
+            return NativeWebSearchOutcome.OPTIONAL;
+        }
+        return NativeWebSearchOutcome.UNSUPPORTED;
     }
 
     private static boolean supportsRuntimeDynamicNativeWebSearchProbe(String providerName) {
         String provider = normalize(providerName);
         return OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
-                || containsAny(provider, GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS);
+                || GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider);
     }
 
-    public static boolean supportsNativeWebSearch(
-            ProviderCapabilities capabilities,
-            String providerName,
-            String modelId,
-            String baseUrl,
-            String apiKey
-    ) {
-        String provider = normalize(providerName);
-        String model = normalize(modelId);
-        if (DeepSeekNativeWebSearchSupport.isDeepSeek(providerName)) {
-            return DeepSeekNativeWebSearchSupport.supports(providerName, modelId, baseUrl);
-        }
-        if (model.isBlank() || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
-            return false;
-        }
-
-        if (containsAny(provider, PERPLEXITY_PROVIDER_HINTS)) {
-            return PerplexityModelIds.isSonarModel(modelId);
-        }
-
-        if (GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
-            return supportsGroqNativeWebSearch(model);
-        }
-
-        if (capabilities != null && capabilities.supportsNativeWebSearch()) {
-            return true;
-        }
-
-        Optional<Boolean> dynamicallyResolvedSupport = resolveDynamicNativeWebSearchSupport(
-                provider,
-                modelId,
-                baseUrl,
-                apiKey
-        );
-        if (dynamicallyResolvedSupport.isPresent()) {
-            return dynamicallyResolvedSupport.get();
-        }
-
-        if (ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
-            return containsAny(model, ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
-        }
-
-        if (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
-            return containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
-        }
-
-        if (XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)) {
-            return containsAny(model, XAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
-        }
-
-        if (containsAny(provider, GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS)) {
-            return containsAny(model, GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS);
-        }
-
-        if (OPENROUTER_PROVIDER_HINTS.contains(provider)) {
-            return supportsOpenRouterNativeWebSearch(model);
-        }
-
-        return false;
+    private static boolean sameEndpoint(String baseUrl, String defaultBaseUrl) {
+        return StringUtils.isNotBlank(baseUrl)
+                && StringUtils.isNotBlank(defaultBaseUrl)
+                && baseUrl.equals(defaultBaseUrl);
     }
 
-    public static boolean supportsFileInput(ProviderCapabilities capabilities, String providerName, String modelId) {
+    public static boolean supportsXaiNativeWebSearch(String modelId) {
+        return ProviderCapabilityHints.supportsXaiNativeWebSearch(normalize(modelId));
+    }
+
+    public static boolean isOpenAiSearchPreviewModel(String modelId) {
+        return normalize(modelId).matches("gpt-4o(?:-mini)?-search-preview(?:-\\d{4}-\\d{2}-\\d{2})?");
+    }
+
+    public static boolean supportsFileInput(ProviderCapabilities capabilities) {
         return capabilities != null && capabilities.supportsFileInput();
     }
 

@@ -18,11 +18,11 @@ public class ConversationLoadApplyCoordinator {
             return false;
         }
 
-        historyLoader.accept(plan.records());
+        conversationSelector.accept(plan.conversationId());
         if (plan.selectedModelKey() != null) {
             selectedModelSetter.accept(plan.selectedModelKey());
         }
-        conversationSelector.accept(plan.conversationId());
+        historyLoader.accept(plan.records());
         return true;
     }
 }
