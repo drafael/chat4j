@@ -1,9 +1,11 @@
                     .code-block-shell { position: relative; margin: 10px 0 20px 0; border-radius: 3px; }
                     .code-block-shell table.md-code-block { margin: 0 !important; }
-                    .code-copy-button, .activity-copy-button { position: absolute; width: 24px; height: 24px; border: 1px solid var(--chat4j-border); border-radius: 5px; background: var(--chat4j-menu-bg); color: var(--chat4j-icon-color); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; z-index: 12; opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.92); transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease, color 120ms ease, border-color 120ms ease; }
-                    .code-copy-button { top: 6px; right: 6px; }
-                    .code-block-shell:hover .code-copy-button, .activity-box:hover .activity-copy-button { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
-                    .code-copy-button:hover, .activity-copy-button:hover { background: var(--chat4j-hover-bg); color: var(--chat4j-hover-fg); transform: translateY(0) scale(1.04); }
+                    .code-copy-button, .activity-copy-button { width: 24px; height: 24px; border-radius: 5px; color: var(--chat4j-icon-color); display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; transition: opacity 120ms ease, transform 140ms cubic-bezier(.2,.8,.2,1), background 120ms ease, color 120ms ease; }
+                    .code-copy-button { position: absolute; top: 6px; right: 6px; border: 1px solid var(--chat4j-border); background: var(--chat4j-menu-bg); opacity: 0; pointer-events: none; transform: translateY(-2px) scale(0.92); z-index: 12; }
+                    .activity-copy-button { flex: 0 0 auto; border: 1px solid transparent; background: transparent; opacity: 0.72; }
+                    .code-block-shell:hover .code-copy-button, .code-copy-button:focus-visible { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+                    .code-copy-button:hover, .activity-copy-button:hover { background: var(--chat4j-hover-bg); color: var(--chat4j-hover-fg); opacity: 1; transform: translateY(0) scale(1.04); }
+                    .code-copy-button:focus-visible, .activity-copy-button:focus-visible { outline: 2px solid var(--chat4j-border); outline-offset: 2px; }
                     .code-copy-button .icon, .activity-copy-button .icon { width: 14px; height: 14px; }
                     .copy-flash .icon.copy, .message-action-button.copy-flash .icon.copy { animation: chat4j-copy-pop 420ms cubic-bezier(.2,.8,.2,1); }
                     .copy-flash { animation: chat4j-copy-button-flash 420ms ease; }

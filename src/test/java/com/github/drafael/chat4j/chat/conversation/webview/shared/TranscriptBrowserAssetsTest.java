@@ -280,6 +280,14 @@ class TranscriptBrowserAssetsTest {
         return value.replace("\r\n", "\n");
     }
 
+    private static String cssRule(String css, String selector) {
+        return css.lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith("%s {".formatted(selector)))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing CSS rule: %s".formatted(selector)));
+    }
+
     @Test
     @DisplayName("Transcript action bridge exposes dispatch and Mermaid context menu actions")
     void transcriptActionsScript_whenRendered_exposesDiagramActionDispatcher() {
@@ -289,6 +297,8 @@ class TranscriptBrowserAssetsTest {
                 .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
                 .contains("window.chat4jTranscriptAction(JSON.stringify({args:")
                 .contains("dispatchMessageActionButton(actionButton, event)")
+                .contains("button.type = 'button'")
+                .contains("button.setAttribute('aria-label', 'Copy code')")
                 .contains("button.getAttribute('data-read-aloud-token')")
                 .contains("dispatchTranscriptAction(action, Number(button.getAttribute('data-message-index')), text)")
                 .doesNotContain("messageActionText(button)", "function rowText(row)")
@@ -335,6 +345,124 @@ class TranscriptBrowserAssetsTest {
             assertThat(context.eval("js", "documentListenerCapture.mousedown").asBoolean()).isTrue();
             assertThat(context.eval("js", "bridgePayloads.length").asInt()).isOne();
             assertThat(action).isEqualTo(new TranscriptCallbackPayloads.TranscriptAction("webview-pointer-down", -1, ""));
+        }
+    }
+
+    @Test
+    @DisplayName("Activity copy dispatches rendered text without toggling the details element")
+    void transcriptActionsScript_whenActivityCopyClicked_dispatchesTextAndCancelsDefaultInteraction() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.eval("js", """
+                    var documentListeners = {};
+                    var bridgePayloads = [];
+                    var setTimeout = function(callback) { callback(); };
+                    var activityContent = { textContent: 'First step\\nSecond step' };
+                    var activitySummary = { textContent: 'Thinking' };
+                    var activityBox = {
+                        querySelector: function(selector) {
+                            return selector === '.activity-content' ? activityContent : activitySummary;
+                        }
+                    };
+                    var activityCopyButton = {
+                        offsetWidth: 24,
+                        classList: { add: function() {}, remove: function() {} },
+                        closest: function(selector) {
+                            if (selector === 'button[data-action="copy-activity"]') {
+                                return activityCopyButton;
+                            }
+                            return selector === '.activity-box' ? activityBox : null;
+                        }
+                    };
+                    var clickEvent = {
+                        target: activityCopyButton,
+                        prevented: false,
+                        stopped: false,
+                        preventDefault: function() { this.prevented = true; },
+                        stopPropagation: function() { this.stopped = true; }
+                    };
+                    var window = {
+                        addEventListener: function () {},
+                        chat4jTranscriptAction: function(payload) { bridgePayloads.push(payload); }
+                    };
+                    var document = {
+                        getElementById: function() { return null; },
+                        addEventListener: function(type, listener) { documentListeners[type] = listener; }
+                    };
+                    """);
+            context.eval("js", TranscriptBrowserAssets.transcriptActionsScript());
+
+            context.eval("js", "documentListeners.click(clickEvent);");
+            String rawPayload = context.eval("js", "bridgePayloads[0]").asString();
+            TranscriptCallbackPayloads.TranscriptAction action = TranscriptCallbackPayloads.transcriptAction(rawPayload);
+
+            assertThat(action).isEqualTo(new TranscriptCallbackPayloads.TranscriptAction(
+                    "copy-text",
+                    -1,
+                    "First step\nSecond step"
+            ));
+            assertThat(context.eval("js", "clickEvent.prevented").asBoolean()).isTrue();
+            assertThat(context.eval("js", "clickEvent.stopped").asBoolean()).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Activity expansion refreshes custom scroll chrome after layout changes")
+    void transcriptActionsScript_whenActivityToggled_recalculatesCustomScrollbar() {
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.eval("js", """
+                    var documentListeners = {};
+                    var documentListenerCapture = {};
+                    var setTimeout = function(callback) { callback(); };
+                    var root = { scrollHeight: 200, clientHeight: 100, scrollTop: 0 };
+                    var topFade = { classList: { toggle: function() {} } };
+                    var bottomFade = { classList: { toggle: function() {} } };
+                    var jump = {
+                        classList: { toggle: function() {} },
+                        getAttribute: function() { return 'false'; },
+                        style: {}
+                    };
+                    var track = {
+                        clientHeight: 100,
+                        removeCount: 0,
+                        classList: {
+                            add: function() {},
+                            remove: function() { track.removeCount++; }
+                        }
+                    };
+                    var thumb = { clientHeight: 0, style: {} };
+                    var elements = {
+                        'chat4j-top-fade': topFade,
+                        'chat4j-bottom-fade': bottomFade,
+                        'chat4j-jump-bottom': jump,
+                        'chat4j-scrollbar': track,
+                        'chat4j-scrollbar-thumb': thumb
+                    };
+                    var activity = {
+                        closest: function(selector) { return selector === '.activity-box' ? activity : null; }
+                    };
+                    var window = {
+                        innerHeight: 100,
+                        addEventListener: function() {}
+                    };
+                    var document = {
+                        scrollingElement: root,
+                        documentElement: root,
+                        body: { scrollHeight: 200 },
+                        getElementById: function(id) { return elements[id] || null; },
+                        addEventListener: function(type, listener, capture) {
+                            documentListeners[type] = listener;
+                            documentListenerCapture[type] = capture;
+                        }
+                    };
+                    """);
+            context.eval("js", TranscriptBrowserAssets.transcriptActionsScript());
+
+            context.eval("js", "documentListeners.toggle({ target: activity });");
+
+            assertThat(context.eval("js", "documentListenerCapture.toggle").asBoolean()).isTrue();
+            assertThat(context.eval("js", "track.removeCount").asInt()).isOne();
+            assertThat(context.eval("js", "thumb.style.height").asString()).isEqualTo("50px");
+            assertThat(context.eval("js", "jump.style.display").asString()).isEqualTo("flex");
         }
     }
 
@@ -394,6 +522,50 @@ class TranscriptBrowserAssetsTest {
         assertThat(scrollScript)
                 .contains("window.scrollTo")
                 .contains("document.documentElement.scrollHeight");
+    }
+
+    @Test
+    @DisplayName("Activity styles keep the header borderless and the copy action visible")
+    void transcriptActivityStyles_whenLoaded_matchReferenceLayoutWithoutChangingCodeCopyBehavior() {
+        String activityCss = TranscriptResources.requiredResourceText("/web/chat/transcript-activity.css");
+        String codeCss = TranscriptResources.requiredResourceText("/web/chat/transcript-code.css");
+
+        assertThat(cssRule(activityCss, ".activity-box"))
+                .contains("width: 100%", "background: transparent")
+                .doesNotMatch(".*(?:\\{|;)\\s*border(?:-[a-z]+)?\\s*:.*");
+        assertThat(cssRule(activityCss, ".activity-box summary"))
+                .contains("display: inline-flex", "align-items: center");
+        assertThat(cssRule(activityCss, ".activity-chevron"))
+                .contains("border-right:", "border-bottom:", "rotate(-45deg)");
+        assertThat(cssRule(activityCss, ".activity-box[open] .activity-chevron"))
+                .contains("rotate(45deg)");
+        assertThat(cssRule(activityCss, ".activity-content"))
+                .contains("width: 100%", "border: 1px solid var(--chat4j-border)", "border-radius: 10px");
+        assertThat(cssRule(codeCss, ".activity-copy-button"))
+                .contains("opacity: 0.72")
+                .doesNotContain("position:", "pointer-events:", "transform:");
+        assertThat(cssRule(codeCss, ".code-copy-button"))
+                .contains("position: absolute", "opacity: 0", "pointer-events: none");
+        assertThat(codeCss)
+                .contains(".code-block-shell:hover .code-copy-button, .code-copy-button:focus-visible")
+                .doesNotContain(".activity-box:hover .activity-copy-button");
+
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(
+                List.of(ConversationEntry.activity("Thinking", "Reviewing the request", false)),
+                RenderMode.PREVIEW,
+                false,
+                false
+        );
+        String document = new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
+        assertThat(document)
+                .contains(".activity-title {", ".activity-content {")
+                .contains("<span class=\"activity-title\">Thinking</span>");
     }
 
     @Test

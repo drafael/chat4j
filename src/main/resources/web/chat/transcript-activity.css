@@ -1,11 +1,10 @@
-                    .activity-box { box-sizing: border-box; position: relative; width: 100%; border: 1px solid var(--chat4j-border); border-radius: 10px; padding: 0; color: var(--chat4j-muted-text); background: transparent; }
-                    .activity-box summary { cursor: pointer; list-style: none; padding: 7px 40px 7px 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-                    .activity-copy-button { top: 4px; right: 6px; }
+                    .activity-box { box-sizing: border-box; position: relative; width: 100%; padding: 0; color: var(--chat4j-text); background: transparent; }
+                    .activity-box summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 0; font-weight: 600; }
                     .activity-box summary::-webkit-details-marker { display: none; }
-                    .activity-box summary::before { content: '›'; display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--chat4j-muted-text); font-size: 16px; line-height: 1; transition: transform 120ms ease; }
-                    .activity-box[open] summary { border-bottom: 1px solid var(--chat4j-border); }
-                    .activity-box[open] summary::before { transform: rotate(90deg); }
-                    .activity-content { box-sizing: border-box; padding: 8px 12px 10px 24px; }
+                    .activity-title { line-height: 1.35; }
+                    .activity-chevron { box-sizing: border-box; width: 7px; height: 7px; margin: 0 2px 0 1px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; flex: 0 0 auto; transform: rotate(-45deg); transform-origin: center; transition: transform 120ms ease; }
+                    .activity-box[open] .activity-chevron { transform: rotate(45deg); }
+                    .activity-content { box-sizing: border-box; width: 100%; margin-top: 6px; border: 1px solid var(--chat4j-border); border-radius: 10px; padding: 10px 14px; background: var(--chat4j-menu-bg); }
                     .activity-content .message.assistant { padding: 0; }
                     .activity-content .message > :first-child { margin-top: 0; }
                     .activity-content .message > :last-child { margin-bottom: 0; }

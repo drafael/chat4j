@@ -209,8 +209,10 @@
             table.parentNode.insertBefore(shell, table);
             shell.appendChild(table);
             var button = document.createElement('button');
+            button.type = 'button';
             button.className = 'code-copy-button';
             button.title = 'Copy code';
+            button.setAttribute('aria-label', 'Copy code');
             button.innerHTML = '<span class="icon copy" aria-hidden="true"></span>';
             button.onclick = function(event) {
                 var code = table.querySelector('tr.code-body pre') || table.querySelector('pre') || table;
@@ -378,6 +380,11 @@
     }, true);
     document.addEventListener('mousedown', function() {
         dispatchTranscriptAction('webview-pointer-down', -1, '');
+    }, true);
+    document.addEventListener('toggle', function(event) {
+        if (closest(event.target, '.activity-box')) {
+            setTimeout(updateCustomScrollbar, 0);
+        }
     }, true);
     document.addEventListener('click', function (event) {
         hideSourcePreview();

@@ -68,9 +68,13 @@ public final class TranscriptEntryRenderer {
         }
     }
 
-    private String renderFallbackEntry(ConversationEntry entry) {
-        String roleClass = entry.role() == Role.USER ? "user" : "assistant";
+    private static String renderFallbackEntry(ConversationEntry entry) {
         String text = escapeHtml(entry.text()).replace("\n", "<br>");
+        if (entry.kind() == ConversationEntryKind.ACTIVITY) {
+            return renderActivityEntry(entry, text);
+        }
+
+        String roleClass = entry.role() == Role.USER ? "user" : "assistant";
         String attachments = renderAttachmentStripHtml(entry.attachments());
         return """
                 <section class="row %s" data-message-index="%d">
@@ -88,18 +92,7 @@ public final class TranscriptEntryRenderer {
             Document activityDocument = Jsoup.parse(renderedActivity);
             prepareRenderedDocument(activityDocument, emptyList());
             String activityBody = activityDocument.body() == null ? escapeHtml(entry.text()) : activityDocument.body().html();
-            String content = StringUtils.isBlank(entry.text())
-                    ? ""
-                    : "<div class=\"activity-content\"><div class=\"message assistant\">%s</div></div>".formatted(activityBody);
-            String openAttribute = entry.collapsed() ? "" : " open";
-            return """
-                    <section class="row activity">
-                      <details class="activity-box"%s>
-                        <summary>%s<button class="activity-copy-button" title="Copy activity" data-action="copy-activity"><span class="icon copy" aria-hidden="true"></span></button></summary>
-                        %s
-                      </details>
-                    </section>
-                    """.formatted(openAttribute, escapeHtml(entry.title()), content);
+            return renderActivityEntry(entry, activityBody);
         }
 
         String rendered = entry.parts().isEmpty()
@@ -137,6 +130,21 @@ public final class TranscriptEntryRenderer {
                   </div>
                 </section>
                 """.formatted(roleClass, entry.messageIndex(), attachments, actions, roleClass, body);
+    }
+
+    private static String renderActivityEntry(ConversationEntry entry, String activityBody) {
+        String content = StringUtils.isBlank(entry.text())
+                ? ""
+                : "<div class=\"activity-content\"><div class=\"message assistant\">%s</div></div>".formatted(activityBody);
+        String openAttribute = entry.collapsed() ? "" : " open";
+        return """
+                <section class="row activity">
+                  <details class="activity-box"%s>
+                    <summary><span class="activity-title">%s</span><span class="activity-chevron" aria-hidden="true"></span><button type="button" class="activity-copy-button" title="Copy activity" aria-label="Copy activity" data-action="copy-activity"><span class="icon copy" aria-hidden="true"></span></button></summary>
+                    %s
+                  </details>
+                </section>
+                """.formatted(openAttribute, escapeHtml(entry.title()), content);
     }
 
     public static String renderAttachmentStripHtml(List<ConversationAttachment> attachments) {

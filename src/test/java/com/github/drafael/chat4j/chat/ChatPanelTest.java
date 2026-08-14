@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
+import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.composer.AttachmentStager;
 import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
@@ -4689,6 +4690,34 @@ class ChatPanelTest {
 
         JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
         assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Hidden activity bubbles are omitted from browser transcript entries")
+    void toConversationEntry_whenActivityBubbleIsHidden_returnsNoEntry() throws Exception {
+        ActivityBubble activityBubble = callOnEdt(() -> new ActivityBubble("Thinking", true));
+        Method method = ChatPanel.class.getDeclaredMethod("toConversationEntry", Component.class, int[].class);
+        method.setAccessible(true);
+
+        try {
+            runOnEdt(() -> {
+                activityBubble.setText("Internal reasoning");
+                activityBubble.setVisible(false);
+            });
+            ConversationEntry hiddenEntry = callOnEdt(() ->
+                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0})
+            );
+            runOnEdt(() -> activityBubble.setVisible(true));
+            ConversationEntry visibleEntry = callOnEdt(() ->
+                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0})
+            );
+
+            assertThat(hiddenEntry).isNull();
+            assertThat(visibleEntry).isEqualTo(ConversationEntry.activity("Thinking", "Internal reasoning", true));
+        } finally {
+            runOnEdt(activityBubble::dispose);
+            runOnEdt(() -> {});
+        }
     }
 
     @Test

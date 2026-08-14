@@ -34,6 +34,35 @@ class TranscriptDocumentRendererTest {
     Path tempDir;
 
     @Test
+    @DisplayName("Activity entries render an accessible inline header and separate expanded content")
+    void renderEntriesHtml_whenActivitiesRendered_usesReferenceHeaderStructureAndNativeOpenState() {
+        List<ConversationEntry> entries = List.of(
+                ConversationEntry.activity("Thinking <unsafe>", "**First step**", true),
+                ConversationEntry.activity("Web Search", "**Sources consulted**", false),
+                ConversationEntry.activity("Empty", "", false)
+        );
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(entries, RenderMode.PREVIEW, false, false);
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(snapshot);
+        var document = Jsoup.parseBodyFragment(html);
+        var activities = document.select("details.activity-box");
+
+        assertThat(activities).hasSize(3);
+        assertThat(activities.getFirst().hasAttr("open")).isFalse();
+        assertThat(activities.get(1).hasAttr("open")).isTrue();
+        assertThat(activities.get(2).hasAttr("open")).isTrue();
+        assertThat(activities.getFirst().selectFirst(".activity-title").text()).isEqualTo("Thinking <unsafe>");
+        assertThat(activities.getFirst().selectFirst(".activity-chevron").attr("aria-hidden")).isEqualTo("true");
+        assertThat(activities.getFirst().select("summary > .activity-title + .activity-chevron + .activity-copy-button"))
+                .hasSize(1);
+        assertThat(activities.getFirst().select("button[type=button][data-action=copy-activity][title=Copy activity][aria-label=Copy activity]"))
+                .hasSize(1);
+        assertThat(activities.getFirst().select(".activity-content").text()).isEqualTo("First step");
+        assertThat(activities.get(2).select(".activity-content")).isEmpty();
+        assertThat(html).contains("Thinking &lt;unsafe&gt;").doesNotContain("Thinking <unsafe>");
+    }
+
+    @Test
     @DisplayName("Attachment strip renders image previews and file chips")
     void renderAttachmentStripHtml_whenAttachmentsPresent_rendersPreviewAndChip() throws Exception {
         Path imagePath = tempDir.resolve("photo.png");

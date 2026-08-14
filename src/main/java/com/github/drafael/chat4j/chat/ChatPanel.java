@@ -3824,6 +3824,9 @@ public class ChatPanel extends JPanel {
     private ConversationEntry toConversationEntry(Component component, int[] messageIndex) {
         ActivityBubble activityBubble = findActivityBubble(component);
         if (activityBubble != null) {
+            if (!activityBubble.isVisible()) {
+                return null;
+            }
             return ConversationEntry.activity(
                     activityBubble.getTitleText(),
                     activityBubble.getFullText(),
