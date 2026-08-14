@@ -128,4 +128,35 @@ public interface ChatCompletionClient {
                 clearActiveStream
         );
     }
+
+    default void streamCompletion(
+            ProviderRuntime runtime,
+            List<Message> history,
+            ReasoningLevel reasoningLevel,
+            WebSearchRequestOptions webSearchOptions,
+            Consumer<String> onToken,
+            Consumer<String> onThinkingToken,
+            Consumer<ContentPart> onPart,
+            Consumer<CitationRef> onCitation,
+            Consumer<String> onWebSearchQuery,
+            Consumer<WebSearchSource> onWebSearchSource,
+            BooleanSupplier isCancelled,
+            Consumer<AutoCloseable> registerActiveStream,
+            Runnable clearActiveStream
+    ) throws Exception {
+        streamCompletion(
+                runtime,
+                history,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                onThinkingToken,
+                onPart,
+                onCitation,
+                onWebSearchSource,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
 }

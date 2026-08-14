@@ -11,8 +11,10 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.NonNull;
 
+import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toMap;
 
@@ -117,6 +119,13 @@ public class ProviderRegistry {
                 .filter(runtimePolicy::hasRequiredCredentials)
                 .map(this::toEffectiveProvider)
                 .toList();
+    }
+
+    public Optional<List<String>> cachedModelSupportedEndpoints(ProviderDef provider, String modelId) {
+        if (provider == null || !"GitHub Copilot".equals(provider.name())) {
+            return Optional.empty();
+        }
+        return catalog.cachedCopilotSupportedEndpoints(provider.baseUrl(), modelId);
     }
 
     public boolean matchesRuntimeConfig(ProviderDef installed, ProviderRuntimeConfig proposed) {

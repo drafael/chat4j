@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.CodexCliChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.DeepSeekChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.MistralChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.PerplexityChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
@@ -129,6 +130,7 @@ public class OpenAiCompatibleModule implements ProviderModule {
                     new GeneratedImageAttachmentWriter(attachmentSupport)
             );
             case "DeepSeek" -> new DeepSeekChatCompletionClient(attachmentSupport);
+            case "Mistral" -> new MistralChatCompletionClient(attachmentSupport);
             default -> new OpenAiChatCompletionClient(attachmentSupport);
         };
     }

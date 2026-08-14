@@ -198,6 +198,72 @@ class DeepSeekAnthropicWebSearchClientTest {
     }
 
     @Test
+    @DisplayName("DeepSeek streams require a message stop event")
+    void streamCompletion_whenStreamEndsAfterPartialOutput_throws() throws Exception {
+        CapturedRequest request = startServer(exchange -> respondSse(exchange, """
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partial"}}
+
+                """));
+
+        assertThatThrownBy(() -> subject(request.baseUrl()).streamCompletion(
+                runtime(),
+                List.of(Message.user("question")),
+                ReasoningLevel.OFF,
+                nativeSearch(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> false,
+                ignored -> {
+                },
+                () -> {
+                }
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessage("DeepSeek stream ended before message_stop.");
+    }
+
+    @Test
+    @DisplayName("DeepSeek message stop events require assistant output")
+    void streamCompletion_whenMessageStopsWithoutOutput_throws() throws Exception {
+        CapturedRequest request = startServer(exchange -> respondSse(exchange, """
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """));
+
+        assertThatThrownBy(() -> subject(request.baseUrl()).streamCompletion(
+                runtime(),
+                List.of(Message.user("question")),
+                ReasoningLevel.OFF,
+                nativeSearch(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> false,
+                ignored -> {
+                },
+                () -> {
+                }
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessage("DeepSeek completed without assistant output.");
+    }
+
+    @Test
     @DisplayName("HTTP failures propagate through the SDK and still clear registered ownership")
     void streamCompletion_whenServerRejectsRequest_throwsWithoutRegisteringStream() throws Exception {
         CapturedRequest request = startServer(exchange -> {

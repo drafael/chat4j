@@ -6,6 +6,7 @@ import com.anthropic.models.messages.CitationPageLocation;
 import com.anthropic.models.messages.CitationsDelta;
 import com.anthropic.models.messages.CitationsSearchResultLocation;
 import com.anthropic.models.messages.CitationsWebSearchResultLocation;
+import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
 import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import org.apache.commons.lang3.StringUtils;
@@ -59,14 +60,18 @@ final class AnthropicCitationMapper {
     private static Optional<CitationRef> fromWebSearch(CitationsWebSearchResultLocation citation) {
         String title = citation.title().orElse("");
         String citedText = citation.citedText();
-        if (StringUtils.isBlank(citation.url()) && StringUtils.isBlank(title) && StringUtils.isBlank(citedText)) {
+        String url = StringUtils.trimToEmpty(citation.url());
+        if (StringUtils.isNotBlank(url) && !ExternalLinkSupport.isAllowedHttpLink(url)) {
+            url = "";
+        }
+        if (StringUtils.isBlank(url) && StringUtils.isBlank(title) && StringUtils.isBlank(citedText)) {
             return Optional.empty();
         }
         return Optional.of(CitationRef.builder()
                 .kind(CitationKind.WEB)
                 .title(title)
                 .citedText(citedText)
-                .url(citation.url())
+                .url(url)
                 .encryptedIndex(citation.encryptedIndex())
                 .build());
     }

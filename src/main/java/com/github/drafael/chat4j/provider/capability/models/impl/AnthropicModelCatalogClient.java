@@ -18,14 +18,18 @@ public class AnthropicModelCatalogClient implements ModelCatalogClient {
                 .baseUrl(runtime.baseUrl())
                 .build();
 
-        return client.models().list().data().stream()
-                .sorted((left, right) -> {
-                    int byRecency = ModelOrdering.compareByRecency(left.id(), right.id());
-                    return byRecency != 0
-                            ? byRecency
-                            : right.createdAt().compareTo(left.createdAt());
-                })
-                .map(ModelInfo::id)
-                .toList();
+        try {
+            return client.models().list().data().stream()
+                    .sorted((left, right) -> {
+                        int byRecency = ModelOrdering.compareByRecency(left.id(), right.id());
+                        return byRecency != 0
+                                ? byRecency
+                                : right.createdAt().compareTo(left.createdAt());
+                    })
+                    .map(ModelInfo::id)
+                    .toList();
+        } finally {
+            client.close();
+        }
     }
 }

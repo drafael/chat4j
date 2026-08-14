@@ -30,6 +30,7 @@ import java.io.ByteArrayOutputStream;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +40,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -46,6 +49,8 @@ import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -100,6 +105,45 @@ class GoogleAiGenerateContentClientTest {
     }
 
     @Test
+    @DisplayName("Active-request registration failures cancel Google native requests")
+    @SuppressWarnings("unchecked")
+    void streamCompletion_whenActiveRequestRegistrationFails_cancelsFuture() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        CompletableFuture<HttpResponse<byte[]>> future = new CompletableFuture<>();
+        doReturn(future).when(httpClient).sendAsync(any(), any(HttpResponse.BodyHandler.class));
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        var subject = new GoogleAiGenerateContentClient(
+                failingFallbackClient(),
+                httpClient,
+                attachmentAuthority,
+                mock(GeneratedImageAttachmentWriter.class)
+        );
+        var cleared = new AtomicBoolean();
+
+        assertThatThrownBy(() -> subject.streamCompletion(
+                runtime("https://generativelanguage.googleapis.com/v1beta/openai"),
+                List.of(Message.user("Draw a cat")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> false,
+                ignored -> {
+                    throw new IllegalStateException("registration failed");
+                },
+                () -> cleared.set(true)
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessage("registration failed");
+
+        assertThat(future).isCancelled();
+        assertThat(cleared).isTrue();
+    }
+
+    @Test
     @DisplayName("Google native response emits text and generated image parts")
     void streamCompletion_whenGoogleReturnsTextAndInlineImage_emitsTextAndGeneratedImagePart(
             @TempDir Path tempDir
@@ -145,7 +189,7 @@ class GoogleAiGenerateContentClientTest {
             subject.streamCompletion(
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort())),
                     List.of(Message.user("Draw a cat")),
-                    ReasoningLevel.OFF,
+                    ReasoningLevel.HIGH,
                     WebSearchRequestOptions.disabled(),
                     tokens::add,
                     thinkingTokens::add,
@@ -170,7 +214,9 @@ class GoogleAiGenerateContentClientTest {
                 Path storedImage = Path.of(image.attachmentRef().storagePath());
                 assertThat(storedImage).startsWith(attachmentRoot).isRegularFile();
             });
-            assertThat(requestBody.get()).contains("\"responseModalities\":[\"TEXT\",\"IMAGE\"]");
+            assertThat(requestBody.get())
+                    .contains("\"responseModalities\":[\"TEXT\",\"IMAGE\"]")
+                    .contains("\"thinkingConfig\":{\"includeThoughts\":true}");
         } finally {
             server.stop(0);
         }
@@ -400,7 +446,7 @@ class GoogleAiGenerateContentClientTest {
             subject.streamCompletion(
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-2.5-flash"),
                     List.of(Message.user("Search Google")),
-                    ReasoningLevel.OFF,
+                    ReasoningLevel.HIGH,
                     new WebSearchRequestOptions(true),
                     tokens::add,
                     token -> {
@@ -425,14 +471,51 @@ class GoogleAiGenerateContentClientTest {
                         assertThat(citation.url()).isEqualTo("https://ai.google.dev/gemini-api/docs/google-search");
                         assertThat(citation.citedText()).isEqualTo("Grounded answer");
                     });
-            assertThat(requestBody.get()).contains("\"google_search\":{}");
-            assertThat(requestBody.get()).doesNotContain("responseModalities");
+            assertThat(requestBody.get())
+                    .contains("\"google_search\":{}")
+                    .contains("\"thinkingConfig\":{\"includeThoughts\":true}")
+                    .doesNotContain("responseModalities");
         } finally {
             server.stop(0);
         }
     }
 
 
+
+    @Test
+    @DisplayName("Google latest aliases reject Web Search before transport starts")
+    void streamCompletion_whenGoogleModelUsesLatestAlias_failsBeforeTransport() {
+        var subject = new GoogleAiGenerateContentClient(
+                failingFallbackClient(),
+                HttpClient.newHttpClient(),
+                ProviderAttachmentTestSupport.authority(),
+                mock(GeneratedImageAttachmentWriter.class)
+        );
+
+        assertThatThrownBy(() -> subject.streamCompletion(
+                runtime(
+                        "https://generativelanguage.googleapis.com/v1beta/openai",
+                        "gemini-2.5-flash-latest"
+                ),
+                List.of(Message.user("Search Google")),
+                ReasoningLevel.OFF,
+                new WebSearchRequestOptions(true),
+                token -> {
+                },
+                token -> {
+                },
+                part -> {
+                },
+                citation -> {
+                },
+                () -> false,
+                stream -> {
+                },
+                () -> {
+                }
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model or endpoint");
+    }
 
     @Test
     @DisplayName("Google native web search reports blocked empty responses without fallback")
@@ -522,6 +605,52 @@ class GoogleAiGenerateContentClientTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("only thinking parts, no answer text");
             assertThat(thinkingTokens).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Google native responses reject partial content with a failure finish reason")
+    void streamCompletion_whenCandidateEndsForSafety_rejectsPartialOutput() throws Exception {
+        String responseBody = """
+                {
+                  "candidates": [{
+                    "finishReason": "SAFETY",
+                    "finishMessage": "Blocked by safety policy",
+                    "content": {"parts": [{"text": "partial answer"}]}
+                  }]
+                }
+                """;
+        HttpServer server = responseServer(responseBody, 200);
+        try {
+            var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+            var subject = new GoogleAiGenerateContentClient(
+                    failingFallbackClient(),
+                    HttpClient.newHttpClient(),
+                    attachmentAuthority,
+                    mock(GeneratedImageAttachmentWriter.class)
+            );
+            List<String> tokens = new ArrayList<>();
+
+            assertThatThrownBy(() -> subject.streamCompletion(
+                    runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort())),
+                    List.of(Message.user("Draw a cat")),
+                    ReasoningLevel.OFF,
+                    WebSearchRequestOptions.disabled(),
+                    tokens::add,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            )).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("finishReason=SAFETY");
+            assertThat(tokens).isEmpty();
         } finally {
             server.stop(0);
         }

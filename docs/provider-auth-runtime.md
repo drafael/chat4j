@@ -99,7 +99,7 @@ Configuration:
 
 Runtime behavior:
 
-- Codex chat uses `CodexCliChatCompletionClient` by design.
+- Codex chat uses `CodexCliChatCompletionClient` by design. Each request writes the admitted Chat4J credential to an owner-only temporary `CODEX_HOME`, uses it for app-server and exec fallback, and deletes it afterward; the user's global Codex login is never used as subprocess auth.
 - Remote model listing uses the OpenAI-compatible `/v1/models` endpoint.
 - Chat4J keeps that remote catalog in `<app-config>/cache/OpenAI_Codex.txt` and overlays it in memory with the current visible models from `~/.codex/models_cache.json`.
 - Local Codex visibility changes are refreshed without persisting local-only model IDs into Chat4J's remote catalog cache. Chat4J treats the current file contents as authoritative and does not reject them based on its `fetched_at` value.

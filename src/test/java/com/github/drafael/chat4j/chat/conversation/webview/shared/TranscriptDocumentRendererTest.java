@@ -388,6 +388,34 @@ class TranscriptDocumentRendererTest {
     }
 
     @Test
+    @DisplayName("Metadata-backed citation URLs containing user-info remain non-navigable")
+    void renderEntriesHtml_whenWebCitationUrlContainsUserInfo_removesHref() {
+        var citation = CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("Misleading Source")
+                .url("https://trusted.example@untrusted.example/source")
+                .build();
+        var entry = ConversationEntry.message(
+                Role.ASSISTANT,
+                "Fact [1]",
+                0,
+                List.of(),
+                List.of(),
+                new MessageMeta(List.of(), List.of(), false, "", "", "", List.of(), List.of(citation))
+        );
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(
+                TranscriptRenderSupport.snapshot(List.of(entry), RenderMode.PREVIEW, false, false)
+        );
+        var anchor = Jsoup.parseBodyFragment(html).selectFirst("a.source-citation.citation-ref");
+
+        assertThat(anchor).isNotNull();
+        assertThat(anchor.hasAttr("href")).isFalse();
+        assertThat(anchor.attr("data-source-url")).isEqualTo("citation:1");
+    }
+
+    @Test
     @DisplayName("Supported code blocks are highlighted before WebView load")
     void renderCodeHighlights_whenDocumentContainsSupportedCodeBlock_replacesPreHtmlWithHighlightSpans() {
         var document = Jsoup.parse("""

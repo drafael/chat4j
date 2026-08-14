@@ -340,8 +340,8 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
-    @DisplayName("Copilot model listing preserves previously known endpoint metadata when degraded refresh omits endpoints")
-    void fetchModels_whenDegradedCopilotRefreshOmitsEndpoints_keepsExistingEndpointMetadata() throws Exception {
+    @DisplayName("Copilot model listing replaces stale endpoint metadata with the successful catalog snapshot")
+    void fetchModels_whenSuccessfulCopilotRefreshOmitsPriorModel_removesStaleEndpointMetadata() throws Exception {
         var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("degraded-refresh-metadata"));
         var subject = new OpenAiModelCatalogClient(metadataStore);
         var authorizationHeader = new AtomicReference<String>();
@@ -395,10 +395,92 @@ class OpenAiModelCatalogClientTest {
 
             assertThat(models).contains("gpt-4o");
             assertThat(authorizationHeader).hasValue("Bearer %s".formatted(sessionToken));
-            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
-                    .containsExactly("/responses");
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini")).isEmpty();
             assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-4o"))
                     .containsExactly("/chat/completions");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Only an explicit empty Copilot catalog revokes prior endpoint metadata")
+    void fetchModels_whenCopilotCatalogShapeIsExplicitlyEmpty_removesStaleEndpointMetadata() throws Exception {
+        var metadataStore = new CopilotModelMetadataStore(tempDir.resolve("empty-catalog-metadata"));
+        var subject = new OpenAiModelCatalogClient(metadataStore);
+        var responseBody = new AtomicReference<>("{}");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            byte[] payload = responseBody.get().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String baseUrl = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            assertThat(metadataStore.updateIfGenerationCurrent(
+                    metadataStore.currentGeneration(),
+                    baseUrl,
+                    List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+            )).isTrue();
+            var descriptor = new ProviderDescriptor(
+                    "GitHub Copilot",
+                    AuthType.COPILOT_OAUTH,
+                    null,
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            var runtime = new ProviderRuntime(descriptor, null, baseUrl, "tid=test;exp=4102444800", null);
+
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+
+            responseBody.set("{\"data\":[{\"unexpected\":true}]}");
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+
+            responseBody.set("""
+                    {"data":[
+                      {"id":"gpt-4o","supported_endpoints":["/chat/completions"]},
+                      {"unexpected":true}
+                    ]}
+                    """);
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+
+            responseBody.set("""
+                    {"data":[
+                      {"id":"gpt-4o","supported_endpoints":["/chat/completions"]},
+                      {"id":"gpt-5.4-mini","supported_endpoints":"/responses"}
+                    ]}
+                    """);
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+
+            responseBody.set("""
+                    {"data":[
+                      {"id":"gpt-4o","supported_endpoints":["/chat/completions"]},
+                      {"id":123,"supported_endpoints":["/responses"]},
+                      {"id":"gpt-5.4-mini","model_picker_enabled":"yes","supported_endpoints":["/responses"]}
+                    ]}
+                    """);
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini"))
+                    .containsExactly("/responses");
+
+            responseBody.set("{\"data\":[]}");
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(metadataStore.supportedEndpoints(baseUrl, "gpt-5.4-mini")).isEmpty();
         } finally {
             server.stop(0);
         }
@@ -630,6 +712,51 @@ class OpenAiModelCatalogClientTest {
     }
 
     @Test
+    @DisplayName("HTTP fallback rejects non-textual model identifiers")
+    void fetchModels_whenFallbackCatalogContainsNumericId_rejectsMalformedCatalog() throws Exception {
+        var requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            int request = requests.incrementAndGet();
+            String body = request == 1
+                    ? "{\"object\":\"list\",\"data\":[]}"
+                    : "{\"data\":[{\"id\":123},{\"id\":\"gpt-4o\"}]}";
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String baseUrl = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            ProviderDescriptor descriptor = new ProviderDescriptor(
+                    "OpenAI",
+                    AuthType.ENV_VAR,
+                    "OPENAI_API_KEY",
+                    null,
+                    baseUrl,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            ProviderRuntime runtime = new ProviderRuntime(
+                    descriptor,
+                    "OPENAI_API_KEY",
+                    baseUrl,
+                    "test-key",
+                    null
+            );
+
+            assertThat(subject.fetchModels(runtime)).isEmpty();
+            assertThat(requests).hasValue(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("Untrusted Copilot token endpoint overrides require explicit opt-in")
     void copilotTokenEndpoint_whenOverrideIsUntrusted_requiresExplicitOptIn() {
         String customEndpoint = "http://127.0.0.1:8080/copilot_internal/v2/token";
@@ -694,6 +821,51 @@ class OpenAiModelCatalogClientTest {
 
             assertThat(models).containsExactly("gpt-4o");
             assertThat(requests).hasValue(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Mistral catalog excludes non-chat API models while retaining specialized chat models")
+    void fetchModels_whenMistralCatalogContainsMixedFamilies_returnsChatModelsOnly() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/models", exchange -> {
+            byte[] payload = """
+                    {
+                      "object": "list",
+                      "data": [
+                        {"id":"mistral-small-latest","object":"model","created":3,"owned_by":"mistral"},
+                        {"id":"codestral-latest","object":"model","created":2,"owned_by":"mistral"},
+                        {"id":"mistral-ocr-latest","object":"model","created":1,"owned_by":"mistral"},
+                        {"id":"voxtral-mini-latest","object":"model","created":1,"owned_by":"mistral"}
+                      ]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            String endpoint = "http://127.0.0.1:%d".formatted(server.getAddress().getPort());
+            var descriptor = new ProviderDescriptor(
+                    "Mistral",
+                    AuthType.ENV_VAR,
+                    "MISTRAL_API_KEY",
+                    null,
+                    endpoint,
+                    emptyList(),
+                    ProviderCapabilities.chatAndModels(),
+                    UnaryOperator.identity()
+            );
+            var runtime = new ProviderRuntime(descriptor, "MISTRAL_API_KEY", endpoint, "test-token", null);
+
+            List<String> models = subject.fetchModels(runtime);
+
+            assertThat(models).containsExactly("mistral-small-latest", "codestral-latest");
         } finally {
             server.stop(0);
         }

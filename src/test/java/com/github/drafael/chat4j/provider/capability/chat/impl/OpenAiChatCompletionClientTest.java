@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
+import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
@@ -15,9 +16,27 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
+import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.openai.client.OpenAIClient;
+import com.openai.core.JsonValue;
+import com.openai.core.http.StreamResponse;
 import com.openai.models.ReasoningEffort;
+import com.openai.models.chat.completions.ChatCompletionChunk;
+import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.responses.EasyInputMessage;
+import com.openai.models.responses.Response;
+import com.openai.models.responses.ResponseCompletedEvent;
+import com.openai.models.responses.ResponseCreateParams;
+import com.openai.models.responses.ResponseError;
+import com.openai.models.responses.ResponseFailedEvent;
 import com.openai.models.responses.ResponseInputItem;
+import com.openai.models.responses.ResponseReasoningSummaryTextDeltaEvent;
+import com.openai.models.responses.ResponseReasoningTextDeltaEvent;
+import com.openai.models.responses.ResponseStreamEvent;
+import com.openai.models.responses.ResponseTextDeltaEvent;
+import com.openai.services.blocking.ChatService;
+import com.openai.services.blocking.ResponseService;
+import com.openai.services.blocking.chat.ChatCompletionService;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,14 +47,28 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class OpenAiChatCompletionClientTest {
 
@@ -48,34 +81,37 @@ class OpenAiChatCompletionClientTest {
         Path storedImage = ProviderAttachmentTestSupport.managedRoot(attachmentSupport)
                 .resolve(UUID.randomUUID().toString());
         Files.write(storedImage, new byte[]{1, 2, 3});
-        storedImage.toFile().deleteOnExit();
-        List<ContentPart> parts = List.of(
-                new TextPart("Describe this screenshot"),
-                new ImagePart(
-                        new AttachmentRef(UUID.randomUUID(), storedImage.toString(), "img.png", "image/png", 3L, "sha"),
-                        512,
-                        320
-                )
-        );
-        Message message = new Message(Role.USER, parts, Instant.now());
-        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
-                List.of(message),
-                attachmentSupport,
-                AttachmentProjectionPlan.openAi(true),
-                () -> false
-        );
+        try {
+            List<ContentPart> parts = List.of(
+                    new TextPart("Describe this screenshot"),
+                    new ImagePart(
+                            new AttachmentRef(UUID.randomUUID(), storedImage.toString(), "img.png", "image/png", 3L, "sha"),
+                            512,
+                            320
+                    )
+            );
+            Message message = new Message(Role.USER, parts, Instant.now());
+            AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                    List.of(message),
+                    attachmentSupport,
+                    AttachmentProjectionPlan.openAi(true),
+                    () -> false
+            );
 
-        List<ResponseInputItem> input = invokeToResponsesInput(plan);
+            List<ResponseInputItem> input = invokeToResponsesInput(plan);
 
-        assertThat(input).hasSize(1);
-        var easyMessage = input.getFirst().asEasyInputMessage();
-        assertThat(easyMessage.role().known()).isEqualTo(EasyInputMessage.Role.Known.USER);
-        assertThat(easyMessage.content().asResponseInputMessageContentList())
-                .satisfiesExactly(
-                        content -> assertThat(content.asInputText().text()).isEqualTo("Describe this screenshot"),
-                        content -> assertThat(content.asInputImage().imageUrl())
-                                .contains("data:image/png;base64,AQID")
-                );
+            assertThat(input).hasSize(1);
+            var easyMessage = input.getFirst().asEasyInputMessage();
+            assertThat(easyMessage.role().known()).isEqualTo(EasyInputMessage.Role.Known.USER);
+            assertThat(easyMessage.content().asResponseInputMessageContentList())
+                    .satisfiesExactly(
+                            content -> assertThat(content.asInputText().text()).isEqualTo("Describe this screenshot"),
+                            content -> assertThat(content.asInputImage().imageUrl())
+                                    .contains("data:image/png;base64,AQID")
+                    );
+        } finally {
+            Files.deleteIfExists(storedImage);
+        }
     }
 
     @Test
@@ -154,6 +190,505 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("Copilot search failures remain on Responses without Chat Completions fallback")
+    void streamCopilotCompletion_whenSearchResponsesFails_doesNotFallback() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class)))
+                .thenThrow(new IllegalStateException("search unavailable"));
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(plan, client))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .rootCause()
+                .hasMessage("search unavailable");
+        verify(client, never()).chat();
+    }
+
+    @Test
+    @DisplayName("Copilot search transport requires captured Responses endpoint evidence")
+    void streamCopilotCompletion_whenSearchRuntimeLacksResponsesEvidence_rejectsBeforeTransport() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime("gpt-5.4-mini", emptyList()),
+                ReasoningLevel.OFF,
+                new WebSearchRequestOptions(true),
+                ignored -> {
+                }
+        )).hasRootCauseInstanceOf(IllegalArgumentException.class);
+        verify(client, never()).responses();
+    }
+
+    @Test
+    @DisplayName("Copilot search transport preserves previously admitted capability evidence")
+    void streamCopilotCompletion_whenContinuationEvidenceWasAdmitted_usesResponses() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class)))
+                .thenThrow(new IllegalStateException("search unavailable"));
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime("gpt-5.4-mini", emptyList()),
+                ReasoningLevel.OFF,
+                new WebSearchRequestOptions(true, true),
+                ignored -> {
+                }
+        )).hasRootCauseMessage("search unavailable");
+        verify(responses).createStreaming(any(ResponseCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("Responses reasoning fallback stops after partial output")
+    void streamCopilotCompletion_whenFailedTerminalFollowsOutput_doesNotRetryReasoning() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        ResponseStreamEvent deltaEvent = mock(ResponseStreamEvent.class);
+        ResponseTextDeltaEvent textDelta = mock(ResponseTextDeltaEvent.class);
+        ResponseStreamEvent failedEvent = mock(ResponseStreamEvent.class);
+        ResponseFailedEvent failed = mock(ResponseFailedEvent.class);
+        Response response = mock(Response.class);
+        ResponseError error = mock(ResponseError.class);
+        List<String> tokens = new ArrayList<>();
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(deltaEvent, failedEvent));
+        when(deltaEvent.outputTextDelta()).thenReturn(Optional.of(textDelta));
+        when(textDelta.delta()).thenReturn("partial");
+        when(failedEvent.failed()).thenReturn(Optional.of(failed));
+        when(failed.response()).thenReturn(response);
+        when(response.error()).thenReturn(Optional.of(error));
+        when(error.message()).thenReturn("invalid reasoning_effort: low");
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime("gpt-5.4-mini", List.of("/responses")),
+                ReasoningLevel.LOW,
+                new WebSearchRequestOptions(true),
+                tokens::add
+        )).hasRootCauseMessage("invalid reasoning_effort: low");
+        assertThat(tokens).containsExactly("partial");
+        verify(responses, times(1)).createStreaming(any(ResponseCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("Empty Responses reasoning deltas do not block reasoning fallback")
+    void streamCopilotCompletion_whenResponsesReasoningDeltasAreEmpty_retriesReasoning() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> failedStream = mock(StreamResponse.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> successfulStream = mock(StreamResponse.class);
+        ResponseStreamEvent reasoningEvent = mock(ResponseStreamEvent.class);
+        ResponseReasoningSummaryTextDeltaEvent summaryDelta = mock(ResponseReasoningSummaryTextDeltaEvent.class);
+        ResponseReasoningTextDeltaEvent rawDelta = mock(ResponseReasoningTextDeltaEvent.class);
+        ResponseStreamEvent failedEvent = mock(ResponseStreamEvent.class);
+        ResponseFailedEvent failed = mock(ResponseFailedEvent.class);
+        Response failedResponse = mock(Response.class);
+        ResponseError error = mock(ResponseError.class);
+        ResponseStreamEvent successfulDeltaEvent = mock(ResponseStreamEvent.class);
+        ResponseTextDeltaEvent successfulTextDelta = mock(ResponseTextDeltaEvent.class);
+        ResponseStreamEvent completedEvent = mock(ResponseStreamEvent.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class)))
+                .thenReturn(failedStream, successfulStream);
+        when(failedStream.stream()).thenReturn(Stream.of(reasoningEvent, failedEvent));
+        when(successfulStream.stream()).thenReturn(Stream.of(successfulDeltaEvent, completedEvent));
+        when(successfulDeltaEvent.outputTextDelta()).thenReturn(Optional.of(successfulTextDelta));
+        when(successfulTextDelta.delta()).thenReturn("answer");
+        when(reasoningEvent.reasoningSummaryTextDelta()).thenReturn(Optional.of(summaryDelta));
+        when(summaryDelta.delta()).thenReturn("");
+        when(reasoningEvent.reasoningTextDelta()).thenReturn(Optional.of(rawDelta));
+        when(rawDelta.delta()).thenReturn("");
+        when(failedEvent.failed()).thenReturn(Optional.of(failed));
+        when(failed.response()).thenReturn(failedResponse);
+        when(failedResponse.error()).thenReturn(Optional.of(error));
+        when(error.message()).thenReturn("invalid reasoning_effort: low");
+        when(completedEvent.completed()).thenReturn(Optional.of(mock(ResponseCompletedEvent.class)));
+
+        assertThatCode(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime("gpt-5.4-mini", List.of("/responses")),
+                ReasoningLevel.LOW,
+                new WebSearchRequestOptions(true),
+                ignored -> {
+                }
+        )).doesNotThrowAnyException();
+        verify(responses, times(2)).createStreaming(any(ResponseCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("Chat Completions reasoning fallback stops after partial output")
+    void streamCopilotCompletion_whenChatStreamFailsAfterOutput_doesNotRetryReasoning() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ChatService chat = mock(ChatService.class);
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> stream = mock(StreamResponse.class);
+        ChatCompletionChunk chunk = mock(ChatCompletionChunk.class);
+        ChatCompletionChunk.Choice choice = mock(ChatCompletionChunk.Choice.class);
+        ChatCompletionChunk.Choice.Delta delta = mock(ChatCompletionChunk.Choice.Delta.class);
+        List<String> tokens = new ArrayList<>();
+        when(client.chat()).thenReturn(chat);
+        when(chat.completions()).thenReturn(completions);
+        when(completions.createStreaming(any(ChatCompletionCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.concat(
+                Stream.of(chunk),
+                Stream.generate(() -> {
+                    throw new IllegalStateException("invalid reasoning_effort: low");
+                })
+        ));
+        when(chunk._additionalProperties()).thenReturn(emptyMap());
+        when(chunk.choices()).thenReturn(List.of(choice));
+        when(choice._additionalProperties()).thenReturn(emptyMap());
+        when(choice.delta()).thenReturn(delta);
+        when(delta._additionalProperties()).thenReturn(emptyMap());
+        when(delta.content()).thenReturn(Optional.of("partial"));
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime(List.of("/chat/completions")),
+                ReasoningLevel.LOW,
+                WebSearchRequestOptions.disabled(),
+                tokens::add
+        )).hasRootCauseMessage("invalid reasoning_effort: low");
+        assertThat(tokens).containsExactly("partial");
+        verify(completions, times(1)).createStreaming(any(ChatCompletionCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("Empty Chat Completions deltas do not block reasoning fallback")
+    void streamCopilotCompletion_whenChatStreamEmitsEmptyDelta_retriesReasoning() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ChatService chat = mock(ChatService.class);
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> failedStream = mock(StreamResponse.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> successfulStream = mock(StreamResponse.class);
+        ChatCompletionChunk chunk = mock(ChatCompletionChunk.class);
+        ChatCompletionChunk.Choice choice = mock(ChatCompletionChunk.Choice.class);
+        ChatCompletionChunk.Choice.Delta delta = mock(ChatCompletionChunk.Choice.Delta.class);
+        List<String> tokens = new ArrayList<>();
+        when(client.chat()).thenReturn(chat);
+        when(chat.completions()).thenReturn(completions);
+        when(completions.createStreaming(any(ChatCompletionCreateParams.class)))
+                .thenReturn(failedStream, successfulStream);
+        when(failedStream.stream()).thenReturn(Stream.concat(
+                Stream.of(chunk),
+                Stream.generate(() -> {
+                    throw new IllegalStateException("invalid reasoning_effort: low");
+                })
+        ));
+        when(successfulStream.stream()).thenReturn(Stream.of(chunk));
+        when(chunk._additionalProperties()).thenReturn(emptyMap());
+        when(chunk.choices()).thenReturn(List.of(choice));
+        when(choice._additionalProperties()).thenReturn(emptyMap());
+        when(choice.delta()).thenReturn(delta);
+        when(choice.finishReason()).thenReturn(Optional.of(mock(ChatCompletionChunk.Choice.FinishReason.class)));
+        when(delta._additionalProperties()).thenReturn(emptyMap());
+        when(delta.content()).thenReturn(Optional.of(""), Optional.of("answer"));
+
+        assertThatCode(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime(List.of("/chat/completions")),
+                ReasoningLevel.LOW,
+                WebSearchRequestOptions.disabled(),
+                tokens::add
+        )).doesNotThrowAnyException();
+        assertThat(tokens).containsExactly("answer");
+        verify(completions, times(2)).createStreaming(any(ChatCompletionCreateParams.class));
+    }
+
+    @Test
+    @DisplayName("Chat Completions streams reject partial output without a terminal choice")
+    void streamCopilotCompletion_whenChatStreamEndsAfterPartialOutput_throws() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ChatService chat = mock(ChatService.class);
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> stream = mock(StreamResponse.class);
+        ChatCompletionChunk chunk = mock(ChatCompletionChunk.class);
+        ChatCompletionChunk.Choice choice = mock(ChatCompletionChunk.Choice.class);
+        ChatCompletionChunk.Choice.Delta delta = mock(ChatCompletionChunk.Choice.Delta.class);
+        when(client.chat()).thenReturn(chat);
+        when(chat.completions()).thenReturn(completions);
+        when(completions.createStreaming(any(ChatCompletionCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(chunk));
+        when(chunk._additionalProperties()).thenReturn(emptyMap());
+        when(chunk.choices()).thenReturn(List.of(choice));
+        when(choice._additionalProperties()).thenReturn(emptyMap());
+        when(choice.delta()).thenReturn(delta);
+        when(delta._additionalProperties()).thenReturn(emptyMap());
+        when(delta.content()).thenReturn(Optional.of("partial"));
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime(List.of("/chat/completions")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                }
+        )).hasRootCauseMessage("Chat Completions stream ended before a terminal choice.");
+    }
+
+    @Test
+    @DisplayName("Chat Completions streams without assistant output are rejected")
+    void streamCopilotCompletion_whenChatStreamCompletesWithoutOutput_throws() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ChatService chat = mock(ChatService.class);
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> stream = mock(StreamResponse.class);
+        when(client.chat()).thenReturn(chat);
+        when(chat.completions()).thenReturn(completions);
+        when(completions.createStreaming(any(ChatCompletionCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.empty());
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime(List.of("/chat/completions")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                }
+        )).hasRootCauseMessage("Chat Completions stream completed without assistant output.");
+    }
+
+    @Test
+    @DisplayName("Copilot endpoint fallback stops after partial output")
+    void streamCopilotCompletion_whenUnsupportedEndpointFollowsOutput_doesNotSwitchEndpoint() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        ResponseStreamEvent deltaEvent = mock(ResponseStreamEvent.class);
+        ResponseTextDeltaEvent textDelta = mock(ResponseTextDeltaEvent.class);
+        ResponseStreamEvent failedEvent = mock(ResponseStreamEvent.class);
+        ResponseFailedEvent failed = mock(ResponseFailedEvent.class);
+        Response response = mock(Response.class);
+        ResponseError error = mock(ResponseError.class);
+        List<String> tokens = new ArrayList<>();
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(deltaEvent, failedEvent));
+        when(deltaEvent.outputTextDelta()).thenReturn(Optional.of(textDelta));
+        when(textDelta.delta()).thenReturn("partial");
+        when(failedEvent.failed()).thenReturn(Optional.of(failed));
+        when(failed.response()).thenReturn(response);
+        when(response.error()).thenReturn(Optional.of(error));
+        when(error.message()).thenReturn("model does not support Responses API");
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime(List.of("/responses")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                tokens::add
+        )).hasRootCauseMessage("model does not support Responses API");
+        assertThat(tokens).containsExactly("partial");
+        verify(client, never()).chat();
+    }
+
+    @Test
+    @DisplayName("Responses failed terminal events are surfaced instead of completing partial output")
+    void streamCopilotCompletion_whenResponsesEmitsFailedTerminal_throws() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        ResponseStreamEvent event = mock(ResponseStreamEvent.class);
+        ResponseFailedEvent failed = mock(ResponseFailedEvent.class);
+        Response response = mock(Response.class);
+        ResponseError error = mock(ResponseError.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(event));
+        when(event.failed()).thenReturn(Optional.of(failed));
+        when(failed.response()).thenReturn(response);
+        when(response.error()).thenReturn(Optional.of(error));
+        when(error.message()).thenReturn("provider terminal failure");
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(plan, client))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .rootCause()
+                .hasMessage("provider terminal failure");
+    }
+
+    @Test
+    @DisplayName("Responses completed terminal events finish successfully")
+    void streamCopilotCompletion_whenResponsesEmitsCompletedTerminal_returns() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        ResponseStreamEvent deltaEvent = mock(ResponseStreamEvent.class);
+        ResponseTextDeltaEvent textDelta = mock(ResponseTextDeltaEvent.class);
+        ResponseStreamEvent completedEvent = mock(ResponseStreamEvent.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(deltaEvent, completedEvent));
+        when(deltaEvent.outputTextDelta()).thenReturn(Optional.of(textDelta));
+        when(textDelta.delta()).thenReturn("answer");
+        when(completedEvent.completed()).thenReturn(Optional.of(mock(ResponseCompletedEvent.class)));
+
+        assertThatCode(() -> invokeStreamCopilotCompletion(plan, client)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Responses completed events without assistant output are rejected")
+    void streamCopilotCompletion_whenResponsesCompletesWithoutOutput_throws() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        ResponseStreamEvent completedEvent = mock(ResponseStreamEvent.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(completedEvent));
+        when(completedEvent.completed()).thenReturn(Optional.of(mock(ResponseCompletedEvent.class)));
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(plan, client))
+                .hasRootCauseMessage("OpenAI Responses completed without assistant output.");
+    }
+
+    @Test
+    @DisplayName("Responses streams require a completed terminal event")
+    void streamCopilotCompletion_whenResponsesEndsWithoutTerminal_throws() throws Exception {
+        var plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ResponseService responses = mock(ResponseService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ResponseStreamEvent> stream = mock(StreamResponse.class);
+        when(client.responses()).thenReturn(responses);
+        when(responses.createStreaming(any(ResponseCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.empty());
+
+        assertThatThrownBy(() -> invokeStreamCopilotCompletion(plan, client))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .rootCause()
+                .hasMessage("OpenAI Responses stream ended before response.completed.");
+    }
+
+    @Test
+    @DisplayName("Responses request includes the hosted Web Search tool only when enabled")
+    void createResponsesParams_whenWebSearchEnabled_addsWebSearchTool() throws Exception {
+        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                List.of(Message.user("latest release")),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(false),
+                () -> false
+        );
+        List<ResponseInputItem> input = invokeToResponsesInput(plan);
+        var runtime = copilotRuntime("gpt-5.4-mini", List.of("/responses"));
+
+        var enabled = subject.createResponsesParams(runtime, input, ReasoningLevel.OFF, true);
+        var disabled = subject.createResponsesParams(runtime, input, ReasoningLevel.OFF, false);
+
+        assertThat(enabled.tools()).hasValueSatisfying(tools -> assertThat(tools)
+                .singleElement()
+                .satisfies(tool -> assertThat(tool.isWebSearch()).isTrue()));
+        assertThat(disabled.tools()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Reasoning attempts degrade progressively from extra high to off")
     void reasoningAttempts_whenExtraHighSelected_degradesToOff() throws Exception {
         List<ReasoningLevel> attempts = invokeReasoningAttempts(ReasoningLevel.EXTRA_HIGH);
@@ -226,6 +761,8 @@ class OpenAiChatCompletionClientTest {
             byte[] body = """
                     data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}
 
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
                     data: [DONE]
 
                     """.getBytes(StandardCharsets.UTF_8);
@@ -294,11 +831,80 @@ class OpenAiChatCompletionClientTest {
     }
 
     @Test
+    @DisplayName("Chat Completions reasoning preserves newline-only deltas")
+    void emitThinkingDeltaFromProperties_whenDeltaIsNewline_emitsFormatting() throws Exception {
+        List<String> tokens = new ArrayList<>();
+
+        boolean emitted = invokeEmitThinkingDeltaFromProperties(
+                Map.of("reasoning_content", JsonValue.from("\n")),
+                tokens::add
+        );
+
+        assertThat(emitted).isTrue();
+        assertThat(tokens).containsExactly("\n");
+    }
+
+    @Test
     @DisplayName("Responses output delta emission skips empty tokens")
     void shouldEmitOutputDelta_whenDeltaIsEmpty_returnsFalse() throws Exception {
         boolean shouldEmit = invokeShouldEmitOutputDelta("");
 
         assertThat(shouldEmit).isFalse();
+    }
+
+    private void invokeStreamCopilotCompletion(AttachmentProjectionPlan plan, OpenAIClient client) throws Exception {
+        invokeStreamCopilotCompletion(
+                plan,
+                client,
+                copilotRuntime("gpt-5.4-mini", List.of("/responses")),
+                ReasoningLevel.OFF,
+                new WebSearchRequestOptions(true),
+                ignored -> {
+                }
+        );
+    }
+
+    private void invokeStreamCopilotCompletion(
+            AttachmentProjectionPlan plan,
+            OpenAIClient client,
+            ProviderRuntime runtime,
+            ReasoningLevel reasoningLevel,
+            WebSearchRequestOptions webSearchOptions,
+            Consumer<String> onToken
+    ) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "streamCopilotCompletion",
+                ProviderRuntime.class,
+                AttachmentProjectionPlan.class,
+                OpenAIClient.class,
+                ReasoningLevel.class,
+                WebSearchRequestOptions.class,
+                Consumer.class,
+                Consumer.class,
+                Consumer.class,
+                BooleanSupplier.class,
+                Consumer.class,
+                Runnable.class
+        );
+        method.setAccessible(true);
+        method.invoke(
+                subject,
+                runtime,
+                plan,
+                client,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                (Consumer<String>) ignored -> {
+                },
+                (Consumer<CitationRef>) ignored -> {
+                },
+                (BooleanSupplier) () -> false,
+                (Consumer<AutoCloseable>) ignored -> {
+                },
+                (Runnable) () -> {
+                }
+        );
     }
 
     @SuppressWarnings("unchecked")
@@ -335,6 +941,19 @@ class OpenAiChatCompletionClientTest {
         Method method = OpenAiChatCompletionClient.class.getDeclaredMethod("isUnsupportedReasoningEffort", Exception.class);
         method.setAccessible(true);
         return (boolean) method.invoke(subject, exception);
+    }
+
+    private boolean invokeEmitThinkingDeltaFromProperties(
+            Map<String, JsonValue> properties,
+            Consumer<String> onThinkingToken
+    ) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "emitThinkingDeltaFromProperties",
+                Map.class,
+                Consumer.class
+        );
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, properties, onThinkingToken);
     }
 
     private boolean invokeShouldEmitOutputDelta(String delta) throws Exception {
@@ -387,6 +1006,10 @@ class OpenAiChatCompletionClientTest {
     }
 
     private ProviderRuntime copilotRuntime(List<String> supportedEndpoints) {
+        return copilotRuntime("claude-sonnet-4.6", supportedEndpoints);
+    }
+
+    private ProviderRuntime copilotRuntime(String modelId, List<String> supportedEndpoints) {
         return new ProviderRuntime(
                 new ProviderDescriptor(
                         "GitHub Copilot",
@@ -401,7 +1024,7 @@ class OpenAiChatCompletionClientTest {
                 null,
                 "https://api.githubcopilot.com",
                 "copilot-token",
-                "claude-sonnet-4.6",
+                modelId,
                 supportedEndpoints
         );
     }

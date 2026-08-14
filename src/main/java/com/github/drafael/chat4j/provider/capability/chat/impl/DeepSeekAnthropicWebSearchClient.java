@@ -147,12 +147,30 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
                         return;
                     }
                     Iterator<RawMessageStreamEvent> iterator = stream.stream().iterator();
+                    boolean emittedAssistantText = false;
                     while (!shouldStop(isCancelled) && iterator.hasNext()) {
                         RawMessageStreamEvent event = iterator.next();
                         if (shouldStop(isCancelled)) {
                             return;
                         }
-                        handleEvent(event, level, emittedSources, onToken, onThinkingToken, onWebSearchSource, isCancelled);
+                        if (event.isMessageStop()) {
+                            if (!emittedAssistantText) {
+                                throw new IllegalStateException("DeepSeek completed without assistant output.");
+                            }
+                            return;
+                        }
+                        emittedAssistantText |= handleEvent(
+                                event,
+                                level,
+                                emittedSources,
+                                onToken,
+                                onThinkingToken,
+                                onWebSearchSource,
+                                isCancelled
+                        );
+                    }
+                    if (!shouldStop(isCancelled)) {
+                        throw new IllegalStateException("DeepSeek stream ended before message_stop.");
                     }
                 } finally {
                     clearActiveStream.run();
@@ -163,7 +181,7 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
         }
     }
 
-    private void handleEvent(
+    private boolean handleEvent(
             RawMessageStreamEvent event,
             ReasoningLevel reasoningLevel,
             Set<String> emittedSources,
@@ -175,24 +193,28 @@ public class DeepSeekAnthropicWebSearchClient implements ChatCompletionClient {
         if (event.isContentBlockDelta()) {
             RawContentBlockDelta delta = event.asContentBlockDelta().delta();
             if (delta.isText()) {
-                emit(delta.asText().text(), onToken, isCancelled);
-            } else if (reasoningLevel.enabled() && delta.isThinking()) {
+                String text = delta.asText().text();
+                emit(text, onToken, isCancelled);
+                return StringUtils.isNotBlank(text);
+            }
+            if (reasoningLevel.enabled() && delta.isThinking()) {
                 emit(delta.asThinking().thinking(), onThinkingToken, isCancelled);
             }
-            return;
+            return false;
         }
         if (!event.isContentBlockStart()) {
-            return;
+            return false;
         }
         var block = event.asContentBlockStart().contentBlock();
         if (!block.isWebSearchToolResult()) {
-            return;
+            return false;
         }
         WebSearchToolResultBlockContent content = block.asWebSearchToolResult().content();
         if (!content.isResultBlocks()) {
-            return;
+            return false;
         }
         content.asResultBlocks().forEach(result -> emitSource(result, emittedSources, onWebSearchSource, isCancelled));
+        return false;
     }
 
     private void emitSource(

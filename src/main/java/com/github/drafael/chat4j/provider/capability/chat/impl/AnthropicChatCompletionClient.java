@@ -120,6 +120,15 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         Consumer<AutoCloseable> registerActiveStream,
         Runnable clearActiveStream
     ) throws Exception {
+        if (webSearchOptions != null && webSearchOptions.enabled()
+                && !ProviderCapabilityResolver.nativeWebSearchOutcome(
+                runtime.descriptor().name(),
+                runtime.selectedModel(),
+                runtime.baseUrl(),
+                runtime.normalizedDefaultBaseUrl()
+        ).supported()) {
+            throw new IllegalArgumentException("Native Web Search is unavailable for this Anthropic model or endpoint.");
+        }
         AttachmentProjectionPlan projectionPlan = AttachmentProjectionPlan.create(
                 history,
                 attachmentSupport,
@@ -170,9 +179,16 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
             try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
                 registerActiveStream.accept(stream);
                 Iterator<RawMessageStreamEvent> iterator = stream.stream().iterator();
+                boolean emittedAssistantText = false;
                 while (!shouldStop(isCancelled) && iterator.hasNext()) {
                     RawMessageStreamEvent event = iterator.next();
                     if (shouldStop(isCancelled)) {
+                        return;
+                    }
+                    if (event.isMessageStop()) {
+                        if (!emittedAssistantText) {
+                            throw new IllegalStateException("Anthropic completed without assistant output.");
+                        }
                         return;
                     }
                     if (!event.isContentBlockDelta()) {
@@ -183,6 +199,9 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                     if (delta.isText()) {
                         String text = delta.asText().text();
                         if (StringUtils.isNotEmpty(text)) {
+                            if (StringUtils.isNotBlank(text)) {
+                                emittedAssistantText = true;
+                            }
                             onToken.accept(text);
                         }
                     }
@@ -204,6 +223,9 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
                         }
                     }
                 }
+                if (!shouldStop(isCancelled)) {
+                    throw new IllegalStateException("Anthropic stream ended before message_stop.");
+                }
             } finally {
                 clearActiveStream.run();
             }
@@ -222,9 +244,12 @@ public class AnthropicChatCompletionClient implements ChatCompletionClient {
         AnthropicCitationMapper.fromDelta(delta.asCitations())
                 .map(citationAccumulator::add)
                 .ifPresent(citation -> {
-                    onToken.accept(" [%d]".formatted(citation.number()));
+                    if (shouldStop(isCancelled)) {
+                        return;
+                    }
+                    onCitation.accept(citation);
                     if (!shouldStop(isCancelled)) {
-                        onCitation.accept(citation);
+                        onToken.accept(" [%d]".formatted(citation.number()));
                     }
                 });
     }

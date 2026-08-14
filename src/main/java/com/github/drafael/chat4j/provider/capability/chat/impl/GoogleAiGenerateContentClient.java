@@ -15,12 +15,12 @@ import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
-import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.NativeImage;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedPart;
 import com.github.drafael.chat4j.provider.support.GeneratedImageAttachmentWriter;
+import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +49,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
@@ -74,6 +75,11 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
     private static final long MAX_GENERATED_IMAGE_BYTES = 20L * 1024L * 1024L;
     private static final int MAX_IMAGE_DIMENSION = 16_384;
     private static final long MAX_IMAGE_PIXELS = 40_000_000L;
+    private static final Set<String> SUCCESSFUL_FINISH_REASONS = Set.of(
+            "FINISH_REASON_UNSPECIFIED",
+            "MAX_TOKENS",
+            "STOP"
+    );
 
     private final ChatCompletionClient fallbackClient;
     private final HttpClient httpClient;
@@ -173,8 +179,9 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         boolean imageOutputModel = isGoogleImageOutputModel(runtime);
         boolean webSearchRequested = webSearchOptions != null && webSearchOptions.enabled();
         boolean nativeWebSearch = shouldUseGoogleNativeWebSearch(runtime, webSearchOptions);
+        ReasoningLevel normalizedReasoningLevel = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
         if (webSearchRequested && !nativeWebSearch) {
-            throw new IllegalArgumentException("Native Web Search is unavailable for this Google AI endpoint.");
+            throw new IllegalArgumentException("Native Web Search is unavailable for this Google AI model or endpoint.");
         }
         if (!imageOutputModel && !nativeWebSearch) {
             fallbackClient.streamCompletion(
@@ -207,6 +214,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                 projectionPlan,
                 imageOutputModel,
                 nativeWebSearch,
+                normalizedReasoningLevel,
                 onToken,
                 onThinkingToken,
                 onPart,
@@ -222,6 +230,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             AttachmentProjectionPlan projectionPlan,
             boolean imageOutputModel,
             boolean nativeWebSearch,
+            ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
             Consumer<String> onThinkingToken,
             Consumer<ContentPart> onPart,
@@ -238,7 +247,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                 .header("Content-Type", "application/json")
                 .header("x-goog-api-key", runtime.apiKey())
                 .POST(HttpRequest.BodyPublishers.ofString(
-                        requestBody(projectionPlan, imageOutputModel, nativeWebSearch),
+                        requestBody(projectionPlan, imageOutputModel, nativeWebSearch, reasoningLevel),
                         StandardCharsets.UTF_8
                 ))
                 .build();
@@ -249,8 +258,15 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         if (registerActiveStream != null) {
             try {
                 registerActiveStream.accept(() -> future.cancel(true));
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
                 future.cancel(true);
+                if (clearActiveStream != null) {
+                    try {
+                        clearActiveStream.run();
+                    } catch (RuntimeException | Error clearFailure) {
+                        e.addSuppressed(clearFailure);
+                    }
+                }
                 throw e;
             }
         }
@@ -270,7 +286,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             {
                 JsonNode root = JSON.readTree(responseBody);
                 List<GoogleAiEmission> emissions = materializeGeneratedImages(
-                        responseEmissions(root, isCancelled),
+                        responseEmissions(root, reasoningLevel, isCancelled),
                         isCancelled
                 );
                 if (emissions.isEmpty() && shouldStop(isCancelled)) {
@@ -359,6 +375,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
                 && runtime.descriptor() != null
                 && GOOGLE_AI_PROVIDER_NAME.equals(runtime.descriptor().name())
                 && Strings.CS.equals(runtime.baseUrl(), runtime.normalizedDefaultBaseUrl())
+                && !ProviderCapabilityResolver.isGoogleLatestAlias(runtime.selectedModel())
                 && webSearchOptions != null
                 && webSearchOptions.enabled();
     }
@@ -391,7 +408,8 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
     private String requestBody(
             AttachmentProjectionPlan projectionPlan,
             boolean includeImageResponse,
-            boolean webSearchEnabled
+            boolean webSearchEnabled,
+            ReasoningLevel reasoningLevel
     ) throws Exception {
         ObjectNode root = JSON.createObjectNode();
         ArrayNode contents = JSON.createArrayNode();
@@ -417,13 +435,16 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         }
         root.set("contents", contents);
 
-        if (includeImageResponse) {
-            ObjectNode generationConfig = JSON.createObjectNode();
-            ArrayNode responseModalities = JSON.createArrayNode();
-            responseModalities.add("TEXT");
-            responseModalities.add("IMAGE");
-            generationConfig.set("responseModalities", responseModalities);
-            root.set("generationConfig", generationConfig);
+        if (includeImageResponse || reasoningLevel.enabled()) {
+            ObjectNode generationConfig = root.putObject("generationConfig");
+            if (includeImageResponse) {
+                ArrayNode responseModalities = generationConfig.putArray("responseModalities");
+                responseModalities.add("TEXT");
+                responseModalities.add("IMAGE");
+            }
+            if (reasoningLevel.enabled()) {
+                generationConfig.putObject("thinkingConfig").put("includeThoughts", true);
+            }
         }
         if (webSearchEnabled) {
             ArrayNode tools = JSON.createArrayNode();
@@ -461,7 +482,12 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         return node;
     }
 
-    private List<GoogleAiEmission> responseEmissions(JsonNode root, BooleanSupplier isCancelled) throws Exception {
+    private List<GoogleAiEmission> responseEmissions(
+            JsonNode root,
+            ReasoningLevel reasoningLevel,
+            BooleanSupplier isCancelled
+    ) throws Exception {
+        validateCandidateFinishReason(root);
         JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
         if (!parts.isArray() || parts.isEmpty()) {
             throw emptyOutput(root, "no candidate content parts");
@@ -478,7 +504,7 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
             }
             String text = part.path("text").asText("");
             if (part.path("thought").asBoolean(false)) {
-                if (StringUtils.isNotEmpty(text)) {
+                if (reasoningLevel.enabled() && StringUtils.isNotEmpty(text)) {
                     emissions.add(GoogleAiEmission.thinking(text));
                 }
                 thinkingParts++;
@@ -523,6 +549,18 @@ public class GoogleAiGenerateContentClient implements ChatCompletionClient {
         }
 
         return List.copyOf(emissions);
+    }
+
+    private void validateCandidateFinishReason(JsonNode root) {
+        String finishReason = StringUtils.trimToEmpty(
+                root.path("candidates").path(0).path("finishReason").asText("")
+        ).toUpperCase(Locale.ROOT);
+        if (finishReason.isEmpty() || SUCCESSFUL_FINISH_REASONS.contains(finishReason)) {
+            return;
+        }
+        throw new IllegalStateException(
+                "Google AI did not complete generateContent successfully%s.".formatted(outputDiagnostics(root))
+        );
     }
 
     private GeneratedImageData decodeGeneratedImage(

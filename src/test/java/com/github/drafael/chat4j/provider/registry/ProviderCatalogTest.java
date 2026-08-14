@@ -4,6 +4,7 @@ import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.DeepSeekChatCompletionClient;
 import com.github.drafael.chat4j.provider.capability.chat.impl.GoogleAiGenerateContentClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.MistralChatCompletionClient;
 import com.github.drafael.chat4j.provider.core.ProviderFacade;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -272,7 +273,7 @@ class ProviderCatalogTest {
                 );
         for (ProviderDefinition provider : catalog.allProviders()) {
             Object client = provider.module().chatCompletionClient();
-            if (client instanceof DeepSeekChatCompletionClient) {
+            if (client instanceof DeepSeekChatCompletionClient || client instanceof MistralChatCompletionClient) {
                 Object ordinaryClient = readField(client, "ordinaryClient");
                 Object nativeSearchClient = readField(client, "nativeSearchClient");
                 assertThat(readField(ordinaryClient, "attachmentSupport")).isSameAs(attachmentAuthority);

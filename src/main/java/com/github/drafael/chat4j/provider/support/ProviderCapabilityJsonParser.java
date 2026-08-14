@@ -87,12 +87,10 @@ final class ProviderCapabilityJsonParser {
         }
 
         String normalizedModelId = normalize(modelId);
-        return StreamSupport.stream(modelsNode.spliterator(), false)
+        return resolveNativeWebSearchSignals(StreamSupport.stream(modelsNode.spliterator(), false)
                 .filter(modelNode -> modelMatches(modelNode, normalizedModelId))
                 .map(ProviderCapabilityJsonParser::resolveNativeWebSearchSupportFromNode)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .findFirst();
+                .toList());
     }
 
     static Optional<Boolean> resolveImageSupportFromNode(JsonNode node) {
@@ -169,22 +167,12 @@ final class ProviderCapabilityJsonParser {
             return Optional.empty();
         }
 
-        Optional<Boolean> directResolution = resolveNativeWebSearchSupportFromSingleNode(node);
-        if (directResolution.isPresent()) {
-            return directResolution;
-        }
-
-        Optional<Boolean> metaResolution = resolveNativeWebSearchSupportFromSingleNode(node.path("meta"));
-        if (metaResolution.isPresent()) {
-            return metaResolution;
-        }
-
-        Optional<Boolean> detailsResolution = resolveNativeWebSearchSupportFromSingleNode(node.path("details"));
-        if (detailsResolution.isPresent()) {
-            return detailsResolution;
-        }
-
-        return resolveNativeWebSearchSupportFromSingleNode(node.path("architecture"));
+        return resolveNativeWebSearchSignals(List.of(
+                resolveNativeWebSearchSupportFromSingleNode(node),
+                resolveNativeWebSearchSupportFromNode(node.path("meta")),
+                resolveNativeWebSearchSupportFromNode(node.path("details")),
+                resolveNativeWebSearchSupportFromNode(node.path("architecture"))
+        ));
     }
 
     private static Optional<Boolean> resolveImageSupportFromSingleNode(JsonNode node) {
@@ -334,48 +322,15 @@ final class ProviderCapabilityJsonParser {
             return Optional.empty();
         }
 
-        Optional<Boolean> booleanResolution = resolveNativeWebSearchSupportFromBooleanFields(node);
-        if (booleanResolution.isPresent()) {
-            return booleanResolution;
-        }
-
-        Optional<Boolean> capabilitiesResolution = resolveNativeWebSearchSupportFromCapabilitiesField(
-                node.path("capabilities")
-        );
-        if (capabilitiesResolution.isPresent()) {
-            return capabilitiesResolution;
-        }
-
-        Optional<Boolean> directFieldsResolution = resolveNativeWebSearchSupportFromKnownFields(node);
-        if (directFieldsResolution.isPresent()) {
-            return directFieldsResolution;
-        }
-
-        Optional<Boolean> supportedParametersResolution = resolveNativeWebSearchSupportFromSupportedParameters(
-                node.path("supported_parameters")
-        );
-        if (supportedParametersResolution.isPresent()) {
-            return supportedParametersResolution;
-        }
-
-        Optional<Boolean> supportedParametersCamelResolution = resolveNativeWebSearchSupportFromSupportedParameters(
-                node.path("supportedParameters")
-        );
-        if (supportedParametersCamelResolution.isPresent()) {
-            return supportedParametersCamelResolution;
-        }
-
-        Optional<Boolean> tagsResolution = resolveNativeWebSearchSupportFromStringArray(node.path("tags"));
-        if (tagsResolution.isPresent()) {
-            return tagsResolution;
-        }
-
-        Optional<Boolean> featuresResolution = resolveNativeWebSearchSupportFromStringArray(node.path("features"));
-        if (featuresResolution.isPresent()) {
-            return featuresResolution;
-        }
-
-        return resolveNativeWebSearchSupportFromSingleNode(node.path("architecture"));
+        return resolveNativeWebSearchSignals(List.of(
+                resolveNativeWebSearchSupportFromBooleanFields(node),
+                resolveNativeWebSearchSupportFromCapabilitiesField(node.path("capabilities")),
+                resolveNativeWebSearchSupportFromKnownFields(node),
+                resolveNativeWebSearchSupportFromSupportedParameters(node.path("supported_parameters")),
+                resolveNativeWebSearchSupportFromSupportedParameters(node.path("supportedParameters")),
+                resolveNativeWebSearchSupportFromStringArray(node.path("tags")),
+                resolveNativeWebSearchSupportFromStringArray(node.path("features"))
+        ));
     }
 
     private static Optional<Boolean> resolveImageSupportFromBooleanFields(JsonNode node) {
@@ -425,21 +380,14 @@ final class ProviderCapabilityJsonParser {
     }
 
     private static Optional<Boolean> resolveNativeWebSearchSupportFromBooleanFields(JsonNode node) {
-        boolean hasNativeWebSearchField = NATIVE_WEB_SEARCH_BOOLEAN_FIELDS.stream()
+        List<Boolean> signals = NATIVE_WEB_SEARCH_BOOLEAN_FIELDS.stream()
                 .map(field -> booleanField(node, field))
-                .anyMatch(Optional::isPresent);
-        if (!hasNativeWebSearchField) {
+                .flatMap(Optional::stream)
+                .toList();
+        if (signals.isEmpty()) {
             return Optional.empty();
         }
-
-        boolean supported = NATIVE_WEB_SEARCH_BOOLEAN_FIELDS.stream()
-                .map(field -> booleanField(node, field))
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .reduce((left, right) -> left || right)
-                .orElse(false);
-
-        return Optional.of(supported);
+        return Optional.of(signals.stream().allMatch(Boolean::booleanValue));
     }
 
     private static Optional<Boolean> resolveImageSupportFromModalities(JsonNode node) {
@@ -585,34 +533,16 @@ final class ProviderCapabilityJsonParser {
         }
 
         if (capabilitiesNode.isObject()) {
-            Optional<Boolean> booleanResolution = resolveNativeWebSearchSupportFromBooleanFields(capabilitiesNode);
-            if (booleanResolution.isPresent()) {
-                return booleanResolution;
-            }
-
-            Optional<Boolean> directFieldsResolution = resolveNativeWebSearchSupportFromKnownFields(capabilitiesNode);
-            if (directFieldsResolution.isPresent()) {
-                return directFieldsResolution;
-            }
-
-            Optional<Boolean> tagsResolution = resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("tags"));
-            if (tagsResolution.isPresent()) {
-                return tagsResolution;
-            }
-
-            Optional<Boolean> featuresResolution = resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("features"));
-            if (featuresResolution.isPresent()) {
-                return featuresResolution;
-            }
-
-            Optional<Boolean> supportedParametersResolution = resolveNativeWebSearchSupportFromSupportedParameters(
-                    capabilitiesNode.path("supported_parameters")
-            );
-            if (supportedParametersResolution.isPresent()) {
-                return supportedParametersResolution;
-            }
-
-            return resolveNativeWebSearchSupportFromSupportedParameters(capabilitiesNode.path("supportedParameters"));
+            return resolveNativeWebSearchSignals(List.of(
+                    resolveNativeWebSearchSupportFromBooleanFields(capabilitiesNode),
+                    resolveNativeWebSearchSupportFromKnownFields(capabilitiesNode),
+                    resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("tags")),
+                    resolveNativeWebSearchSupportFromStringArray(capabilitiesNode.path("features")),
+                    resolveNativeWebSearchSupportFromSupportedParameters(
+                            capabilitiesNode.path("supported_parameters")
+                    ),
+                    resolveNativeWebSearchSupportFromSupportedParameters(capabilitiesNode.path("supportedParameters"))
+            ));
         }
 
         return resolveNativeWebSearchSupportFromFieldValue(capabilitiesNode);
@@ -636,6 +566,14 @@ final class ProviderCapabilityJsonParser {
                 DYNAMIC_NATIVE_WEB_SEARCH_HINTS,
                 DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS
         );
+    }
+
+    private static Optional<Boolean> resolveNativeWebSearchSignals(List<Optional<Boolean>> signals) {
+        List<Boolean> resolved = signals.stream().flatMap(Optional::stream).toList();
+        if (resolved.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(resolved.stream().allMatch(Boolean::booleanValue));
     }
 
     private static Optional<Boolean> resolveImageSupportFromModalityText(JsonNode modalityNode) {
@@ -688,7 +626,7 @@ final class ProviderCapabilityJsonParser {
     }
 
     private static Optional<Boolean> resolveNativeWebSearchSupportFromKnownFields(JsonNode node) {
-        return StreamSupport.stream(List.of(
+        List<Boolean> signals = StreamSupport.stream(List.of(
                         node.path("web_search"),
                         node.path("webSearch"),
                         node.path("native_web_search"),
@@ -700,9 +638,12 @@ final class ProviderCapabilityJsonParser {
                         node.path("googleSearch")
                 ).spliterator(), false)
                 .map(ProviderCapabilityJsonParser::resolveNativeWebSearchSupportFromFieldValue)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
-                .findFirst();
+                .flatMap(Optional::stream)
+                .toList();
+        if (signals.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(signals.stream().allMatch(Boolean::booleanValue));
     }
 
     private static Optional<Boolean> resolveToolSupportFromFieldValue(JsonNode fieldNode) {
@@ -790,19 +731,19 @@ final class ProviderCapabilityJsonParser {
                 return Optional.empty();
             }
 
+            if (containsAny(normalized, DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS)
+                    || "disabled".equals(normalized)
+                    || "unsupported".equals(normalized)
+            ) {
+                return Optional.of(false);
+            }
+
             if (containsAny(normalized, DYNAMIC_NATIVE_WEB_SEARCH_HINTS)
                     || "enabled".equals(normalized)
                     || "supported".equals(normalized)
                     || "required".equals(normalized)
             ) {
                 return Optional.of(true);
-            }
-
-            if (containsAny(normalized, DYNAMIC_NON_NATIVE_WEB_SEARCH_HINTS)
-                    || "disabled".equals(normalized)
-                    || "unsupported".equals(normalized)
-            ) {
-                return Optional.of(false);
             }
 
             return Optional.empty();
@@ -813,12 +754,7 @@ final class ProviderCapabilityJsonParser {
                 return Optional.of(false);
             }
 
-            Optional<Boolean> textualResolution = resolveNativeWebSearchSupportFromStringArray(fieldNode);
-            if (textualResolution.isPresent()) {
-                return textualResolution;
-            }
-
-            return Optional.of(true);
+            return resolveNativeWebSearchSupportFromStringArray(fieldNode);
         }
 
         if (fieldNode.isObject()) {
@@ -838,7 +774,7 @@ final class ProviderCapabilityJsonParser {
             }
 
             return fieldNode.fieldNames().hasNext()
-                    ? Optional.of(true)
+                    ? Optional.empty()
                     : Optional.of(false);
         }
 
@@ -887,14 +823,14 @@ final class ProviderCapabilityJsonParser {
             return Optional.empty();
         }
 
+        boolean hasNegativeHint = values.stream().anyMatch(value -> containsAny(value, negativeHints));
+        if (hasNegativeHint) {
+            return Optional.of(false);
+        }
+
         boolean hasPositiveHint = values.stream().anyMatch(value -> containsAny(value, positiveHints));
         if (hasPositiveHint) {
             return Optional.of(true);
-        }
-
-        boolean explicitNegative = values.stream().allMatch(value -> containsAny(value, negativeHints));
-        if (explicitNegative) {
-            return Optional.of(false);
         }
 
         return Optional.empty();

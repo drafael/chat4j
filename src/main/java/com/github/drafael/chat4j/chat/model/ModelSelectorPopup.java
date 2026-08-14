@@ -57,6 +57,7 @@ public class ModelSelectorPopup extends JDialog {
     private static final Duration MODEL_REFRESH_TTL = Duration.ofHours(12);
     private static final Duration LOCAL_PROVIDER_REFRESH_TTL = Duration.ofMinutes(5);
     private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
+    private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final Set<String> LOCAL_HEALTH_GATED_PROVIDERS = Set.of("LM Studio", "Ollama");
     private static final int POPUP_MIN_WIDTH = 340;
     private static final int POPUP_MAX_WIDTH = 768;
@@ -1039,8 +1040,21 @@ public class ModelSelectorPopup extends JDialog {
             return;
         }
         SwingUtilities.invokeLater(() -> {
-            if (isCatalogRefreshCurrent(providerGeneration)) {
-                refreshProviderFromCache(providerName);
+            if (!isCatalogRefreshCurrent(providerGeneration)) {
+                return;
+            }
+            ProviderEntry entry = entries.get(providerName);
+            List<String> previousModels = entry == null ? emptyList() : entry.models;
+            boolean copilotMetadataRefreshed = Strings.CS.equals(providerName, COPILOT_PROVIDER_NAME);
+            if (copilotMetadataRefreshed) {
+                capabilityCache.keySet().removeIf(key -> Strings.CS.equals(key.providerName(), providerName));
+            }
+            refreshProviderFromCache(providerName);
+            if (copilotMetadataRefreshed && entry != null && previousModels.equals(entry.models)) {
+                onModelsChanged.run();
+                if (preloaded) {
+                    rebuildVisibleList();
+                }
             }
         });
     }
@@ -1203,18 +1217,20 @@ public class ModelSelectorPopup extends JDialog {
                 modelId
         );
 
-        NativeWebSearchOutcome nativeWebSearchOutcome = ProviderCapabilityResolver.nativeWebSearchOutcome(
-                entry.name(),
-                modelId,
-                entry.baseUrl(),
-                entry.def.defaultBaseUrl()
-        );
+        NativeWebSearchOutcome nativeWebSearchOutcome =
+                ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                        entry.name(),
+                        modelId,
+                        entry.baseUrl(),
+                        entry.def.defaultBaseUrl(),
+                        providerRegistry.cachedModelSupportedEndpoints(entry.def, modelId)
+                );
 
         return new ModelCapabilities(supportsImageInput, supportsReasoning, nativeWebSearchOutcome);
     }
 
     private void refreshCapabilitiesAsync(ProviderEntry entry, String modelId) {
-        if (StringUtils.isBlank(entry.baseUrl())) {
+        if (StringUtils.isBlank(entry.baseUrl()) || Strings.CS.equals(entry.name(), COPILOT_PROVIDER_NAME)) {
             return;
         }
 

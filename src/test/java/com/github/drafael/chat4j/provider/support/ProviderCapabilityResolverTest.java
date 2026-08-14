@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -10,11 +12,14 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
+import static java.util.Collections.emptyList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProviderCapabilityResolverTest {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final String TEST_API_KEY = "test-key";
 
     @Test
@@ -1578,6 +1583,117 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Google dynamic native-search evidence uses the native model endpoint")
+    void nativeWebSearchOutcome_whenGoogleNativeMetadataDeclaresWebSearch_returnsOptional() throws Exception {
+        HttpServer server = createGoogleAiFallbackServer(
+                "gemini-4-preview",
+                """
+                        {
+                          "name": "models/gemini-4-preview",
+                          "capabilities": {"web_search": true}
+                        }
+                        """,
+                "{\"models\": []}",
+                "{\"id\": \"gemini-4-preview\"}",
+                "{\"data\": []}",
+                TEST_API_KEY
+        );
+
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1beta/openai".formatted(server.getAddress().getPort());
+
+            assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                    "Google AI",
+                    "gemini-4-preview",
+                    endpoint,
+                    endpoint,
+                    TEST_API_KEY
+            )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Negative native-search signals override overlapping positive substrings")
+    void resolveNativeWebSearchSupportFromNode_whenSignalExplicitlyDisablesSearch_returnsFalse() throws Exception {
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"web_search": "no_web_search"}}
+                """))).contains(false);
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"features": ["chat", "web_search_disabled"]}}
+                """))).contains(false);
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"web_search": true, "supports_web_search": false}}
+                """))).contains(false);
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"web_search": "supported", "grounding": "disabled"}}
+                """))).contains(false);
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"web_search": true, "meta": {"features": ["web_search_disabled"]}}
+                """))).contains(false);
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"web_search": true, "supported_parameters": ["no_web_search"]}
+                """))).contains(false);
+    }
+
+    @Test
+    @DisplayName("Negative native-search evidence wins across duplicate model records")
+    void resolveNativeWebSearchSupportFromModelsList_whenDuplicateRecordsConflict_returnsFalse() throws Exception {
+        JsonNode root = JSON.readTree("""
+                {
+                  "data": [
+                    {"id": "future-model", "web_search": true},
+                    {"id": "future-model", "web_search": false}
+                  ]
+                }
+                """);
+
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromModelsList(root, "future-model"))
+                .contains(false);
+    }
+
+    @Test
+    @DisplayName("Unrecognized native-search containers remain inconclusive")
+    void resolveNativeWebSearchSupportFromNode_whenContainerShapeIsUnknown_returnsEmpty() throws Exception {
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"web_search": {"unexpected": 1}}}
+                """))).isEmpty();
+        assertThat(ProviderCapabilityJsonParser.resolveNativeWebSearchSupportFromNode(JSON.readTree("""
+                {"capabilities": {"web_search": [42]}}
+                """))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Google Gemini latest aliases do not expose native Web Search")
+    void nativeWebSearchOutcome_whenGoogleModelUsesLatestAlias_returnsUnsupported() {
+        assertThat(List.of(
+                "gemini-pro-latest",
+                "gemini-2.5-flash-latest",
+                "gemini-2.5-pro-latest",
+                "gemini-3-flash-latest",
+                "models/gemini-2.5-flash-latest"
+        )).allSatisfy(modelId -> assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Google AI",
+                modelId,
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED));
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Google AI",
+                "gemini-2.5-flash",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Google AI",
+                "gemini-4-pro",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+        )).isEqualTo(NativeWebSearchOutcome.PENDING);
+    }
+
+    @Test
     @DisplayName("Provider-name substrings cannot inherit native Web Search transports")
     void nativeWebSearchOutcome_whenProviderNameOnlyContainsKnownName_returnsUnsupported() {
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
@@ -1713,6 +1829,113 @@ class ProviderCapabilityResolverTest {
     }
 
     @Test
+    @DisplayName("Local Ollama and LM Studio runtimes do not advertise native Web Search")
+    void nativeWebSearchOutcome_whenProviderRequiresExternalSearchOrchestration_returnsUnsupported() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Ollama",
+                "llama3.2",
+                "http://localhost:11434/v1",
+                "http://localhost:11434/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "LM Studio",
+                "local-model",
+                "http://localhost:1234/v1",
+                "http://localhost:1234/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Codex native search is optional only for the exact CLI provider endpoint")
+    void nativeWebSearchOutcome_whenCodexProviderAndEndpointAreExact_returnsOptional() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI Codex",
+                "gpt-5.4-mini",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI Codex",
+                "gpt-5.4-mini",
+                "https://proxy.example/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "OpenAI Codex Proxy",
+                "gpt-5.4-mini",
+                "https://api.openai.com/v1",
+                "https://api.openai.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(List.of("openai codex", " OpenAI Codex ")).allSatisfy(providerName -> assertThat(
+                ProviderCapabilityResolver.nativeWebSearchOutcome(
+                        providerName,
+                        "gpt-5.4-mini",
+                        "https://api.openai.com/v1",
+                        "https://api.openai.com/v1"
+                )
+        ).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED));
+    }
+
+    @Test
+    @DisplayName("Copilot native search requires the live-proven model and Responses endpoint metadata")
+    void nativeWebSearchOutcome_whenCopilotModelHasResponsesEvidence_returnsOptional() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                "GitHub Copilot",
+                "gpt-5.4-mini",
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                Optional.of(List.of("/chat/completions", "/responses"))
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "GitHub Copilot",
+                "gpt-5.4-mini",
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com"
+        )).isEqualTo(NativeWebSearchOutcome.PENDING);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                "GitHub Copilot",
+                "gpt-5.4-mini",
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                Optional.of(List.of("/chat/completions"))
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                "GitHub Copilot",
+                "gpt-5.4-mini",
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                Optional.of(emptyList())
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Copilot native search rejects unproven models and non-official endpoints")
+    void nativeWebSearchOutcome_whenCopilotRouteIsNotLiveProven_returnsUnsupported() {
+        assertThat(List.of("gpt-5.4", "gpt-5.4-nano", "gpt-5-mini", "claude-sonnet-4.6", "copilot-search-agent"))
+                .allSatisfy(modelId -> assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                        "GitHub Copilot",
+                        modelId,
+                        "https://api.githubcopilot.com",
+                        "https://api.githubcopilot.com",
+                        Optional.of(List.of("/responses"))
+                )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED));
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                "GitHub Copilot",
+                "gpt-5.4-mini",
+                "https://proxy.example/v1",
+                "https://api.githubcopilot.com",
+                Optional.of(List.of("/responses"))
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                "GitHub Copilot Proxy",
+                "gpt-5.4-mini",
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                Optional.of(List.of("/responses"))
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
     @DisplayName("DeepSeek native search requires its official endpoint")
     void nativeWebSearchOutcome_whenDeepSeekEndpointIsOfficial_returnsOptional() {
         assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
@@ -1726,6 +1949,35 @@ class ProviderCapabilityResolverTest {
                 "deepseek-v4-pro",
                 "https://proxy.example/v1",
                 "https://api.deepseek.com/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Mistral chat models expose Conversations search only on the official endpoint")
+    void nativeWebSearchOutcome_whenMistralRuntimeIsEligible_returnsOptional() {
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Mistral",
+                "mistral-small-latest",
+                "https://api.mistral.ai/v1",
+                "https://api.mistral.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.OPTIONAL);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Mistral",
+                "mistral-small-latest",
+                "https://proxy.example/v1",
+                "https://api.mistral.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Mistral",
+                "mistral-embed",
+                "https://api.mistral.ai/v1",
+                "https://api.mistral.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Mistral",
+                "codestral-latest",
+                "https://api.mistral.ai/v1",
+                "https://api.mistral.ai/v1"
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
     }
 

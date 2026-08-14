@@ -42,13 +42,28 @@ public final class ExternalLinkSupport {
                 return false;
             }
 
-            if ("mailto".equals(scheme)) {
-                return StringUtils.isNotBlank(uri.getSchemeSpecificPart());
-            }
-
-            return StringUtils.isNotBlank(uri.getHost());
+            return "mailto".equals(scheme)
+                    ? StringUtils.isNotBlank(uri.getSchemeSpecificPart())
+                    : isAllowedHttpUri(uri);
         } catch (Exception e) {
             return false;
         }
+    }
+
+    public static boolean isAllowedHttpLink(String link) {
+        if (StringUtils.isBlank(link)) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(link.trim());
+            String scheme = StringUtils.defaultString(uri.getScheme()).toLowerCase(Locale.ROOT);
+            return ("http".equals(scheme) || "https".equals(scheme)) && isAllowedHttpUri(uri);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isAllowedHttpUri(URI uri) {
+        return StringUtils.isNotBlank(uri.getHost()) && uri.getRawUserInfo() == null;
     }
 }

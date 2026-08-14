@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class SendJob {
@@ -22,6 +23,8 @@ final class SendJob {
     final SendRuntimeSnapshot runtime;
     volatile String apiKey;
     volatile ProviderService provider;
+    volatile boolean providerAdmitted;
+    volatile long admittedCredentialVersion;
     final List<Message> historySnapshot;
     final ReasoningLevel reasoningLevel;
     final boolean requestedWebSearch;
@@ -37,6 +40,7 @@ final class SendJob {
     volatile ComposerState composerState;
     volatile Message preparedUserMessage;
     volatile boolean durableUserMessageSubmissionStarted;
+    volatile CompletableFuture<Void> durableUserMessageSettlement = CompletableFuture.completedFuture(null);
     volatile boolean durableHistoryMutationSubmissionStarted;
     volatile boolean persistenceAlreadyCanonical;
     volatile boolean providerContinuationCancelled;
@@ -97,6 +101,8 @@ final class SendJob {
         assistantMessageOrdinal = source.assistantMessageOrdinal;
         createsConversation = source.createsConversation;
         runtime = source.runtime;
+        providerAdmitted = source.providerAdmitted;
+        admittedCredentialVersion = source.admittedCredentialVersion;
         historySnapshot = source.historySnapshot;
         reasoningLevel = source.reasoningLevel;
         requestedWebSearch = source.requestedWebSearch;

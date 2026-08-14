@@ -290,9 +290,11 @@ class CapabilityProviderServiceTest {
     }
 
     @Test
-    @DisplayName("Structured Web Search sources are forwarded independently from citations")
-    void streamCompletion_whenClientEmitsWebSearchSource_forwardsSourceAndCompletes() {
+    @DisplayName("Structured Web Search queries and sources are forwarded independently from citations")
+    void streamCompletion_whenClientEmitsWebSearchEvidence_forwardsQuerySourceAndCompletes() {
+        String expectedQuery = "current documentation";
         WebSearchSource expectedSource = new WebSearchSource("Docs", "https://example.test/docs");
+        AtomicReference<String> observedQuery = new AtomicReference<>();
         AtomicReference<WebSearchSource> observedSource = new AtomicReference<>();
         AtomicBoolean completed = new AtomicBoolean();
         ChatCompletionClient client = new ChatCompletionClient() {
@@ -319,11 +321,13 @@ class CapabilityProviderServiceTest {
                     Consumer<String> onThinkingToken,
                     Consumer<ContentPart> onPart,
                     Consumer<CitationRef> onCitation,
+                    Consumer<String> onWebSearchQuery,
                     Consumer<WebSearchSource> onWebSearchSource,
                     BooleanSupplier isCancelled,
                     Consumer<AutoCloseable> registerActiveStream,
                     Runnable clearActiveStream
             ) {
+                onWebSearchQuery.accept(expectedQuery);
                 onWebSearchSource.accept(expectedSource);
             }
         };
@@ -341,6 +345,7 @@ class CapabilityProviderServiceTest {
                 },
                 ignored -> {
                 },
+                observedQuery::set,
                 observedSource::set,
                 () -> completed.set(true),
                 ignored -> {
@@ -352,6 +357,7 @@ class CapabilityProviderServiceTest {
                 }
         );
 
+        assertThat(observedQuery).hasValue(expectedQuery);
         assertThat(observedSource).hasValue(expectedSource);
         assertThat(completed).isTrue();
     }

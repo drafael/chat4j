@@ -17,5 +17,7 @@ class ExternalLinkSupportTest {
         assertThat(ExternalLinkSupport.isAllowedExternalLink("javascript:alert(1)")).isFalse();
         assertThat(ExternalLinkSupport.isAllowedExternalLink("file:///etc/passwd")).isFalse();
         assertThat(ExternalLinkSupport.isAllowedExternalLink("data:text/html;base64,PHNjcmlwdD4=")).isFalse();
+        assertThat(ExternalLinkSupport.isAllowedExternalLink("https://name:password@example.com/path")).isFalse();
+        assertThat(ExternalLinkSupport.isAllowedExternalLink("https://")).isFalse();
     }
 }

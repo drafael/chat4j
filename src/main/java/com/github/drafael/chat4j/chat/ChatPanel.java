@@ -15,6 +15,7 @@ import com.github.drafael.chat4j.chat.composer.EditComposerPanel;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
 import com.github.drafael.chat4j.chat.composer.ImageAttachmentPreview;
 import com.github.drafael.chat4j.chat.composer.InputBar;
+import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
 import com.github.drafael.chat4j.chat.conversation.webview.jcef.JcefBrowserView;
@@ -149,6 +150,8 @@ import static java.util.stream.Collectors.toUnmodifiableSet;
 public class ChatPanel extends JPanel {
     private static final String CARD_EMPTY = "empty";
     private static final String CARD_CHAT = "chat";
+    private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
+    private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final int CHAT_MENU_ICON_SIZE = 14;
     private static final int RENDER_MODE_ICON_SIZE = 16;
     private static final int BUBBLE_ACTION_BUTTON_SIZE = 20;
@@ -262,6 +265,9 @@ public class ChatPanel extends JPanel {
     private final Object terminalPersistenceLock = new Object();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
     private final AtomicLong credentialSettlementCounter = new AtomicLong();
+    private final Map<String, Integer> credentialChangesPending = new ConcurrentHashMap<>();
+    private final Map<String, Long> credentialChangeVersions = new ConcurrentHashMap<>();
+    private final Set<Thread> credentialSettlementWorkers = ConcurrentHashMap.newKeySet();
     private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final AtomicReference<Thread> capabilityRefreshThread = new AtomicReference<>();
     private final AtomicLong readAloudUiGeneration = new AtomicLong();
@@ -1011,7 +1017,7 @@ public class ChatPanel extends JPanel {
             discardFailedUserSend(failedUserSend);
         }
 
-        if (!preflightWebSearchSend()) {
+        if (!preflightSend()) {
             return;
         }
         SendRuntimeSnapshot runtime = captureSendRuntime();
@@ -1116,7 +1122,7 @@ public class ChatPanel extends JPanel {
         if (!originCurrent || original.preparedUserMessage == null) {
             return false;
         }
-        if (!preflightWebSearchSend() || !validateAgentProjectRoot()) {
+        if (!preflightSend() || !validateAgentProjectRoot()) {
             return true;
         }
         SendRuntimeSnapshot runtime = captureSendRuntime();
@@ -1187,31 +1193,42 @@ public class ChatPanel extends JPanel {
 
         UserMessageEvent event = userMessageEvent(sendJob, userMessage, visibleConversation);
         sendJob.durableUserMessageSubmissionStarted = true;
+        var settlement = new CompletableFuture<Void>();
+        sendJob.durableUserMessageSettlement = settlement;
         CompletionStage<UUID> persistence;
         try {
             persistence = durableUserMessageSubmittedListener.persist(event);
         } catch (Exception e) {
+            settlement.complete(null);
             handleDurableUserMessageFailure(sendJob, e);
             return;
         }
         if (persistence == null) {
+            settlement.complete(null);
             handleDurableUserMessageFailure(sendJob, new IllegalStateException("User persistence returned no completion stage"));
             return;
         }
         persistence.whenComplete((conversationId, error) -> SwingUtilities.invokeLater(() -> {
-            if (shutdownInProgress) {
-                abandonSendJob(sendJob);
-                return;
+            try {
+                if (shutdownInProgress) {
+                    if (error != null && !(unwrapCompletion(error) instanceof ConversationPersistenceIndeterminateException)) {
+                        discardStagedAttachments(userMessage);
+                    }
+                    abandonSendJob(sendJob);
+                    return;
+                }
+                if (error != null) {
+                    handleDurableUserMessageFailure(sendJob, unwrapCompletion(error));
+                    return;
+                }
+                if (!isPreparing(sendJob)) {
+                    finishSendJob(sendJob);
+                    return;
+                }
+                completePreparedSend(sendJob, userMessage, conversationId, isVisibleConversation(sendJob.conversationId));
+            } finally {
+                settlement.complete(null);
             }
-            if (error != null) {
-                handleDurableUserMessageFailure(sendJob, unwrapCompletion(error));
-                return;
-            }
-            if (!isPreparing(sendJob)) {
-                finishSendJob(sendJob);
-                return;
-            }
-            completePreparedSend(sendJob, userMessage, conversationId, isVisibleConversation(sendJob.conversationId));
         }));
     }
 
@@ -1325,7 +1342,6 @@ public class ChatPanel extends JPanel {
                 }
                 removeCurrentWebSearchBubbleIfBlank();
                 removeCurrentActivityBubbleIfBlank();
-                removeCurrentAgentToolBubblesIfBlank();
                 currentAssistantWebSearchBubble = null;
                 currentAssistantActivityBubble = null;
                 clearCurrentAgentToolBubbleState();
@@ -1377,7 +1393,7 @@ public class ChatPanel extends JPanel {
             HistoryMutationEvent mutationEvent,
             Runnable commitRegeneration
     ) {
-        if (!preflightWebSearchSend() || !validateAgentProjectRoot()) {
+        if (!preflightSend() || !validateAgentProjectRoot()) {
             return;
         }
         SendRuntimeSnapshot runtime = captureSendRuntime();
@@ -1545,10 +1561,13 @@ public class ChatPanel extends JPanel {
                 () -> {
                     PreparedAssistantResponse preparedResponse;
                     synchronized (terminalPersistenceLock) {
-                        if (shutdownInProgress || !session.beginTerminalCallback()) {
+                        if (!canAcceptStreamingCallback(session)) {
                             return;
                         }
                         flushThinkTagParser(session, sendJob);
+                        if (!session.beginTerminalCallback()) {
+                            return;
+                        }
                         finalizeConsultedSourceActivity(session);
                         preparedResponse = prepareAssistantResponse(session, sendJob);
                     }
@@ -1558,7 +1577,11 @@ public class ChatPanel extends JPanel {
                     String errorText;
                     PreparedAssistantResponse preparedResponse;
                     synchronized (terminalPersistenceLock) {
-                        if (shutdownInProgress || !session.beginTerminalCallback()) {
+                        if (!canAcceptStreamingCallback(session)) {
+                            return;
+                        }
+                        flushThinkTagParser(session, sendJob);
+                        if (!session.beginTerminalCallback()) {
                             return;
                         }
                         Exception safeError = ProviderExceptionMapper.map(error, sendJob.apiKey);
@@ -1587,7 +1610,6 @@ public class ChatPanel extends JPanel {
                                 }
                                 removeCurrentWebSearchBubbleIfBlank();
                                 removeCurrentActivityBubbleIfBlank();
-                                removeCurrentAgentToolBubblesIfBlank();
                                 currentAssistantWebSearchBubble = null;
                                 currentAssistantActivityBubble = null;
                                 clearCurrentAgentToolBubbleState();
@@ -1631,11 +1653,12 @@ public class ChatPanel extends JPanel {
                 session.provider.streamCompletion(
                         effectiveHistory,
                         sendJob.reasoningLevel,
-                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob)),
+                        new WebSearchRequestOptions(nativeWebSearchEnabled(sendJob), sendJob.providerAdmitted),
                         callbacks.onToken(),
                         callbacks.onThinkingToken(),
                         callbacks.onPart(),
                         callbacks.onCitation(),
+                        query -> handleAssistantWebSearchQuery(session, query),
                         source -> handleAssistantWebSearchSource(session, source),
                         callbacks.onComplete(),
                         callbacks.onError(),
@@ -1791,50 +1814,51 @@ public class ChatPanel extends JPanel {
             return requestHistory;
         }
         ensureNotCancelled(isCancelled);
-        String query = latestUserText(requestHistory);
-        if (DeepSeekNativeWebSearchSupport.supports(sendJob.runtime.providerName(), sendJob.runtime.modelId(), sendJob.runtime.baseUrl())) {
-            initializeConsultedSourceActivity(session, query);
-        } else if (StringUtils.isNotBlank(query)) {
-            recordWebSearchActivity(session, formatNativeWebSearchActivity(sendJob, query));
+        if (usesConsultedSourceActivity(sendJob)) {
+            initializeConsultedSourceActivity(session);
         }
         return requestHistory;
+    }
+
+    private boolean usesConsultedSourceActivity(SendJob sendJob) {
+        return Strings.CS.equals(sendJob.runtime.providerName(), CODEX_PROVIDER_NAME)
+                || DeepSeekNativeWebSearchSupport.supports(
+                        sendJob.runtime.providerName(),
+                        sendJob.runtime.modelId(),
+                        sendJob.runtime.baseUrl()
+                );
     }
 
     private boolean nativeWebSearchEnabled(SendJob sendJob) {
         return sendJob.webSearchEnabled && sendJob.runtime.webSearchOutcome().supported();
     }
 
-    private String latestUserText(List<Message> requestHistory) {
-        return requestHistory.stream()
-                .filter(message -> message.role() == Role.USER)
-                .reduce((first, second) -> second)
-                .map(Message::content)
-                .orElse("");
-    }
-
-    private void recordWebSearchActivity(StreamingSession session, String webSearchActivity) {
-        String normalizedActivity = normalizeWebSearchActivity(webSearchActivity);
-        if (StringUtils.isBlank(normalizedActivity)) {
-            return;
-        }
-
-        synchronized (session.webSearchActivity) {
-            session.webSearchActivity.setLength(0);
-            session.webSearchActivity.append(normalizedActivity);
-        }
-        SwingUtilities.invokeLater(() -> showWebSearchActivity(session, normalizedActivity));
-    }
-
-    private void initializeConsultedSourceActivity(StreamingSession session, String query) {
-        String snapshot;
+    private void initializeConsultedSourceActivity(StreamingSession session) {
         synchronized (terminalPersistenceLock) {
             synchronized (session.webSearchSourceLock) {
-                if (shutdownInProgress || !session.isLive() || session.terminalCallbackStarted.get()) {
+                if (!canAcceptStreamingCallback(session)) {
                     return;
                 }
                 session.consultedSourceMode = true;
-                session.webSearchQuery = StringUtils.normalizeSpace(query);
+                session.webSearchQueries.clear();
                 session.webSearchSources.clear();
+                replaceWebSearchActivity(session, "");
+            }
+        }
+    }
+
+    private void handleAssistantWebSearchQuery(StreamingSession session, String query) {
+        String normalizedQuery = StringUtils.normalizeSpace(query);
+        if (StringUtils.isBlank(normalizedQuery)) {
+            return;
+        }
+        String snapshot;
+        synchronized (terminalPersistenceLock) {
+            synchronized (session.webSearchSourceLock) {
+                if (!canAcceptStreamingCallback(session) || !session.consultedSourceMode) {
+                    return;
+                }
+                session.webSearchQueries.add(normalizedQuery);
                 snapshot = renderConsultedSourceActivity(session, false);
                 replaceWebSearchActivity(session, snapshot);
             }
@@ -1847,11 +1871,7 @@ public class ChatPanel extends JPanel {
             String snapshot;
             synchronized (terminalPersistenceLock) {
                 synchronized (session.webSearchSourceLock) {
-                    if (shutdownInProgress
-                            || !session.isLive()
-                            || session.terminalCallbackStarted.get()
-                            || !session.consultedSourceMode
-                    ) {
+                    if (!canAcceptStreamingCallback(session) || !session.consultedSourceMode) {
                         return;
                     }
                     String title = StringUtils.defaultIfBlank(StringUtils.normalizeSpace(source.title()), normalized.host());
@@ -1876,14 +1896,16 @@ public class ChatPanel extends JPanel {
             if (!session.consultedSourceMode) {
                 return;
             }
-            replaceWebSearchActivity(session, renderConsultedSourceActivity(session, true));
+            boolean observedSearch = !session.webSearchQueries.isEmpty() || !session.webSearchSources.isEmpty();
+            replaceWebSearchActivity(session, observedSearch ? renderConsultedSourceActivity(session, true) : "");
         }
     }
 
     private String renderConsultedSourceActivity(StreamingSession session, boolean completed) {
         StringBuilder activity = new StringBuilder();
-        if (StringUtils.isNotBlank(session.webSearchQuery)) {
-            activity.append("**Searched**\n- ").append(session.webSearchQuery).append("\n");
+        if (!session.webSearchQueries.isEmpty()) {
+            activity.append("**Searched**\n");
+            session.webSearchQueries.forEach(query -> activity.append("- ").append(query).append("\n"));
         }
         if (!session.webSearchSources.isEmpty() || completed) {
             if (!activity.isEmpty()) {
@@ -1909,18 +1931,6 @@ public class ChatPanel extends JPanel {
             session.webSearchActivity.setLength(0);
             session.webSearchActivity.append(StringUtils.defaultString(activity));
         }
-    }
-
-    private String formatNativeWebSearchActivity(SendJob sendJob, String query) {
-        String provider = StringUtils.defaultIfBlank(sendJob.runtime.providerName(), "Selected provider");
-        String model = StringUtils.defaultIfBlank(sendJob.runtime.modelId(), "selected model");
-        return """
-                **Searched**
-                - %s
-
-                **Sources**
-                - Native web search is handled by %s (%s). Source URLs will appear here if the provider returns citation metadata in the answer.
-                """.formatted(query, provider, model).trim();
     }
 
     private String escapeMarkdownLinkLabel(String value) {
@@ -1952,16 +1962,17 @@ public class ChatPanel extends JPanel {
     }
 
     private void handleAgentToolActivity(StreamingSession session, AgentToolActivity activity) {
-        if (session == null || activity == null || !session.isLive()) {
-            return;
+        String formattedActivity;
+        synchronized (terminalPersistenceLock) {
+            if (!canAcceptStreamingCallback(session) || activity == null) {
+                return;
+            }
+            formattedActivity = formatAgentToolActivity(activity);
+            if (StringUtils.isBlank(formattedActivity)) {
+                return;
+            }
+            session.agentToolActivities.add(activity);
         }
-
-        String formattedActivity = formatAgentToolActivity(activity);
-        if (StringUtils.isBlank(formattedActivity)) {
-            return;
-        }
-
-        session.agentToolActivities.add(activity);
 
         SwingUtilities.invokeLater(() -> {
             if (!session.isLive() || !isVisibleSession(session)) {
@@ -2220,16 +2231,13 @@ public class ChatPanel extends JPanel {
         String modelId = selectedModelId;
         ProviderCapabilities capabilities = providerDef.capabilities();
         inputBar.setThinkingAvailable(ProviderCapabilityResolver.supportsReasoning(capabilities, providerName, modelId));
-        applyNativeWebSearchOutcome(ProviderCapabilityResolver.nativeWebSearchOutcome(
-                providerName,
-                modelId,
-                providerDef.baseUrl(),
-                providerDef.defaultBaseUrl()
-        ));
+        applyNativeWebSearchOutcome(resolveCachedNativeWebSearchOutcome(providerDef, modelId));
         inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required()
                 && ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId));
 
-        if (StringUtils.isBlank(providerDef.baseUrl()) || nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING) {
+        if (StringUtils.isBlank(providerDef.baseUrl())
+                || nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING
+                || Strings.CS.equals(providerName, COPILOT_PROVIDER_NAME)) {
             return;
         }
 
@@ -2318,9 +2326,13 @@ public class ChatPanel extends JPanel {
         setRequestedWebSearch(enabled, false);
     }
 
-    private boolean preflightWebSearchSend() {
+    private boolean preflightSend() {
         if (installedProviderScope < 0L) {
             inputBar.showValidationMessage("Provider configuration is still loading. Try again in a moment.");
+            return false;
+        }
+        if (selectedProviderName != null && credentialChangesPending.containsKey(selectedProviderName)) {
+            inputBar.showValidationMessage("Provider credentials are still updating. Try again in a moment.");
             return false;
         }
         if (requestedWebSearch && nativeWebSearchOutcome == NativeWebSearchOutcome.PENDING) {
@@ -2426,8 +2438,16 @@ public class ChatPanel extends JPanel {
 
     public void invalidateSelectedProviderCapabilityEvidence(Collection<String> providerNames) {
         runSynchronouslyOnEdt(() -> {
-            if (providerNames != null && !providerNames.isEmpty() && modelPopup != null) {
-                modelPopup.invalidateModelList();
+            if (providerNames != null && !providerNames.isEmpty()) {
+                providerNames.stream()
+                        .filter(Objects::nonNull)
+                        .forEach(providerName -> {
+                            credentialChangesPending.merge(providerName, 1, Integer::sum);
+                            credentialChangeVersions.merge(providerName, 1L, Long::sum);
+                        });
+                if (modelPopup != null) {
+                    modelPopup.invalidateModelList();
+                }
             }
             if (!selectedProviderAffected(providerNames)) {
                 return;
@@ -2437,15 +2457,7 @@ public class ChatPanel extends JPanel {
             pendingWebSearchOptOut = null;
             inputBar.clearValidationMessage();
             cancelCapabilityRefresh();
-            ProviderRegistry.ProviderDef selected = selectedProviderDef();
-            nativeWebSearchOutcome = selected == null
-                    ? NativeWebSearchOutcome.PENDING
-                    : ProviderCapabilityResolver.nativeWebSearchOutcome(
-                            selected.name(),
-                            selectedModelId,
-                            selected.baseUrl(),
-                            selected.defaultBaseUrl()
-                    );
+            nativeWebSearchOutcome = NativeWebSearchOutcome.PENDING;
             applyWebSearchPresentation();
         });
     }
@@ -2455,40 +2467,83 @@ public class ChatPanel extends JPanel {
             SwingUtilities.invokeLater(() -> settleSelectedProviderCredentialChange(providerNames));
             return;
         }
-        if (!selectedProviderAffected(providerNames)) {
+        if (shutdownInProgress || removed || providerNames == null || providerNames.isEmpty()) {
+            return;
+        }
+        List<String> settledProviderNames = providerNames.stream().filter(Objects::nonNull).toList();
+        if (settledProviderNames.isEmpty()) {
+            return;
+        }
+        settledProviderNames.forEach(providerName -> credentialChangesPending.computeIfPresent(
+                providerName,
+                (ignored, pendingCount) -> pendingCount > 1 ? pendingCount - 1 : null
+        ));
+        if (!selectedProviderAffected(settledProviderNames)
+                || credentialChangesPending.containsKey(selectedProviderName)) {
             return;
         }
         String providerName = selectedProviderName;
         String modelId = selectedModelId;
         long selectionId = providerSelectionCounter.get();
         long settlementId = credentialSettlementCounter.incrementAndGet();
-        Thread.startVirtualThread(() -> {
-            ProviderRegistry.ProviderDef settledProvider = providerRegistry.availableProviders().stream()
-                    .filter(provider -> Strings.CS.equals(provider.name(), providerName))
-                    .findFirst()
-                    .orElse(null);
-            SwingUtilities.invokeLater(() -> {
-                if (credentialSettlementCounter.get() != settlementId
-                        || !isSelectedModel(selectionId, providerName, modelId)) {
-                    return;
+        Thread settlementThread = Thread.ofVirtual().name("chat4j-credential-settlement").unstarted(() -> {
+            try {
+                ProviderRegistry.ProviderDef settledProvider = null;
+                boolean resolutionFailed = false;
+                try {
+                    settledProvider = providerRegistry.availableProviders().stream()
+                            .filter(provider -> Strings.CS.equals(provider.name(), providerName))
+                            .findFirst()
+                            .orElse(null);
+                } catch (RuntimeException | LinkageError e) {
+                    resolutionFailed = true;
+                    log.warn("Failed to settle provider credentials for {}: {}", providerName, ExceptionUtils.getMessage(e));
                 }
-                if (settledProvider == null) {
-                    invalidateSelectedProviderRuntimeOnEdt();
-                    return;
-                }
-                Map<String, ProviderRegistry.ProviderDef> settledProviders = new LinkedHashMap<>(providerMap);
-                settledProviders.put(providerName, settledProvider);
-                providerMap = settledProviders;
-                updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
-                if (modelPopup != null) {
-                    modelPopup.invalidateModelList();
-                }
-            });
+                ProviderRegistry.ProviderDef resolvedProvider = settledProvider;
+                boolean providerResolutionFailed = resolutionFailed;
+                SwingUtilities.invokeLater(() -> {
+                    if (shutdownInProgress
+                            || removed
+                            || credentialSettlementCounter.get() != settlementId
+                            || !isSelectedModel(selectionId, providerName, modelId)) {
+                        return;
+                    }
+                    if (providerResolutionFailed) {
+                        invalidateSelectedProviderRuntimeOnEdt();
+                        refreshProviders();
+                        return;
+                    }
+                    if (resolvedProvider == null) {
+                        invalidateSelectedProviderRuntimeOnEdt();
+                        return;
+                    }
+                    Map<String, ProviderRegistry.ProviderDef> settledProviders = new LinkedHashMap<>(providerMap);
+                    settledProviders.put(providerName, resolvedProvider);
+                    providerMap = settledProviders;
+                    updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
+                    if (modelPopup != null) {
+                        modelPopup.invalidateModelList();
+                    }
+                });
+            } finally {
+                credentialSettlementWorkers.remove(Thread.currentThread());
+            }
         });
+        credentialSettlementWorkers.add(settlementThread);
+        try {
+            settlementThread.start();
+        } catch (RuntimeException | Error e) {
+            credentialSettlementWorkers.remove(settlementThread);
+            throw e;
+        }
     }
 
     private boolean selectedProviderAffected(Collection<String> providerNames) {
         return providerNames != null && providerNames.contains(selectedProviderName);
+    }
+
+    private long credentialChangeVersion(String providerName) {
+        return credentialChangeVersions.getOrDefault(providerName, 0L);
     }
 
     private void invalidateSelectedProviderRuntimeOnEdt() {
@@ -2537,6 +2592,19 @@ public class ChatPanel extends JPanel {
                 && Strings.CS.equals(selectedModelId, modelId);
     }
 
+    private NativeWebSearchOutcome resolveCachedNativeWebSearchOutcome(
+            ProviderRegistry.ProviderDef providerDef,
+            String modelId
+    ) {
+        return ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
+                providerDef.name(),
+                modelId,
+                providerDef.baseUrl(),
+                providerDef.defaultBaseUrl(),
+                providerRegistry.cachedModelSupportedEndpoints(providerDef, modelId)
+        );
+    }
+
     private SendRuntimeSnapshot captureSendRuntime() {
         ProviderRegistry.ProviderDef providerDef = selectedProviderDef();
         if (providerDef == null || installedProviderScope < 0L || StringUtils.isBlank(selectedModelId)) {
@@ -2557,6 +2625,11 @@ public class ChatPanel extends JPanel {
 
     private void admitProvider(SendJob sendJob) {
         ensureNotCancelled(sendJob.cancelled::get);
+        String providerName = sendJob.runtime.providerName();
+        long credentialVersion = credentialChangeVersion(providerName);
+        if (credentialChangesPending.containsKey(providerName)) {
+            throw new IllegalStateException("Provider credentials are still updating.");
+        }
         if (sendJob.agentModeEnabled && (sendJob.webSearchEnabled || sendJob.runtime.webSearchOutcome().required())) {
             throw new IllegalArgumentException("Agent Mode and Web Search cannot be enabled together.");
         }
@@ -2565,10 +2638,27 @@ public class ChatPanel extends JPanel {
             throw new IllegalArgumentException("Native Web Search is no longer available for the selected provider configuration.");
         }
         ProviderRegistry.ProviderDef providerDefinition = sendJob.runtime.providerDefinition();
+        boolean requiresCopilotRevalidation = !sendJob.providerAdmitted
+                && sendJob.webSearchEnabled
+                && Strings.CS.equals(providerDefinition.name(), COPILOT_PROVIDER_NAME);
+        if (requiresCopilotRevalidation
+                && !resolveCachedNativeWebSearchOutcome(providerDefinition, sendJob.runtime.modelId()).supported()) {
+            throw new IllegalArgumentException("Native Web Search is no longer available for the selected provider configuration.");
+        }
         try {
             sendJob.provider = providerDefinition.factory().create(sendJob.runtime.modelId());
             sendJob.apiKey = sendJob.provider.apiKey();
             ensureNotCancelled(sendJob.cancelled::get);
+            if (credentialChangesPending.containsKey(providerName)
+                    || credentialChangeVersion(providerName) != credentialVersion) {
+                throw new IllegalStateException("Provider credentials changed while the request was being prepared.");
+            }
+            if (requiresCopilotRevalidation
+                    && !resolveCachedNativeWebSearchOutcome(providerDefinition, sendJob.runtime.modelId()).supported()) {
+                throw new IllegalArgumentException("Native Web Search is no longer available for the selected provider configuration.");
+            }
+            sendJob.providerAdmitted = true;
+            sendJob.admittedCredentialVersion = credentialVersion;
         } catch (RuntimeException | Error e) {
             sendJob.clearCredentialReferences();
             throw e;
@@ -2589,7 +2679,7 @@ public class ChatPanel extends JPanel {
             return codexAuthResolver.resolveBearerTokenOrNull();
         }
 
-        if (Strings.CS.equals(providerDef.name(), "GitHub Copilot")) {
+        if (Strings.CS.equals(providerDef.name(), COPILOT_PROVIDER_NAME)) {
             return copilotAuthResolver.resolveBearerTokenOrNull();
         }
 
@@ -4748,13 +4838,21 @@ public class ChatPanel extends JPanel {
         continuation.persistenceAlreadyCanonical = true;
         activeSendJobs.put(continuation.jobId, continuation);
         beginPreparing(continuation);
-        if (continuation.providerContinuationCancelled) {
+        boolean credentialsChanged = credentialChangesPending.containsKey(continuation.runtime.providerName())
+                || credentialChangeVersion(continuation.runtime.providerName()) != continuation.admittedCredentialVersion;
+        if (continuation.providerContinuationCancelled || credentialsChanged) {
+            continuation.providerContinuationCancelled = true;
             completePreparedSend(
                     continuation,
                     continuation.preparedUserMessage,
                     conversationId,
                     isVisibleConversation(conversationId)
             );
+            if (credentialsChanged && isVisibleConversation(conversationId)) {
+                inputBar.showValidationMessage(
+                        "Provider credentials changed while the message was being saved. Regenerate the response after the update finishes."
+                );
+            }
             return;
         }
         continuation.worker = Thread.startVirtualThread(() -> {
@@ -4773,7 +4871,26 @@ public class ChatPanel extends JPanel {
                     );
                 });
             } catch (Exception | LinkageError e) {
-                SwingUtilities.invokeLater(() -> handlePreparationFailure(continuation, e));
+                SwingUtilities.invokeLater(() -> {
+                    if (shutdownInProgress || !isPreparing(continuation)) {
+                        abandonSendJob(continuation);
+                        return;
+                    }
+                    String safeMessage = ProviderExceptionMapper.sanitizeMessage(e, continuation.apiKey);
+                    continuation.providerContinuationCancelled = true;
+                    completePreparedSend(
+                            continuation,
+                            continuation.preparedUserMessage,
+                            conversationId,
+                            isVisibleConversation(conversationId)
+                    );
+                    if (isVisibleConversation(conversationId)) {
+                        inputBar.showValidationMessage(
+                                "The message was saved, but the response could not start: %s"
+                                        .formatted(StringUtils.defaultIfBlank(safeMessage, "Unknown error"))
+                        );
+                    }
+                });
             }
         });
     }
@@ -4854,13 +4971,25 @@ public class ChatPanel extends JPanel {
         sendJobs.forEach(this::discardSendJob);
         sessions.forEach(this::discardStreamingSession);
         updateGenerationIndicator();
-        CompletableFuture<?>[] cleanupTasks = Stream.concat(
+        CompletableFuture<?>[] cleanupTasks = Stream.of(
                         activeRequests.stream().map(this::closeActiveRequestAsync),
-                        workers.stream().map(this::awaitWorkerAsync)
+                        workers.stream().map(this::awaitWorkerAsync),
+                        sendJobs.stream().map(sendJob -> sendJob.durableUserMessageSettlement)
                 )
+                .flatMap(Function.identity())
                 .toArray(CompletableFuture[]::new);
         return CompletableFuture.allOf(cleanupTasks)
-                .thenCompose(ignored -> awaitAttachmentDiscardTasks())
+                .handle((ignored, cleanupFailure) -> cleanupFailure)
+                .thenCompose(cleanupFailure -> awaitAttachmentDiscardTasks().handle((ignored, attachmentFailure) -> {
+                    Throwable failure = cleanupFailure == null ? attachmentFailure : cleanupFailure;
+                    if (cleanupFailure != null && attachmentFailure != null) {
+                        unwrapCompletion(cleanupFailure).addSuppressed(unwrapCompletion(attachmentFailure));
+                    }
+                    if (failure != null) {
+                        throw new CompletionException(unwrapCompletion(failure));
+                    }
+                    return null;
+                }))
                 .thenRun(() -> {
                     shutdownPreparationWorkers.removeAll(workers);
                     sessions.stream()
@@ -4939,17 +5068,21 @@ public class ChatPanel extends JPanel {
         if (session == null) {
             return;
         }
+        boolean conversationStopped;
         try {
-            session.cancelled.set(true);
-            discardStreamingResponseAttachments(session);
-            session.finished = true;
-            activeSessions.remove(session.sessionId);
+            synchronized (terminalPersistenceLock) {
+                session.cancelled.set(true);
+                discardStreamingResponseAttachments(session);
+                session.finished = true;
+                activeSessions.remove(session.sessionId);
+                conversationStopped = !hasLiveStreamingSession(session.conversationId);
+            }
             cancelSessionActiveRequest(session, false);
             Thread worker = session.worker;
             if (worker != null) {
                 worker.interrupt();
             }
-            if (!hasLiveStreamingSession(session.conversationId)) {
+            if (conversationStopped) {
                 notifyConversationStreamingChanged(session.conversationId, false);
             }
         } finally {
@@ -5249,7 +5382,7 @@ public class ChatPanel extends JPanel {
                             .map(this::toAgentToolActivity)
                             .forEach(this::addPersistedAgentToolBubble);
 
-                    if (StringUtils.isBlank(msg.content()) && msg.parts().stream().noneMatch(GeneratedImagePart.class::isInstance)) {
+                    if (!hasVisibleAssistantMessageContent(msg)) {
                         continue;
                     }
                 }
@@ -5484,8 +5617,12 @@ public class ChatPanel extends JPanel {
     public void beginShutdown() {
         synchronized (terminalPersistenceLock) {
             shutdownInProgress = true;
-        stagedRuntimeLoad = null;
+            stagedRuntimeLoad = null;
         }
+        credentialSettlementCounter.incrementAndGet();
+        List<Thread> settlementWorkers = credentialSettlementWorkers.stream().toList();
+        shutdownPreparationWorkers.addAll(settlementWorkers);
+        settlementWorkers.forEach(Thread::interrupt);
         activeSendJobs.values().stream()
                 .filter(sendJob -> !sendJob.durableUserMessageSubmissionStarted)
                 .filter(sendJob -> !sendJob.durableHistoryMutationSubmissionStarted)
@@ -5787,6 +5924,11 @@ public class ChatPanel extends JPanel {
     }
 
     private void notifyModelCatalogChanged() {
+        if (installedProviderScope >= 0L
+                && Strings.CS.equals(selectedProviderName, COPILOT_PROVIDER_NAME)
+                && providerMap.containsKey(selectedProviderName)) {
+            updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
+        }
         if (modelCatalogChangedListener != null) {
             modelCatalogChangedListener.run();
         }
@@ -5920,14 +6062,22 @@ public class ChatPanel extends JPanel {
         return Objects.equals(activeConversationId, conversationId);
     }
 
-    private void handleAssistantToken(StreamingSession session, SendJob sendJob, String token) {
-        if (!session.isLive()) {
-            return;
-        }
+    private boolean canAcceptStreamingCallback(StreamingSession session) {
+        return session != null
+                && !shutdownInProgress
+                && session.isLive()
+                && !session.terminalCallbackStarted.get();
+    }
 
-        ThinkTagSplit split = session.thinkTagParser.accept(token);
-        appendAssistantVisibleToken(session, split.visibleText());
-        handleAssistantThinkingToken(session, sendJob, split.thinkingText(), true);
+    private void handleAssistantToken(StreamingSession session, SendJob sendJob, String token) {
+        synchronized (terminalPersistenceLock) {
+            if (!canAcceptStreamingCallback(session)) {
+                return;
+            }
+            ThinkTagSplit split = session.thinkTagParser.accept(token);
+            appendAssistantVisibleToken(session, split.visibleText());
+            handleAssistantThinkingToken(session, sendJob, split.thinkingText(), true);
+        }
     }
 
     private void flushThinkTagParser(StreamingSession session, SendJob sendJob) {
@@ -5967,15 +6117,21 @@ public class ChatPanel extends JPanel {
         if (part == null || part instanceof TextPart) {
             return;
         }
-        synchronized (session.responseParts) {
-            if (!session.isLive()) {
-                AttachmentRef discardedAttachment = attachmentRef(part);
-                if (discardedAttachment != null) {
-                    discardAttachmentRefs(List.of(discardedAttachment));
+        boolean rejected;
+        synchronized (terminalPersistenceLock) {
+            rejected = !canAcceptStreamingCallback(session);
+            if (!rejected) {
+                synchronized (session.responseParts) {
+                    session.responseParts.add(part);
                 }
-                return;
             }
-            session.responseParts.add(part);
+        }
+        if (rejected) {
+            AttachmentRef discardedAttachment = attachmentRef(part);
+            if (discardedAttachment != null) {
+                discardAttachmentRefs(List.of(discardedAttachment));
+            }
+            return;
         }
         SwingUtilities.invokeLater(() -> {
             if (!session.isLive() || !isVisibleSession(session)) {
@@ -5992,14 +6148,16 @@ public class ChatPanel extends JPanel {
     }
 
     private void handleAssistantCitation(StreamingSession session, CitationRef citation) {
-        if (!session.isLive() || citation == null) {
-            return;
-        }
-        synchronized (session.responseCitations) {
-            if (session.responseCitations.stream().anyMatch(existing -> existing.number() == citation.number())) {
+        synchronized (terminalPersistenceLock) {
+            if (!canAcceptStreamingCallback(session) || citation == null) {
                 return;
             }
-            session.responseCitations.add(citation);
+            synchronized (session.responseCitations) {
+                if (session.responseCitations.stream().anyMatch(existing -> existing.number() == citation.number())) {
+                    return;
+                }
+                session.responseCitations.add(citation);
+            }
         }
         List<CitationRef> citations = snapshotCitations(session);
         SwingUtilities.invokeLater(() -> {
@@ -6039,16 +6197,17 @@ public class ChatPanel extends JPanel {
             String thinkingToken,
             boolean forceRender
     ) {
-        if (!session.isLive() || (!forceRender && !sendJob.reasoningLevel.enabled())) {
-            return;
+        String normalizedThinkingToken;
+        synchronized (terminalPersistenceLock) {
+            if (!canAcceptStreamingCallback(session) || (!forceRender && !sendJob.reasoningLevel.enabled())) {
+                return;
+            }
+            normalizedThinkingToken = normalizeThinkingText(thinkingToken);
+            if (normalizedThinkingToken.isEmpty()) {
+                return;
+            }
+            appendAssistantThinking(session, normalizedThinkingToken);
         }
-
-        String normalizedThinkingToken = normalizeThinkingText(thinkingToken);
-        if (normalizedThinkingToken.isEmpty()) {
-            return;
-        }
-
-        appendAssistantThinking(session, normalizedThinkingToken);
         SwingUtilities.invokeLater(() -> {
             if (!session.isLive() || !isVisibleSession(session)) {
                 return;
@@ -6239,13 +6398,17 @@ public class ChatPanel extends JPanel {
         refreshModelSelectorConversationState();
         int assistantMessageIndex = history.size() - 1;
         if (currentAssistantBubble == null) {
-            addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);
-        } else {
+            if (hasVisibleAssistantMessageContent(assistantMessage)) {
+                addBubble(createMessageView(Role.ASSISTANT), assistantMessage, Role.ASSISTANT, assistantMessageIndex);
+            }
+        } else if (hasVisibleAssistantMessageContent(assistantMessage)) {
             currentAssistantBubble.setContentParts(assistantMessage.parts());
             currentAssistantBubble.component().putClientProperty(MESSAGE_META_PROPERTY, assistantMessage.meta());
             setMessageIndex(currentAssistantBubble, assistantMessageIndex);
             prepareReadAloudAvailability(currentAssistantBubble);
             refreshWebTranscript(false);
+        } else {
+            removeMessageComponentFromPanel(currentAssistantBubble.component());
         }
         refreshBubbleActionBars();
         updateClearChatButtonVisibility();
@@ -6335,7 +6498,7 @@ public class ChatPanel extends JPanel {
         return citations.stream()
                 .filter(citation -> citation != null && citation.number() > 0)
                 .filter(citation -> citation.kind() == CitationKind.WEB)
-                .filter(citation -> isHttpUrl(citation.url()))
+                .filter(citation -> ExternalLinkSupport.isAllowedHttpLink(citation.url()))
                 .collect(toMap(
                         CitationRef::number,
                         this::citationSourceLine,
@@ -6373,18 +6536,6 @@ public class ChatPanel extends JPanel {
             return StringUtils.defaultIfBlank(Strings.CS.removeStart(host, "www."), url);
         } catch (Exception e) {
             return url;
-        }
-    }
-
-    private boolean isHttpUrl(String url) {
-        if (StringUtils.isBlank(url) || url.chars().anyMatch(Character::isWhitespace)) {
-            return false;
-        }
-        try {
-            URI uri = URI.create(url);
-            return Strings.CI.equalsAny(uri.getScheme(), "http", "https") && StringUtils.isNotBlank(uri.getHost());
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -6445,10 +6596,6 @@ public class ChatPanel extends JPanel {
         }
 
         removeMessageComponentFromPanel(currentAssistantActivityBubble);
-    }
-
-    private void removeCurrentAgentToolBubblesIfBlank() {
-        // Compact tool bubbles render their state in the title, not in the expandable body.
     }
 
     private void clearCurrentAgentToolBubbleState() {
@@ -6521,6 +6668,12 @@ public class ChatPanel extends JPanel {
         } catch (Exception e) {
             return AgentToolActivity.Status.STARTED;
         }
+    }
+
+    private boolean hasVisibleAssistantMessageContent(Message message) {
+        return message != null
+                && (StringUtils.isNotBlank(message.content())
+                || message.parts().stream().anyMatch(part -> !(part instanceof TextPart)));
     }
 
     private boolean hasVisibleThinkingContent(String text) {
@@ -6751,6 +6904,9 @@ public class ChatPanel extends JPanel {
                 return;
             }
             if (session != null) {
+                if (markAsCancelled) {
+                    flushThinkTagParser(session, findSendJobByStreamSession(session.sessionId));
+                }
                 session.cancelled.set(true);
                 if (markAsCancelled) {
                     synchronized (session.webSearchSourceLock) {
@@ -6774,7 +6930,6 @@ public class ChatPanel extends JPanel {
                     persistAssistantResponse(session, findSendJobByStreamSession(session.sessionId));
                     removeCurrentWebSearchBubbleIfBlank();
                     removeCurrentActivityBubbleIfBlank();
-                    removeCurrentAgentToolBubblesIfBlank();
                 }
             } finally {
                 try {
@@ -6803,7 +6958,6 @@ public class ChatPanel extends JPanel {
         setVisibleStreaming(false);
         removeCurrentWebSearchBubbleIfBlank();
         removeCurrentActivityBubbleIfBlank();
-        removeCurrentAgentToolBubblesIfBlank();
         currentAssistantWebSearchBubble = null;
         currentAssistantActivityBubble = null;
         clearCurrentAgentToolBubbleState();

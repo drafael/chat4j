@@ -1,13 +1,14 @@
 package com.github.drafael.chat4j.provider.modules;
 
-import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
-
 import com.github.drafael.chat4j.provider.api.AuthType;
+import com.github.drafael.chat4j.provider.capability.chat.impl.MistralChatCompletionClient;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
-import java.nio.file.Path;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,6 +32,23 @@ class OpenAiCompatibleModuleTest {
         );
 
         assertThat(subject.descriptor().capabilities().supportsImageInput()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Mistral uses the hybrid client that preserves ordinary chat routing")
+    void chatCompletionClient_whenMistralProvider_returnsHybridClient() {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        var subject = new OpenAiCompatibleModule(
+                "Mistral",
+                AuthType.ENV_VAR,
+                "MISTRAL_API_KEY",
+                null,
+                "https://api.mistral.ai/v1",
+                new CopilotModelMetadataStore(tempDir.resolve("mistral-metadata")),
+                attachmentAuthority
+        );
+
+        assertThat(subject.chatCompletionClient()).isInstanceOf(MistralChatCompletionClient.class);
     }
 
     @Test

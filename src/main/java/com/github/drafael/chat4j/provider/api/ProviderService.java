@@ -135,6 +135,39 @@ public interface ProviderService {
         );
     }
 
+    default void streamCompletion(
+        List<Message> history,
+        ReasoningLevel reasoningLevel,
+        WebSearchRequestOptions webSearchOptions,
+        Consumer<String> onToken,
+        Consumer<String> onThinkingToken,
+        Consumer<ContentPart> onPart,
+        Consumer<CitationRef> onCitation,
+        Consumer<String> onWebSearchQuery,
+        Consumer<WebSearchSource> onWebSearchSource,
+        Runnable onComplete,
+        Consumer<Exception> onError,
+        BooleanSupplier isCancelled,
+        Consumer<AutoCloseable> registerActiveStream,
+        Runnable clearActiveStream
+    ) {
+        streamCompletion(
+                history,
+                reasoningLevel,
+                webSearchOptions,
+                onToken,
+                onThinkingToken,
+                onPart,
+                onCitation,
+                onWebSearchSource,
+                onComplete,
+                onError,
+                isCancelled,
+                registerActiveStream,
+                clearActiveStream
+        );
+    }
+
     default void cancelActiveRequest() {
         // no-op by default
     }

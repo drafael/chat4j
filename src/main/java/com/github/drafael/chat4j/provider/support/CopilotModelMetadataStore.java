@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.persistence.CacheRootHandle;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -55,17 +56,19 @@ public class CopilotModelMetadataStore {
     }
 
     public List<String> supportedEndpoints(String baseUrl, String modelId) {
+        return supportedEndpointsEvidence(baseUrl, modelId).orElse(emptyList());
+    }
+
+    public Optional<List<String>> supportedEndpointsEvidence(String baseUrl, String modelId) {
         if (StringUtils.isBlank(modelId)) {
-            return emptyList();
+            return Optional.empty();
         }
 
         loadIfNecessary();
         Map<String, List<String>> supportedEndpointsByModel = supportedEndpointsByBaseUrl.get(normalizeBaseUrl(baseUrl));
-        if (supportedEndpointsByModel == null) {
-            return emptyList();
-        }
-
-        return supportedEndpointsByModel.getOrDefault(modelId.trim(), emptyList());
+        return supportedEndpointsByModel == null
+                ? Optional.empty()
+                : Optional.ofNullable(supportedEndpointsByModel.get(modelId.trim()));
     }
 
     public boolean clear() {
@@ -111,31 +114,23 @@ public class CopilotModelMetadataStore {
     }
 
     private void updateUnderLock(String normalizedBaseUrl, List<ModelMetadata> models) {
-        Map<String, List<String>> mergedSupportedEndpoints = new LinkedHashMap<>(
-                supportedEndpointsByBaseUrl.getOrDefault(normalizedBaseUrl, emptyMap())
-        );
-
-        if (models != null) {
-            models.stream()
-                    .filter(model -> StringUtils.isNotBlank(model.modelId()))
-                    .collect(toMap(
-                            model -> model.modelId().trim(),
-                            model -> sanitizeEndpoints(model.supportedEndpoints()),
-                            (left, right) -> right,
-                            LinkedHashMap::new
-                    ))
-                    .forEach((modelId, supportedEndpoints) -> {
-                        if (!supportedEndpoints.isEmpty()) {
-                            mergedSupportedEndpoints.put(modelId, supportedEndpoints);
-                        }
-                    });
-        }
-
-        if (mergedSupportedEndpoints.isEmpty()) {
+        if (models == null) {
             return;
         }
 
-        supportedEndpointsByBaseUrl.put(normalizedBaseUrl, Map.copyOf(mergedSupportedEndpoints));
+        Map<String, List<String>> supportedEndpoints = models.stream()
+                .filter(model -> StringUtils.isNotBlank(model.modelId()))
+                .collect(toMap(
+                        model -> model.modelId().trim(),
+                        model -> sanitizeEndpoints(model.supportedEndpoints()),
+                        (left, right) -> left.equals(right) ? left : emptyList(),
+                        LinkedHashMap::new
+                ));
+        if (supportedEndpoints.isEmpty()) {
+            supportedEndpointsByBaseUrl.remove(normalizedBaseUrl);
+        } else {
+            supportedEndpointsByBaseUrl.put(normalizedBaseUrl, Map.copyOf(supportedEndpoints));
+        }
         persistUnderLock();
     }
 
@@ -159,6 +154,9 @@ public class CopilotModelMetadataStore {
                 JsonNode catalogs = root.path("catalogsByBaseUrl");
                 if (catalogs.isObject()) {
                     catalogs.fields().forEachRemaining(entry -> {
+                        if (!isValidPersistedBaseUrl(entry.getKey())) {
+                            throw new IllegalArgumentException("Copilot metadata base URL is malformed");
+                        }
                         String normalizedBaseUrl = normalizeBaseUrl(entry.getKey());
                         supportedEndpointsByBaseUrl.put(normalizedBaseUrl, readCatalog(entry.getValue()));
                     });
@@ -212,12 +210,14 @@ public class CopilotModelMetadataStore {
     }
 
     private List<String> readEndpoints(JsonNode endpointsNode) {
-        if (!endpointsNode.isArray()) {
-            return emptyList();
+        if (!endpointsNode.isArray()
+                || StreamSupport.stream(((ArrayNode) endpointsNode).spliterator(), false)
+                        .anyMatch(endpoint -> !endpoint.isTextual() || StringUtils.isBlank(endpoint.asText()))) {
+            throw new IllegalArgumentException("Copilot endpoint metadata is malformed");
         }
 
         return sanitizeEndpoints(StreamSupport.stream(((ArrayNode) endpointsNode).spliterator(), false)
-                .map(endpoint -> endpoint.asText(""))
+                .map(JsonNode::asText)
                 .toList());
     }
 
@@ -261,6 +261,22 @@ public class CopilotModelMetadataStore {
 
     private String normalizeBaseUrl(String baseUrl) {
         return BaseUrlNormalizer.normalize(baseUrl, DEFAULT_COPILOT_BASE_URL);
+    }
+
+    private boolean isValidPersistedBaseUrl(String baseUrl) {
+        if (StringUtils.isBlank(baseUrl)) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(baseUrl.trim());
+            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    && StringUtils.isNotBlank(uri.getHost())
+                    && uri.getRawUserInfo() == null
+                    && uri.getRawQuery() == null
+                    && uri.getRawFragment() == null;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private List<String> sanitizeEndpoints(List<String> supportedEndpoints) {

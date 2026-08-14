@@ -5,10 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.IntStream;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,8 +19,8 @@ class CopilotModelMetadataStoreTest {
     Path tempDir;
 
     @Test
-    @DisplayName("Metadata updates preserve previously known endpoints when new snapshot omits them")
-    void update_whenNewSnapshotOmitsEndpoints_preservesExistingMetadata() throws Exception {
+    @DisplayName("A successful metadata snapshot revokes endpoint evidence that it omits")
+    void update_whenNewSnapshotOmitsEndpoints_revokesExistingMetadata() throws Exception {
         var subject = new CopilotModelMetadataStore(directory("preserve"));
 
         storeMetadata(
@@ -39,7 +35,63 @@ class CopilotModelMetadataStoreTest {
         );
 
         assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "claude-sonnet-4.6"))
+                .isEmpty();
+        assertThat(subject.supportedEndpointsEvidence("https://api.githubcopilot.com", "claude-sonnet-4.6"))
+                .contains(emptyList());
+    }
+
+    @Test
+    @DisplayName("Conflicting duplicate endpoint records fail closed")
+    void update_whenDuplicateModelEndpointsConflict_storesNegativeEvidence() throws Exception {
+        var subject = new CopilotModelMetadataStore(directory("duplicate-conflict"));
+
+        storeMetadata(
+                subject,
+                "https://api.githubcopilot.com",
+                List.of(
+                        new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")),
+                        new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/chat/completions"))
+                )
+        );
+
+        assertThat(subject.supportedEndpointsEvidence("https://api.githubcopilot.com", "gpt-5.4-mini"))
+                .contains(emptyList());
+    }
+
+    @Test
+    @DisplayName("A successful metadata snapshot removes models that are no longer listed")
+    void update_whenModelIsOmitted_removesExistingMetadata() throws Exception {
+        var subject = new CopilotModelMetadataStore(directory("remove-omitted-model"));
+
+        storeMetadata(
+                subject,
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+        );
+        storeMetadata(
+                subject,
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-4o", List.of("/chat/completions")))
+        );
+
+        assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "gpt-5.4-mini")).isEmpty();
+        assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "gpt-4o"))
                 .containsExactly("/chat/completions");
+    }
+
+    @Test
+    @DisplayName("A successful empty metadata snapshot removes prior endpoint evidence")
+    void update_whenSnapshotIsEmpty_removesExistingMetadata() throws Exception {
+        var subject = new CopilotModelMetadataStore(directory("empty-snapshot"));
+        storeMetadata(
+                subject,
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+        );
+
+        storeMetadata(subject, "https://api.githubcopilot.com", emptyList());
+
+        assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "gpt-5.4-mini")).isEmpty();
     }
 
     @Test
@@ -88,6 +140,51 @@ class CopilotModelMetadataStoreTest {
         var subject = new CopilotModelMetadataStore(cacheDirectory);
 
         assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "model")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Blank persisted base URLs cannot become official endpoint evidence")
+    void supportedEndpoints_whenCacheContainsBlankBaseUrl_returnsNoEvidence() throws Exception {
+        Path cacheDirectory = directory("blank-base-url");
+        Files.writeString(
+                cacheDirectory.resolve("github-copilot-model-metadata.json"),
+                """
+                        {
+                          "catalogsByBaseUrl": {
+                            "": {"models": {"gpt-5.4-mini": ["/responses"]}}
+                          }
+                        }
+                        """,
+                StandardCharsets.UTF_8
+        );
+        var subject = new CopilotModelMetadataStore(cacheDirectory);
+
+        assertThat(subject.supportedEndpointsEvidence(
+                "https://api.githubcopilot.com",
+                "gpt-5.4-mini"
+        )).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Malformed endpoint element types invalidate cached metadata")
+    void supportedEndpoints_whenCacheContainsNonTextEndpoint_returnsNoEvidence() throws Exception {
+        Path cacheDirectory = directory("malformed-endpoint");
+        Files.writeString(
+                cacheDirectory.resolve("github-copilot-model-metadata.json"),
+                """
+                        {
+                          "catalogsByBaseUrl": {
+                            "https://api.githubcopilot.com": {
+                              "models": {"model": [123]}
+                            }
+                          }
+                        }
+                        """,
+                StandardCharsets.UTF_8
+        );
+        var subject = new CopilotModelMetadataStore(cacheDirectory);
+
+        assertThat(subject.supportedEndpointsEvidence("https://api.githubcopilot.com", "model")).isEmpty();
     }
 
     @Test
@@ -184,60 +281,6 @@ class CopilotModelMetadataStoreTest {
 
         assertThat(cleared).isFalse();
         assertThat(subject.supportedEndpoints("https://api.githubcopilot.com", "model")).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Concurrent metadata updates for the same base URL keep all model endpoint entries")
-    void update_whenConcurrentUpdatesTargetSameBaseUrl_keepsAllModelMetadata() throws Exception {
-        var subject = new CopilotModelMetadataStore(directory("concurrent"));
-        var baseUrl = "https://api.githubcopilot.com";
-
-        storeMetadata(
-                subject,
-                baseUrl,
-                List.of(new CopilotModelMetadataStore.ModelMetadata("seed", List.of("/responses")))
-        );
-
-        int workers = 12;
-        int rounds = 25;
-        var pool = Executors.newFixedThreadPool(workers);
-
-        try {
-            IntStream.range(0, rounds).forEach(round -> {
-                var startGate = new CountDownLatch(1);
-                var futures = IntStream.range(0, workers)
-                        .mapToObj(worker -> pool.submit(() -> {
-                            startGate.await();
-                            String modelId = "round-%d-model-%d".formatted(round, worker);
-                            String endpoint = worker % 2 == 0 ? "/responses" : "/chat/completions";
-                            storeMetadata(
-                                    subject,
-                                    baseUrl,
-                                    List.of(new CopilotModelMetadataStore.ModelMetadata(modelId, List.of(endpoint)))
-                            );
-                            return null;
-                        }))
-                        .toList();
-
-                startGate.countDown();
-                futures.forEach(future -> {
-                    try {
-                        future.get(5, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
-            });
-        } finally {
-            pool.shutdownNow();
-            pool.awaitTermination(5, TimeUnit.SECONDS);
-        }
-
-        IntStream.range(0, rounds).forEach(round -> IntStream.range(0, workers).forEach(worker -> {
-            String modelId = "round-%d-model-%d".formatted(round, worker);
-            String expectedEndpoint = worker % 2 == 0 ? "/responses" : "/chat/completions";
-            assertThat(subject.supportedEndpoints(baseUrl, modelId)).containsExactly(expectedEndpoint);
-        }));
     }
 
     private static void storeMetadata(

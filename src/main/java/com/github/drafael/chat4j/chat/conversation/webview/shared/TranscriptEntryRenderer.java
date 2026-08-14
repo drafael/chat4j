@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
+import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
 import com.github.drafael.chat4j.chat.content.HighlightJsCodeRenderer;
 import com.github.drafael.chat4j.chat.content.KatexMathRenderer;
 import com.github.drafael.chat4j.chat.content.MathFallbackTextRenderer;
@@ -545,7 +546,7 @@ public final class TranscriptEntryRenderer {
     }
 
     private boolean isHttpUrl(String href) {
-        return Strings.CI.startsWith(href, "http://") || Strings.CI.startsWith(href, "https://");
+        return ExternalLinkSupport.isAllowedHttpLink(href);
     }
 
     private String sourceDomain(String url) {

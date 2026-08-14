@@ -7,6 +7,7 @@ import com.github.drafael.chat4j.provider.core.ProviderRuntime;
 import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
+import com.github.drafael.chat4j.provider.support.MistralNativeWebSearchSupport;
 import com.github.drafael.chat4j.provider.support.ModelFilters;
 import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.openai.client.OpenAIClient;
@@ -80,14 +81,14 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
                     : copilotCatalog.modelIds();
         }
 
+        OpenAIClient client = null;
         try {
-            OpenAIClient client = OpenAIOkHttpClient.builder()
+            client = OpenAIOkHttpClient.builder()
                     .apiKey(runtime.apiKey())
                     .baseUrl(runtime.baseUrl())
                     .build();
-
             List<String> models = client.models().list().data().stream()
-                    .filter(model -> ModelFilters.isSupportedChatModelId(model.id()))
+                    .filter(model -> isSupportedChatModel(runtime, model.id()))
                     .sorted((left, right) -> {
                         int byRecency = ModelOrdering.compareByRecency(left.id(), right.id());
                         return byRecency != 0
@@ -100,7 +101,9 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             if (Thread.currentThread().isInterrupted()) {
                 return emptyList();
             }
-            return models.isEmpty() ? fallbackModels(runtime) : models;
+            if (!models.isEmpty()) {
+                return models;
+            }
         } catch (Exception e) {
             if (Thread.currentThread().isInterrupted()) {
                 return emptyList();
@@ -108,8 +111,12 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             log.debug("Primary model listing failed for {}: {}",
                     runtime.descriptor().name(),
                     ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
-            return fallbackModels(runtime);
+        } finally {
+            if (client != null) {
+                client.close();
+            }
         }
+        return fallbackModels(runtime);
     }
 
     private List<String> fallbackModels(ProviderRuntime runtime) {
@@ -173,8 +180,14 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             }
 
             JsonNode root = JSON.readTree(response.body());
+            if (!hasCatalogArray(root)) {
+                return CatalogFetchResult.empty();
+            }
             List<JsonNode> modelEntries = extractModelEntries(root);
             if (modelEntries.isEmpty()) {
+                return CatalogFetchResult.successfulEmpty();
+            }
+            if (modelEntries.stream().anyMatch(model -> !isValidCatalogEntry(runtime, model))) {
                 return CatalogFetchResult.empty();
             }
 
@@ -186,12 +199,13 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             List<String> modelIds = selectableEntries.stream()
                     .map(OpenAiModelCatalogClient::modelId)
                     .filter(StringUtils::isNotBlank)
-                    .filter(ModelFilters::isSupportedChatModelId)
+                    .filter(modelId -> isSupportedChatModel(runtime, modelId))
                     .toList();
 
             return new CatalogFetchResult(
                     ModelOrdering.sanitizeAndSortByProvider(runtime.descriptor().name(), modelIds),
-                    isCopilotProvider(runtime) ? toCopilotModelMetadata(selectableEntries) : emptyList()
+                    isCopilotProvider(runtime) ? toCopilotModelMetadata(selectableEntries) : emptyList(),
+                    true
             );
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -312,6 +326,12 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name());
     }
 
+    private boolean isSupportedChatModel(ProviderRuntime runtime, String modelId) {
+        return ModelFilters.isSupportedChatModelId(modelId)
+                && (!"Mistral".equals(runtime.descriptor().name())
+                || MistralNativeWebSearchSupport.isChatModel(modelId));
+    }
+
     private boolean supportsConfiguredApiEndpoint(ProviderRuntime runtime, JsonNode modelNode) {
         if (!isCopilotProvider(runtime) || !modelNode.isObject()) {
             return true;
@@ -336,9 +356,7 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
             CatalogFetchResult catalog,
             long metadataGeneration
     ) {
-        if (Thread.currentThread().isInterrupted()
-                || !isCopilotProvider(runtime)
-                || catalog.metadata().isEmpty()) {
+        if (Thread.currentThread().isInterrupted() || !isCopilotProvider(runtime) || !catalog.authoritative()) {
             return;
         }
 
@@ -397,6 +415,45 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
         return modelNode.path("name").asText("");
     }
 
+    private boolean hasCatalogArray(JsonNode root) {
+        return root.path("data").isArray() || root.path("models").isArray();
+    }
+
+    private boolean isValidCatalogEntry(ProviderRuntime runtime, JsonNode model) {
+        if (model.isTextual()) {
+            return StringUtils.isNotBlank(model.asText());
+        }
+        if (!model.isObject() || !hasValidModelId(model)) {
+            return false;
+        }
+        if (!isCopilotProvider(runtime)) {
+            return true;
+        }
+
+        JsonNode modelPickerEnabled = model.get("model_picker_enabled");
+        if (modelPickerEnabled != null && !modelPickerEnabled.isBoolean()) {
+            return false;
+        }
+        JsonNode endpoints = model.get("supported_endpoints");
+        return endpoints == null || (endpoints.isArray() && StreamSupport.stream(endpoints.spliterator(), false)
+                .allMatch(endpoint -> endpoint.isTextual() && StringUtils.isNotBlank(endpoint.asText())));
+    }
+
+    private boolean hasValidModelId(JsonNode model) {
+        JsonNode id = model.get("id");
+        if (id != null && !id.isNull()) {
+            if (!id.isTextual()) {
+                return false;
+            }
+            if (StringUtils.isNotBlank(id.asText())) {
+                return true;
+            }
+        }
+
+        JsonNode name = model.get("name");
+        return name != null && name.isTextual() && StringUtils.isNotBlank(name.asText());
+    }
+
     private List<JsonNode> extractModelEntries(JsonNode root) {
         JsonNode data = root.path("data");
         if (data.isArray()) {
@@ -445,11 +502,16 @@ public class OpenAiModelCatalogClient implements ModelCatalogClient {
 
     private record CatalogFetchResult(
             List<String> modelIds,
-            List<CopilotModelMetadataStore.ModelMetadata> metadata
+            List<CopilotModelMetadataStore.ModelMetadata> metadata,
+            boolean authoritative
     ) {
 
         private static CatalogFetchResult empty() {
-            return new CatalogFetchResult(emptyList(), emptyList());
+            return new CatalogFetchResult(emptyList(), emptyList(), false);
+        }
+
+        private static CatalogFetchResult successfulEmpty() {
+            return new CatalogFetchResult(emptyList(), emptyList(), true);
         }
     }
 }

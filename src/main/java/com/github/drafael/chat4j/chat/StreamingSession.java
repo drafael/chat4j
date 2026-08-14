@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.WebSearchSource;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,7 +32,7 @@ final class StreamingSession {
     final Object webSearchSourceLock = new Object();
     final StringBuilder webSearchActivity = new StringBuilder();
     final LinkedHashMap<String, WebSearchSource> webSearchSources = new LinkedHashMap<>();
-    String webSearchQuery = "";
+    final LinkedHashSet<String> webSearchQueries = new LinkedHashSet<>();
     boolean consultedSourceMode;
     final List<AgentToolActivity> agentToolActivities = synchronizedList(new ArrayList<>());
     final ThinkTagStreamParser thinkTagParser = new ThinkTagStreamParser();

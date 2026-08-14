@@ -119,6 +119,25 @@ class AnthropicCitationMapperTest {
     }
 
     @Test
+    @DisplayName("Web search citations containing URL user-info retain non-navigable evidence")
+    void fromCitation_whenWebSearchUrlContainsUserInfo_removesUrl() {
+        var anthropicCitation = CitationsWebSearchResultLocation.builder()
+                .url("https://trusted.example@untrusted.example/source")
+                .title("Misleading source")
+                .citedText("Quoted text")
+                .encryptedIndex("encrypted")
+                .build();
+
+        CitationRef citation = AnthropicCitationMapper.fromCitation(
+                CitationsDelta.Citation.ofWebSearchResultLocation(anthropicCitation)
+        ).orElseThrow();
+
+        assertThat(citation.url()).isEmpty();
+        assertThat(citation.displayTitle()).isEqualTo("Misleading source");
+        assertThat(citation.citedText()).isEqualTo("Quoted text");
+    }
+
+    @Test
     @DisplayName("Web search citations without URLs become non-navigable citation refs when useful text exists")
     void fromCitation_whenWebSearchLocationHasNoUrl_returnsNonNavigableCitation() {
         var anthropicCitation = CitationsWebSearchResultLocation.builder()

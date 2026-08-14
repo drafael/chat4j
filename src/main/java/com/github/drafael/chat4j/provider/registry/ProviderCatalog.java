@@ -19,6 +19,7 @@ import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.NonNull;
 
 final class ProviderCatalog {
@@ -178,6 +179,10 @@ final class ProviderCatalog {
         ProviderDefinition providerDefinition = findRequiredProvider(providerName);
         return model -> providerDefinition.module().createService(
                 resolveRuntime(providerDefinition, envVar, baseUrl, model));
+    }
+
+    Optional<List<String>> cachedCopilotSupportedEndpoints(String baseUrl, String modelId) {
+        return copilotModelMetadataStore.supportedEndpointsEvidence(baseUrl, modelId);
     }
 
     ModelFetcher createFetcher(String providerName, String envVar, String baseUrl) {

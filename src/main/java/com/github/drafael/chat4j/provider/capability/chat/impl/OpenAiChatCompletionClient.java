@@ -34,6 +34,7 @@ import com.openai.models.chat.completions.ChatCompletionMessageParam;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
 import com.openai.models.responses.EasyInputMessage;
+import com.openai.models.responses.Response;
 import com.openai.models.responses.ResponseCreateParams;
 import com.openai.models.responses.ResponseInputContent;
 import com.openai.models.responses.ResponseInputImage;
@@ -56,8 +57,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import static java.util.stream.Collectors.joining;
@@ -68,7 +68,6 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
     private static final String CHAT_COMPLETIONS_ENDPOINT = "/chat/completions";
     private static final String RESPONSES_ENDPOINT = "/responses";
-    private static final Map<CopilotModelKey, CopilotEndpointMode> COPILOT_ENDPOINT_BY_MODEL = new ConcurrentHashMap<>();
 
     private final ProviderAttachmentSupport attachmentSupport;
 
@@ -165,7 +164,19 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         OpenAIClient client = builder.build();
         try {
             if (COPILOT_PROVIDER_NAME.equals(runtime.descriptor().name())) {
-                streamCopilotCompletion(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+                streamCopilotCompletion(
+                        runtime,
+                        projectionPlan,
+                        client,
+                        normalizedReasoningLevel,
+                        webSearchOptions,
+                        onToken,
+                        onThinkingToken,
+                        safeOnCitation,
+                        isCancelled,
+                        registerActiveStream,
+                        clearActiveStream
+                );
                 return;
             }
 
@@ -247,11 +258,33 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         } : onCitation;
     }
 
+    private <T> Consumer<T> trackOutput(AtomicBoolean emittedOutput, Consumer<T> delegate) {
+        return value -> {
+            emittedOutput.set(true);
+            delegate.accept(value);
+        };
+    }
+
+    private Consumer<String> trackAssistantOutput(
+            AtomicBoolean emittedOutput,
+            AtomicBoolean emittedAssistantText,
+            Consumer<String> delegate
+    ) {
+        return value -> {
+            emittedOutput.set(true);
+            if (StringUtils.isNotBlank(value)) {
+                emittedAssistantText.set(true);
+            }
+            delegate.accept(value);
+        };
+    }
+
     private void streamCopilotCompletion(
             ProviderRuntime runtime,
             AttachmentProjectionPlan projectionPlan,
             OpenAIClient client,
             ReasoningLevel reasoningLevel,
+            WebSearchRequestOptions webSearchOptions,
             Consumer<String> onToken,
             Consumer<String> onThinkingToken,
             Consumer<CitationRef> onCitation,
@@ -259,16 +292,45 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
+        if (webSearchOptions != null && webSearchOptions.enabled()) {
+            if (!ProviderCapabilityResolver.supportsCopilotResponsesWebSearchRoute(
+                    runtime.descriptor().name(),
+                    runtime.selectedModel(),
+                    runtime.baseUrl(),
+                    runtime.normalizedDefaultBaseUrl()
+            ) || (!runtime.selectedModelSupportedEndpoints().contains(RESPONSES_ENDPOINT)
+                    && !webSearchOptions.capabilityEvidenceAdmitted())) {
+                throw new IllegalArgumentException("Native Web Search is unavailable for this Copilot model or endpoint.");
+            }
+            streamWithResponses(
+                    runtime,
+                    projectionPlan,
+                    client,
+                    reasoningLevel,
+                    true,
+                    onToken,
+                    onThinkingToken,
+                    onCitation,
+                    isCancelled,
+                    registerActiveStream,
+                    clearActiveStream
+            );
+            return;
+        }
+
         String modelId = runtime.selectedModel();
-        CopilotModelKey modelKey = new CopilotModelKey(runtime.baseUrl(), modelId);
-        CopilotEndpointMode mode = COPILOT_ENDPOINT_BY_MODEL.getOrDefault(modelKey, preferredCopilotEndpointMode(runtime));
+        CopilotEndpointMode mode = preferredCopilotEndpointMode(runtime);
+        AtomicBoolean emittedOutput = new AtomicBoolean();
+        Consumer<String> trackedOnToken = trackOutput(emittedOutput, onToken);
+        Consumer<String> trackedOnThinkingToken = trackOutput(emittedOutput, onThinkingToken);
+        Consumer<CitationRef> trackedOnCitation = trackOutput(emittedOutput, onCitation);
 
         if (mode == CopilotEndpointMode.RESPONSES) {
             try {
-                streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
+                streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, trackedOnToken, trackedOnThinkingToken, trackedOnCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
             } catch (Exception e) {
-                if (!isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
+                if (emittedOutput.get() || !isUnsupportedApiForEndpoint(e, RESPONSES_ENDPOINT)) {
                     throw e;
                 }
                 log.info("Switching Copilot endpoint for model {} from {} to {} after failure: {}",
@@ -276,16 +338,15 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         RESPONSES_ENDPOINT,
                         CHAT_COMPLETIONS_ENDPOINT,
                         ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
-                COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.CHAT_COMPLETIONS);
-                streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
+                streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, trackedOnToken, trackedOnThinkingToken, trackedOnCitation, isCancelled, registerActiveStream, clearActiveStream);
                 return;
             }
         }
 
         try {
-            streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
+            streamWithChatCompletions(runtime, projectionPlan, client, reasoningLevel, trackedOnToken, trackedOnThinkingToken, trackedOnCitation, isCancelled, registerActiveStream, clearActiveStream);
         } catch (Exception e) {
-            if (!isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
+            if (emittedOutput.get() || !isUnsupportedApiForEndpoint(e, CHAT_COMPLETIONS_ENDPOINT)) {
                 throw e;
             }
             log.info("Switching Copilot endpoint for model {} from {} to {} after failure: {}",
@@ -293,8 +354,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     CHAT_COMPLETIONS_ENDPOINT,
                     RESPONSES_ENDPOINT,
                     ProviderExceptionMapper.sanitizeMessage(ExceptionUtils.getMessage(e), runtime.apiKey()));
-            COPILOT_ENDPOINT_BY_MODEL.put(modelKey, CopilotEndpointMode.RESPONSES);
-            streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, onToken, onThinkingToken, onCitation, isCancelled, registerActiveStream, clearActiveStream);
+            streamWithResponses(runtime, projectionPlan, client, reasoningLevel, false, trackedOnToken, trackedOnThinkingToken, trackedOnCitation, isCancelled, registerActiveStream, clearActiveStream);
         }
     }
 
@@ -314,6 +374,11 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 .map(this::toParam)
                 .toList();
         CitationAccumulator citationAccumulator = new CitationAccumulator();
+        AtomicBoolean emittedOutput = new AtomicBoolean();
+        AtomicBoolean emittedAssistantText = new AtomicBoolean();
+        Consumer<String> trackedOnToken = trackAssistantOutput(emittedOutput, emittedAssistantText, onToken);
+        Consumer<String> trackedOnThinkingToken = trackOutput(emittedOutput, onThinkingToken);
+        Consumer<CitationRef> trackedOnCitation = trackOutput(emittedOutput, onCitation);
 
         List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
         for (int attemptIndex = 0; attemptIndex < attempts.size(); attemptIndex++) {
@@ -329,32 +394,45 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
 
             try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
                 registerActiveStream.accept(stream);
+                boolean terminalChoiceObserved = false;
                 Iterator<ChatCompletionChunk> iterator = stream.stream().iterator();
                 while (!shouldStop(isCancelled) && iterator.hasNext()) {
                     ChatCompletionChunk chunk = iterator.next();
                     if (shouldStop(isCancelled)) {
                         return;
                     }
-                    emitChatCompletionsCitations(chunk, citationAccumulator, onCitation, isCancelled);
+                    emitChatCompletionsCitations(chunk, citationAccumulator, trackedOnCitation, isCancelled);
                     for (ChatCompletionChunk.Choice choice : chunk.choices()) {
                         if (shouldStop(isCancelled)) {
                             return;
                         }
-                        choice.delta().content().ifPresent(onToken);
+                        terminalChoiceObserved |= choice.finishReason().isPresent();
+                        choice.delta().content()
+                                .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
+                                .ifPresent(trackedOnToken);
                         if (shouldStop(isCancelled)) {
                             return;
                         }
                         if (attemptLevel.enabled()) {
-                            emitChatCompletionsThinkingDelta(choice, onThinkingToken);
+                            emitChatCompletionsThinkingDelta(choice, trackedOnThinkingToken);
                         }
                     }
+                }
+                if (shouldStop(isCancelled)) {
+                    return;
+                }
+                if (!emittedAssistantText.get()) {
+                    throw new IllegalStateException("Chat Completions stream completed without assistant output.");
+                }
+                if (!terminalChoiceObserved) {
+                    throw new IllegalStateException("Chat Completions stream ended before a terminal choice.");
                 }
                 return;
             } catch (Exception e) {
                 if (shouldStop(isCancelled)) {
                     return;
                 }
-                if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
+                if (emittedOutput.get() || !shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
                 log.info("Retrying {} model {} with lower reasoning effort ({} -> {}) after failure: {}",
@@ -384,18 +462,21 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     ) throws Exception {
         List<ResponseInputItem> input = toResponsesInput(projectionPlan);
         CitationAccumulator citationAccumulator = new CitationAccumulator();
+        AtomicBoolean emittedOutput = new AtomicBoolean();
+        AtomicBoolean emittedAssistantText = new AtomicBoolean();
+        Consumer<String> trackedOnToken = trackAssistantOutput(emittedOutput, emittedAssistantText, onToken);
+        Consumer<String> trackedOnThinkingToken = trackOutput(emittedOutput, onThinkingToken);
+        Consumer<CitationRef> trackedOnCitation = trackOutput(emittedOutput, onCitation);
 
         List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
         for (int attemptIndex = 0; attemptIndex < attempts.size(); attemptIndex++) {
             ReasoningLevel attemptLevel = attempts.get(attemptIndex);
-            ResponseCreateParams.Builder paramsBuilder = ResponseCreateParams.builder()
-                    .model(runtime.selectedModel())
-                    .inputOfResponse(input);
-            applyResponsesReasoningHints(paramsBuilder, attemptLevel);
-            if (webSearchEnabled) {
-                paramsBuilder.addTool(WebSearchTool.builder().build());
-            }
-            ResponseCreateParams params = paramsBuilder.build();
+            ResponseCreateParams params = createResponsesParams(
+                    runtime,
+                    input,
+                    attemptLevel,
+                    webSearchEnabled
+            );
             if (shouldStop(isCancelled)) {
                 return;
             }
@@ -409,15 +490,27 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     if (shouldStop(isCancelled)) {
                         return;
                     }
+                    if (event.failed().isPresent()) {
+                        throw new IllegalStateException(responseFailureMessage(event.failed().get().response()));
+                    }
+                    if (event.incomplete().isPresent()) {
+                        throw new IllegalStateException(responseIncompleteMessage(event.incomplete().get().response()));
+                    }
+                    if (event.completed().isPresent()) {
+                        if (emittedAssistantText.get()) {
+                            return;
+                        }
+                        throw new IllegalStateException("OpenAI Responses completed without assistant output.");
+                    }
                     event.outputTextAnnotationAdded()
-                            .ifPresent(annotation -> emitResponseAnnotationCitation(annotation, citationAccumulator, onCitation));
+                            .ifPresent(annotation -> emitResponseAnnotationCitation(annotation, citationAccumulator, trackedOnCitation));
                     if (shouldStop(isCancelled)) {
                         return;
                     }
                     event.outputTextDelta()
                             .map(ResponseTextDeltaEvent::delta)
                             .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
-                            .ifPresent(onToken);
+                            .ifPresent(trackedOnToken);
                     if (shouldStop(isCancelled)) {
                         return;
                     }
@@ -425,18 +518,18 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                     if (attemptLevel.enabled()) {
                         String reasoningSummaryDelta = event.reasoningSummaryTextDelta()
                                 .map(ResponseReasoningSummaryTextDeltaEvent::delta)
-                                .filter(Objects::nonNull)
+                                .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
                                 .orElse(null);
                         if (reasoningSummaryDelta != null) {
                             emittedReasoningSummary = true;
-                            onThinkingToken.accept(reasoningSummaryDelta);
+                            trackedOnThinkingToken.accept(reasoningSummaryDelta);
                         }
 
                         if (!emittedReasoningSummary && !shouldStop(isCancelled)) {
                             event.reasoningTextDelta()
                                     .map(ResponseReasoningTextDeltaEvent::delta)
-                                    .filter(Objects::nonNull)
-                                    .ifPresent(onThinkingToken);
+                                    .filter(OpenAiChatCompletionClient::shouldEmitOutputDelta)
+                                    .ifPresent(trackedOnThinkingToken);
                         }
                     }
 
@@ -444,12 +537,15 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                         throw new IllegalStateException(event.error().get().message());
                     }
                 }
-                return;
+                if (shouldStop(isCancelled)) {
+                    return;
+                }
+                throw new IllegalStateException("OpenAI Responses stream ended before response.completed.");
             } catch (Exception e) {
                 if (shouldStop(isCancelled)) {
                     return;
                 }
-                if (!shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
+                if (emittedOutput.get() || !shouldRetryWithLowerReasoning(attempts, attemptIndex, e)) {
                     throw e;
                 }
                 log.info("Retrying {} model {} with lower reasoning effort ({} -> {}) after failure: {}",
@@ -462,6 +558,38 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
                 clearActiveStream.run();
             }
         }
+    }
+
+    private String responseFailureMessage(Response response) {
+        return response.error()
+                .map(error -> StringUtils.defaultIfBlank(error.message(), "OpenAI Responses request failed."))
+                .orElse("OpenAI Responses request failed.");
+    }
+
+    private String responseIncompleteMessage(Response response) {
+        String reason = response.incompleteDetails()
+                .flatMap(Response.IncompleteDetails::reason)
+                .map(Object::toString)
+                .orElse("unknown reason");
+        return "OpenAI Responses request was incomplete: %s".formatted(reason);
+    }
+
+    ResponseCreateParams createResponsesParams(
+            ProviderRuntime runtime,
+            List<ResponseInputItem> input,
+            ReasoningLevel reasoningLevel,
+            boolean webSearchEnabled
+    ) {
+        ResponseCreateParams.Builder paramsBuilder = ResponseCreateParams.builder()
+                .model(runtime.selectedModel())
+                .inputOfResponse(input);
+        applyResponsesReasoningHints(paramsBuilder, reasoningLevel);
+        if (webSearchEnabled) {
+            paramsBuilder.addTool(WebSearchTool.builder()
+                    .type(WebSearchTool.Type.WEB_SEARCH)
+                    .build());
+        }
+        return paramsBuilder.build();
     }
 
     private void emitResponseAnnotationCitation(
@@ -626,7 +754,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         for (String key : keys) {
             JsonValue value = properties.get(key);
             String text = thinkingText(value);
-            if (StringUtils.isBlank(text)) {
+            if (StringUtils.isEmpty(text)) {
                 continue;
             }
 
@@ -752,9 +880,6 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
     private enum CopilotEndpointMode {
         CHAT_COMPLETIONS,
         RESPONSES
-    }
-
-    private record CopilotModelKey(String baseUrl, String modelId) {
     }
 
     private ChatCompletionMessageParam toParam(ProjectedMessage message) {

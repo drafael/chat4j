@@ -98,6 +98,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -123,9 +124,11 @@ class ChatPanelTest {
     @TempDir
     private Path tempDir;
 
+    private final List<CompletableFuture<?>> controlledFutures = new ArrayList<>();
     private ChatPanel subject;
     private ProviderRegistry providerRegistry;
     private CopilotAuthResolver copilotAuthResolver;
+    private CopilotModelMetadataStore copilotModelMetadataStore;
     private CodexAuthResolver codexAuthResolver;
     private CredentialResolver credentialResolver;
     private CredentialMutationService credentialMutationService;
@@ -152,10 +155,11 @@ class ChatPanelTest {
         storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("chat-panel"));
         Path attachmentRoot = Files.createDirectories(storagePaths.attachmentsDirectory());
         attachmentSupport = new ProviderAttachmentSupport(attachmentRoot);
+        copilotModelMetadataStore = new CopilotModelMetadataStore(tempDir.resolve("provider-metadata"));
         providerRegistry = new ProviderRegistry(
                 copilotAuthResolver,
                 codexAuthResolver,
-                new CopilotModelMetadataStore(tempDir.resolve("provider-metadata")),
+                copilotModelMetadataStore,
                 credentialResolver,
                 emptyMap(),
                 attachmentSupport
@@ -179,6 +183,8 @@ class ChatPanelTest {
 
     @AfterEach
     void tearDown() throws Exception {
+        controlledFutures.forEach(future -> future.cancel(true));
+        runOnEdt(() -> {});
         if (subject != null) {
             callOnEdt(subject::cancelAllRequestsAsync).join();
             runOnEdt(subject::disposeViewResources);
@@ -186,6 +192,247 @@ class ChatPanelTest {
             runOnEdt(() -> {});
         }
         credentialMutationService.closeSecrets();
+    }
+
+    @Test
+    @DisplayName("Cached Copilot Responses evidence controls Web Search availability without provider creation")
+    void setSelectedModel_whenCopilotResponsesEvidenceIsCached_exposesOptionalWebSearch() throws Exception {
+        long generation = copilotModelMetadataStore.currentGeneration();
+        assertThat(copilotModelMetadataStore.updateIfGenerationCurrent(
+                generation,
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata(
+                        "gpt-5.4-mini",
+                        List.of("/chat/completions", "/responses")
+                ))
+        )).isTrue();
+        var provider = new ProviderRegistry.ProviderDef(
+                "GitHub Copilot",
+                null,
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                List.of("gpt-5.4-mini"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    throw new AssertionError("Provider creation should not occur during capability resolution");
+                },
+                List::of
+        );
+
+        try {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.setSelectedModel("GitHub Copilot > gpt-5.4-mini");
+            });
+
+            assertThat(callOnEdt(() -> subject.getInputBar().isWebSearchAvailable())).isTrue();
+
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of("GitHub Copilot"));
+
+            assertThat(callOnEdt(() -> subject.getInputBar().isWebSearchAvailable())).isFalse();
+            assertThat(callOnEdt(() -> readField(subject, "nativeWebSearchOutcome")))
+                    .isEqualTo(NativeWebSearchOutcome.PENDING);
+            assertThat(copilotModelMetadataStore.clear()).isTrue();
+        } finally {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", emptyMap());
+                setField(subject, "installedProviderScope", -1L);
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Codestral selection does not expose unsupported Mistral Web Search")
+    void setSelectedModel_whenMistralModelRejectsBuiltinConnectors_hidesWebSearch() throws Exception {
+        var provider = new ProviderRegistry.ProviderDef(
+                "Mistral",
+                "MISTRAL_API_KEY",
+                "https://api.mistral.ai/v1",
+                "https://api.mistral.ai/v1",
+                List.of("codestral-latest"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        try {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.setSelectedModel("Mistral > codestral-latest");
+            });
+
+            assertThat(callOnEdt(() -> subject.getInputBar().isWebSearchAvailable())).isFalse();
+            assertThat(callOnEdt(() -> readField(subject, "nativeWebSearchOutcome")))
+                    .isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        } finally {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", emptyMap());
+                setField(subject, "installedProviderScope", -1L);
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Gemini latest aliases do not expose unsupported Google Web Search")
+    void setSelectedModel_whenGoogleModelUsesLatestAlias_hidesWebSearch() throws Exception {
+        var provider = new ProviderRegistry.ProviderDef(
+                "Google AI",
+                "GEMINI_API_KEY",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+                List.of("gemini-2.5-flash-latest"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("ok"),
+                List::of
+        );
+
+        try {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", Map.of(provider.name(), provider));
+                setField(subject, "installedProviderScope", 1L);
+                subject.setSelectedModel("Google AI > gemini-2.5-flash-latest");
+            });
+
+            assertThat(callOnEdt(() -> subject.getInputBar().isWebSearchAvailable())).isFalse();
+            assertThat(callOnEdt(() -> readField(subject, "nativeWebSearchOutcome")))
+                    .isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+        } finally {
+            runOnEdt(() -> {
+                setField(subject, "providerMap", emptyMap());
+                setField(subject, "installedProviderScope", -1L);
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Copilot admission rejects revoked Responses evidence before provider creation")
+    void admitProvider_whenCopilotResponsesEvidenceWasRevoked_rejectsBeforeProviderCreation() throws Exception {
+        assertThat(copilotModelMetadataStore.updateIfGenerationCurrent(
+                copilotModelMetadataStore.currentGeneration(),
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+        )).isTrue();
+        var providerCreations = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                "GitHub Copilot",
+                null,
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                List.of("gpt-5.4-mini"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    providerCreations.incrementAndGet();
+                    return immediateProvider("unexpected");
+                },
+                List::of
+        );
+        var sendJob = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                new SendRuntimeSnapshot(provider, "gpt-5.4-mini", NativeWebSearchOutcome.OPTIONAL),
+                List.of(Message.user("Search")),
+                ReasoningLevel.OFF,
+                true,
+                false,
+                null,
+                ""
+        );
+        assertThat(copilotModelMetadataStore.clear()).isTrue();
+
+        assertThatThrownBy(() -> invokeAdmitProvider(subject, sendJob))
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .rootCause()
+                .hasMessage("Native Web Search is no longer available for the selected provider configuration.");
+        assertThat(providerCreations).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("Copilot admission rejects Responses evidence revoked during provider creation")
+    void admitProvider_whenCopilotEvidenceChangesDuringCreation_rejectsProvider() throws Exception {
+        assertThat(copilotModelMetadataStore.updateIfGenerationCurrent(
+                copilotModelMetadataStore.currentGeneration(),
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+        )).isTrue();
+        var providerCreations = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                "GitHub Copilot",
+                null,
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                List.of("gpt-5.4-mini"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    providerCreations.incrementAndGet();
+                    copilotModelMetadataStore.clear();
+                    return immediateProvider("unexpected");
+                },
+                List::of
+        );
+        var sendJob = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                new SendRuntimeSnapshot(provider, "gpt-5.4-mini", NativeWebSearchOutcome.OPTIONAL),
+                List.of(Message.user("Search")),
+                ReasoningLevel.OFF,
+                true,
+                false,
+                null,
+                ""
+        );
+
+        assertThatThrownBy(() -> invokeAdmitProvider(subject, sendJob))
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .rootCause()
+                .hasMessage("Native Web Search is no longer available for the selected provider configuration.");
+        assertThat(providerCreations).hasValue(1);
+        assertThat(sendJob.provider).isNull();
+        assertThat(sendJob.providerAdmitted).isFalse();
+    }
+
+    @Test
+    @DisplayName("An admitted Copilot continuation retains its original Responses evidence")
+    void admitProvider_whenCopilotContinuationWasAlreadyAdmitted_retainsCapturedEvidence() throws Exception {
+        assertThat(copilotModelMetadataStore.updateIfGenerationCurrent(
+                copilotModelMetadataStore.currentGeneration(),
+                "https://api.githubcopilot.com",
+                List.of(new CopilotModelMetadataStore.ModelMetadata("gpt-5.4-mini", List.of("/responses")))
+        )).isTrue();
+        var providerCreations = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                "GitHub Copilot",
+                null,
+                "https://api.githubcopilot.com",
+                "https://api.githubcopilot.com",
+                List.of("gpt-5.4-mini"),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    providerCreations.incrementAndGet();
+                    return immediateProvider("ok");
+                },
+                List::of
+        );
+        var original = new SendJob(
+                1L,
+                UUID.randomUUID(),
+                new SendRuntimeSnapshot(provider, "gpt-5.4-mini", NativeWebSearchOutcome.OPTIONAL),
+                List.of(Message.user("Search")),
+                ReasoningLevel.OFF,
+                true,
+                false,
+                null,
+                ""
+        );
+        invokeAdmitProvider(subject, original);
+        SendJob continuation = SendJob.admittedContinuation(2L, original);
+        assertThat(copilotModelMetadataStore.clear()).isTrue();
+
+        invokeAdmitProvider(subject, continuation);
+
+        assertThat(providerCreations).hasValue(2);
+        assertThat(continuation.providerAdmitted).isTrue();
     }
 
     @Test
@@ -273,35 +520,57 @@ class ChatPanelTest {
     @Test
     @DisplayName("Activity bubble uses status title color for failed tool cards")
     void setTitle_whenFailedStatus_usesErrorTitleColor() throws Exception {
+        String key = "Component.error.focusedBorderColor";
+        Object previous = callOnEdt(() -> UIManager.get(key));
         Color errorColor = new Color(210, 70, 70);
-        UIManager.put("Component.error.focusedBorderColor", errorColor);
+        try {
+            Color actual = callOnEdt(() -> {
+                UIManager.put(key, errorColor);
+                ActivityBubble bubble = new ActivityBubble();
+                try {
+                    bubble.setTitle("✗ write file — denied");
+                    return findComponents(bubble, JLabel.class).stream()
+                            .filter(label -> "✗ write file — denied".equals(label.getText()))
+                            .findFirst()
+                            .orElseThrow()
+                            .getForeground();
+                } finally {
+                    bubble.dispose();
+                }
+            });
 
-        JLabel titleLabel = callOnEdt(() -> {
-            ActivityBubble bubble = new ActivityBubble();
-            bubble.setTitle("✗ write file — denied");
-            return findComponents(bubble, JLabel.class).stream()
-                    .filter(label -> "✗ write file — denied".equals(label.getText()))
-                    .findFirst()
-                    .orElseThrow();
-        });
-        assertThat(callOnEdt(titleLabel::getForeground)).isEqualTo(errorColor);
+            assertThat(actual).isEqualTo(errorColor);
+        } finally {
+            runOnEdt(() -> restoreUiDefault(key, previous));
+        }
     }
 
     @Test
     @DisplayName("Activity bubble uses accent title color while streaming")
     void setStreaming_whenEnabled_usesAccentTitleColor() throws Exception {
+        String key = "Component.accentColor";
+        Object previous = callOnEdt(() -> UIManager.get(key));
         Color accent = new Color(80, 120, 240);
-        UIManager.put("Component.accentColor", accent);
+        try {
+            Color actual = callOnEdt(() -> {
+                UIManager.put(key, accent);
+                ActivityBubble bubble = new ActivityBubble();
+                try {
+                    bubble.setStreaming(true);
+                    return findComponents(bubble, JLabel.class).stream()
+                            .filter(label -> "Thinking".equals(label.getText()))
+                            .findFirst()
+                            .orElseThrow()
+                            .getForeground();
+                } finally {
+                    bubble.dispose();
+                }
+            });
 
-        JLabel titleLabel = callOnEdt(() -> {
-            ActivityBubble bubble = new ActivityBubble();
-            bubble.setStreaming(true);
-            return findComponents(bubble, JLabel.class).stream()
-                    .filter(label -> "Thinking".equals(label.getText()))
-                    .findFirst()
-                    .orElseThrow();
-        });
-        assertThat(callOnEdt(titleLabel::getForeground)).isEqualTo(accent);
+            assertThat(actual).isEqualTo(accent);
+        } finally {
+            runOnEdt(() -> restoreUiDefault(key, previous));
+        }
     }
 
     @Test
@@ -322,7 +591,7 @@ class ChatPanelTest {
     @DisplayName("Visible streaming listener reports active generation lifecycle")
     void onSend_whenStreamingVisible_notifiesVisibleStreamingChanges() throws Exception {
         var releaseStream = new CountDownLatch(1);
-        var observedStates = new ArrayList<Boolean>();
+        var observedStates = new CopyOnWriteArrayList<Boolean>();
         subject.setOnVisibleStreamingChanged(observedStates::add);
         setField(subject, "selectedProviderName", "OpenAI");
         setField(subject, "selectedModelId", "gpt-5-mini");
@@ -364,22 +633,111 @@ class ChatPanelTest {
 
 
     @Test
-    @DisplayName("DeepSeek consulted-source activity finalizes successful zero-result searches")
-    void finalizeConsultedSourceActivity_whenNoSourcesReturned_persistsZeroResultStatus() throws Exception {
+    @DisplayName("Codex search activity waits for an observed provider query")
+    void prepareNativeWebSearchActivity_whenProviderIsCodex_doesNotClaimSearchBeforeEvent() throws Exception {
         UUID conversationId = UUID.randomUUID();
         StreamingSession session = new StreamingSession(1L, conversationId, null);
+        SendJob sendJob = webSearchSendJob(
+                1L,
+                conversationId,
+                "OpenAI Codex",
+                "gpt-5.4-mini",
+                "https://api.openai.com/v1"
+        );
+        List<Message> history = List.of(Message.user("latest Java release"));
 
-        invokeInitializeConsultedSourceActivity(subject, session, "latest DeepSeek models");
+        List<Message> result = callOnEdt(() -> invokePrepareNativeWebSearchActivity(subject, sendJob, session, history));
+
+        assertThat(result).isSameAs(history);
+        assertThat(session.consultedSourceMode).isTrue();
+        assertThat(session.webSearchQueries).isEmpty();
+        assertThat(session.webSearchActivity).isEmpty();
+
+        invokeHandleAssistantWebSearchQuery(subject, session, "Java 26 release date");
+        invokeHandleAssistantWebSearchQuery(subject, session, "OpenJDK 26 release notes");
+
+        assertThat(session.webSearchQueries).containsExactly("Java 26 release date", "OpenJDK 26 release notes");
+        assertThat(session.webSearchActivity).hasToString("""
+                **Searched**
+                - Java 26 release date
+                - OpenJDK 26 release notes
+                """.trim());
+    }
+
+    @Test
+    @DisplayName("Mistral search does not claim the user prompt as an observed query")
+    void prepareNativeWebSearchActivity_whenProviderIsMistral_keepsUnobservedActivityEmpty() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(2L, conversationId, null);
+        SendJob sendJob = webSearchSendJob(
+                2L,
+                conversationId,
+                "Mistral",
+                "mistral-small-latest",
+                "https://api.mistral.ai/v1"
+        );
+        List<Message> history = List.of(Message.user("latest Mistral release"));
+
+        List<Message> result = callOnEdt(() -> invokePrepareNativeWebSearchActivity(subject, sendJob, session, history));
+
+        assertThat(result).isSameAs(history);
+        assertThat(session.consultedSourceMode).isFalse();
+        assertThat(session.webSearchQueries).isEmpty();
+        assertThat(session.webSearchActivity).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Native search activity does not claim an unobserved user-prompt query")
+    void prepareNativeWebSearchActivity_whenProviderDoesNotReportQuery_keepsActivityEmpty() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(3L, conversationId, null);
+        SendJob sendJob = webSearchSendJob(
+                3L,
+                conversationId,
+                "OpenAI",
+                "gpt-5",
+                "https://api.openai.com/v1"
+        );
+        List<Message> history = List.of(Message.user("latest OpenAI release"));
+
+        List<Message> result = callOnEdt(() -> invokePrepareNativeWebSearchActivity(subject, sendJob, session, history));
+
+        assertThat(result).isSameAs(history);
+        assertThat(session.consultedSourceMode).isFalse();
+        assertThat(session.webSearchQueries).isEmpty();
+        assertThat(session.webSearchActivity).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Codex activity remains absent when no provider search event is observed")
+    void finalizeConsultedSourceActivity_whenCodexDoesNotSearch_keepsActivityEmpty() throws Exception {
+        StreamingSession session = new StreamingSession(2L, UUID.randomUUID(), null);
+        invokeInitializeConsultedSourceActivity(subject, session);
+
         invokeFinalizeConsultedSourceActivity(subject, session);
 
         assertThat(session.consultedSourceMode).isTrue();
-        assertThat(session.webSearchActivity).hasToString("""
-                **Searched**
-                - latest DeepSeek models
+        assertThat(session.webSearchActivity).isEmpty();
+    }
 
-                **Sources consulted**
-                - No source URLs returned.
-                """.trim());
+    @Test
+    @DisplayName("DeepSeek activity does not claim the prompt as a provider-observed search")
+    void prepareNativeWebSearchActivity_whenDeepSeekReturnsNoEvidence_keepsActivityEmpty() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(1L, conversationId, null);
+        List<Message> history = List.of(Message.user("latest DeepSeek models"));
+
+        invokePrepareNativeWebSearchActivity(
+                subject,
+                deepSeekWebSearchSendJob(conversationId),
+                session,
+                history
+        );
+        invokeFinalizeConsultedSourceActivity(subject, session);
+
+        assertThat(session.consultedSourceMode).isTrue();
+        assertThat(session.webSearchQueries).isEmpty();
+        assertThat(session.webSearchActivity).isEmpty();
     }
 
     @Test
@@ -391,44 +749,49 @@ class ChatPanelTest {
         terminal.terminalCallbackStarted.set(true);
         StreamingSession shutdown = new StreamingSession(4L, UUID.randomUUID(), null);
 
-        invokeInitializeConsultedSourceActivity(subject, cancelled, "cancelled query");
-        invokeInitializeConsultedSourceActivity(subject, terminal, "terminal query");
+        invokeInitializeConsultedSourceActivity(subject, cancelled);
+        invokeInitializeConsultedSourceActivity(subject, terminal);
         setField(subject, "shutdownInProgress", true);
         try {
-            invokeInitializeConsultedSourceActivity(subject, shutdown, "shutdown query");
+            invokeInitializeConsultedSourceActivity(subject, shutdown);
         } finally {
             setField(subject, "shutdownInProgress", false);
         }
 
         assertThat(List.of(cancelled, terminal, shutdown)).allSatisfy(session -> {
             assertThat(session.consultedSourceMode).isFalse();
-            assertThat(session.webSearchQuery).isEmpty();
+            assertThat(session.webSearchQueries).isEmpty();
             assertThat(session.webSearchSources).isEmpty();
             assertThat(session.webSearchActivity).isEmpty();
         });
     }
 
     @Test
-    @DisplayName("Consulted-source admission rejects cancelled, terminal, and shutdown sessions")
-    void handleAssistantWebSearchSource_whenSessionCannotAcceptSources_doesNotMutateSnapshot() throws Exception {
+    @DisplayName("Consulted-search admission rejects cancelled, terminal, and shutdown sessions")
+    void handleAssistantWebSearchEvidence_whenSessionCannotAcceptEvidence_doesNotMutateSnapshot() throws Exception {
         StreamingSession cancelled = initializedConsultedSourceSession(5L, "cancelled query");
         cancelled.cancelled.set(true);
         StreamingSession terminal = initializedConsultedSourceSession(6L, "terminal query");
         terminal.terminalCallbackStarted.set(true);
         StreamingSession shutdown = initializedConsultedSourceSession(7L, "shutdown query");
 
+        invokeHandleAssistantWebSearchQuery(subject, cancelled, "late cancelled query");
+        invokeHandleAssistantWebSearchQuery(subject, terminal, "late terminal query");
         invokeHandleAssistantWebSearchSource(subject, cancelled, new WebSearchSource("Docs", "https://cancelled.example"));
         invokeHandleAssistantWebSearchSource(subject, terminal, new WebSearchSource("Docs", "https://terminal.example"));
         setField(subject, "shutdownInProgress", true);
         try {
+            invokeHandleAssistantWebSearchQuery(subject, shutdown, "late shutdown query");
             invokeHandleAssistantWebSearchSource(subject, shutdown, new WebSearchSource("Docs", "https://shutdown.example"));
         } finally {
             setField(subject, "shutdownInProgress", false);
         }
 
         assertThat(List.of(cancelled, terminal, shutdown)).allSatisfy(session -> {
+            assertThat(session.webSearchQueries).hasSize(1);
             assertThat(session.webSearchSources).isEmpty();
-            assertThat(session.webSearchActivity).hasToString("**Searched**\n- %s".formatted(session.webSearchQuery));
+            assertThat(session.webSearchActivity)
+                    .hasToString("**Searched**\n- %s".formatted(session.webSearchQueries.getFirst()));
         });
     }
 
@@ -469,12 +832,52 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("A cancellation holding the persistence lock rejects a waiting token callback")
+    void handleAssistantToken_whenCancellationWinsLock_rejectsLateToken() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StreamingSession session = new StreamingSession(9L, conversationId, null);
+        SendJob sendJob = webSearchSendJob(
+                9L,
+                conversationId,
+                "OpenAI",
+                "gpt-5",
+                "https://api.openai.com/v1"
+        );
+        Object terminalLock = readField(subject, "terminalPersistenceLock");
+        CountDownLatch callbackReady = new CountDownLatch(1);
+        CountDownLatch callbackFinished = new CountDownLatch(1);
+        AtomicReference<Throwable> callbackFailure = new AtomicReference<>();
+
+        Thread callback;
+        synchronized (terminalLock) {
+            callback = Thread.startVirtualThread(() -> {
+                callbackReady.countDown();
+                try {
+                    invokeHandleAssistantToken(subject, session, sendJob, "late token");
+                } catch (Throwable t) {
+                    callbackFailure.set(t);
+                } finally {
+                    callbackFinished.countDown();
+                }
+            });
+            assertThat(callbackReady.await(2, TimeUnit.SECONDS)).isTrue();
+            session.cancelled.set(true);
+        }
+
+        assertThat(callbackFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        callback.join();
+        assertThat(callbackFailure.get()).isNull();
+        assertThat(session.response).isEmpty();
+        assertThat(session.responseParts).isEmpty();
+    }
+
+    @Test
     @DisplayName("DeepSeek consulted sources remain structured and do not scrape answer links")
     void prepareAssistantResponse_whenConsultedSourceMode_doesNotScrapeAnswerLinks() throws Exception {
         UUID conversationId = UUID.randomUUID();
         StreamingSession session = new StreamingSession(1L, conversationId, null);
         appendAssistantResponse(session, "Answer with [model link](https://answer.example/link)");
-        invokeInitializeConsultedSourceActivity(subject, session, "latest DeepSeek models");
+        invokeInitializeConsultedSourceActivity(subject, session);
         invokeHandleAssistantWebSearchSource(subject, session, new WebSearchSource("Docs", "https://docs.example/source"));
         invokeFinalizeConsultedSourceActivity(subject, session);
 
@@ -485,10 +888,41 @@ class ChatPanelTest {
         assertThat(entry.message().meta().assistantWebSearch())
                 .contains("**Sources consulted**")
                 .contains("https://docs.example/source")
-                .doesNotContain("https://answer.example/link");
+                .doesNotContain("**Searched**", "https://answer.example/link");
         assertThat(entry.message().meta().citations()).isEmpty();
     }
 
+
+    @Test
+    @DisplayName("Native search activity adds one Sources section when citations arrive")
+    void mergeAssistantWebSearchWithAnswerSources_whenActivityHasSearchQuery_doesNotDuplicateSourcesHeading() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        SendJob sendJob = webSearchSendJob(
+                9L,
+                conversationId,
+                "OpenAI",
+                "gpt-5",
+                "https://api.openai.com/v1"
+        );
+        List<CitationRef> citations = List.of(CitationRef.builder()
+                .number(1)
+                .kind(CitationKind.WEB)
+                .title("OpenAI docs")
+                .url("https://platform.openai.com/docs")
+                .build());
+
+        String merged = invokeMergeAssistantWebSearchWithAnswerSources(
+                subject,
+                sendJob,
+                "Answer [1]",
+                "**Searched**\n- current OpenAI docs",
+                citations
+        );
+
+        assertThat(merged).contains("**Searched**", "**Sources**", "https://platform.openai.com/docs");
+        assertThat(StringUtils.countMatches(merged, "**Sources**")).isEqualTo(1);
+        assertThat(merged).doesNotContain("Source URLs will appear here");
+    }
 
     @Test
     @DisplayName("Structured web citations append a Sources section when answer has no source references")
@@ -698,32 +1132,35 @@ class ChatPanelTest {
     @Test
     @DisplayName("Composer is centered and constrained inside workspace")
     void layout_whenWidePanel_constrainsComposerWidth() throws Exception {
-        subject.setSize(1400, 900);
-        subject.doLayout();
-        flushEdt();
+        runOnEdt(() -> {
+            subject.setSize(1400, 900);
+            subject.doLayout();
+        });
 
-        assertThat(subject.getInputBar().getWidth()).isLessThanOrEqualTo(920);
+        assertThat(callOnEdt(() -> subject.getInputBar().getWidth())).isLessThanOrEqualTo(920);
     }
 
     @Test
     @DisplayName("Chat panel exposes icon render mode buttons for the title bar")
-    void constructor_whenCreated_restoresRenderModeButtonsOnly() {
-        List<JToggleButton> renderModeButtons = findComponents(subject.getRenderTogglePanel(), JToggleButton.class);
+    void constructor_whenCreated_restoresRenderModeButtonsOnly() throws Exception {
+        runOnEdt(() -> {
+            List<JToggleButton> renderModeButtons = findComponents(subject.getRenderTogglePanel(), JToggleButton.class);
 
-        assertThat(renderModeButtons.stream().map(AbstractButton::getText))
-                .containsOnly("");
-        assertThat(renderModeButtons.stream().map(AbstractButton::getToolTipText))
-                .contains("Preview rendered markdown", "Show raw markdown")
-                .doesNotContain("Project");
-        assertThat(renderModeButtons.stream()
-                .filter(button -> Strings.CS.equals(button.getToolTipText(), "Preview rendered markdown"))
-                .findFirst()
-                .orElseThrow()
-                .isSelected()).isTrue();
-        assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
-                .doesNotContain("More conversation actions");
-        assertThat(findComponents(subject, JLabel.class).stream().map(JLabel::getText))
-                .doesNotContain("New chat");
+            assertThat(renderModeButtons.stream().map(AbstractButton::getText))
+                    .containsOnly("");
+            assertThat(renderModeButtons.stream().map(AbstractButton::getToolTipText))
+                    .contains("Preview rendered markdown", "Show raw markdown")
+                    .doesNotContain("Project");
+            assertThat(renderModeButtons.stream()
+                    .filter(button -> Strings.CS.equals(button.getToolTipText(), "Preview rendered markdown"))
+                    .findFirst()
+                    .orElseThrow()
+                    .isSelected()).isTrue();
+            assertThat(findComponents(subject, JButton.class).stream().map(JButton::getToolTipText))
+                    .doesNotContain("More conversation actions");
+            assertThat(findComponents(subject, JLabel.class).stream().map(JLabel::getText))
+                    .doesNotContain("New chat");
+        });
     }
 
 
@@ -732,42 +1169,47 @@ class ChatPanelTest {
     void promptQuickActionButton_whenClicked_invokesActionWithoutReplacingInput() throws Exception {
         AtomicInteger invoked = new AtomicInteger();
 
-        subject.setPromptQuickActions(List.of(new ChatPanel.PromptQuickAction("Summarize", invoked::incrementAndGet)));
+        JButton summarizeButton = callOnEdt(() -> {
+            subject.setPromptQuickActions(List.of(new ChatPanel.PromptQuickAction("Summarize", invoked::incrementAndGet)));
+            return findComponents(subject, JButton.class).stream()
+                    .filter(button -> Strings.CS.equals(button.getText(), "Summarize"))
+                    .findFirst()
+                    .orElseThrow();
+        });
 
-        JButton summarizeButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> Strings.CS.equals(button.getText(), "Summarize"))
-                .findFirst()
-                .orElseThrow();
-
-        SwingUtilities.invokeAndWait(summarizeButton::doClick);
+        runOnEdt(summarizeButton::doClick);
 
         assertThat(invoked).hasValue(1);
-        assertThat(subject.getInputBar().getRawText()).isEmpty();
+        assertThat(callOnEdt(() -> subject.getInputBar().getRawText())).isEmpty();
     }
 
     @Test
     @DisplayName("Loaded assistant findings remain normal chat content")
     void loadHistory_whenAssistantContainsFindings_rendersAsAssistantMessage() throws Exception {
-        subject.loadHistory(List.of(
-                Message.user("Review codebase"),
-                Message.assistant("""
-                        Findings
+        List<MessageBubble> assistantBubbles = callOnEdt(() -> {
+            subject.loadHistory(List.of(
+                    Message.user("Review codebase"),
+                    Message.assistant("""
+                            Findings
 
-                        P1 Agent bash escapes selected root
-                        Agent Mode documents bash as running within selected folder.
-                        LocalToolRuntime.java:218-233
-                        """)
-        ));
+                            P1 Agent bash escapes selected root
+                            Agent Mode documents bash as running within selected folder.
+                            LocalToolRuntime.java:218-233
+                            """)
+            ));
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<MessageBubble> assistantBubbles = findComponents(messagesPanel, MessageBubble.class).stream()
-                .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
-                .toList();
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, MessageBubble.class).stream()
+                    .filter(bubble -> bubble.getRole() == Role.ASSISTANT)
+                    .toList();
+        });
 
         assertThat(assistantBubbles).hasSize(1);
-        assertThat(findComponents(messagesPanel, JLabel.class).stream().map(JLabel::getText))
-                .doesNotContain("1 finding");
-        assertThat(subject.getHistory()).extracting(Message::content)
+        assertThat(callOnEdt(() -> findComponents(
+                (JPanel) readField(subject, "messagesPanel"),
+                JLabel.class
+        ).stream().map(JLabel::getText).toList())).doesNotContain("1 finding");
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
                 .contains("Findings\n\nP1 Agent bash escapes selected root\nAgent Mode documents bash as running within selected folder.\nLocalToolRuntime.java:218-233\n");
     }
 
@@ -1538,6 +1980,93 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Credential invalidation blocks ordinary sends until settlement completes")
+    void invalidateSelectedProviderCapabilityEvidence_whenCredentialsAreChanging_blocksSend() throws Exception {
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("answer", providerCalls));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("credentials are still updating");
+    }
+
+    @Test
+    @DisplayName("One settlement does not unblock another credential change for the same provider")
+    void settleSelectedProviderCredentialChange_whenChangesOverlap_keepsProviderBlocked() throws Exception {
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("answer", providerCalls));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.settleSelectedProviderCredentialChange(Set.of(providerName));
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(() -> ((Map<?, ?>) readField(subject, "credentialChangesPending")).get(providerName)))
+                .isEqualTo(1);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("credentials are still updating");
+    }
+
+    @Test
+    @DisplayName("Credential settlement does not start provider resolution during shutdown")
+    void settleSelectedProviderCredentialChange_whenShutdownStarted_doesNotLaunchSettlement() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.beginShutdown();
+        });
+        long settlementGeneration = ((AtomicLong) readField(subject, "credentialSettlementCounter")).get();
+
+        runOnEdt(() -> subject.settleSelectedProviderCredentialChange(Set.of(providerName)));
+
+        assertThat(((AtomicLong) readField(subject, "credentialSettlementCounter"))).hasValue(settlementGeneration);
+    }
+
+    @Test
+    @DisplayName("Transient credential settlement failures trigger a provider refresh")
+    void settleSelectedProviderCredentialChange_whenResolutionFails_recoversThroughRefresh() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        ProviderRegistry.ProviderDef selectedProvider = callOnEdt(() ->
+                ((Map<String, ProviderRegistry.ProviderDef>) readField(subject, "providerMap")).get(providerName)
+        );
+        ProviderRegistry registry = mock(ProviderRegistry.class);
+        var providerResolutionCalls = new AtomicInteger();
+        when(registry.availableProviders()).thenAnswer(ignored -> {
+            if (providerResolutionCalls.incrementAndGet() == 1) {
+                throw new IllegalStateException("temporary credential lookup failure");
+            }
+            return List.of(selectedProvider);
+        });
+        setField(subject, "providerRegistry", registry);
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.settleSelectedProviderCredentialChange(Set.of(providerName));
+        });
+
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerResolutionCalls.get() >= 2 && callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "providerMap")).containsKey(providerName)
+                        && (long) readField(subject, "installedProviderScope") >= 0L
+        ));
+
+        assertThat(providerResolutionCalls).hasValue(2);
+    }
+
+    @Test
     @DisplayName("Empty-state Web Search action is hidden until native search is supported")
     void applyNativeWebSearchOutcome_whenSupportChanges_updatesEmptyStateSearchAction() throws Exception {
         assertThat(callOnEdt(() -> findComponents(subject, JButton.class).stream()
@@ -1815,6 +2344,40 @@ class ChatPanelTest {
             assertThat(job.requestedWebSearch).isFalse();
             assertThat(job.webSearchEnabled).isTrue();
             assertThat(job.runtime.webSearchOutcome()).isEqualTo(NativeWebSearchOutcome.REQUIRED);
+        } finally {
+            releaseAdmission.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("Credential invalidation during provider creation prevents stale admission")
+    void onSend_whenCredentialsChangeDuringProviderCreation_doesNotPersistOrStream() throws Exception {
+        var admissionStarted = new CountDownLatch(1);
+        var releaseAdmission = new CountDownLatch(1);
+        var persistenceCalls = new AtomicInteger();
+        installBlockingProvider(subject, admissionStarted, releaseAdmission);
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalls.incrementAndGet();
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            readInputTextArea(subject.getInputBar()).setText("do not send with stale credentials");
+        });
+
+        try {
+            invokeOnSend(subject);
+            assertThat(admissionStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+            runOnEdt(() -> subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName)));
+            releaseAdmission.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                    ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+            ));
+
+            assertThat(persistenceCalls).hasValue(0);
+            assertThat(callOnEdt(subject::getHistory)).isEmpty();
+            assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                    .contains("Provider credentials changed while the request was being prepared");
         } finally {
             releaseAdmission.countDown();
         }
@@ -2230,6 +2793,47 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Cancelling a stream flushes buffered partial think-tag text")
+    void cancelStreamingAndMarkCancelled_whenTokenEndsWithPartialThinkTag_preservesBufferedText() throws Exception {
+        var streamStarted = new CountDownLatch(1);
+        var releaseStream = new CountDownLatch(1);
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("answer<thi");
+                streamStarted.countDown();
+                try {
+                    releaseStream.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("question"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(subject::cancelStreamingAndMarkCancelled);
+            flushEdt();
+
+            assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                    .containsExactly("question", "answer<thi\n\n[Cancelled]");
+        } finally {
+            releaseStream.countDown();
+        }
+    }
+
+    @Test
     @DisplayName("Visible cancel falls back to legacy provider cancellation when no session handle exists")
     void cancelStreaming_whenLegacyProviderHasNoSessionHandle_callsProviderCancel() throws Exception {
         var streamStarted = new CountDownLatch(1);
@@ -2444,6 +3048,32 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Permanent cancellation still waits for attachment cleanup when request close fails")
+    void cancelAllRequestsAsync_whenRequestCloseFails_waitsForAttachmentCleanup() throws Exception {
+        var session = new StreamingSession(92L, UUID.randomUUID(), immediateProvider("unused"));
+        session.registerActiveRequest(() -> {
+            throw new IOException("close failed");
+        });
+        CompletableFuture<Void> attachmentCleanup = controlledFuture();
+        runOnEdt(() -> {
+            @SuppressWarnings("unchecked")
+            Map<Long, StreamingSession> sessions = (Map<Long, StreamingSession>) readField(subject, "activeSessions");
+            sessions.put(session.sessionId, session);
+            @SuppressWarnings("unchecked")
+            Set<CompletableFuture<Void>> cleanupTasks =
+                    (Set<CompletableFuture<Void>>) readField(subject, "attachmentDiscardTasks");
+            cleanupTasks.add(attachmentCleanup);
+        });
+
+        CompletableFuture<Void> cancellation = callOnEdt(subject::cancelAllRequestsAsync);
+        assertThat(cancellation).isNotDone();
+
+        attachmentCleanup.complete(null);
+
+        assertThatThrownBy(cancellation::join).hasRootCauseMessage("close failed");
+    }
+
+    @Test
     @DisplayName("Cancelling during preparing restores draft and clears busy state")
     void cancelStreaming_whenPreparing_restoresDraftAndClearsIndicator() throws Exception {
         var started = new CountDownLatch(1);
@@ -2485,7 +3115,7 @@ class ChatPanelTest {
     void cancelStreaming_whenUserPersistenceIsPending_adoptsSuccessWithoutProvider() throws Exception {
         UUID conversationId = UUID.randomUUID();
         var persistenceStarted = new CountDownLatch(1);
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var providerCalls = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
@@ -2517,7 +3147,7 @@ class ChatPanelTest {
     void resolveIndeterminateUserMessage_whenCancelledAfterSubmission_doesNotInvokeProvider() throws Exception {
         UUID conversationId = UUID.randomUUID();
         var persistenceStarted = new CountDownLatch(1);
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var providerCalls = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
@@ -2645,32 +3275,31 @@ class ChatPanelTest {
     @Test
     @DisplayName("Render mode buttons use icons instead of visible text")
     void renderModeToggle_whenCreated_usesIconButtons() throws Exception {
-        JToggleButton previewToggle = (JToggleButton) readField(subject, "previewToggle");
-        JToggleButton markdownToggle = (JToggleButton) readField(subject, "markdownToggle");
+        runOnEdt(() -> {
+            JToggleButton previewToggle = (JToggleButton) readField(subject, "previewToggle");
+            JToggleButton markdownToggle = (JToggleButton) readField(subject, "markdownToggle");
 
-        assertThat(previewToggle.getText()).isEmpty();
-        assertThat(markdownToggle.getText()).isEmpty();
-        assertThat(previewToggle.getIcon()).isNotNull();
-        assertThat(markdownToggle.getIcon()).isNotNull();
-        assertThat(previewToggle.getAccessibleContext().getAccessibleName()).isEqualTo(RenderMode.PREVIEW.displayName());
-        assertThat(markdownToggle.getAccessibleContext().getAccessibleName()).isEqualTo(RenderMode.MARKDOWN.displayName());
+            assertThat(previewToggle.getText()).isEmpty();
+            assertThat(markdownToggle.getText()).isEmpty();
+            assertThat(previewToggle.getIcon()).isNotNull();
+            assertThat(markdownToggle.getIcon()).isNotNull();
+            assertThat(previewToggle.getAccessibleContext().getAccessibleName())
+                    .isEqualTo(RenderMode.PREVIEW.displayName());
+            assertThat(markdownToggle.getAccessibleContext().getAccessibleName())
+                    .isEqualTo(RenderMode.MARKDOWN.displayName());
+        });
     }
 
     @Test
     @DisplayName("Clear chat button is visible only when chat history has messages")
     void loadHistoryAndClearChat_whenHistoryChanges_updatesClearChatButtonVisibility() throws Exception {
-        flushEdt();
-        assertThat(subject.getInputBar().isClearChatVisible()).isFalse();
+        assertThat(callOnEdt(() -> subject.getInputBar().isClearChatVisible())).isFalse();
 
-        subject.loadHistory(List.of(Message.user("hello")));
-        flushEdt();
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("hello"))));
+        assertThat(callOnEdt(() -> subject.getInputBar().isClearChatVisible())).isTrue();
 
-        assertThat(subject.getInputBar().isClearChatVisible()).isTrue();
-
-        subject.clearChatView();
-        flushEdt();
-
-        assertThat(subject.getInputBar().isClearChatVisible()).isFalse();
+        runOnEdt(subject::clearChatView);
+        assertThat(callOnEdt(() -> subject.getInputBar().isClearChatVisible())).isFalse();
     }
 
     @Test
@@ -2717,26 +3346,29 @@ class ChatPanelTest {
     @DisplayName("Bubble context menu clear item follows clear chat visibility and requests clear")
     void bubbleContextMenu_whenClearChatAvailabilityChanges_updatesItemVisibilityAndAction() throws Exception {
         var requested = new AtomicInteger();
-        subject.setOnClearChatRequested(requested::incrementAndGet);
-        subject.loadHistory(List.of(Message.user("hello")));
-        flushEdt();
+        JMenuItem clearChatItem = callOnEdt(() -> {
+            subject.setOnClearChatRequested(requested::incrementAndGet);
+            subject.loadHistory(List.of(Message.user("hello")));
+            MessageBubble bubble = findComponents(
+                    (JPanel) readField(subject, "messagesPanel"),
+                    MessageBubble.class
+            ).getFirst();
+            JPopupMenu popup = contentPopupMenu(bubble);
+            JMenuItem item = findMenuItem(popup, "Clear Chat");
+            notifyPopupWillBecomeVisible(popup);
+            assertThat(item.isVisible()).isTrue();
+            return item;
+        });
 
-        MessageBubble bubble = findComponents((JPanel) readField(subject, "messagesPanel"), MessageBubble.class).getFirst();
-        JPopupMenu popup = contentPopupMenu(bubble);
-        JMenuItem clearChatItem = findMenuItem(popup, "Clear Chat");
-
-        notifyPopupWillBecomeVisible(popup);
-        assertThat(clearChatItem.isVisible()).isTrue();
-
-        SwingUtilities.invokeAndWait(clearChatItem::doClick);
+        runOnEdt(clearChatItem::doClick);
         assertThat(requested).hasValue(1);
 
-        subject.getInputBar().setEnabled(false);
-        notifyPopupWillBecomeVisible(popup);
-
-        assertThat(clearChatItem.isVisible()).isFalse();
-
-        SwingUtilities.invokeAndWait(clearChatItem::doClick);
+        runOnEdt(() -> {
+            subject.getInputBar().setEnabled(false);
+            notifyPopupWillBecomeVisible((JPopupMenu) clearChatItem.getParent());
+            assertThat(clearChatItem.isVisible()).isFalse();
+            clearChatItem.doClick();
+        });
         assertThat(requested).hasValue(1);
     }
 
@@ -3485,7 +4117,7 @@ class ChatPanelTest {
     @DisplayName("Assistant persistence rejected after deletion does not recreate recovery state")
     void persistAssistantMessageEvent_whenDeletionWins_discardsRejectedRecovery() throws Exception {
         UUID conversationId = UUID.randomUUID();
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         var submitted = new CountDownLatch(1);
         var entry = new ConversationHistoryEntry(UUID.randomUUID(), 2, Message.assistant("late answer"));
         runOnEdt(() -> subject.setOnDurableAssistantMessageCompleted(event -> {
@@ -3547,7 +4179,7 @@ class ChatPanelTest {
     void removeNotify_whenUserPersistenceCompletes_preservesCommittedContinuation() throws Exception {
         UUID conversationId = UUID.randomUUID();
         var persistenceStarted = new CountDownLatch(1);
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var providerCalls = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
@@ -3775,7 +4407,7 @@ class ChatPanelTest {
         UUID conversationId = UUID.randomUUID();
         UUID otherConversationId = UUID.randomUUID();
         var persistenceStarted = new CountDownLatch(1);
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var delivered = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
@@ -3857,7 +4489,7 @@ class ChatPanelTest {
     void addNotify_whenDurableFailureArrivedWhileRemoved_marksFailureDelivered() throws Exception {
         UUID conversationId = UUID.randomUUID();
         var persistenceStarted = new CountDownLatch(1);
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var delivered = new AtomicInteger();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
@@ -3961,6 +4593,51 @@ class ChatPanelTest {
 
         awaitCondition(2, TimeUnit.SECONDS, () -> !Files.exists(stagedPath));
         assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "failedUserSends"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A definite persistence failure after shutdown discards staged attachments")
+    void beginShutdown_whenPendingUserPersistenceFails_discardsStagedAttachments() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDir.resolve("shutdown-pending-failure"));
+        var attachmentStager = new AttachmentStager(storagePaths);
+        Path source = tempDir.resolve("pending-draft.txt");
+        Files.writeString(source, "draft");
+        AttachmentRef attachment = attachmentStager.stage(new ComposerAttachment(source, "text/plain", 5L, false));
+        Path stagedPath = Path.of(attachment.storagePath());
+        var persistenceStarted = new CountDownLatch(1);
+        CompletableFuture<UUID> persistence = controlledFuture();
+        setField(subject, "attachmentStager", attachmentStager);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) ->
+                    new Message(
+                            Role.USER,
+                            List.of(new TextPart(composerState.text()), new FilePart(attachment)),
+                            Instant.now()
+                    )
+            );
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceStarted.countDown();
+                return persistence;
+            });
+            readInputTextArea(subject.getInputBar()).setText("pending attachment");
+        });
+        setCurrentProvider(subject, immediateProvider("unused"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        runOnEdt(subject::beginShutdown);
+        CompletableFuture<Void> cleanup = callOnEdt(subject::cancelAllRequestsAsync);
+        assertThat(cleanup).isNotDone();
+
+        persistence.completeExceptionally(new SQLException("forced failure"));
+        cleanup.get(2, TimeUnit.SECONDS);
+        flushEdt();
+
+        assertThat(stagedPath).doesNotExist();
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "activeSendJobs"))).isEmpty();
     }
 
     @Test
@@ -4206,13 +4883,104 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Canonical reconciliation adopts the saved message when provider recreation fails")
+    void resolveIndeterminateUserMessage_whenProviderRecreationFails_keepsCanonicalMessage() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceCalled = new CountDownLatch(1);
+        var factoryCalls = new AtomicInteger();
+        ProviderRegistry.ProviderDef provider = new ProviderRegistry.ProviderDef(
+                "Reconciliation Provider",
+                null,
+                null,
+                null,
+                List.of("reconciliation-model"),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> {
+                    if (factoryCalls.incrementAndGet() == 1) {
+                        return immediateProvider("unused");
+                    }
+                    throw new IllegalStateException("provider recreation failed");
+                },
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(provider.name(), provider));
+            setField(subject, "installedProviderScope", 1L);
+            subject.setSelectedModel("Reconciliation Provider > reconciliation-model");
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ));
+            });
+            readInputTextArea(subject.getInputBar()).setText("canonical message");
+        });
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        runOnEdt(() -> subject.resolveIndeterminateUserMessage(conversationId, true));
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+        flushEdt();
+
+        assertThat(factoryCalls).hasValue(2);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("canonical message");
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("message was saved", "provider recreation failed");
+    }
+
+    @Test
+    @DisplayName("Canonical reconciliation does not reuse admission after a settled credential change")
+    void resolveIndeterminateUserMessage_whenCredentialsChangedBeforeReconciliation_adoptsMessageWithoutProvider() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        var persistenceCalled = new CountDownLatch(1);
+        var providerCalls = new AtomicInteger();
+        runOnEdt(() -> {
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ));
+            });
+            readInputTextArea(subject.getInputBar()).setText("committed during credential update");
+        });
+        setCurrentProvider(subject, providerReturning("unexpected", providerCalls));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            @SuppressWarnings("unchecked")
+            Map<String, Integer> pendingChanges = (Map<String, Integer>) readField(subject, "credentialChangesPending");
+            pendingChanges.remove(providerName);
+            subject.resolveIndeterminateUserMessage(conversationId, true);
+        });
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("committed during credential update");
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("Regenerate the response after the update finishes");
+    }
+
+    @Test
     @DisplayName("Durable save-only edit keeps the original history until persistence succeeds")
     void editUserMessage_whenDurableSaveIsPending_commitsUiAfterPersistence() throws Exception {
         UUID conversationId = UUID.randomUUID();
         UUID userMessageId = UUID.randomUUID();
         Message userMessage = Message.user("old question");
         Message assistantMessage = Message.assistant("old answer");
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         var mutation = new AtomicReference<ChatPanel.HistoryMutationEvent>();
         runOnEdt(() -> {
             subject.loadConversationHistoryEntries(conversationId, List.of(
@@ -4257,7 +5025,7 @@ class ChatPanelTest {
     @DisplayName("Reattaching after an edit failure delivers the retained editor recovery")
     void addNotify_whenEditFailureArrivedWhileRemoved_marksHistoryFailureDelivered() throws Exception {
         UUID conversationId = UUID.randomUUID();
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         var delivered = new AtomicInteger();
         runOnEdt(() -> {
             subject.loadConversationHistoryEntries(conversationId, List.of(
@@ -4370,7 +5138,7 @@ class ChatPanelTest {
         UUID userMessageId = UUID.randomUUID();
         Message userMessage = Message.user("question");
         Message assistantMessage = Message.assistant("old answer");
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         var mutation = new AtomicReference<ChatPanel.HistoryMutationEvent>();
         runOnEdt(() -> {
             subject.loadConversationHistoryEntries(conversationId, List.of(
@@ -4406,7 +5174,7 @@ class ChatPanelTest {
     @DisplayName("Cancelling after durable regeneration submission applies committed truncation without invoking the provider")
     void regenerateRecentResponse_whenCancelledAfterSubmission_appliesCommittedTruncationOnly() throws Exception {
         UUID conversationId = UUID.randomUUID();
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         var mutationCalled = new CountDownLatch(1);
         runOnEdt(() -> {
             subject.loadConversationHistoryEntries(conversationId, List.of(
@@ -4493,26 +5261,26 @@ class ChatPanelTest {
     @Test
     @DisplayName("Cancelling user message edit restores composer draft and leaves history unchanged")
     void editUserMessage_whenCancelled_restoresDraftAndKeepsHistory() throws Exception {
-        subject.loadHistory(List.of(Message.user("old question")));
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("draft text"));
-        flushEdt();
+        JTextArea textArea = callOnEdt(() -> {
+            subject.loadHistory(List.of(Message.user("old question")));
+            JTextArea area = readInputTextArea(subject.getInputBar());
+            area.setText("draft text");
+            findComponents(subject, JButton.class).stream()
+                    .filter(button -> "Edit message".equals(button.getToolTipText()))
+                    .findFirst()
+                    .orElseThrow()
+                    .doClick();
+            area.setText("changed edit");
+            findComponents(subject, JButton.class).stream()
+                    .filter(button -> "Cancel editing".equals(button.getToolTipText()))
+                    .findFirst()
+                    .orElseThrow()
+                    .doClick();
+            return area;
+        });
 
-        JButton editButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> "Edit message".equals(button.getToolTipText()))
-                .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(editButton::doClick);
-        SwingUtilities.invokeAndWait(() -> textArea.setText("changed edit"));
-
-        JButton cancelButton = findComponents(subject, JButton.class).stream()
-                .filter(button -> "Cancel editing".equals(button.getToolTipText()))
-                .findFirst()
-                .orElseThrow();
-        SwingUtilities.invokeAndWait(cancelButton::doClick);
-
-        assertThat(subject.getHistory()).extracting(Message::content).containsExactly("old question");
-        assertThat(textArea.getText()).isEqualTo("draft text");
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("old question");
+        assertThat(callOnEdt(() -> textArea.getText())).isEqualTo("draft text");
     }
 
     @Test
@@ -4552,7 +5320,7 @@ class ChatPanelTest {
     @DisplayName("Shutdown suppresses provider continuation after a pending durable user write settles")
     void beginShutdown_whenUserPersistenceIsPending_suppressesProviderAndLateUiMutation() throws Exception {
         UUID conversationId = UUID.randomUUID();
-        var persistence = new CompletableFuture<UUID>();
+        CompletableFuture<UUID> persistence = controlledFuture();
         var persistenceStarted = new CountDownLatch(1);
         var providerCalls = new AtomicInteger();
         runOnEdt(() -> {
@@ -4870,6 +5638,42 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Thinking-only completions do not create an empty assistant message bubble")
+    void onSend_whenProviderEmitsOnlyThinking_keepsOnlyTheActivityBubble() throws Exception {
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+        });
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onThinkingToken.accept("Thinking without a text answer");
+                onComplete.run();
+            }
+        });
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+        flushEdt();
+
+        assertThat(callOnEdt(() -> (List<?>) readField(subject, "assistantBubbles"))).isEmpty();
+        assertThat(callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class);
+        })).singleElement().satisfies(bubble -> assertThat(bubble.getFullText())
+                .contains("Thinking without a text answer"));
+    }
+
+    @Test
     @DisplayName("Thinking bubble copy button appears on hover")
     void loadHistory_whenActivityBubbleHovered_showsCopyButton() throws Exception {
         List<Message> messages = List.of(
@@ -5088,6 +5892,38 @@ class ChatPanelTest {
                 .filter(message -> message.role() == Role.ASSISTANT)
                 .count();
         assertThat(assistantCount).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Provider errors flush buffered partial think-tag text before persistence")
+    void onSend_whenProviderErrorsWithPartialThinkTag_preservesBufferedText() throws Exception {
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                onToken.accept("answer<thi");
+                onError.accept(new IllegalStateException("provider failed"));
+            }
+        });
+
+        JTextArea textArea = readInputTextArea(subject.getInputBar());
+        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        invokeOnSend(subject);
+
+        awaitCondition(5, TimeUnit.SECONDS, () -> {
+            flushEdt();
+            return subject.getHistory().size() == 2;
+        });
+
+        Message assistant = subject.getHistory().get(1);
+        assertThat(assistant.content()).contains("answer<thi", "provider failed");
     }
 
     @Test
@@ -5551,7 +6387,7 @@ class ChatPanelTest {
     @DisplayName("Assistant persistence failure while removed is surfaced after reattachment")
     void addNotify_whenAssistantPersistenceFailedWhileRemoved_showsUnsavedMessage() throws Exception {
         UUID conversationId = UUID.randomUUID();
-        var persistence = new CompletableFuture<Void>();
+        CompletableFuture<Void> persistence = controlledFuture();
         runOnEdt(() -> {
             subject.setActiveConversationId(conversationId);
             subject.setOnDurableAssistantMessageCompleted(event -> persistence);
@@ -6171,6 +7007,12 @@ class ChatPanelTest {
         return cacheService;
     }
 
+    private <T> CompletableFuture<T> controlledFuture() {
+        var future = new CompletableFuture<T>();
+        controlledFutures.add(future);
+        return future;
+    }
+
     private static void updateModels(
             ProviderModelCacheService cacheService,
             String providerName,
@@ -6216,6 +7058,14 @@ class ChatPanelTest {
         return result.get();
     }
 
+    private static void restoreUiDefault(String key, Object value) {
+        if (value == null) {
+            UIManager.getDefaults().remove(key);
+        } else {
+            UIManager.put(key, value);
+        }
+    }
+
     @FunctionalInterface
     private interface ThrowingAction {
         void run() throws Exception;
@@ -6246,19 +7096,32 @@ class ChatPanelTest {
 
     private StreamingSession initializedConsultedSourceSession(long sessionId, String query) throws Exception {
         StreamingSession session = new StreamingSession(sessionId, UUID.randomUUID(), null);
-        invokeInitializeConsultedSourceActivity(subject, session, query);
+        invokeInitializeConsultedSourceActivity(subject, session);
+        invokeHandleAssistantWebSearchQuery(subject, session, query);
         return session;
     }
 
+    private static void invokeInitializeConsultedSourceActivity(
+            ChatPanel chatPanel,
+            StreamingSession session
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "initializeConsultedSourceActivity",
+                StreamingSession.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session);
+    }
+
     @SuppressWarnings("unchecked")
-    private static List<Message> invokePrepareWebSearchContext(
+    private static List<Message> invokePrepareNativeWebSearchActivity(
             ChatPanel chatPanel,
             SendJob sendJob,
             StreamingSession session,
             List<Message> history
     ) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod(
-                "prepareWebSearchContext",
+                "prepareNativeWebSearchActivity",
                 SendJob.class,
                 StreamingSession.class,
                 List.class,
@@ -6268,13 +7131,29 @@ class ChatPanelTest {
         return (List<Message>) method.invoke(chatPanel, sendJob, session, history, (BooleanSupplier) () -> false);
     }
 
-    private static void invokeInitializeConsultedSourceActivity(
+    private static void invokeHandleAssistantToken(
+            ChatPanel chatPanel,
+            StreamingSession session,
+            SendJob sendJob,
+            String token
+    ) throws Exception {
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "handleAssistantToken",
+                StreamingSession.class,
+                SendJob.class,
+                String.class
+        );
+        method.setAccessible(true);
+        method.invoke(chatPanel, session, sendJob, token);
+    }
+
+    private static void invokeHandleAssistantWebSearchQuery(
             ChatPanel chatPanel,
             StreamingSession session,
             String query
     ) throws Exception {
         Method method = ChatPanel.class.getDeclaredMethod(
-                "initializeConsultedSourceActivity",
+                "handleAssistantWebSearchQuery",
                 StreamingSession.class,
                 String.class
         );

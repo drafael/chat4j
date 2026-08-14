@@ -2438,7 +2438,6 @@ public class MainFrame extends JFrame {
 
     private void onSettingsCredentialChanged(String canonicalTokenId) {
         CredentialChangeEffects.CredentialChangeEffect effect = CredentialChangeEffects.forTokenId(canonicalTokenId);
-        chatPanel.invalidateSelectedProviderCapabilityEvidence(effect.chatProviders());
         applyCredentialChangeAsync(
                 () -> invalidateCredentialBackedCaches(effect),
                 () -> refreshCredentialBackedUi(effect),

@@ -2,7 +2,9 @@ package com.github.drafael.chat4j.provider.support;
 
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 
+import java.util.List;
 import java.util.Optional;
 
 import static com.github.drafael.chat4j.provider.support.DynamicCapabilityResolver.resolveDynamicImageSupport;
@@ -12,6 +14,12 @@ import static com.github.drafael.chat4j.provider.support.DynamicCapabilityResolv
 import static com.github.drafael.chat4j.provider.support.ProviderCapabilityHints.*;
 
 public final class ProviderCapabilityResolver {
+
+    private static final String CODEX_PROVIDER_NAME = "OpenAI Codex";
+    private static final String COPILOT_PROVIDER_NAME = "GitHub Copilot";
+    private static final String COPILOT_BASE_URL = "https://api.githubcopilot.com";
+    private static final String COPILOT_RESPONSES_ENDPOINT = "/responses";
+    private static final String COPILOT_WEB_SEARCH_MODEL = "gpt-5.4-mini";
 
     private ProviderCapabilityResolver() {
     }
@@ -168,7 +176,23 @@ public final class ProviderCapabilityResolver {
             String baseUrl,
             String defaultBaseUrl
     ) {
-        return staticNativeWebSearchOutcome(providerName, modelId, baseUrl, defaultBaseUrl);
+        return staticNativeWebSearchOutcome(providerName, modelId, baseUrl, defaultBaseUrl, Optional.empty());
+    }
+
+    public static NativeWebSearchOutcome nativeWebSearchOutcomeFromCachedEndpoints(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String defaultBaseUrl,
+            Optional<List<String>> supportedEndpoints
+    ) {
+        return staticNativeWebSearchOutcome(
+                providerName,
+                modelId,
+                baseUrl,
+                defaultBaseUrl,
+                supportedEndpoints
+        );
     }
 
     public static NativeWebSearchOutcome nativeWebSearchOutcome(
@@ -182,12 +206,14 @@ public final class ProviderCapabilityResolver {
                 providerName,
                 modelId,
                 baseUrl,
-                defaultBaseUrl
+                defaultBaseUrl,
+                Optional.empty()
         );
-        if (staticOutcome != NativeWebSearchOutcome.PENDING) {
+        if (staticOutcome != NativeWebSearchOutcome.PENDING
+                || !supportsRuntimeDynamicNativeWebSearchProbe(providerName)) {
             return staticOutcome;
         }
-        return resolveDynamicNativeWebSearchSupport(providerName, modelId, baseUrl, apiKey)
+        return resolveDynamicNativeWebSearchSupport(normalize(providerName), modelId, baseUrl, apiKey)
                 .map(supported -> supported ? NativeWebSearchOutcome.OPTIONAL : NativeWebSearchOutcome.UNSUPPORTED)
                 .orElse(NativeWebSearchOutcome.PENDING);
     }
@@ -196,7 +222,8 @@ public final class ProviderCapabilityResolver {
             String providerName,
             String modelId,
             String baseUrl,
-            String defaultBaseUrl
+            String defaultBaseUrl,
+            Optional<List<String>> supportedEndpoints
     ) {
         String provider = normalize(providerName);
         String model = normalize(modelId);
@@ -213,12 +240,26 @@ public final class ProviderCapabilityResolver {
                     ? NativeWebSearchOutcome.OPTIONAL
                     : NativeWebSearchOutcome.UNSUPPORTED;
         }
+        if (MistralNativeWebSearchSupport.isMistral(providerName)) {
+            return MistralNativeWebSearchSupport.supports(providerName, modelId, baseUrl)
+                    ? NativeWebSearchOutcome.OPTIONAL
+                    : NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (Strings.CS.equals(providerName, COPILOT_PROVIDER_NAME)) {
+            return copilotNativeWebSearchOutcome(model, baseUrl, defaultBaseUrl, supportedEndpoints);
+        }
         if (!sameEndpoint(baseUrl, defaultBaseUrl)) {
             return NativeWebSearchOutcome.UNSUPPORTED;
         }
-        if (GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && supportsGroqNativeWebSearch(model)
-                || OPENROUTER_PROVIDER_HINTS.contains(provider) && supportsOpenRouterNativeWebSearch(model)
-                || OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isOpenAiSearchPreviewModel(model)) {
+        if (Strings.CS.equals(providerName, CODEX_PROVIDER_NAME)) {
+            return NativeWebSearchOutcome.OPTIONAL;
+        }
+        if (GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isGoogleLatestAlias(model)) {
+            return NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if ((GROQ_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && supportsGroqNativeWebSearch(model))
+                || (OPENROUTER_PROVIDER_HINTS.contains(provider) && supportsOpenRouterNativeWebSearch(model))
+                || (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider) && isOpenAiSearchPreviewModel(model))) {
             return NativeWebSearchOutcome.REQUIRED;
         }
 
@@ -235,17 +276,51 @@ public final class ProviderCapabilityResolver {
             String provider,
             String model
     ) {
-        if (ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
-                && containsAny(model, ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
-                || OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
-                && containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)
-                || XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
-                && supportsXaiNativeWebSearch(model)
-                || GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
-                && containsAny(model, GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS)) {
+        if ((ANTHROPIC_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && containsAny(model, ANTHROPIC_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS))
+                || (OPENAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && containsAny(model, OPENAI_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS))
+                || (XAI_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && supportsXaiNativeWebSearch(model))
+                || (GOOGLE_NATIVE_WEB_SEARCH_PROVIDER_HINTS.contains(provider)
+                && supportsGoogleNativeWebSearchModel(model))) {
             return NativeWebSearchOutcome.OPTIONAL;
         }
         return NativeWebSearchOutcome.UNSUPPORTED;
+    }
+
+    public static boolean supportsCopilotResponsesWebSearchRoute(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            String defaultBaseUrl
+    ) {
+        return Strings.CS.equals(providerName, COPILOT_PROVIDER_NAME)
+                && Strings.CS.equals(BaseUrlNormalizer.normalize(baseUrl, ""), COPILOT_BASE_URL)
+                && Strings.CS.equals(BaseUrlNormalizer.normalize(defaultBaseUrl, ""), COPILOT_BASE_URL)
+                && Strings.CS.equals(normalize(modelId), COPILOT_WEB_SEARCH_MODEL);
+    }
+
+    private static NativeWebSearchOutcome copilotNativeWebSearchOutcome(
+            String normalizedModel,
+            String baseUrl,
+            String defaultBaseUrl,
+            Optional<List<String>> supportedEndpoints
+    ) {
+        if (!supportsCopilotResponsesWebSearchRoute(
+                COPILOT_PROVIDER_NAME,
+                normalizedModel,
+                baseUrl,
+                defaultBaseUrl
+        )) {
+            return NativeWebSearchOutcome.UNSUPPORTED;
+        }
+        if (supportedEndpoints.isEmpty()) {
+            return NativeWebSearchOutcome.PENDING;
+        }
+        return supportedEndpoints.get().stream().anyMatch(COPILOT_RESPONSES_ENDPOINT::equals)
+                ? NativeWebSearchOutcome.OPTIONAL
+                : NativeWebSearchOutcome.UNSUPPORTED;
     }
 
     private static boolean supportsRuntimeDynamicNativeWebSearchProbe(String providerName) {
@@ -258,6 +333,16 @@ public final class ProviderCapabilityResolver {
         return StringUtils.isNotBlank(baseUrl)
                 && StringUtils.isNotBlank(defaultBaseUrl)
                 && baseUrl.equals(defaultBaseUrl);
+    }
+
+    private static boolean supportsGoogleNativeWebSearchModel(String modelId) {
+        String model = normalize(modelId);
+        return containsAny(model, GOOGLE_NATIVE_WEB_SEARCH_MODEL_ALLOW_HINTS) && !isGoogleLatestAlias(model);
+    }
+
+    public static boolean isGoogleLatestAlias(String modelId) {
+        String model = Strings.CS.removeStart(normalize(modelId), "models/");
+        return model.matches("gemini(?:-.+)?-latest");
     }
 
     public static boolean supportsXaiNativeWebSearch(String modelId) {

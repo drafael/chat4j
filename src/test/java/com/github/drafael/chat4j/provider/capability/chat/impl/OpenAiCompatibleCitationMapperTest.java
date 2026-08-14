@@ -94,6 +94,7 @@ class OpenAiCompatibleCitationMapperTest {
                         "not a url",
                         "javascript:alert(1)",
                         "mailto:source@example.com",
+                        "https://name:password@example.com/source",
                         "https://",
                         "https://example.com/source\n- injected"
                 ))
