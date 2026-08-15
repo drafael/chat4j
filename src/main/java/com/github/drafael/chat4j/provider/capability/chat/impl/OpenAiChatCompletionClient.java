@@ -17,10 +17,12 @@ import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.Proje
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
 import com.openai.core.http.StreamResponse;
+import com.openai.errors.OpenAIServiceException;
 import com.openai.models.ChatModel;
 import com.openai.models.Reasoning;
 import com.openai.models.ReasoningEffort;
@@ -203,6 +205,19 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             }
 
             streamWithChatCompletions(runtime, projectionPlan, client, normalizedReasoningLevel, onToken, onThinkingToken, safeOnCitation, isCancelled, registerActiveStream, clearActiveStream);
+        } catch (OpenAIServiceException e) {
+            if (TogetherModelSupport.isTogether(runtime.descriptor().name())) {
+                throw ProviderExceptionMapper.mapHttpStatus(
+                        runtime.descriptor().name(),
+                        runtime.baseUrl(),
+                        e.statusCode(),
+                        e.type().orElse(""),
+                        e.code().orElse(""),
+                        e.getMessage(),
+                        runtime.apiKey()
+                );
+            }
+            throw e;
         } finally {
             client.close();
         }
@@ -380,7 +395,7 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         Consumer<String> trackedOnThinkingToken = trackOutput(emittedOutput, onThinkingToken);
         Consumer<CitationRef> trackedOnCitation = trackOutput(emittedOutput, onCitation);
 
-        List<ReasoningLevel> attempts = reasoningAttempts(reasoningLevel);
+        List<ReasoningLevel> attempts = reasoningAttempts(runtime, reasoningLevel);
         for (int attemptIndex = 0; attemptIndex < attempts.size(); attemptIndex++) {
             ReasoningLevel attemptLevel = attempts.get(attemptIndex);
             ChatCompletionCreateParams.Builder paramsBuilder = ChatCompletionCreateParams.builder()
@@ -639,6 +654,11 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             ProviderRuntime runtime,
             ReasoningLevel reasoningLevel
     ) {
+        if (TogetherModelSupport.isTogether(runtime.descriptor().name())) {
+            applyTogetherReasoningHints(paramsBuilder, runtime, reasoningLevel);
+            return;
+        }
+
         if (!reasoningLevel.enabled()) {
             return;
         }
@@ -649,6 +669,33 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
         }
 
         toOpenAiReasoningEffort(reasoningLevel).ifPresent(paramsBuilder::reasoningEffort);
+    }
+
+    private void applyTogetherReasoningHints(
+            ChatCompletionCreateParams.Builder paramsBuilder,
+            ProviderRuntime runtime,
+            ReasoningLevel reasoningLevel
+    ) {
+        TogetherModelSupport.ReasoningRequest request = TogetherModelSupport.reasoningRequest(
+                runtime.baseUrl(),
+                runtime.selectedModel(),
+                reasoningLevel
+        );
+        if (request.enabledPropertyPresent()) {
+            paramsBuilder.putAdditionalBodyProperty(
+                    "reasoning",
+                    JsonValue.from(Map.of("enabled", request.enabled()))
+            );
+        }
+        if (StringUtils.isNotBlank(request.effort())) {
+            paramsBuilder.putAdditionalBodyProperty("reasoning_effort", JsonValue.from(request.effort()));
+        }
+        if (request.mediumEffort()) {
+            paramsBuilder.putAdditionalBodyProperty(
+                    "chat_template_kwargs",
+                    JsonValue.from(Map.of("medium_effort", true))
+            );
+        }
     }
 
     private void applyResponsesReasoningHints(ResponseCreateParams.Builder paramsBuilder, ReasoningLevel reasoningLevel) {
@@ -669,6 +716,12 @@ public class OpenAiChatCompletionClient implements ChatCompletionClient {
             case HIGH -> Optional.of(ReasoningEffort.HIGH);
             case EXTRA_HIGH -> Optional.of(ReasoningEffort.XHIGH);
         };
+    }
+
+    private List<ReasoningLevel> reasoningAttempts(ProviderRuntime runtime, ReasoningLevel reasoningLevel) {
+        return TogetherModelSupport.isTogether(runtime.descriptor().name())
+                ? List.of(reasoningLevel)
+                : reasoningAttempts(reasoningLevel);
     }
 
     private List<ReasoningLevel> reasoningAttempts(ReasoningLevel reasoningLevel) {

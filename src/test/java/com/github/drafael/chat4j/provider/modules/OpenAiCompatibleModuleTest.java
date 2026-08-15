@@ -2,6 +2,8 @@ package com.github.drafael.chat4j.provider.modules;
 
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.capability.chat.impl.MistralChatCompletionClient;
+import com.github.drafael.chat4j.provider.capability.chat.impl.OpenAiChatCompletionClient;
+import com.github.drafael.chat4j.provider.capability.models.impl.TogetherModelCatalogClient;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
 import org.junit.jupiter.api.DisplayName;
@@ -49,6 +51,25 @@ class OpenAiCompatibleModuleTest {
         );
 
         assertThat(subject.chatCompletionClient()).isInstanceOf(MistralChatCompletionClient.class);
+    }
+
+    @Test
+    @DisplayName("Together uses shared chat transport and its top-level-array catalog client")
+    void clients_whenTogetherProvider_selectExpectedImplementations() {
+        var attachmentAuthority = ProviderAttachmentTestSupport.authority();
+        var subject = new OpenAiCompatibleModule(
+                "Together",
+                AuthType.ENV_VAR,
+                "TOGETHER_API_KEY",
+                null,
+                "https://api.together.ai/v1",
+                new CopilotModelMetadataStore(tempDir.resolve("together-metadata")),
+                attachmentAuthority
+        );
+
+        assertThat(subject.chatCompletionClient()).isInstanceOf(OpenAiChatCompletionClient.class);
+        assertThat(subject.modelCatalogClient()).isInstanceOf(TogetherModelCatalogClient.class);
+        assertThat(subject.descriptor().capabilities().supportsImageInput()).isFalse();
     }
 
     @Test

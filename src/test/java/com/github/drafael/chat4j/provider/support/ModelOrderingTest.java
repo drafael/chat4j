@@ -141,6 +141,21 @@ class ModelOrderingTest {
     }
 
     @Test
+    @DisplayName("Together model ordering publishes only exact reviewed serverless IDs")
+    void sanitizeAndSortByProvider_whenProviderIsTogether_filtersUnknownAndWrongCaseIds() {
+        List<String> sorted = ModelOrdering.sanitizeAndSortByProvider(" together ", List.of(
+                " Qwen/Qwen3.5-9B ",
+                "Qwen/Qwen3.5-9B",
+                "qwen/qwen3.5-9b",
+                "unknown/dedicated-model",
+                "MiniMaxAI/MiniMax-M3",
+                "Qwen/Qwen3.5-9B\nother"
+        ));
+
+        assertThat(sorted).containsExactly("MiniMaxAI/MiniMax-M3", "Qwen/Qwen3.5-9B");
+    }
+
+    @Test
     @DisplayName("Copilot alias filtering is independent of the system locale")
     void sanitizeAndSortByProvider_whenDefaultLocaleIsTurkish_filtersLegacyAliases() {
         Locale previousLocale = Locale.getDefault();

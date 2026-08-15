@@ -4,11 +4,14 @@ import com.github.drafael.chat4j.util.Fonts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import javax.swing.Icon;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.lang.reflect.Method;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
@@ -26,6 +29,40 @@ class ModelSelectorButtonTest {
         int size = (int) method.invoke(null, new Object[]{null});
 
         assertThat(size).isEqualTo(Fonts.scale(14));
+    }
+
+    @Test
+    @DisplayName("Together selection resolves and paints the Together provider mark")
+    void providerIcon_whenTogetherSelected_returnsRenderableTogetherIcon() throws Exception {
+        var subject = callOnEdt(ModelSelectorButton::new);
+
+        Icon icon = callOnEdt(() -> {
+            subject.setSelection("Together", "Qwen/Qwen3.5-9B");
+            Method method = ModelSelectorButton.class.getDeclaredMethod("providerIcon", int.class);
+            method.setAccessible(true);
+            return (Icon) method.invoke(subject, Fonts.scale(14));
+        });
+
+        assertThat(icon).isNotNull();
+        long paintedPixels = callOnEdt(() -> {
+            var image = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = image.createGraphics();
+            try {
+                icon.paintIcon(subject, graphics, 0, 0);
+            } finally {
+                graphics.dispose();
+            }
+            long count = 0;
+            for (int x = 0; x < image.getWidth(); x++) {
+                for (int y = 0; y < image.getHeight(); y++) {
+                    if ((image.getRGB(x, y) >>> 24) != 0) {
+                        count++;
+                    }
+                }
+            }
+            return count;
+        });
+        assertThat(paintedPixels).isGreaterThan(0);
     }
 
     @Test

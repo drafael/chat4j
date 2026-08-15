@@ -13,6 +13,7 @@ import com.github.drafael.chat4j.provider.capability.chat.impl.PerplexityChatCom
 import com.github.drafael.chat4j.provider.capability.models.ModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.OpenAiModelCatalogClient;
 import com.github.drafael.chat4j.provider.capability.models.impl.PerplexityModelCatalogClient;
+import com.github.drafael.chat4j.provider.capability.models.impl.TogetherModelCatalogClient;
 import com.github.drafael.chat4j.provider.core.ProviderModule;
 import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
@@ -144,9 +145,11 @@ public class OpenAiCompatibleModule implements ProviderModule {
             String providerName,
             CopilotModelMetadataStore copilotModelMetadataStore
     ) {
-        return "Perplexity".equals(providerName)
-                ? new PerplexityModelCatalogClient()
-                : new OpenAiModelCatalogClient(copilotModelMetadataStore);
+        return switch (providerName) {
+            case "Perplexity" -> new PerplexityModelCatalogClient();
+            case "Together" -> new TogetherModelCatalogClient();
+            default -> new OpenAiModelCatalogClient(copilotModelMetadataStore);
+        };
     }
 
     private static ProviderCapabilities declaredCapabilities(String providerName) {

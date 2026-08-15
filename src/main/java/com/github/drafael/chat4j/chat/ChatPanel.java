@@ -75,6 +75,7 @@ import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderModelsResolver;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
 import com.github.drafael.chat4j.provider.support.WebSearchSourceUrlNormalizer;
 import com.github.drafael.chat4j.stt.SpeechToTextService;
 import com.github.drafael.chat4j.tts.TextToSpeechService;
@@ -174,6 +175,8 @@ public class ChatPanel extends JPanel {
     private static final boolean THINKING_COLLAPSED_BY_DEFAULT_WHEN_LOADING_HISTORY = true;
     private static final boolean WEB_SEARCH_COLLAPSED_BY_DEFAULT = true;
     private static final boolean AGENT_TOOLS_COLLAPSED_BY_DEFAULT = true;
+    private static final String TOGETHER_AGENT_ATTACHMENT_NOTICE =
+            "Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.";
     private static final Pattern ANSI_ESCAPE_PATTERN = Pattern.compile("\u001B\\[[;\\d]*[ -/]*[@-~]");
     private static final Pattern NON_PRINTABLE_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\r\\n\\t]]");
     private static final Pattern UNICODE_FORMAT_PATTERN = Pattern.compile("\\p{Cf}");
@@ -264,10 +267,8 @@ public class ChatPanel extends JPanel {
     private final AtomicLong streamSessionCounter = new AtomicLong();
     private final Object terminalPersistenceLock = new Object();
     private final AtomicLong providerSelectionCounter = new AtomicLong();
-    private final AtomicLong credentialSettlementCounter = new AtomicLong();
     private final Map<String, Integer> credentialChangesPending = new ConcurrentHashMap<>();
     private final Map<String, Long> credentialChangeVersions = new ConcurrentHashMap<>();
-    private final Set<Thread> credentialSettlementWorkers = ConcurrentHashMap.newKeySet();
     private final AtomicLong providerRefreshCounter = new AtomicLong();
     private final AtomicReference<Thread> capabilityRefreshThread = new AtomicReference<>();
     private final AtomicLong readAloudUiGeneration = new AtomicLong();
@@ -790,13 +791,13 @@ public class ChatPanel extends JPanel {
         }
 
         ProviderRegistry.ProviderDef selectedProvider = providerMap.get(selectedProviderName);
-        boolean selectedProviderScopeUsable = selectedProvider != null && hasUsableModelScope(selectedProvider);
-        if (selectedProviderScopeUsable && selectedModelId != null) {
+        boolean selectedModelUsable = selectedProvider != null && isSelectedModelUsable(selectedProvider);
+        if (selectedModelUsable && selectedModelId != null) {
             selectModel(selectedProviderName, selectedModelId);
             return true;
         }
 
-        if (selectedProviderName != null && !selectedProviderScopeUsable) {
+        if (selectedProviderName != null && !selectedModelUsable) {
             clearSelectedModel();
         }
 
@@ -847,7 +848,7 @@ public class ChatPanel extends JPanel {
         }
         ProviderRegistry.ProviderDef selectedProvider = providerMap.get(selectedProviderName);
         if (selectedProviderName != null
-                && (selectedProvider == null || !hasUsableModelScope(selectedProvider))) {
+                && (selectedProvider == null || !isSelectedModelUsable(selectedProvider))) {
             clearSelectedModel();
         }
         return true;
@@ -896,8 +897,15 @@ public class ChatPanel extends JPanel {
         }
     }
 
-    private boolean hasUsableModelScope(ProviderRegistry.ProviderDef providerDef) {
-        return modelCacheService.findUsableModels(providerDef.name(), providerDef.baseUrl()).isPresent();
+    private boolean isSelectedModelUsable(ProviderRegistry.ProviderDef providerDef) {
+        Optional<List<String>> usableModels = modelCacheService.findUsableModels(
+                providerDef.name(),
+                providerDef.baseUrl()
+        );
+        if (!TogetherModelSupport.isTogether(providerDef.name())) {
+            return usableModels.isPresent();
+        }
+        return usableModels.filter(models -> models.contains(selectedModelId)).isPresent();
     }
 
     private List<String> initialProviderModels(ProviderRegistry.ProviderDef providerDef) {
@@ -1026,9 +1034,6 @@ public class ChatPanel extends JPanel {
             return;
         }
 
-        if (!validateAgentProjectRoot()) {
-            return;
-        }
         boolean agentModeEnabled = inputBar.isAgentModeEnabled();
         Path agentProjectRoot = inputBar.getAgentProjectRoot();
 
@@ -1064,12 +1069,12 @@ public class ChatPanel extends JPanel {
                         admittedSnapshot,
                         sendJob.cancelled::get
                 );
-                Message userMessage = new Message(
+                Message userMessage = finalizePreparedUserMessage(sendJob, new Message(
                         preparedMessage.role(),
                         preparedMessage.parts(),
                         sendJob.userMessageTimestamp,
                         preparedMessage.meta()
-                );
+                ));
                 if (!sendJob.isLive()) {
                     discardStagedAttachments(userMessage);
                     return;
@@ -1086,18 +1091,6 @@ public class ChatPanel extends JPanel {
                 SwingUtilities.invokeLater(() -> handlePreparationFailure(sendJob, e));
             }
         });
-    }
-
-    private boolean validateAgentProjectRoot() {
-        if (!inputBar.isAgentModeEnabled()) {
-            return true;
-        }
-        Path projectRoot = inputBar.getAgentProjectRoot();
-        if (projectRoot != null && Files.isDirectory(projectRoot)) {
-            return true;
-        }
-        inputBar.showValidationMessage("Select a valid project folder to enable Agent Mode.");
-        return false;
     }
 
     private FailedUserSend failedUserSendForCurrentView() {
@@ -1122,7 +1115,7 @@ public class ChatPanel extends JPanel {
         if (!originCurrent || original.preparedUserMessage == null) {
             return false;
         }
-        if (!preflightSend() || !validateAgentProjectRoot()) {
+        if (!preflightSend()) {
             return true;
         }
         SendRuntimeSnapshot runtime = captureSendRuntime();
@@ -1158,7 +1151,9 @@ public class ChatPanel extends JPanel {
         retry.worker = Thread.startVirtualThread(() -> {
             try {
                 admitProvider(retry);
-                SwingUtilities.invokeLater(() -> commitPreparedSend(retry, original.preparedUserMessage));
+                Message retryMessage = finalizePreparedUserMessage(retry, original.preparedUserMessage);
+                retry.preparedUserMessage = retryMessage;
+                SwingUtilities.invokeLater(() -> commitPreparedSend(retry, retryMessage));
             } catch (Exception | LinkageError e) {
                 SwingUtilities.invokeLater(() -> handlePreparationFailure(retry, e));
             }
@@ -1254,6 +1249,15 @@ public class ChatPanel extends JPanel {
             updateClearChatButtonVisibility();
         }
 
+        if (credentialsChangedSinceAdmission(sendJob)) {
+            sendJob.providerContinuationCancelled = true;
+            if (visibleConversation) {
+                inputBar.showValidationMessage(
+                        "Provider credentials changed while the message was being saved. Regenerate after the update finishes."
+                );
+                inputBar.requestInputFocus();
+            }
+        }
         if (sendJob.providerContinuationCancelled) {
             finishSendJob(sendJob);
             return;
@@ -1393,7 +1397,7 @@ public class ChatPanel extends JPanel {
             HistoryMutationEvent mutationEvent,
             Runnable commitRegeneration
     ) {
-        if (!preflightSend() || !validateAgentProjectRoot()) {
+        if (!preflightSend()) {
             return;
         }
         SendRuntimeSnapshot runtime = captureSendRuntime();
@@ -1537,6 +1541,13 @@ public class ChatPanel extends JPanel {
         try {
             nextMessageOrdinal = sendJob.assistantMessageOrdinal;
             commitRegeneration.run();
+            if (credentialsChangedSinceAdmission(sendJob)) {
+                sendJob.providerContinuationCancelled = true;
+                inputBar.showValidationMessage(
+                        "Provider credentials changed while the conversation change was being saved. Regenerate after the update finishes."
+                );
+                inputBar.requestInputFocus();
+            }
             if (sendJob.providerContinuationCancelled) {
                 finishSendJob(sendJob);
                 return;
@@ -1628,6 +1639,7 @@ public class ChatPanel extends JPanel {
 
         session.worker = Thread.startVirtualThread(() -> {
             try {
+                ensureCredentialsCurrentForTransport(sendJob);
                 if (sendJob.agentModeEnabled) {
                     AgentRunRequest request = new AgentRunRequest(
                             requestHistory,
@@ -2163,13 +2175,19 @@ public class ChatPanel extends JPanel {
         if (ObjectUtils.isEmpty(attachments)) {
             return emptyList();
         }
-
-        ensureNotCancelled(isCancelled);
-
-        List<String> notices = new ArrayList<>();
         boolean hasImage = attachments.stream().anyMatch(ComposerAttachment::image);
         boolean hasFile = attachments.stream().anyMatch(attachment -> !attachment.image());
+        return buildFallbackNotices(hasImage, hasFile, providerSnapshot, isCancelled);
+    }
 
+    private List<String> buildFallbackNotices(
+            boolean hasImage,
+            boolean hasFile,
+            ProviderSelectionSnapshot providerSnapshot,
+            BooleanSupplier isCancelled
+    ) {
+        ensureNotCancelled(isCancelled);
+        List<String> notices = new ArrayList<>();
         boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
                 providerSnapshot.capabilities(),
                 providerSnapshot.providerName(),
@@ -2178,18 +2196,59 @@ public class ChatPanel extends JPanel {
                 providerSnapshot.apiKey()
         );
         ensureNotCancelled(isCancelled);
-
         boolean supportsFileInput = ProviderCapabilityResolver.supportsFileInput(providerSnapshot.capabilities());
-
         if (hasImage && !supportsImageInput) {
             notices.add(buildImageFallbackNotice(providerSnapshot));
         }
-
         if (hasFile && !supportsFileInput) {
             notices.add(buildFileFallbackNotice(providerSnapshot, supportsImageInput));
         }
-
         return notices;
+    }
+
+    private Message finalizePreparedUserMessage(SendJob sendJob, Message message) {
+        MessageMeta meta = message.meta();
+        boolean togetherAgent = sendJob.agentModeEnabled
+                && TogetherModelSupport.isTogether(sendJob.runtime.providerName());
+        boolean attachmentPresent = containsAttachment(message.parts())
+                || sendJob.historySnapshot.stream().anyMatch(historyMessage -> containsAttachment(historyMessage.parts()));
+        List<String> notices = meta.fallbackNotices();
+        if (togetherAgent && attachmentPresent) {
+            notices = List.of(TOGETHER_AGENT_ATTACHMENT_NOTICE);
+        } else if (!togetherAgent && notices.contains(TOGETHER_AGENT_ATTACHMENT_NOTICE)) {
+            boolean hasImage = message.parts().stream().anyMatch(this::isImageAttachment);
+            boolean hasFile = message.parts().stream().anyMatch(FilePart.class::isInstance);
+            notices = hasImage || hasFile
+                    ? buildFallbackNotices(
+                            hasImage,
+                            hasFile,
+                            providerSelectionSnapshot(sendJob),
+                            sendJob.cancelled::get
+                    )
+                    : emptyList();
+        }
+        if (notices.equals(meta.fallbackNotices())) {
+            return message;
+        }
+        MessageMeta finalizedMeta = new MessageMeta(
+                meta.activeSkills(),
+                notices,
+                meta.cancelled(),
+                meta.error(),
+                meta.assistantThinking(),
+                meta.assistantWebSearch(),
+                meta.agentToolActivities(),
+                meta.citations()
+        );
+        return new Message(message.role(), message.parts(), message.timestamp(), finalizedMeta);
+    }
+
+    private boolean containsAttachment(List<ContentPart> parts) {
+        return parts.stream().anyMatch(part -> isImageAttachment(part) || part instanceof FilePart);
+    }
+
+    private boolean isImageAttachment(ContentPart part) {
+        return part instanceof ImagePart || part instanceof GeneratedImagePart;
     }
 
     private String buildImageFallbackNotice(ProviderSelectionSnapshot providerSnapshot) {
@@ -2230,10 +2289,16 @@ public class ChatPanel extends JPanel {
         String providerName = providerDef.name();
         String modelId = selectedModelId;
         ProviderCapabilities capabilities = providerDef.capabilities();
-        inputBar.setThinkingAvailable(ProviderCapabilityResolver.supportsReasoning(capabilities, providerName, modelId));
+        boolean togetherProvider = TogetherModelSupport.isTogether(providerName);
+        boolean initialSupportsThinking = togetherProvider
+                ? TogetherModelSupport.supportsReasoning(providerDef.baseUrl(), modelId)
+                : ProviderCapabilityResolver.supportsReasoning(capabilities, providerName, modelId);
+        boolean initialSupportsTools = togetherProvider
+                ? TogetherModelSupport.supportsTools(providerDef.baseUrl(), modelId)
+                : ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId);
+        inputBar.setThinkingAvailable(initialSupportsThinking);
         applyNativeWebSearchOutcome(resolveCachedNativeWebSearchOutcome(providerDef, modelId));
-        inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required()
-                && ProviderCapabilityResolver.supportsToolInvocation(capabilities, providerName, modelId));
+        inputBar.setAgentModeAvailable(!nativeWebSearchOutcome.required() && initialSupportsTools);
 
         if (StringUtils.isBlank(providerDef.baseUrl())
                 || nativeWebSearchOutcome != NativeWebSearchOutcome.PENDING
@@ -2438,21 +2503,23 @@ public class ChatPanel extends JPanel {
 
     public void invalidateSelectedProviderCapabilityEvidence(Collection<String> providerNames) {
         runSynchronouslyOnEdt(() -> {
-            if (providerNames != null && !providerNames.isEmpty()) {
-                providerNames.stream()
-                        .filter(Objects::nonNull)
-                        .forEach(providerName -> {
-                            credentialChangesPending.merge(providerName, 1, Integer::sum);
-                            credentialChangeVersions.merge(providerName, 1L, Long::sum);
-                        });
-                if (modelPopup != null) {
-                    modelPopup.invalidateModelList();
-                }
-            }
-            if (!selectedProviderAffected(providerNames)) {
+            List<String> affectedProviderNames = providerNames == null
+                    ? emptyList()
+                    : providerNames.stream().filter(Objects::nonNull).distinct().toList();
+            if (affectedProviderNames.isEmpty()) {
                 return;
             }
-            credentialSettlementCounter.incrementAndGet();
+            providerRefreshCounter.incrementAndGet();
+            affectedProviderNames.forEach(providerName -> {
+                credentialChangesPending.merge(providerName, 1, Integer::sum);
+                credentialChangeVersions.merge(providerName, 1L, Long::sum);
+            });
+            if (modelPopup != null) {
+                modelPopup.invalidateModelList();
+            }
+            if (!selectedProviderAffected(affectedProviderNames)) {
+                return;
+            }
             providerSelectionCounter.incrementAndGet();
             pendingWebSearchOptOut = null;
             inputBar.clearValidationMessage();
@@ -2467,10 +2534,9 @@ public class ChatPanel extends JPanel {
             SwingUtilities.invokeLater(() -> settleSelectedProviderCredentialChange(providerNames));
             return;
         }
-        if (shutdownInProgress || removed || providerNames == null || providerNames.isEmpty()) {
-            return;
-        }
-        List<String> settledProviderNames = providerNames.stream().filter(Objects::nonNull).toList();
+        List<String> settledProviderNames = providerNames == null
+                ? emptyList()
+                : providerNames.stream().filter(Objects::nonNull).distinct().toList();
         if (settledProviderNames.isEmpty()) {
             return;
         }
@@ -2478,64 +2544,10 @@ public class ChatPanel extends JPanel {
                 providerName,
                 (ignored, pendingCount) -> pendingCount > 1 ? pendingCount - 1 : null
         ));
-        if (!selectedProviderAffected(settledProviderNames)
-                || credentialChangesPending.containsKey(selectedProviderName)) {
+        if (!credentialChangesPending.isEmpty() || shutdownInProgress || removed) {
             return;
         }
-        String providerName = selectedProviderName;
-        String modelId = selectedModelId;
-        long selectionId = providerSelectionCounter.get();
-        long settlementId = credentialSettlementCounter.incrementAndGet();
-        Thread settlementThread = Thread.ofVirtual().name("chat4j-credential-settlement").unstarted(() -> {
-            try {
-                ProviderRegistry.ProviderDef settledProvider = null;
-                boolean resolutionFailed = false;
-                try {
-                    settledProvider = providerRegistry.availableProviders().stream()
-                            .filter(provider -> Strings.CS.equals(provider.name(), providerName))
-                            .findFirst()
-                            .orElse(null);
-                } catch (RuntimeException | LinkageError e) {
-                    resolutionFailed = true;
-                    log.warn("Failed to settle provider credentials for {}: {}", providerName, ExceptionUtils.getMessage(e));
-                }
-                ProviderRegistry.ProviderDef resolvedProvider = settledProvider;
-                boolean providerResolutionFailed = resolutionFailed;
-                SwingUtilities.invokeLater(() -> {
-                    if (shutdownInProgress
-                            || removed
-                            || credentialSettlementCounter.get() != settlementId
-                            || !isSelectedModel(selectionId, providerName, modelId)) {
-                        return;
-                    }
-                    if (providerResolutionFailed) {
-                        invalidateSelectedProviderRuntimeOnEdt();
-                        refreshProviders();
-                        return;
-                    }
-                    if (resolvedProvider == null) {
-                        invalidateSelectedProviderRuntimeOnEdt();
-                        return;
-                    }
-                    Map<String, ProviderRegistry.ProviderDef> settledProviders = new LinkedHashMap<>(providerMap);
-                    settledProviders.put(providerName, resolvedProvider);
-                    providerMap = settledProviders;
-                    updateCapabilityAvailability(providerSelectionCounter.incrementAndGet());
-                    if (modelPopup != null) {
-                        modelPopup.invalidateModelList();
-                    }
-                });
-            } finally {
-                credentialSettlementWorkers.remove(Thread.currentThread());
-            }
-        });
-        credentialSettlementWorkers.add(settlementThread);
-        try {
-            settlementThread.start();
-        } catch (RuntimeException | Error e) {
-            credentialSettlementWorkers.remove(settlementThread);
-            throw e;
-        }
+        refreshProviders();
     }
 
     private boolean selectedProviderAffected(Collection<String> providerNames) {
@@ -2544,6 +2556,20 @@ public class ChatPanel extends JPanel {
 
     private long credentialChangeVersion(String providerName) {
         return credentialChangeVersions.getOrDefault(providerName, 0L);
+    }
+
+    private boolean credentialsChangedSinceAdmission(SendJob sendJob) {
+        String providerName = sendJob.runtime.providerName();
+        return credentialChangesPending.containsKey(providerName)
+                || credentialChangeVersion(providerName) != sendJob.admittedCredentialVersion;
+    }
+
+    private void ensureCredentialsCurrentForTransport(SendJob sendJob) {
+        if (credentialsChangedSinceAdmission(sendJob)) {
+            throw new IllegalStateException(
+                    "Provider credentials changed after the conversation update was saved. Regenerate after the update finishes."
+            );
+        }
     }
 
     private void invalidateSelectedProviderRuntimeOnEdt() {
@@ -2625,7 +2651,12 @@ public class ChatPanel extends JPanel {
 
     private void admitProvider(SendJob sendJob) {
         ensureNotCancelled(sendJob.cancelled::get);
+        if (sendJob.agentModeEnabled
+                && (sendJob.agentProjectRoot == null || !Files.isDirectory(sendJob.agentProjectRoot))) {
+            throw new IllegalArgumentException("Select a valid project folder to enable Agent Mode.");
+        }
         String providerName = sendJob.runtime.providerName();
+        validateTogetherModelAdmission(sendJob);
         long credentialVersion = credentialChangeVersion(providerName);
         if (credentialChangesPending.containsKey(providerName)) {
             throw new IllegalStateException("Provider credentials are still updating.");
@@ -2662,6 +2693,25 @@ public class ChatPanel extends JPanel {
         } catch (RuntimeException | Error e) {
             sendJob.clearCredentialReferences();
             throw e;
+        }
+    }
+
+    private void validateTogetherModelAdmission(SendJob sendJob) {
+        if (sendJob.providerAdmitted || !TogetherModelSupport.isTogether(sendJob.runtime.providerName())) {
+            return;
+        }
+        String modelId = sendJob.runtime.modelId();
+        if (!TogetherModelSupport.isServerlessChatModel(modelId)) {
+            throw new IllegalArgumentException("The selected Together model is not in Chat4J's reviewed serverless catalog.");
+        }
+        boolean usable = modelCacheService.findUsableModels(
+                        sendJob.runtime.providerName(),
+                        sendJob.runtime.baseUrl()
+                )
+                .filter(models -> models.contains(modelId))
+                .isPresent();
+        if (!usable) {
+            throw new IllegalArgumentException("The selected Together model is not available in the current model list.");
         }
     }
 
@@ -3582,6 +3632,13 @@ public class ChatPanel extends JPanel {
 
     private void prepareRegenerationBubbles() {
         SendJob preparingJob = visiblePreparingJob();
+        if (preparingJob != null
+                && preparingJob.agentModeEnabled
+                && TogetherModelSupport.isTogether(preparingJob.runtime.providerName())
+                && history.stream().anyMatch(message -> containsAttachment(message.parts()))) {
+            ActivityBubble attachmentNotice = new ActivityBubble("Attachment notice", false);
+            addActivityBubble(attachmentNotice, TOGETHER_AGENT_ATTACHMENT_NOTICE);
+        }
         if (preparingJob != null && preparingJob.webSearchEnabled) {
             currentAssistantActivityBubble = new ActivityBubble(THINKING_COLLAPSED_BY_DEFAULT_WHEN_STREAMING);
             currentAssistantActivityBubble.setStreaming(true);
@@ -3719,6 +3776,7 @@ public class ChatPanel extends JPanel {
 
     public void disposeViewResources() {
         clearReadAloudAvailability();
+        disposeMessageViews();
         if (modelPopup != null) {
             modelPopup.dispose();
             modelPopup = null;
@@ -5433,19 +5491,24 @@ public class ChatPanel extends JPanel {
     }
 
     private String safeModelId(String providerName, String modelId) {
+        String safeModelId = TogetherModelSupport.isTogether(providerName) ? StringUtils.trim(modelId) : modelId;
+        if (TogetherModelSupport.isTogether(providerName)
+                && !TogetherModelSupport.isServerlessChatModel(safeModelId)) {
+            return null;
+        }
         ProviderRegistry.ProviderDef providerDef = providerMap.get(providerName);
         if (providerDef == null) {
             boolean knownProvider = providerRegistry.allProviders().stream()
                     .map(ProviderRegistry.ProviderDef::name)
                     .anyMatch(providerName::equals);
-            return knownProvider ? modelId : null;
+            return knownProvider ? safeModelId : null;
         }
         if (!modelCacheService.isInvalidated(providerName)) {
-            return modelId;
+            return safeModelId;
         }
         List<String> seedModels = sanitizeModelIds(providerName, providerDef.seedModels());
-        if (seedModels.contains(modelId)) {
-            return modelId;
+        if (seedModels.contains(safeModelId)) {
+            return safeModelId;
         }
         return seedModels.isEmpty() ? null : seedModels.getFirst();
     }
@@ -5619,10 +5682,6 @@ public class ChatPanel extends JPanel {
             shutdownInProgress = true;
             stagedRuntimeLoad = null;
         }
-        credentialSettlementCounter.incrementAndGet();
-        List<Thread> settlementWorkers = credentialSettlementWorkers.stream().toList();
-        shutdownPreparationWorkers.addAll(settlementWorkers);
-        settlementWorkers.forEach(Thread::interrupt);
         activeSendJobs.values().stream()
                 .filter(sendJob -> !sendJob.durableUserMessageSubmissionStarted)
                 .filter(sendJob -> !sendJob.durableHistoryMutationSubmissionStarted)

@@ -471,6 +471,54 @@ class ApiTokenFieldPanelTest {
     }
 
     @Test
+    @DisplayName("Saving an unchanged token still settles the authoritative provider refresh lifecycle")
+    void savePendingChangesAsync_whenTokenIsUnchanged_notifiesCompletionWithoutNewInvalidation() throws Exception {
+        char[] savedToken = "saved-token".toCharArray();
+        try {
+            credentialMutationService.saveTokenOverride(
+                    "OPENAI_API_KEY",
+                    savedToken,
+                    CredentialMutationListener.NO_OP
+            );
+        } finally {
+            fill(savedToken, '\0');
+        }
+        var invalidations = new AtomicInteger();
+        var completions = new AtomicInteger();
+        SettingsCredentialChangeListener listener = new SettingsCredentialChangeListener() {
+            @Override
+            public void credentialChanged(String canonicalTokenId) {
+                invalidations.incrementAndGet();
+            }
+
+            @Override
+            public void credentialChangeCompleted(String canonicalTokenId) {
+                completions.incrementAndGet();
+            }
+        };
+        ApiTokenFieldPanel subject = onEdt(() -> new ApiTokenFieldPanel(
+                "OPENAI_API_KEY",
+                new ApiTokenFieldRegistry(),
+                credentialResolver,
+                credentialMutationService,
+                listener,
+                () -> { },
+                () -> { }
+        ));
+        JPasswordField tokenField = onEdt(() -> findPasswordField(subject));
+
+        CompletableFuture<Boolean> save = onEdt(() -> {
+            tokenField.setText("saved-token");
+            return subject.savePendingChangesAsync();
+        });
+
+        assertThat(save.get(2, TimeUnit.SECONDS)).isTrue();
+        onEdt(() -> null);
+        assertThat(invalidations).hasValue(0);
+        assertThat(completions).hasValue(1);
+    }
+
+    @Test
     @DisplayName("API token field settles application invalidation when a pre-mutation callback fails")
     void savePendingChangesAsync_whenPreInvalidationCallbackFails_settlesApplicationInvalidation() throws Exception {
         var completions = new AtomicInteger();

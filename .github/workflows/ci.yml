@@ -48,5 +48,14 @@ jobs:
         shell: bash
         run: mvn -B -ntp test
 
+      - name: Verify macOS doctor script
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash -n scripts/chat4j-doctor.sh
+          bash -n src/main/resources/tools/chat4j-doctor.sh
+          cmp -s scripts/chat4j-doctor.sh src/main/resources/tools/chat4j-doctor.sh
+          bash scripts/test-chat4j-doctor.sh
+
       - name: Build shaded jar
         run: mvn -B -ntp -DskipTests package

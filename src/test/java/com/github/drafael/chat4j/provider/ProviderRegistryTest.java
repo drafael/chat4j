@@ -96,6 +96,21 @@ class ProviderRegistryTest {
     }
 
     @Test
+    @DisplayName("Together becomes available with its environment credential and default endpoint")
+    void availableProviders_whenTogetherCredentialExists_returnsTogetherProvider() {
+        var togetherRegistry = registry("together-", Map.of("TOGETHER_API_KEY", "secret"));
+
+        assertThat(togetherRegistry.availableProviders())
+                .filteredOn(provider -> "Together".equals(provider.name()))
+                .singleElement()
+                .satisfies(provider -> {
+                    assertThat(provider.envVar()).isEqualTo("TOGETHER_API_KEY");
+                    assertThat(provider.baseUrl()).isEqualTo("https://api.together.ai/v1");
+                    assertThat(provider.seedModels()).isEmpty();
+                });
+    }
+
+    @Test
     @DisplayName("Separate provider registries keep runtime configuration isolated")
     void applyRuntimeConfig_whenRegistriesAreIndependent_doesNotChangeOtherRegistry() {
         var other = registry("other-");
@@ -109,8 +124,12 @@ class ProviderRegistryTest {
     }
 
     private ProviderRegistry registry(String prefix) {
+        return registry(prefix, emptyMap());
+    }
+
+    private ProviderRegistry registry(String prefix, Map<String, String> processEnvironment) {
         ApiTokenVault vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("%scredentials".formatted(prefix))));
-        CredentialResolver credentialResolver = new CredentialResolver(vault, emptyMap(), emptyMap());
+        CredentialResolver credentialResolver = new CredentialResolver(vault, processEnvironment, emptyMap());
         var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         return new ProviderRegistry(
                 new CopilotAuthResolver(tempDir.resolve("%scopilot-home".formatted(prefix)), emptyMap(), HttpClient.newHttpClient()),

@@ -12,6 +12,7 @@ public final class CredentialChangeEffects {
             Map.entry("ANTHROPIC_API_KEY", CredentialChangeEffect.chat(List.of("Anthropic"))),
             Map.entry("OPENAI_API_KEY", CredentialChangeEffect.chat(List.of("OpenAI"))),
             Map.entry("OPENROUTER_API_KEY", CredentialChangeEffect.chat(List.of("OpenRouter"))),
+            Map.entry("TOGETHER_API_KEY", CredentialChangeEffect.chat(List.of("Together"))),
             Map.entry("GROQ_API_KEY", new CredentialChangeEffect(List.of("Groq"), List.of("groq"), List.of("groq"))),
             Map.entry("ELEVENLABS_API_KEY", new CredentialChangeEffect(emptyList(), List.of("elevenlabs"), List.of("elevenlabs"))),
             Map.entry("LISTENHUB_API_KEY", new CredentialChangeEffect(emptyList(), emptyList(), List.of("listenhub"))),

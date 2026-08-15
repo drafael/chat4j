@@ -48,6 +48,27 @@ class ProviderModelCacheServiceTest {
     }
 
     @Test
+    @DisplayName("Together disk and refresh models are re-sanitized against the current snapshot")
+    void getModels_whenTogetherModelsContainUnknownIds_returnsOnlyReviewedServerlessIds() {
+        var cache = new InMemoryModelCache();
+        cache.put("Together", Instant.parse("2026-04-10T10:00:00Z"), List.of(
+                "Qwen/Qwen3.5-9B",
+                "qwen/qwen3.5-9b",
+                "unknown/dedicated"
+        ));
+        var subject = new ProviderModelCacheService(cache, fixedClock("2026-04-10T11:00:00Z"), Duration.ofHours(12));
+
+        assertThat(subject.getModels("Together")).containsExactly("Qwen/Qwen3.5-9B");
+
+        synchronizeScope(subject, "Together", "");
+        updateModels(subject, "Together", "", List.of(
+                "MiniMaxAI/MiniMax-M3",
+                "unknown/new-model"
+        ));
+        assertThat(subject.getModels("Together")).containsExactly("MiniMaxAI/MiniMax-M3");
+    }
+
+    @Test
     @DisplayName("Stale entries are refreshed when fetched time exceeds TTL")
     void shouldRefresh_whenEntryIsOlderThanTtl_returnsTrue() {
         var cache = new InMemoryModelCache();

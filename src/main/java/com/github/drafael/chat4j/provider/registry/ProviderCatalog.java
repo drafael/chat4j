@@ -112,6 +112,17 @@ final class ProviderCatalog {
                         attachmentSupport
                 ),
                 new OpenAiCompatibleModule(
+                        "Together",
+                        AuthType.ENV_VAR,
+                        "TOGETHER_API_KEY",
+                        null,
+                        "https://api.together.ai/v1",
+                        copilotModelMetadataStore,
+                        List.of(),
+                        ProviderCapabilities.chatAndModels(),
+                        attachmentSupport
+                ),
+                new OpenAiCompatibleModule(
                         "Groq",
                         AuthType.ENV_VAR,
                         "GROQ_API_KEY",

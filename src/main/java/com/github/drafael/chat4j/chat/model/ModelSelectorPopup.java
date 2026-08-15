@@ -13,6 +13,7 @@ import com.github.drafael.chat4j.provider.support.ModelOrdering;
 import com.github.drafael.chat4j.provider.support.NativeWebSearchOutcome;
 import com.github.drafael.chat4j.provider.support.PerplexityModelIds;
 import com.github.drafael.chat4j.provider.support.ProviderCapabilityResolver;
+import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.awt.event.AWTEventListener;
@@ -73,6 +74,7 @@ public class ModelSelectorPopup extends JDialog {
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),
             Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
+            Map.entry("Together", "/icons/providers/together.svg"),
             Map.entry("Groq", "/icons/providers/groq.svg"),
             Map.entry("DeepSeek", "/icons/providers/deepseek.svg"),
             Map.entry("Mistral", "/icons/providers/mistral.svg"),
@@ -1200,32 +1202,35 @@ public class ModelSelectorPopup extends JDialog {
             return cached;
         }
 
-        ModelCapabilities fallback = fallbackCapabilities(entry, modelId);
+        ModelCapabilities fallback = fallbackCapabilities(
+                entry.def,
+                modelId,
+                providerRegistry.cachedModelSupportedEndpoints(entry.def, modelId)
+        );
         capabilityCache.put(key, fallback);
         return fallback;
     }
 
-    private ModelCapabilities fallbackCapabilities(ProviderEntry entry, String modelId) {
-        boolean supportsImageInput = ProviderCapabilityResolver.supportsImageInput(
-                entry.def.capabilities(),
-                entry.name(),
-                modelId
-        );
-        boolean supportsReasoning = ProviderCapabilityResolver.supportsReasoning(
-                entry.def.capabilities(),
-                entry.name(),
-                modelId
-        );
-
+    private static ModelCapabilities fallbackCapabilities(
+            ProviderDef provider,
+            String modelId,
+            Optional<List<String>> cachedSupportedEndpoints
+    ) {
+        boolean togetherProvider = TogetherModelSupport.isTogether(provider.name());
+        boolean supportsImageInput = togetherProvider
+                ? TogetherModelSupport.supportsVision(provider.baseUrl(), modelId)
+                : ProviderCapabilityResolver.supportsImageInput(provider.capabilities(), provider.name(), modelId);
+        boolean supportsReasoning = togetherProvider
+                ? TogetherModelSupport.supportsReasoning(provider.baseUrl(), modelId)
+                : ProviderCapabilityResolver.supportsReasoning(provider.capabilities(), provider.name(), modelId);
         NativeWebSearchOutcome nativeWebSearchOutcome =
                 ProviderCapabilityResolver.nativeWebSearchOutcomeFromCachedEndpoints(
-                        entry.name(),
+                        provider.name(),
                         modelId,
-                        entry.baseUrl(),
-                        entry.def.defaultBaseUrl(),
-                        providerRegistry.cachedModelSupportedEndpoints(entry.def, modelId)
+                        provider.baseUrl(),
+                        provider.defaultBaseUrl(),
+                        cachedSupportedEndpoints
                 );
-
         return new ModelCapabilities(supportsImageInput, supportsReasoning, nativeWebSearchOutcome);
     }
 

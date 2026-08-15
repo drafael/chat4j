@@ -21,6 +21,7 @@ class ProviderCapabilityResolverTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String TEST_API_KEY = "test-key";
+    private static final String TOGETHER_BASE_URL = "https://api.together.ai/v1";
 
     @Test
     @DisplayName("OpenAI multimodal-style model names are treated as image-capable")
@@ -1978,6 +1979,72 @@ class ProviderCapabilityResolverTest {
                 "codestral-latest",
                 "https://api.mistral.ai/v1",
                 "https://api.mistral.ai/v1"
+        )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
+    }
+
+    @Test
+    @DisplayName("Together hosted capabilities use exact IDs before generic hints and probes")
+    void capabilities_whenTogetherUsesHostedEndpoint_returnExactDecisions() {
+        String baseUrl = TOGETHER_BASE_URL;
+        String visionAndToolsModel = "Qwen/Qwen3.5-9B";
+
+        assertThat(ProviderCapabilityResolver.supportsImageInput(
+                ProviderCapabilities.chatAndModels(),
+                "Together",
+                visionAndToolsModel,
+                baseUrl,
+                "secret"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Together",
+                visionAndToolsModel,
+                baseUrl,
+                "secret"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                ProviderCapabilities.chatAndModels(),
+                "Together",
+                visionAndToolsModel,
+                baseUrl,
+                "secret"
+        )).isTrue();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                ProviderCapabilities.chatAndModels(),
+                "Together",
+                "Qwen/Qwen3.7-Max",
+                baseUrl,
+                "secret"
+        )).isFalse();
+    }
+
+    @Test
+    @DisplayName("Together custom and unknown model capability queries remain text only")
+    void capabilities_whenTogetherEndpointOrModelIsUntrusted_returnFalse() {
+        ProviderCapabilities broadCapabilities = ProviderCapabilities.chatModelsAndImages();
+
+        assertThat(ProviderCapabilityResolver.supportsImageInput(
+                broadCapabilities,
+                "Together",
+                "Qwen/Qwen3.5-9B",
+                "https://proxy.example/v1"
+        )).isFalse();
+        assertThat(ProviderCapabilityResolver.supportsReasoning(
+                broadCapabilities,
+                "Together",
+                "Qwen/Qwen3.5-9B"
+        )).isFalse();
+        assertThat(ProviderCapabilityResolver.supportsToolInvocation(
+                broadCapabilities,
+                "Together",
+                "qwen/qwen3.5-9b",
+                TOGETHER_BASE_URL
+        )).isFalse();
+        assertThat(ProviderCapabilityResolver.nativeWebSearchOutcome(
+                "Together",
+                "Qwen/Qwen3.5-9B",
+                TOGETHER_BASE_URL,
+                TOGETHER_BASE_URL
         )).isEqualTo(NativeWebSearchOutcome.UNSUPPORTED);
     }
 

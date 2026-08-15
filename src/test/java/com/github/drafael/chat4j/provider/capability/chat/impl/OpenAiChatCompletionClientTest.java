@@ -13,6 +13,8 @@ import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
 import com.github.drafael.chat4j.provider.api.content.TextPart;
 import com.github.drafael.chat4j.provider.core.ProviderRuntime;
+import com.github.drafael.chat4j.provider.core.error.AuthenticationException;
+import com.github.drafael.chat4j.provider.core.error.InvalidRequestException;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
@@ -40,6 +42,7 @@ import com.openai.services.blocking.chat.ChatCompletionService;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
@@ -109,6 +112,59 @@ class OpenAiChatCompletionClientTest {
                             content -> assertThat(content.asInputImage().imageUrl())
                                     .contains("data:image/png;base64,AQID")
                     );
+        } finally {
+            Files.deleteIfExists(storedImage);
+        }
+    }
+
+    @Test
+    @DisplayName("Together sends native images only to reviewed hosted vision models")
+    void streamWithChatCompletions_whenTogetherImageEndpointVaries_respectsHostedCapability() throws Exception {
+        Path storedImage = ProviderAttachmentTestSupport.managedRoot(attachmentSupport)
+                .resolve(UUID.randomUUID().toString());
+        Files.write(storedImage, new byte[]{1, 2, 3});
+        try {
+            Message message = new Message(
+                    Role.USER,
+                    List.of(
+                            new TextPart("Describe this screenshot"),
+                            new ImagePart(
+                                    new AttachmentRef(
+                                            UUID.randomUUID(),
+                                            storedImage.toString(),
+                                            "img.png",
+                                            "image/png",
+                                            3L,
+                                            "sha"
+                                    ),
+                                    512,
+                                    320
+                            )
+                    ),
+                    Instant.now()
+            );
+
+            ChatCompletionCreateParams hosted = captureChatCompletionParams(
+                    runtime("Together", "Qwen/Qwen3.5-9B", "https://api.together.ai/v1"),
+                    message
+            );
+            ChatCompletionCreateParams custom = captureChatCompletionParams(
+                    runtime("Together", "Qwen/Qwen3.5-9B", "https://proxy.example/v1"),
+                    message
+            );
+
+            var hostedContent = hosted.messages().getFirst().asUser().content();
+            assertThat(hostedContent.isArrayOfContentParts()).isTrue();
+            assertThat(hostedContent.asArrayOfContentParts())
+                    .filteredOn(part -> part.isImageUrl())
+                    .singleElement()
+                    .satisfies(part -> assertThat(part.asImageUrl().imageUrl().url())
+                            .isEqualTo("data:image/png;base64,AQID"));
+            var customContent = custom.messages().getFirst().asUser().content();
+            assertThat(customContent.isText()).isTrue();
+            assertThat(customContent.asText())
+                    .contains("Describe this screenshot", "img.png")
+                    .doesNotContain("base64");
         } finally {
             Files.deleteIfExists(storedImage);
         }
@@ -850,6 +906,351 @@ class OpenAiChatCompletionClientTest {
         boolean shouldEmit = invokeShouldEmitOutputDelta("");
 
         assertThat(shouldEmit).isFalse();
+    }
+
+    @Test
+    @DisplayName("Kimi K3 reasoning off uses the lowest supported effort")
+    void applyChatCompletionsThinkingHints_whenKimiK3ReasoningIsOff_sendsLowEffort() throws Exception {
+        Map<String, JsonValue> properties = togetherReasoningProperties(
+                "moonshotai/Kimi-K3",
+                ReasoningLevel.OFF,
+                "https://api.together.ai/v1"
+        );
+
+        assertThat(jsonValue(properties, "reasoning_effort")).isEqualTo("low");
+        assertThat(properties).doesNotContainKey("reasoning");
+    }
+
+    @Test
+    @DisplayName("Hosted Together reasoning models serialize only their documented wire policy")
+    void applyChatCompletionsThinkingHints_whenTogetherModelVaries_usesCentralPolicy() throws Exception {
+        Map<String, JsonValue> binaryOff = togetherReasoningProperties(
+                "MiniMaxAI/MiniMax-M3",
+                ReasoningLevel.OFF,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> binaryOn = togetherReasoningProperties(
+                "MiniMaxAI/MiniMax-M3",
+                ReasoningLevel.EXTRA_HIGH,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> kimiLow = togetherReasoningProperties(
+                "moonshotai/Kimi-K3",
+                ReasoningLevel.LOW,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> kimiMax = togetherReasoningProperties(
+                "moonshotai/Kimi-K3",
+                ReasoningLevel.EXTRA_HIGH,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> gptOss = togetherReasoningProperties(
+                "openai/gpt-oss-120b",
+                ReasoningLevel.EXTRA_HIGH,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> highMax = togetherReasoningProperties(
+                "zai-org/GLM-5.2",
+                ReasoningLevel.EXTRA_HIGH,
+                "https://api.together.ai/v1"
+        );
+        Map<String, JsonValue> nemotron = togetherReasoningProperties(
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                ReasoningLevel.MEDIUM,
+                "https://api.together.ai/v1"
+        );
+
+        assertThat(jsonValue(binaryOff, "reasoning")).isEqualTo(Map.of("enabled", false));
+        assertThat(jsonValue(binaryOn, "reasoning")).isEqualTo(Map.of("enabled", true));
+        assertThat(jsonValue(kimiLow, "reasoning_effort")).isEqualTo("low");
+        assertThat(jsonValue(kimiMax, "reasoning_effort")).isEqualTo("max");
+        assertThat(jsonValue(gptOss, "reasoning_effort")).isEqualTo("high");
+        assertThat(gptOss).doesNotContainKey("reasoning");
+        assertThat(jsonValue(highMax, "reasoning_effort")).isEqualTo("max");
+        assertThat(highMax.values()).noneMatch(value -> value.toString().contains("xhigh"));
+        assertThat(jsonValue(nemotron, "reasoning")).isEqualTo(Map.of("enabled", true));
+        assertThat(jsonValue(nemotron, "chat_template_kwargs")).isEqualTo(Map.of("medium_effort", true));
+    }
+
+    @Test
+    @DisplayName("Unknown and custom-base Together models omit generic reasoning properties")
+    void applyChatCompletionsThinkingHints_whenTogetherPolicyIsUnavailable_omitsReasoning() throws Exception {
+        assertThat(togetherReasoningProperties(
+                "Qwen/Qwen3.7-Max",
+                ReasoningLevel.HIGH,
+                "https://api.together.ai/v1"
+        )).isEmpty();
+        assertThat(togetherReasoningProperties(
+                "MiniMaxAI/MiniMax-M3",
+                ReasoningLevel.HIGH,
+                "https://proxy.example/v1"
+        )).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Together reasoning uses one semantic attempt while other providers retain downgrade attempts")
+    void reasoningAttempts_whenProviderIsTogether_returnsSingleRequestedLevel() throws Exception {
+        assertThat(invokeReasoningAttempts(
+                runtime("Together", "openai/gpt-oss-120b", "https://api.together.ai/v1"),
+                ReasoningLevel.EXTRA_HIGH
+        )).containsExactly(ReasoningLevel.EXTRA_HIGH);
+        assertThat(invokeReasoningAttempts(runtime("OpenAI", "gpt-5"), ReasoningLevel.HIGH))
+                .containsExactly(ReasoningLevel.HIGH, ReasoningLevel.MEDIUM, ReasoningLevel.LOW, ReasoningLevel.OFF);
+    }
+
+    @Test
+    @DisplayName("Together reasoning parameter failures are surfaced after one ordinary-chat attempt")
+    void streamCompletion_whenTogetherRejectsReasoning_doesNotDowngradeOrRetry() throws Exception {
+        var requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requests.incrementAndGet();
+            byte[] body = """
+                    {"error":{"type":"invalid_request_error","code":"invalid_reasoning","message":"invalid reasoning_effort"}}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(400, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+
+            assertThatThrownBy(() -> subject.streamCompletion(
+                    runtime("Together", "openai/gpt-oss-120b", endpoint),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.EXTRA_HIGH,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            )).isInstanceOf(InvalidRequestException.class);
+            assertThat(requests).hasValue(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Custom Together ordinary-chat errors retain generic status semantics")
+    void streamCompletion_whenCustomTogetherReturns403_mapsAuthoritativeStatusGenerically() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = """
+                    {"error":{"type":"context_length","code":"context_length","message":"context length exceeded"}}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(403, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+
+            assertThatThrownBy(() -> subject.streamCompletion(
+                    runtime("Together", "Qwen/Qwen3.5-9B", endpoint),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    ignored -> {
+                    },
+                    ignored -> {
+                    },
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            )).isInstanceOf(AuthenticationException.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Together ordinary chat suppresses streamed reasoning when the requested level is off")
+    void streamCompletion_whenTogetherReasoningIsOff_suppressesThinkingDeltas() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = """
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{"reasoning":"hidden","content":"answer"},"finish_reason":null}]}
+
+                    data: {"id":"chatcmpl","object":"chat.completion.chunk","created":0,"model":"test","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String endpoint = "http://127.0.0.1:%d/v1".formatted(server.getAddress().getPort());
+            List<String> thinking = new ArrayList<>();
+
+            subject.streamCompletion(
+                    runtime("Together", "MiniMaxAI/MiniMax-M3", endpoint),
+                    List.of(Message.user("question")),
+                    ReasoningLevel.OFF,
+                    ignored -> {
+                    },
+                    thinking::add,
+                    () -> false,
+                    ignored -> {
+                    },
+                    () -> {
+                    }
+            );
+
+            assertThat(thinking).isEmpty();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Together canonical reasoning deltas remain available to the thinking callback")
+    void emitThinkingDeltaFromProperties_whenTogetherUsesReasoning_emitsCanonicalValue() throws Exception {
+        List<String> tokens = new ArrayList<>();
+
+        boolean emitted = invokeEmitThinkingDeltaFromProperties(
+                Map.of("reasoning", JsonValue.from("thinking")),
+                tokens::add
+        );
+
+        assertThat(emitted).isTrue();
+        assertThat(tokens).containsExactly("thinking");
+    }
+
+    private ChatCompletionCreateParams captureChatCompletionParams(
+            ProviderRuntime runtime,
+            Message message
+    ) throws Exception {
+        boolean nativeImages = invokeSupportsNativeImages(runtime);
+        AttachmentProjectionPlan plan = AttachmentProjectionPlan.create(
+                List.of(message),
+                attachmentSupport,
+                AttachmentProjectionPlan.openAi(nativeImages),
+                () -> false
+        );
+        OpenAIClient client = mock(OpenAIClient.class);
+        ChatService chat = mock(ChatService.class);
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        @SuppressWarnings("unchecked")
+        StreamResponse<ChatCompletionChunk> stream = mock(StreamResponse.class);
+        ChatCompletionChunk chunk = mock(ChatCompletionChunk.class);
+        ChatCompletionChunk.Choice choice = mock(ChatCompletionChunk.Choice.class);
+        ChatCompletionChunk.Choice.Delta delta = mock(ChatCompletionChunk.Choice.Delta.class);
+        when(client.chat()).thenReturn(chat);
+        when(chat.completions()).thenReturn(completions);
+        when(completions.createStreaming(any(ChatCompletionCreateParams.class))).thenReturn(stream);
+        when(stream.stream()).thenReturn(Stream.of(chunk));
+        when(chunk.choices()).thenReturn(List.of(choice));
+        when(chunk._additionalProperties()).thenReturn(emptyMap());
+        when(choice.delta()).thenReturn(delta);
+        when(choice.finishReason()).thenReturn(Optional.of(mock(ChatCompletionChunk.Choice.FinishReason.class)));
+        when(choice._additionalProperties()).thenReturn(emptyMap());
+        when(delta.content()).thenReturn(Optional.of("done"));
+        when(delta._additionalProperties()).thenReturn(emptyMap());
+        var captor = ArgumentCaptor.forClass(ChatCompletionCreateParams.class);
+
+        invokeStreamWithChatCompletions(runtime, plan, client);
+
+        verify(completions).createStreaming(captor.capture());
+        return captor.getValue();
+    }
+
+    private Map<String, JsonValue> togetherReasoningProperties(
+            String modelId,
+            ReasoningLevel level,
+            String baseUrl
+    ) throws Exception {
+        ChatCompletionCreateParams.Builder builder = ChatCompletionCreateParams.builder()
+                .model(modelId)
+                .addUserMessage("question");
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "applyChatCompletionsThinkingHints",
+                ChatCompletionCreateParams.Builder.class,
+                ProviderRuntime.class,
+                ReasoningLevel.class
+        );
+        method.setAccessible(true);
+        method.invoke(subject, builder, runtime("Together", modelId, baseUrl), level);
+        return builder.build()._additionalBodyProperties();
+    }
+
+    private Object jsonValue(Map<String, JsonValue> properties, String key) {
+        return properties.get(key).convert(Object.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ReasoningLevel> invokeReasoningAttempts(
+            ProviderRuntime runtime,
+            ReasoningLevel reasoningLevel
+    ) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "reasoningAttempts",
+                ProviderRuntime.class,
+                ReasoningLevel.class
+        );
+        method.setAccessible(true);
+        return (List<ReasoningLevel>) method.invoke(subject, runtime, reasoningLevel);
+    }
+
+    private void invokeStreamWithChatCompletions(
+            ProviderRuntime runtime,
+            AttachmentProjectionPlan plan,
+            OpenAIClient client
+    ) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "streamWithChatCompletions",
+                ProviderRuntime.class,
+                AttachmentProjectionPlan.class,
+                OpenAIClient.class,
+                ReasoningLevel.class,
+                Consumer.class,
+                Consumer.class,
+                Consumer.class,
+                BooleanSupplier.class,
+                Consumer.class,
+                Runnable.class
+        );
+        method.setAccessible(true);
+        method.invoke(
+                subject,
+                runtime,
+                plan,
+                client,
+                ReasoningLevel.OFF,
+                (Consumer<String>) ignored -> {
+                },
+                (Consumer<String>) ignored -> {
+                },
+                (Consumer<CitationRef>) ignored -> {
+                },
+                (BooleanSupplier) () -> false,
+                (Consumer<AutoCloseable>) ignored -> {
+                },
+                (Runnable) () -> {
+                }
+        );
+    }
+
+    private boolean invokeSupportsNativeImages(ProviderRuntime runtime) throws Exception {
+        Method method = OpenAiChatCompletionClient.class.getDeclaredMethod(
+                "supportsNativeImages",
+                ProviderRuntime.class
+        );
+        method.setAccessible(true);
+        return (boolean) method.invoke(subject, runtime);
     }
 
     private void invokeStreamCopilotCompletion(AttachmentProjectionPlan plan, OpenAIClient client) throws Exception {

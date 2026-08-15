@@ -75,6 +75,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             Map.entry("Perplexity", "https://www.perplexity.ai/settings/api"),
             Map.entry("Google AI", "https://aistudio.google.com/app/apikey"),
             Map.entry("OpenRouter", "https://openrouter.ai/keys"),
+            Map.entry("Together", "https://api.together.ai/settings/projects/~current/api-keys"),
             Map.entry("Groq", "https://console.groq.com/keys"),
             Map.entry("DeepSeek", "https://platform.deepseek.com/api_keys"),
             Map.entry("Mistral", "https://console.mistral.ai/api-keys"),
@@ -98,6 +99,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
             Map.entry("Google AI", "/icons/providers/google.svg"),
             Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
+            Map.entry("Together", "/icons/providers/together.svg"),
             Map.entry("Groq", "/icons/providers/groq.svg"),
             Map.entry("DeepSeek", "/icons/providers/deepseek.svg"),
             Map.entry("Mistral", "/icons/providers/mistral.svg"),
@@ -139,6 +141,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         PROVIDERS.put("GitHub Copilot", ProviderInfo.copilotOAuth("https://api.githubcopilot.com"));
         PROVIDERS.put("Google AI", ProviderInfo.envVar("GEMINI_API_KEY|GOOGLEAI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai"));
         PROVIDERS.put("OpenRouter", ProviderInfo.envVar("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"));
+        PROVIDERS.put("Together", ProviderInfo.envVar("TOGETHER_API_KEY", "https://api.together.ai/v1"));
         PROVIDERS.put("Groq", ProviderInfo.envVar("GROQ_API_KEY", "https://api.groq.com/openai/v1"));
         PROVIDERS.put("DeepSeek", ProviderInfo.envVar("DEEPSEEK_API_KEY", "https://api.deepseek.com"));
         PROVIDERS.put("Mistral", ProviderInfo.envVar("MISTRAL_API_KEY", "https://api.mistral.ai/v1"));
@@ -2112,7 +2115,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             Graphics2D g2 = (Graphics2D) graphics.create();
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(statusDotColor(component, available));
+                g2.setColor(statusDotColor(available));
                 int dotX = x + (getIconWidth() - STATUS_DOT_SIZE) / 2;
                 int dotY = y + (getIconHeight() - STATUS_DOT_SIZE) / 2;
                 g2.fillOval(dotX, dotY, STATUS_DOT_SIZE, STATUS_DOT_SIZE);
@@ -2147,7 +2150,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             try {
                 baseIcon.paintIcon(component, g2, x, y);
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(statusDotColor(component, available));
+                g2.setColor(statusDotColor(available));
                 int dotX = x + getIconWidth() - STATUS_DOT_SIZE - 1;
                 int dotY = y + getIconHeight() - STATUS_DOT_SIZE - 1;
                 g2.fillOval(dotX, dotY, STATUS_DOT_SIZE, STATUS_DOT_SIZE);
@@ -2167,14 +2170,19 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         }
     }
 
-    private static Color statusDotColor(Component component, boolean available) {
-        Color color = available
-                ? UIManager.getColor("Component.accentColor")
-                : UIManager.getColor("Label.disabledForeground");
-        if (color != null) {
-            return color;
+    private static Color statusDotColor(boolean available) {
+        if (!available) {
+            return ObjectUtils.firstNonNull(
+                    UIManager.getColor("Label.disabledForeground"),
+                    new Color(140, 140, 140)
+            );
         }
-        return available ? new Color(67, 160, 71) : new Color(140, 140, 140);
+        return ObjectUtils.firstNonNull(
+                UIManager.getColor("Component.success.foreground"),
+                UIManager.getColor("Component.success.focusedBorderColor"),
+                UIManager.getColor("Actions.Green"),
+                new Color(67, 160, 71)
+        );
     }
 
     private class ProviderCellRenderer extends DefaultListCellRenderer {

@@ -20,19 +20,58 @@ TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT_FILE="${REPORT_DIR}/doctor-${TIMESTAMP}.md"
 JSON_FILE="${REPORT_DIR}/doctor-${TIMESTAMP}.json"
 JSON_LINES_FILE=""
+ENV_PROBE_PID=""
+TEMP_FILES=()
 
 KNOWN_PROVIDER_KEYS=(
   "ANTHROPIC_API_KEY"
   "OPENAI_API_KEY"
   "OPENROUTER_API_KEY"
+  "TOGETHER_API_KEY"
   "GROQ_API_KEY"
+  "ELEVENLABS_API_KEY"
+  "LISTENHUB_API_KEY"
+  "DEEPGRAM_API_KEY"
+  "ASSEMBLYAI_API_KEY"
   "DEEPSEEK_API_KEY"
   "MISTRAL_API_KEY"
   "XAI_API_KEY"
+  "PERPLEXITY_API_KEY"
   "GEMINI_API_KEY"
   "GOOGLEAI_API_KEY"
-  "GOOGLE_AI_API_KEY"
 )
+
+cleanup() {
+  if [ -n "$ENV_PROBE_PID" ] && kill -0 "$ENV_PROBE_PID" 2>/dev/null; then
+    kill "$ENV_PROBE_PID" 2>/dev/null || true
+    kill -9 "$ENV_PROBE_PID" 2>/dev/null || true
+    wait "$ENV_PROBE_PID" 2>/dev/null || true
+  fi
+  if [ "${#TEMP_FILES[@]}" -gt 0 ]; then
+    rm -f "${TEMP_FILES[@]}"
+  fi
+}
+
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+report_storage_error() {
+  echo "Could not write Chat4J doctor report data in: $REPORT_DIR" >&2
+  exit 2
+}
+
+create_temp_file() {
+  local variable_name="$1"
+  local template="$2"
+  local created_file
+  if ! created_file="$(mktemp "$template")"; then
+    report_storage_error
+  fi
+  printf -v "$variable_name" '%s' "$created_file"
+  TEMP_FILES+=("$created_file")
+}
 
 usage() {
   cat <<EOF
@@ -70,11 +109,23 @@ one_line() {
 }
 
 json_escape() {
-  printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'
+  local value="${1:-}"
+  local code=1
+  local octal control replacement
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  while [ "$code" -le 31 ]; do
+    printf -v octal '%03o' "$code"
+    printf -v control '%b' "\\${octal}"
+    printf -v replacement '\\u%04x' "$code"
+    value="${value//$control/$replacement}"
+    code=$((code + 1))
+  done
+  printf '%s' "$value"
 }
 
 append_report() {
-  printf '%s\n' "$1" >> "$REPORT_FILE"
+  printf '%s\n' "$1" >> "$REPORT_FILE" || report_storage_error
 }
 
 record_check() {
@@ -120,7 +171,8 @@ record_check() {
     escaped_remediation="$(json_escape "$(one_line "$remediation")")"
 
     printf '{"check":"%s","severity":"%s","detail":"%s","remediation":"%s"}\n' \
-      "$escaped_name" "$escaped_severity" "$escaped_detail" "$escaped_remediation" >> "$JSON_LINES_FILE"
+      "$escaped_name" "$escaped_severity" "$escaped_detail" "$escaped_remediation" \
+      >> "$JSON_LINES_FILE" || report_storage_error
   fi
 }
 
@@ -163,35 +215,41 @@ run_env_probe() {
   local shell_path="$1"
   local stdout_file="$2"
   local stderr_file="$3"
+  local interactive="$4"
   local timeout_seconds=5
   local elapsed_seconds=0
-  local timed_out=0
+  local shell_options=(-l -c)
+  if [ "$interactive" -eq 1 ]; then
+    shell_options=(-l -i -c)
+  fi
 
-  "$shell_path" -l -i -c env >"$stdout_file" 2>"$stderr_file" &
-  local probe_pid=$!
+  ENV_PROBE_STATUS=0
+  ENV_PROBE_TIMED_OUT=0
+  "$shell_path" "${shell_options[@]}" \
+    'for key; do if printenv "$key" >/dev/null 2>&1; then printf "%s\\n" "$key"; fi; done' \
+    chat4j-env-probe "${KNOWN_PROVIDER_KEYS[@]}" >"$stdout_file" 2>"$stderr_file" &
+  ENV_PROBE_PID=$!
 
-  while kill -0 "$probe_pid" 2>/dev/null; do
+  while kill -0 "$ENV_PROBE_PID" 2>/dev/null; do
     if [ "$elapsed_seconds" -ge "$timeout_seconds" ]; then
-      timed_out=1
-      kill "$probe_pid" 2>/dev/null || true
+      ENV_PROBE_TIMED_OUT=1
+      kill "$ENV_PROBE_PID" 2>/dev/null || true
       sleep 1
-      kill -9 "$probe_pid" 2>/dev/null || true
+      kill -9 "$ENV_PROBE_PID" 2>/dev/null || true
       break
     fi
     sleep 1
     elapsed_seconds=$((elapsed_seconds + 1))
   done
 
-  local probe_status=0
-  if [ "$timed_out" -eq 1 ]; then
-    wait "$probe_pid" 2>/dev/null || true
-    probe_status=124
+  if [ "$ENV_PROBE_TIMED_OUT" -eq 1 ]; then
+    wait "$ENV_PROBE_PID" 2>/dev/null || true
+    ENV_PROBE_STATUS=124
   else
-    wait "$probe_pid"
-    probe_status=$?
+    wait "$ENV_PROBE_PID"
+    ENV_PROBE_STATUS=$?
   fi
-
-  printf '%s;%s\n' "$probe_status" "$timed_out"
+  ENV_PROBE_PID=""
 }
 
 while [ "$#" -gt 0 ]; do
@@ -227,14 +285,17 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-mkdir -p "$REPORT_DIR"
+if ! mkdir -p "$REPORT_DIR"; then
+  echo "Could not create Chat4J doctor report directory: $REPORT_DIR" >&2
+  exit 2
+fi
 if [ "$JSON_MODE" -eq 1 ]; then
-  JSON_LINES_FILE="$(mktemp "${REPORT_DIR}/doctor-checks-XXXXXX")"
+  create_temp_file JSON_LINES_FILE "${REPORT_DIR}/doctor-checks-XXXXXX"
 fi
 
 APP_PATH="$(canonical_path "$APP_PATH")"
 
-{
+if ! {
   echo "# Chat4J Doctor Report"
   echo ""
   echo "- Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -243,7 +304,9 @@ APP_PATH="$(canonical_path "$APP_PATH")"
   echo ""
   echo "## Check Results"
   echo ""
-} > "$REPORT_FILE"
+} > "$REPORT_FILE"; then
+  report_storage_error
+fi
 
 if [ ! -d "$APP_PATH" ]; then
   record_check "App bundle exists" "CRITICAL" "App bundle not found at ${APP_PATH}" "Verify the app path and reinstall Chat4J from a trusted source."
@@ -269,14 +332,14 @@ else
   record_check "Build metadata file" "WARN" "Build metadata not found in Contents/app or Contents/app/classes" "Identity checks will run in compatibility mode."
 fi
 
-CODESIGN_VERIFY_OUTPUT="$(mktemp "${REPORT_DIR}/codesign-verify-XXXXXX")"
+create_temp_file CODESIGN_VERIFY_OUTPUT "${REPORT_DIR}/codesign-verify-XXXXXX"
 if run_command_capture "$CODESIGN_VERIFY_OUTPUT" /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"; then
   record_check "Code signature integrity" "PASS" "codesign --verify succeeded"
 else
   record_check "Code signature integrity" "CRITICAL" "codesign verify failed: $(one_line "$(cat "$CODESIGN_VERIFY_OUTPUT")")" "Do not bypass security checks. Reinstall a trusted signed build."
 fi
 
-CODESIGN_DETAILS_OUTPUT="$(mktemp "${REPORT_DIR}/codesign-details-XXXXXX")"
+create_temp_file CODESIGN_DETAILS_OUTPUT "${REPORT_DIR}/codesign-details-XXXXXX"
 if run_command_capture "$CODESIGN_DETAILS_OUTPUT" /usr/bin/codesign -dv --verbose=4 "$APP_PATH"; then
   ACTUAL_TEAM_ID="$(awk -F= '/^TeamIdentifier=/ {print $2; exit}' "$CODESIGN_DETAILS_OUTPUT")"
   ACTUAL_BUNDLE_ID="$(awk -F= '/^Identifier=/ {print $2; exit}' "$CODESIGN_DETAILS_OUTPUT")"
@@ -331,7 +394,7 @@ if [ -n "$EXPECTED_SIGNER_CN" ] && [ -n "$ACTUAL_SIGNER_CN" ]; then
   fi
 fi
 
-SPCTL_OUTPUT="$(mktemp "${REPORT_DIR}/spctl-XXXXXX")"
+create_temp_file SPCTL_OUTPUT "${REPORT_DIR}/spctl-XXXXXX"
 if run_command_capture "$SPCTL_OUTPUT" /usr/sbin/spctl --assess --verbose=4 "$APP_PATH"; then
   record_check "Gatekeeper assessment" "PASS" "spctl assessment accepted"
 else
@@ -342,7 +405,7 @@ if [ "$CRITICAL_COUNT" -eq 0 ]; then
   SECURITY_BASELINE_OK=1
 fi
 
-XATTR_OUTPUT="$(mktemp "${REPORT_DIR}/xattr-XXXXXX")"
+create_temp_file XATTR_OUTPUT "${REPORT_DIR}/xattr-XXXXXX"
 if run_command_capture "$XATTR_OUTPUT" /usr/bin/xattr -l "$APP_PATH"; then
   if grep -q "com.apple.quarantine" "$XATTR_OUTPUT"; then
     if [ "$SECURITY_BASELINE_OK" -eq 1 ]; then
@@ -367,6 +430,7 @@ fi
 
 if mkdir -p "${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs" 2>/dev/null; then
   WRITE_TEST_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j/logs/.doctor-write-test-${TIMESTAMP}"
+  TEMP_FILES+=("$WRITE_TEST_FILE")
   if touch "$WRITE_TEST_FILE" 2>/dev/null; then
     rm -f "$WRITE_TEST_FILE"
     record_check "Writable log directory" "PASS" "Chat4J log directory is writable"
@@ -377,25 +441,31 @@ else
   record_check "Writable log directory" "WARN" "Cannot create Chat4J log directory" "Fix permissions on ${XDG_CONFIG_HOME:-${HOME}/.config}/chat4j"
 fi
 
-ENV_STDOUT_FILE="$(mktemp "${REPORT_DIR}/env-probe-out-XXXXXX")"
-ENV_STDERR_FILE="$(mktemp "${REPORT_DIR}/env-probe-err-XXXXXX")"
+create_temp_file ENV_STDOUT_FILE "${REPORT_DIR}/env-probe-out-XXXXXX"
+create_temp_file ENV_STDERR_FILE "${REPORT_DIR}/env-probe-err-XXXXXX"
 ENV_SHELL="${SHELL:-/bin/zsh}"
 if [ ! -x "$ENV_SHELL" ]; then
   ENV_SHELL="/bin/zsh"
 fi
 
-ENV_PROBE_RESULT="$(run_env_probe "$ENV_SHELL" "$ENV_STDOUT_FILE" "$ENV_STDERR_FILE")"
-ENV_PROBE_STATUS="${ENV_PROBE_RESULT%%;*}"
-ENV_PROBE_TIMED_OUT="${ENV_PROBE_RESULT##*;}"
+run_env_probe "$ENV_SHELL" "$ENV_STDOUT_FILE" "$ENV_STDERR_FILE" 1
+PRIMARY_PROBE_STATUS="$ENV_PROBE_STATUS"
+PRIMARY_PROBE_TIMED_OUT="$ENV_PROBE_TIMED_OUT"
+if [ "$PRIMARY_PROBE_TIMED_OUT" = "1" ] || [ "$PRIMARY_PROBE_STATUS" != "0" ]; then
+  run_env_probe "$ENV_SHELL" "$ENV_STDOUT_FILE" "$ENV_STDERR_FILE" 0
+  if [ "$ENV_PROBE_TIMED_OUT" = "0" ] && [ "$ENV_PROBE_STATUS" = "0" ]; then
+    record_check "Shell environment probe" "PASS" "Login-only key detection succeeded after the login+interactive attempt failed"
+  elif [ "$PRIMARY_PROBE_TIMED_OUT" = "1" ]; then
+    record_check "Shell environment probe" "WARN" "${ENV_SHELL} login+interactive key detection timed out and login-only fallback failed" "Simplify shell startup scripts and avoid interactive blocking commands."
+  else
+    record_check "Shell environment probe" "WARN" "Shell key detection failed in login+interactive and login-only modes"
+  fi
+fi
 
-if [ "$ENV_PROBE_TIMED_OUT" = "1" ]; then
-  record_check "Shell environment probe" "WARN" "${ENV_SHELL} -l -i -c env timed out after 5s" "Simplify shell startup scripts and avoid interactive blocking commands."
-elif [ "$ENV_PROBE_STATUS" != "0" ]; then
-  record_check "Shell environment probe" "WARN" "Shell env probe exited with code ${ENV_PROBE_STATUS}: $(one_line "$(cat "$ENV_STDERR_FILE")")"
-else
+if [ "$ENV_PROBE_TIMED_OUT" = "0" ] && [ "$ENV_PROBE_STATUS" = "0" ]; then
   PRESENT_KEYS=()
   for key in "${KNOWN_PROVIDER_KEYS[@]}"; do
-    if grep -q "^${key}=" "$ENV_STDOUT_FILE"; then
+    if grep -q "^${key}$" "$ENV_STDOUT_FILE"; then
       PRESENT_KEYS+=("$key")
     fi
   done
@@ -413,12 +483,12 @@ append_report "- Warnings: ${WARN_COUNT}"
 append_report "- Exit code: $( [ "$CRITICAL_COUNT" -gt 0 ] && echo 2 || ( [ "$WARN_COUNT" -gt 0 ] && echo 1 || echo 0 ) )"
 append_report ""
 append_report "## Security notes"
-append_report "- This tool never reads or prints credential values."
+append_report "- Credential values may be read only to detect whether known keys are present; values are never reported."
 append_report "- If signature or Gatekeeper checks fail, do not remove quarantine attributes."
 append_report ""
 
 if [ "$JSON_MODE" -eq 1 ]; then
-  {
+  if ! {
     echo "{"
     echo "  \"generatedAt\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," 
     echo "  \"appPath\": \"$(json_escape "$APP_PATH")\"," 
@@ -431,7 +501,9 @@ if [ "$JSON_MODE" -eq 1 ]; then
     fi
     echo "  ]"
     echo "}"
-  } > "$JSON_FILE"
+  } > "$JSON_FILE"; then
+    report_storage_error
+  fi
 fi
 
 if [ "$VERBOSE" -eq 1 ]; then
@@ -439,7 +511,6 @@ if [ "$VERBOSE" -eq 1 ]; then
   echo "Detailed command output snippets:" 
   echo "- codesign verify: $(one_line "$(cat "$CODESIGN_VERIFY_OUTPUT")")"
   echo "- spctl assess: $(one_line "$(cat "$SPCTL_OUTPUT")")"
-  echo "- env probe stderr: $(one_line "$(cat "$ENV_STDERR_FILE")")"
 fi
 
 rm -f \

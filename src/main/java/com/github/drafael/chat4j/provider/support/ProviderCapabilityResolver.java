@@ -44,6 +44,10 @@ public final class ProviderCapabilityResolver {
             String baseUrl,
             String apiKey
     ) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            return TogetherModelSupport.supportsVision(baseUrl, modelId);
+        }
+
         String provider = normalize(providerName);
         String model = normalize(modelId);
 
@@ -92,6 +96,10 @@ public final class ProviderCapabilityResolver {
             String baseUrl,
             String apiKey
     ) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            return TogetherModelSupport.supportsReasoning(baseUrl, modelId);
+        }
+
         String provider = normalize(providerName);
         String model = normalize(modelId);
 
@@ -143,6 +151,10 @@ public final class ProviderCapabilityResolver {
             String baseUrl,
             String apiKey
     ) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            return TogetherModelSupport.supportsTools(baseUrl, modelId);
+        }
+
         String provider = normalize(providerName);
         String model = normalize(modelId);
 
@@ -227,7 +239,9 @@ public final class ProviderCapabilityResolver {
     ) {
         String provider = normalize(providerName);
         String model = normalize(modelId);
-        if (model.isBlank() || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
+        if (TogetherModelSupport.isTogether(providerName)
+                || model.isBlank()
+                || containsAny(model, NATIVE_WEB_SEARCH_MODEL_DENY_HINTS)) {
             return NativeWebSearchOutcome.UNSUPPORTED;
         }
         if (PERPLEXITY_PROVIDER_HINTS.contains(provider)) {

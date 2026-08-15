@@ -2,13 +2,17 @@ package com.github.drafael.chat4j.chat.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.chat.render.BoundedUtf8;
+import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
-import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
-import lombok.NonNull;
+import com.github.drafael.chat4j.provider.core.error.ProviderException;
+import com.github.drafael.chat4j.provider.core.error.ProviderExceptionMapper;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan;
 import com.github.drafael.chat4j.provider.support.AttachmentProjectionPlan.ProjectedMessage;
+import com.github.drafael.chat4j.provider.support.BaseUrlNormalizer;
 import com.github.drafael.chat4j.provider.support.CopilotRequestHeaders;
+import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
+import com.github.drafael.chat4j.provider.support.TogetherModelSupport;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -19,13 +23,17 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toSet;
 
 final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
@@ -43,8 +51,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     private final ProviderAttachmentSupport attachmentSupport;
     private final List<AgentToolDefinition> agentToolDefinitions;
     private final List<Map<String, Object>> toolExchangeMessages = new ArrayList<>();
-    private List<Map<String, Object>> pendingToolCalls = emptyList();
-    private String pendingReasoningContent = "";
+    private PendingAssistantContinuation pendingAssistantContinuation;
 
     OpenAiToolAgentAdapter(
             String providerName,
@@ -86,7 +93,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
     ) {
         this.providerName = StringUtils.defaultString(providerName);
         this.modelId = StringUtils.defaultString(modelId);
-        this.baseUrl = normalizeBaseUrl(baseUrl);
+        this.baseUrl = BaseUrlNormalizer.normalize(baseUrl, "");
         this.apiKey = apiKey;
         this.systemPromptAppend = StringUtils.defaultString(systemPromptAppend);
         this.attachmentSupport = attachmentSupport;
@@ -99,11 +106,11 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
-            if (!request.toolResults().isEmpty() && !pendingToolCalls.isEmpty()) {
-                appendToolExchange(request.toolResults());
-            }
+            PendingToolExchange pendingToolExchange = request.toolResults().isEmpty()
+                    ? null
+                    : prepareToolExchange(request.toolResults());
 
-            List<Map<String, Object>> messages = buildMessages(request);
+            List<Map<String, Object>> messages = buildMessages(request, pendingToolExchange);
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
@@ -113,6 +120,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             payload.put("tools", toolDefinitions());
             payload.put("tool_choice", "auto");
             payload.put("stream", false);
+            applyTogetherReasoning(payload, request.reasoningLevel());
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(chatCompletionsEndpoint(baseUrl)))
@@ -131,37 +139,37 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException(buildHttpErrorMessage(response.statusCode(), response.body()));
+                throw mapHttpError(response.statusCode(), response.body());
             }
 
             JsonNode root = JSON.readTree(response.body());
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
-            JsonNode messageNode = root.path("choices").path(0).path("message");
-
-            String assistantText = extractAssistantText(messageNode);
-            if (StringUtils.isNotBlank(assistantText) && !shouldStop(request)) {
-                callbacks.onToken().accept(assistantText);
-            }
-
-            String reasoningContent = extractReasoningContent(messageNode);
-            if (StringUtils.isNotBlank(reasoningContent) && !shouldStop(request)) {
-                callbacks.onThinkingToken().accept(reasoningContent);
-            }
-
-            List<ToolInvocationRequest> toolInvocations = extractToolInvocations(messageNode.path("tool_calls"));
+            ValidatedResponse validated = validateResponse(root, request.reasoningLevel());
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
-            if (!toolInvocations.isEmpty()) {
-                pendingToolCalls = toPendingToolCalls(messageNode.path("tool_calls"));
-                pendingReasoningContent = reasoningContent;
-                return AgentTurnResult.continueWithTools(toolInvocations);
+            if (request.reasoningLevel().enabled() && StringUtils.isNotBlank(validated.reasoningText())) {
+                callbacks.onThinkingToken().accept(validated.reasoningText());
+            }
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
+            }
+            if (validated.toolInvocations().isEmpty() && StringUtils.isNotBlank(validated.assistantText())) {
+                callbacks.onToken().accept(validated.assistantText());
+            }
+            if (shouldStop(request)) {
+                return new AgentTurnResult(false, emptyList());
             }
 
-            pendingToolCalls = emptyList();
-            pendingReasoningContent = "";
+            commitToolExchange(pendingToolExchange);
+            if (!validated.toolInvocations().isEmpty()) {
+                pendingAssistantContinuation = validated.continuation();
+                return AgentTurnResult.continueWithTools(validated.toolInvocations());
+            }
+
+            pendingAssistantContinuation = null;
             return AgentTurnResult.complete();
         } catch (CancellationException e) {
             return new AgentTurnResult(false, emptyList());
@@ -185,17 +193,34 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         return Thread.currentThread().isInterrupted() || request.isCancelled().getAsBoolean();
     }
 
-    private void appendToolExchange(List<ToolInvocationResult> toolResults) {
+    private PendingToolExchange prepareToolExchange(List<ToolInvocationResult> toolResults) {
+        if (pendingAssistantContinuation == null) {
+            throw new IllegalStateException("Tool results were received without a pending assistant tool call.");
+        }
+        Set<String> expectedIds = pendingAssistantContinuation.toolCalls().stream()
+                .map(toolCall -> String.valueOf(toolCall.get("id")))
+                .collect(toSet());
+        Set<String> resultIds = toolResults.stream()
+                .map(ToolInvocationResult::id)
+                .collect(toSet());
+        if (toolResults.size() != expectedIds.size() || !resultIds.equals(expectedIds)) {
+            throw new IllegalStateException("Tool results do not match the pending assistant tool calls.");
+        }
+
+        List<Map<String, Object>> messages = new ArrayList<>();
         Map<String, Object> assistantMessage = new LinkedHashMap<>();
         assistantMessage.put("role", "assistant");
-        assistantMessage.put("content", null);
-        if (StringUtils.isNotBlank(pendingReasoningContent)) {
-            assistantMessage.put("reasoning_content", pendingReasoningContent);
+        if (pendingAssistantContinuation.contentPresent()) {
+            assistantMessage.put("content", pendingAssistantContinuation.content());
         }
-        assistantMessage.put("tool_calls", pendingToolCalls);
-        toolExchangeMessages.add(assistantMessage);
+        ReasoningContinuation reasoning = pendingAssistantContinuation.reasoning();
+        if (reasoning != null) {
+            assistantMessage.put(reasoning.fieldName(), reasoning.value());
+        }
+        assistantMessage.put("tool_calls", pendingAssistantContinuation.toolCalls());
+        messages.add(assistantMessage);
 
-        for (ToolInvocationResult toolResult : toolResults) {
+        toolResults.forEach(toolResult -> {
             Map<String, Object> toolMessage = new LinkedHashMap<>();
             toolMessage.put("role", "tool");
             toolMessage.put("tool_call_id", toolResult.id());
@@ -203,14 +228,23 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                     ? toolResult.output()
                     : "ERROR: %s".formatted(toolResult.error());
             toolMessage.put("content", StringUtils.defaultString(content));
-            toolExchangeMessages.add(toolMessage);
-        }
-
-        pendingToolCalls = emptyList();
-        pendingReasoningContent = "";
+            messages.add(toolMessage);
+        });
+        return new PendingToolExchange(pendingAssistantContinuation, List.copyOf(messages));
     }
 
-    private List<Map<String, Object>> buildMessages(AgentRunRequest request) {
+    private void commitToolExchange(PendingToolExchange pendingToolExchange) {
+        if (pendingToolExchange == null) {
+            return;
+        }
+        if (pendingAssistantContinuation != pendingToolExchange.continuation()) {
+            throw new IllegalStateException("The pending assistant tool call changed before continuation completed.");
+        }
+        toolExchangeMessages.addAll(pendingToolExchange.messages());
+        pendingAssistantContinuation = null;
+    }
+
+    private List<Map<String, Object>> buildMessages(AgentRunRequest request, PendingToolExchange pendingToolExchange) {
         List<Map<String, Object>> combined = new ArrayList<>();
         combined.add(systemPromptMessage(request));
 
@@ -226,6 +260,9 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
         combined.addAll(messages);
         combined.addAll(toolExchangeMessages);
+        if (pendingToolExchange != null) {
+            combined.addAll(pendingToolExchange.messages());
+        }
         return combined;
     }
 
@@ -258,78 +295,244 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         };
     }
 
-    private String extractAssistantText(JsonNode messageNode) {
-        JsonNode contentNode = messageNode.path("content");
-        if (contentNode.isTextual()) {
-            return contentNode.asText("");
+    private ValidatedResponse validateResponse(JsonNode root, ReasoningLevel reasoningLevel) {
+        JsonNode choices = root == null ? null : root.get("choices");
+        if (choices == null || !choices.isArray() || choices.isEmpty() || !choices.get(0).isObject()) {
+            throw invalidResponse("a nonempty choices array is required");
+        }
+        JsonNode choice = choices.get(0);
+        JsonNode message = choice.get("message");
+        if (message == null || !message.isObject()) {
+            throw invalidResponse("the first choice must contain an object-valued message");
         }
 
-        if (!contentNode.isArray()) {
-            return "";
-        }
-
-        StringBuilder collected = new StringBuilder();
-        for (JsonNode partNode : contentNode) {
-            if (partNode.path("type").asText("").equals("text")) {
-                collected.append(partNode.path("text").asText(""));
+        boolean hostedTogether = TogetherModelSupport.isTogether(providerName)
+                && TogetherModelSupport.isHostedEndpoint(baseUrl);
+        if (hostedTogether) {
+            JsonNode role = message.get("role");
+            if (role == null || !role.isTextual() || !"assistant".equals(role.asText())) {
+                throw invalidResponse("hosted Together requires message.role=assistant");
+            }
+            JsonNode content = message.get("content");
+            if (content == null || !content.isNull() && !content.isTextual()) {
+                throw invalidResponse("hosted Together requires present null or textual message.content");
             }
         }
 
+        ValidatedToolBatch toolBatch = validateToolCalls(message);
+        String assistantText = extractAssistantText(message);
+        JsonNode finishReasonNode = choice.get("finish_reason");
+        if (hostedTogether && finishReasonNode != null && !finishReasonNode.isTextual()) {
+            throw invalidResponse("hosted Together requires a textual finish_reason when present");
+        }
+        String finishReason = textualValue(finishReasonNode);
+        if ("length".equals(finishReason)) {
+            throw invalidResponse("the response was truncated before completion");
+        }
+        if (hostedTogether) {
+            validateTogetherFinishReason(finishReason, assistantText, toolBatch.invocations());
+        }
+        if (message.has("function_call")
+                && !message.path("function_call").isNull()
+                && toolBatch.invocations().isEmpty()) {
+            throw invalidResponse("deprecated function_call responses are unsupported without tool_calls");
+        }
+        if (StringUtils.isBlank(assistantText) && toolBatch.invocations().isEmpty()) {
+            throw invalidResponse("assistant content or a valid tool-call batch is required");
+        }
+
+        String reasoningText = extractReasoningText(message);
+        ReasoningContinuation reasoning = reasoningContinuation(message, reasoningLevel);
+        PendingAssistantContinuation continuation = toolBatch.invocations().isEmpty()
+                ? null
+                : new PendingAssistantContinuation(
+                        message.has("content"),
+                        jsonValue(message.get("content")),
+                        toolBatch.serializedCalls(),
+                        reasoning
+                );
+        return new ValidatedResponse(assistantText, reasoningText, toolBatch.invocations(), continuation);
+    }
+
+    private ValidatedToolBatch validateToolCalls(JsonNode message) {
+        if (!message.has("tool_calls")) {
+            return ValidatedToolBatch.empty();
+        }
+        JsonNode toolCalls = message.get("tool_calls");
+        if (toolCalls == null || !toolCalls.isArray()) {
+            throw invalidResponse("message.tool_calls must be an array when present");
+        }
+        if (toolCalls.isEmpty()) {
+            return ValidatedToolBatch.empty();
+        }
+
+        List<ToolInvocationRequest> invocations = new ArrayList<>();
+        List<Map<String, Object>> serializedCalls = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (JsonNode toolCall : toolCalls) {
+            if (!toolCall.isObject()) {
+                throw invalidResponse("every tool call must be an object");
+            }
+            String id = textualValue(toolCall.get("id"));
+            String type = textualValue(toolCall.get("type"));
+            JsonNode function = toolCall.get("function");
+            String name = function == null || !function.isObject()
+                    ? ""
+                    : textualValue(function.get("name"));
+            JsonNode arguments = function == null || !function.isObject()
+                    ? null
+                    : function.get("arguments");
+            if (StringUtils.isBlank(id)
+                    || !ids.add(id)
+                    || !"function".equals(type)
+                    || StringUtils.isBlank(name)
+                    || arguments == null
+                    || !arguments.isTextual()) {
+                throw invalidResponse("tool calls require unique nonblank IDs, function type/name, and textual arguments");
+            }
+
+            String argumentsJson = arguments.asText();
+            invocations.add(new ToolInvocationRequest(id, name, argumentsJson));
+            serializedCalls.add(toObjectMap(toolCall));
+        }
+        return new ValidatedToolBatch(List.copyOf(invocations), List.copyOf(serializedCalls));
+    }
+
+    private void validateTogetherFinishReason(
+            String finishReason,
+            String assistantText,
+            List<ToolInvocationRequest> toolInvocations
+    ) {
+        if ("tool_calls".equals(finishReason) && toolInvocations.isEmpty()) {
+            throw invalidResponse("finish_reason=tool_calls requires a valid tool-call batch");
+        }
+        if (Strings.CS.equalsAny(finishReason, "stop", "eos")
+                && (StringUtils.isBlank(assistantText) || !toolInvocations.isEmpty())) {
+            throw invalidResponse("finish_reason=stop/eos requires final content without tool calls");
+        }
+    }
+
+    private ReasoningContinuation reasoningContinuation(JsonNode message, ReasoningLevel reasoningLevel) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            if (!reasoningLevel.enabled()) {
+                return null;
+            }
+            return switch (TogetherModelSupport.agentContinuationMode(baseUrl, modelId)) {
+                case DEEPSEEK_EXACT_FIELD -> firstReasoningContinuation(message, List.of("reasoning", "reasoning_content"));
+                case GLM_PRESERVED_REASONING -> firstReasoningContinuation(message, List.of("reasoning"));
+                case NONE -> null;
+            };
+        }
+        if (Strings.CI.equals(StringUtils.trim(providerName), "DeepSeek")) {
+            return firstReasoningContinuation(message, List.of("reasoning_content"));
+        }
+        return null;
+    }
+
+    private ReasoningContinuation firstReasoningContinuation(JsonNode message, List<String> fieldNames) {
+        return fieldNames.stream()
+                .filter(message::has)
+                .map(fieldName -> new ReasoningContinuation(fieldName, jsonValue(message.get(fieldName))))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Object jsonValue(JsonNode node) {
+        return node == null || node.isMissingNode() ? null : JSON.convertValue(node, Object.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> toObjectMap(JsonNode node) {
+        return JSON.convertValue(node, Map.class);
+    }
+
+    private String extractAssistantText(JsonNode message) {
+        JsonNode content = message.get("content");
+        if (content != null && content.isTextual()) {
+            return content.asText("");
+        }
+        if (content == null || !content.isArray()) {
+            return "";
+        }
+        StringBuilder collected = new StringBuilder();
+        content.forEach(part -> {
+            if ("text".equals(part.path("type").asText(""))) {
+                collected.append(part.path("text").asText(""));
+            }
+        });
         return collected.toString();
     }
 
-    private String extractReasoningContent(JsonNode messageNode) {
-        if (messageNode == null || messageNode.isMissingNode()) {
-            return "";
-        }
-
-        List<String> keys = List.of("reasoning_content", "reasoning", "thinking", "thought");
-        return keys.stream()
-                .map(key -> messageNode.path(key).asText(""))
+    private String extractReasoningText(JsonNode message) {
+        return List.of("reasoning", "reasoning_content", "thinking", "thought").stream()
+                .map(message::get)
+                .filter(Objects::nonNull)
+                .filter(JsonNode::isTextual)
+                .map(JsonNode::asText)
                 .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse("");
     }
 
-    private List<ToolInvocationRequest> extractToolInvocations(JsonNode toolCallsNode) {
-        if (!toolCallsNode.isArray() || toolCallsNode.isEmpty()) {
-            return emptyList();
-        }
-
-        List<ToolInvocationRequest> invocations = new ArrayList<>();
-        for (JsonNode toolCallNode : toolCallsNode) {
-            String id = toolCallNode.path("id").asText("");
-            JsonNode functionNode = toolCallNode.path("function");
-            String name = functionNode.path("name").asText("");
-            String argumentsJson = functionNode.path("arguments").asText("{}");
-            if (StringUtils.isBlank(name)) {
-                continue;
-            }
-            invocations.add(new ToolInvocationRequest(id, name, argumentsJson));
-        }
-
-        return invocations;
+    private String textualValue(JsonNode node) {
+        return node != null && node.isTextual() ? node.asText("") : "";
     }
 
-    private List<Map<String, Object>> toPendingToolCalls(JsonNode toolCallsNode) {
-        if (!toolCallsNode.isArray() || toolCallsNode.isEmpty()) {
-            return emptyList();
+    private IllegalStateException invalidResponse(String detail) {
+        return new IllegalStateException("%s tool turn returned an invalid response: %s."
+                .formatted(StringUtils.defaultIfBlank(providerName, "OpenAI-compatible provider"), detail));
+    }
+
+    private void applyTogetherReasoning(Map<String, Object> payload, ReasoningLevel reasoningLevel) {
+        if (!TogetherModelSupport.isTogether(providerName)) {
+            return;
+        }
+        TogetherModelSupport.ReasoningRequest reasoning = TogetherModelSupport.reasoningRequest(
+                baseUrl,
+                modelId,
+                reasoningLevel
+        );
+        if (reasoning.enabledPropertyPresent()) {
+            payload.put("reasoning", Map.of("enabled", reasoning.enabled()));
+        }
+        if (StringUtils.isNotBlank(reasoning.effort())) {
+            payload.put("reasoning_effort", reasoning.effort());
         }
 
-        List<Map<String, Object>> serialized = new ArrayList<>();
-        for (JsonNode toolCallNode : toolCallsNode) {
-            Map<String, Object> function = new LinkedHashMap<>();
-            function.put("name", toolCallNode.path("function").path("name").asText(""));
-            function.put("arguments", toolCallNode.path("function").path("arguments").asText("{}"));
-
-            Map<String, Object> toolCall = new LinkedHashMap<>();
-            toolCall.put("id", toolCallNode.path("id").asText(""));
-            toolCall.put("type", "function");
-            toolCall.put("function", function);
-            serialized.add(toolCall);
+        Map<String, Object> templateArguments = new LinkedHashMap<>();
+        if (reasoning.mediumEffort()) {
+            templateArguments.put("medium_effort", true);
         }
+        if (reasoningLevel.enabled()
+                && TogetherModelSupport.agentContinuationMode(baseUrl, modelId)
+                == TogetherModelSupport.AgentContinuationMode.GLM_PRESERVED_REASONING) {
+            templateArguments.put("clear_thinking", false);
+        }
+        if (!templateArguments.isEmpty()) {
+            payload.put("chat_template_kwargs", templateArguments);
+        }
+    }
 
-        return serialized;
+    private ProviderException mapHttpError(int statusCode, String responseBody) {
+        String errorType = "";
+        String errorCode = "";
+        String message = "";
+        try {
+            JsonNode error = JSON.readTree(StringUtils.defaultString(responseBody)).path("error");
+            errorType = error.path("type").asText("");
+            errorCode = error.path("code").asText("");
+            message = error.path("message").asText("");
+        } catch (Exception ignored) {
+        }
+        return ProviderExceptionMapper.mapHttpStatus(
+                providerName,
+                baseUrl,
+                statusCode,
+                errorType,
+                errorCode,
+                message,
+                apiKey
+        );
     }
 
     private String buildTimeoutMessage() {
@@ -340,14 +543,6 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                         timeoutSeconds,
                         StringUtils.defaultIfBlank(modelId, "unknown")
                 );
-    }
-
-    private String normalizeBaseUrl(String baseUrl) {
-        String normalized = StringUtils.defaultString(baseUrl).trim();
-        while (normalized.endsWith("/")) {
-            normalized = normalized.substring(0, normalized.length() - 1);
-        }
-        return normalized;
     }
 
     private String chatCompletionsEndpoint(String normalizedBaseUrl) {
@@ -369,45 +564,6 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
     }
 
-    private String buildHttpErrorMessage(int statusCode, String responseBody) {
-        String providerLabel = StringUtils.defaultIfBlank(providerName, "OpenAI-compatible provider");
-
-        try {
-            JsonNode root = JSON.readTree(StringUtils.defaultString(responseBody));
-            JsonNode errorNode = root.path("error");
-            String message = sanitizeErrorMessage(errorNode.path("message").asText(""));
-            String code = StringUtils.trimToEmpty(errorNode.path("code").asText(""));
-
-            if (statusCode == 429 && Strings.CI.equals(code, "insufficient_quota")) {
-                return "%s tool-calling is unavailable due to insufficient_quota (HTTP 429)."
-                        .formatted(providerLabel);
-            }
-
-            if (StringUtils.isNotBlank(message) && StringUtils.isNotBlank(code)) {
-                return "%s tool turn failed (HTTP %d, %s): %s"
-                        .formatted(providerLabel, statusCode, code, message);
-            }
-
-            if (StringUtils.isNotBlank(message)) {
-                return "%s tool turn failed (HTTP %d): %s"
-                        .formatted(providerLabel, statusCode, message);
-            }
-        } catch (Exception ignored) {
-            // Fall through to generic message.
-        }
-
-        return "%s tool turn failed with HTTP %d".formatted(providerLabel, statusCode);
-    }
-
-    private String sanitizeErrorMessage(String message) {
-        if (StringUtils.isBlank(message)) {
-            return "";
-        }
-
-        String flattened = message.replace('\n', ' ').replace('\r', ' ').trim();
-        return BoundedUtf8.presentation(flattened.replaceAll("\\s{2,}", " "), 512, 2_048);
-    }
-
     private List<Map<String, Object>> toolDefinitions() {
         return agentToolDefinitions.stream()
                 .map(this::toolDefinition)
@@ -424,5 +580,39 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         definition.put("type", "function");
         definition.put("function", function);
         return definition;
+    }
+
+    private record ValidatedResponse(
+            String assistantText,
+            String reasoningText,
+            List<ToolInvocationRequest> toolInvocations,
+            PendingAssistantContinuation continuation
+    ) {
+    }
+
+    private record ValidatedToolBatch(
+            List<ToolInvocationRequest> invocations,
+            List<Map<String, Object>> serializedCalls
+    ) {
+        private static ValidatedToolBatch empty() {
+            return new ValidatedToolBatch(emptyList(), emptyList());
+        }
+    }
+
+    private record PendingAssistantContinuation(
+            boolean contentPresent,
+            Object content,
+            List<Map<String, Object>> toolCalls,
+            ReasoningContinuation reasoning
+    ) {
+    }
+
+    private record PendingToolExchange(
+            PendingAssistantContinuation continuation,
+            List<Map<String, Object>> messages
+    ) {
+    }
+
+    private record ReasoningContinuation(String fieldName, Object value) {
     }
 }

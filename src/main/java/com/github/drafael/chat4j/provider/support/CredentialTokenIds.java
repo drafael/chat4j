@@ -22,6 +22,7 @@ public final class CredentialTokenIds {
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",
+            "TOGETHER_API_KEY",
             "GROQ_API_KEY",
             "ELEVENLABS_API_KEY",
             "LISTENHUB_API_KEY",

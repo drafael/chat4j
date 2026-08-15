@@ -21,9 +21,9 @@ The selected folder is treated as a **workspace root** and can contain any conte
 
 ## Settings
 
-General settings include:
+**Settings → Agent Mode** includes:
 
-- **Prompt addendum** (appended to default Agent Mode system prompt)
+- **Prompt addendum** (appended to the default Agent Mode system prompt)
 
 Stored setting key:
 
@@ -70,6 +70,7 @@ Adapter factory: `AgentProviderAdapterFactory`
 - **Anthropic**: native tool adapter (`AnthropicToolAgentAdapter`).
 - **OpenAI-compatible providers**: `OpenAiToolAgentAdapter`.
   - Preserves provider reasoning fields such as DeepSeek `reasoning_content` across tool-result turns when required by the API.
+  - Together's direct Agent path sends attachment metadata labels, not image or file contents. Chat4J adds an attachment notice to new user turns and a transient notice during regeneration when current post-truncation history contains attachments. This limitation does not apply universally to Codex or provider-service fallback paths.
 - **OpenAI Codex**: direct provider-service/Codex CLI path (`ProviderServiceAgentAdapter`).
 - **GitHub Copilot Claude models**: Copilot bearer-auth variant of `AnthropicToolAgentAdapter` against `/v1/messages`, wrapped by `OpenAiCompatibleFallbackAgentAdapter`.
 - **Google AI / other GitHub Copilot models**: wrapped by `OpenAiCompatibleFallbackAgentAdapter` around `OpenAiToolAgentAdapter`.

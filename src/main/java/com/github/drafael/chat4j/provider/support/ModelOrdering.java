@@ -221,6 +221,11 @@ public final class ModelOrdering {
     }
 
     private static List<String> applyProviderSpecificFiltering(String providerName, List<String> modelIds) {
+        if (TogetherModelSupport.isTogether(providerName)) {
+            return modelIds.stream()
+                    .filter(TogetherModelSupport::isServerlessChatModel)
+                    .toList();
+        }
         if (!isGitHubCopilot(providerName)) {
             return modelIds;
         }

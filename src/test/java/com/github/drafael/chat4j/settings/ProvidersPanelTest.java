@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
@@ -13,7 +14,10 @@ import com.sun.net.httpserver.HttpServer;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,10 +35,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.UIDefaults;
@@ -71,6 +78,128 @@ class ProvidersPanelTest {
     @AfterEach
     void tearDown() {
         credentialMutationService.closeSecrets();
+    }
+
+    @Test
+    @DisplayName("Together appears after OpenRouter with its actual branded status icon")
+    void constructor_whenTogetherIsRegistered_addsOrderedProviderAndPaintsBrandIcon() throws Exception {
+        ProvidersPanel subject = callOnEdt(() -> newPanel(
+                new SettingsRepository(tempDir.resolve("together-provider.properties"))
+        ));
+        try {
+            runOnEdt(() -> {
+                JList<?> providerList = findList(subject);
+                assertThat(providerList).isNotNull();
+                int openRouterIndex = IntStream.range(0, providerList.getModel().getSize())
+                        .filter(index -> "OpenRouter".equals(providerList.getModel().getElementAt(index)))
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(providerList.getModel().getElementAt(openRouterIndex + 1)).isEqualTo("Together");
+                providerList.setSelectedValue("Together", true);
+                JPanel detailPanel = (JPanel) readField(subject, "detailPanel");
+                Component togetherCard = stream(detailPanel.getComponents())
+                        .filter(Component::isVisible)
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(containsLabelText(togetherCard, "Status")).isTrue();
+                assertThat(containsLabelText(togetherCard, "API token")).isTrue();
+                assertThat(containsLabelText(togetherCard, "Base URL")).isTrue();
+                assertThat(containsLabelText(togetherCard, "API Usage")).isFalse();
+                assertThat(containsTextFieldValue(togetherCard, "https://api.together.ai/v1")).isTrue();
+
+                Field providersField = ProvidersPanel.class.getDeclaredField("PROVIDERS");
+                providersField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                Map<String, ProvidersPanel.ProviderInfo> providers =
+                        (Map<String, ProvidersPanel.ProviderInfo>) providersField.get(null);
+                assertThat(providers.get("Together").envVar()).isEqualTo("TOGETHER_API_KEY");
+                assertThat(providers.get("Together").defaultBaseUrl()).isEqualTo("https://api.together.ai/v1");
+
+                Field portalField = ProvidersPanel.class.getDeclaredField("API_KEY_PORTAL_URLS");
+                portalField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                Map<String, String> portals = (Map<String, String>) portalField.get(null);
+                assertThat(portals.get("Together"))
+                        .isEqualTo("https://api.together.ai/settings/projects/~current/api-keys");
+
+                Field iconPathsField = ProvidersPanel.class.getDeclaredField("PROVIDER_ICON_PATHS");
+                iconPathsField.setAccessible(true);
+                @SuppressWarnings("unchecked")
+                Map<String, String> iconPaths = (Map<String, String>) iconPathsField.get(null);
+                String togetherIconPath = iconPaths.get("Together");
+                assertThat(togetherIconPath).isEqualTo("/icons/providers/together.svg");
+                assertThat(ProvidersPanel.class.getResource(togetherIconPath)).isNotNull();
+                assertThat(new FlatSVGIcon(ProvidersPanel.class.getResource(togetherIconPath)).hasFound()).isTrue();
+
+                Method baseIconMethod = ProvidersPanel.class.getDeclaredMethod("loadProviderBaseIcon", String.class);
+                baseIconMethod.setAccessible(true);
+                assertThat((Icon) baseIconMethod.invoke(null, "Together")).isNotNull();
+
+                Method iconMethod = ProvidersPanel.class.getDeclaredMethod("iconForProvider", String.class, boolean.class);
+                iconMethod.setAccessible(true);
+                Icon icon = (Icon) iconMethod.invoke(null, "Together", true);
+                assertThat(icon).isNotNull();
+                var image = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+                Graphics2D graphics = image.createGraphics();
+                try {
+                    icon.paintIcon(subject, graphics, 0, 0);
+                } finally {
+                    graphics.dispose();
+                }
+                long markPixels = IntStream.range(0, image.getWidth())
+                        .boxed()
+                        .flatMap(x -> IntStream.range(0, image.getHeight()).mapToObj(y -> new int[]{x, y}))
+                        .filter(point -> point[0] < image.getWidth() - 8 || point[1] < image.getHeight() - 8)
+                        .filter(point -> (image.getRGB(point[0], point[1]) >>> 24) != 0)
+                        .count();
+                assertThat(markPixels).isGreaterThan(0);
+            });
+        } finally {
+            runOnEdt(subject::removeNotify);
+            runOnEdt(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Available-provider status dots use semantic green rather than the theme accent")
+    void iconForProvider_whenProviderIsAvailable_usesSemanticGreenStatusDot() throws Exception {
+        String successKey = "Component.success.foreground";
+        String accentKey = "Component.accentColor";
+        UIDefaults defaults = callOnEdt(UIManager::getDefaults);
+        UiDefaultState previousSuccess = callOnEdt(() -> defaultState(defaults, successKey));
+        UiDefaultState previousAccent = callOnEdt(() -> defaultState(defaults, accentKey));
+        Color semanticGreen = new Color(35, 155, 85);
+        try {
+            Color painted = callOnEdt(() -> {
+                defaults.put(successKey, semanticGreen);
+                defaults.put(accentKey, new Color(190, 45, 70));
+                Method iconMethod = ProvidersPanel.class.getDeclaredMethod(
+                        "iconForProvider",
+                        String.class,
+                        boolean.class
+                );
+                iconMethod.setAccessible(true);
+                Icon icon = (Icon) iconMethod.invoke(null, "Together", true);
+                var image = new BufferedImage(icon.getIconWidth(), icon.getIconHeight(), BufferedImage.TYPE_INT_ARGB);
+                Graphics2D graphics = image.createGraphics();
+                try {
+                    icon.paintIcon(null, graphics, 0, 0);
+                } finally {
+                    graphics.dispose();
+                }
+                int dotCenterX = icon.getIconWidth() - 4;
+                int dotCenterY = icon.getIconHeight() - 4;
+                return new Color(image.getRGB(dotCenterX, dotCenterY), true);
+            });
+
+            assertThat(painted).isEqualTo(semanticGreen);
+        } finally {
+            runOnEdt(() -> {
+                restoreDefault(defaults, successKey, previousSuccess);
+                restoreDefault(defaults, accentKey, previousAccent);
+            });
+        }
     }
 
     @Test
@@ -1010,6 +1139,17 @@ class ProvidersPanelTest {
         }
         return stream(container.getComponents())
                 .anyMatch(child -> containsLabelText(child, expectedText));
+    }
+
+    private static boolean containsTextFieldValue(Component component, String expectedText) {
+        if (component instanceof JTextField textField && expectedText.equals(textField.getText())) {
+            return true;
+        }
+        if (!(component instanceof Container container)) {
+            return false;
+        }
+        return stream(container.getComponents())
+                .anyMatch(child -> containsTextFieldValue(child, expectedText));
     }
 
     private static boolean containsVisibleLabelText(Component component, String expectedText) {

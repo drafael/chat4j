@@ -91,6 +91,21 @@ class AgentProviderAdapterFactoryTest {
     }
 
     @Test
+    @DisplayName("Together tool models use the direct OpenAI-compatible Agent adapter")
+    void create_whenTogetherToolModelIsAdmitted_returnsOpenAiToolAdapter() {
+        AgentProviderAdapter adapter = subject.create(
+                "Together",
+                "Qwen/Qwen3.5-9B",
+                "https://api.together.ai/v1",
+                "token-123",
+                providerService(),
+                ""
+        );
+
+        assertThat(adapter).isInstanceOf(OpenAiToolAgentAdapter.class);
+    }
+
+    @Test
     @DisplayName("MCP-required unsupported provider rejects provider-service fallback")
     void create_whenCodexRequiresMcpTools_rejectsFallbackPath() {
         assertThatThrownBy(() -> subject.create(

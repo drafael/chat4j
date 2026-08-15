@@ -125,6 +125,7 @@ class ChatPanelTest {
     private Path tempDir;
 
     private final List<CompletableFuture<?>> controlledFutures = new ArrayList<>();
+    private final List<TextToSpeechService> testTextToSpeechServices = new ArrayList<>();
     private ChatPanel subject;
     private ProviderRegistry providerRegistry;
     private CopilotAuthResolver copilotAuthResolver;
@@ -186,11 +187,9 @@ class ChatPanelTest {
         controlledFutures.forEach(future -> future.cancel(true));
         runOnEdt(() -> {});
         if (subject != null) {
-            callOnEdt(subject::cancelAllRequestsAsync).join();
-            runOnEdt(subject::disposeViewResources);
-            runOnEdt(subject::removeNotify);
-            runOnEdt(() -> {});
+            disposePanel(subject);
         }
+        testTextToSpeechServices.forEach(service -> service.disposeAsync().join());
         credentialMutationService.closeSecrets();
     }
 
@@ -515,76 +514,6 @@ class ChatPanelTest {
             assertThat(operationCompleted.await(2, TimeUnit.SECONDS)).isTrue();
             runOnEdt(() -> {});
         }
-    }
-
-    @Test
-    @DisplayName("Activity bubble uses status title color for failed tool cards")
-    void setTitle_whenFailedStatus_usesErrorTitleColor() throws Exception {
-        String key = "Component.error.focusedBorderColor";
-        Object previous = callOnEdt(() -> UIManager.get(key));
-        Color errorColor = new Color(210, 70, 70);
-        try {
-            Color actual = callOnEdt(() -> {
-                UIManager.put(key, errorColor);
-                ActivityBubble bubble = new ActivityBubble();
-                try {
-                    bubble.setTitle("✗ write file — denied");
-                    return findComponents(bubble, JLabel.class).stream()
-                            .filter(label -> "✗ write file — denied".equals(label.getText()))
-                            .findFirst()
-                            .orElseThrow()
-                            .getForeground();
-                } finally {
-                    bubble.dispose();
-                }
-            });
-
-            assertThat(actual).isEqualTo(errorColor);
-        } finally {
-            runOnEdt(() -> restoreUiDefault(key, previous));
-        }
-    }
-
-    @Test
-    @DisplayName("Activity bubble uses accent title color while streaming")
-    void setStreaming_whenEnabled_usesAccentTitleColor() throws Exception {
-        String key = "Component.accentColor";
-        Object previous = callOnEdt(() -> UIManager.get(key));
-        Color accent = new Color(80, 120, 240);
-        try {
-            Color actual = callOnEdt(() -> {
-                UIManager.put(key, accent);
-                ActivityBubble bubble = new ActivityBubble();
-                try {
-                    bubble.setStreaming(true);
-                    return findComponents(bubble, JLabel.class).stream()
-                            .filter(label -> "Thinking".equals(label.getText()))
-                            .findFirst()
-                            .orElseThrow()
-                            .getForeground();
-                } finally {
-                    bubble.dispose();
-                }
-            });
-
-            assertThat(actual).isEqualTo(accent);
-        } finally {
-            runOnEdt(() -> restoreUiDefault(key, previous));
-        }
-    }
-
-    @Test
-    @DisplayName("Activity bubble disposes its embedded message renderer")
-    void dispose_whenCalled_disposesRenderedMessageView() throws Exception {
-        boolean[] disposed = callOnEdt(() -> {
-            ActivityBubble bubble = new ActivityBubble();
-            bubble.setText("thinking");
-            MessageBubble renderedBubble = findComponents(bubble, MessageBubble.class).getFirst();
-            bubble.dispose();
-            return new boolean[]{bubble.isDisposed(), renderedBubble.isDisposed()};
-        });
-
-        assertThat(disposed).containsExactly(true, true);
     }
 
     @Test
@@ -1233,7 +1162,7 @@ class ChatPanelTest {
                 assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
             });
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1280,8 +1209,7 @@ class ChatPanelTest {
         } finally {
             cacheService.releaseLookup();
             completion.await(2, TimeUnit.SECONDS);
-            runOnEdt(panel::removeNotify);
-            runOnEdt(() -> {});
+            disposePanel(panel);
         }
     }
 
@@ -1307,7 +1235,7 @@ class ChatPanelTest {
             assertThat(cacheService.isInvalidated("OpenAI")).isTrue();
             assertThat(cacheService.shouldRefresh("OpenAI")).isTrue();
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1332,7 +1260,7 @@ class ChatPanelTest {
             assertThat(cacheService.isInvalidated("OpenAI")).isFalse();
             assertThat(cacheService.getModels("OpenAI")).contains("same-endpoint-model");
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1356,7 +1284,7 @@ class ChatPanelTest {
 
             assertThat(catalogChanges).hasValue(1);
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1379,7 +1307,7 @@ class ChatPanelTest {
                 assertThat(panel.getSelectedModel()).isEqualTo("OpenAI > seed-model");
             });
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1402,7 +1330,7 @@ class ChatPanelTest {
             assertThat(callOnEdt(() -> panel.resolveUserSelectableModel("OpenAI > seed-model")))
                     .isEqualTo("OpenAI > seed-model");
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1423,7 +1351,7 @@ class ChatPanelTest {
             assertThat(callOnEdt(() -> panel.resolveUserSelectableModel("OpenAI > seed-model")))
                     .isEqualTo("OpenAI > seed-model");
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1463,7 +1391,7 @@ class ChatPanelTest {
                 assertThat(panel.getSelectedModel()).isNull();
             });
         } finally {
-            runOnEdt(panel::removeNotify);
+            disposePanel(panel);
         }
     }
 
@@ -1943,6 +1871,219 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Persisted Together selections reject unknown and wrong-case model IDs before provider models load")
+    void setSelectedModel_whenTogetherModelsAreNotLoaded_rejectsUnreviewedIds() throws Exception {
+        runOnEdt(() -> setField(subject, "providerMap", emptyMap()));
+
+        runOnEdt(() -> subject.setSelectedModel("Together > qwen/qwen3.5-9b"));
+        assertThat(callOnEdt(subject::getSelectedModel)).isNull();
+
+        runOnEdt(() -> subject.setSelectedModel("Together >  Qwen/Qwen3.5-9B "));
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Together > Qwen/Qwen3.5-9B");
+    }
+
+    @Test
+    @DisplayName("Together model application replaces a removed selection while popup refresh only clears it")
+    void providerModelsChanged_whenTogetherSelectionIsAbsent_appliesPathSpecificFallback() throws Exception {
+        String baseUrl = "https://api.together.ai/v1";
+        String availableModel = "Qwen/Qwen3.5-9B";
+        String removedModel = "MiniMaxAI/MiniMax-M3";
+        var provider = new ProviderRegistry.ProviderDef(
+                "Together",
+                "TOGETHER_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("answer"),
+                List::of
+        );
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long applyScope = cacheService.nextScopeVersion();
+        cacheService.synchronizeScope("Together", baseUrl, applyScope);
+        ProviderModelCacheService.RefreshAttempt attempt = cacheService.tryBeginRefreshIfNeeded(
+                "Together",
+                baseUrl,
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(cacheService.update(attempt, List.of(availableModel))).isTrue();
+        runOnEdt(() -> {
+            setField(subject, "selectedProviderName", "Together");
+            setField(subject, "selectedModelId", removedModel);
+        });
+
+        invokeApplyProviderModels(subject, List.of(provider), applyScope);
+        assertThat(callOnEdt(subject::getSelectedModel)).isEqualTo("Together > " + availableModel);
+
+        runOnEdt(() -> {
+            setField(subject, "selectedProviderName", "Together");
+            setField(subject, "selectedModelId", removedModel);
+        });
+        assertThat(invokeUpdateProviderModelsFromPopup(subject, List.of(provider), applyScope)).isTrue();
+
+        assertThat(callOnEdt(subject::getSelectedModel)).isNull();
+    }
+
+    @Test
+    @DisplayName("Together admission rejects a reviewed model absent from the current usable model list before provider creation")
+    void onSend_whenTogetherModelIsNotCurrentlyUsable_rejectsBeforeProviderCreation() throws Exception {
+        String baseUrl = "https://api.together.ai/v1";
+        String availableModel = "Qwen/Qwen3.5-9B";
+        String unavailableModel = "MiniMaxAI/MiniMax-M3";
+        var providerCalls = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                "Together",
+                "TOGETHER_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                model -> {
+                    providerCalls.incrementAndGet();
+                    return immediateProvider("answer");
+                },
+                List::of
+        );
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long scope = cacheService.nextScopeVersion();
+        cacheService.synchronizeScope("Together", baseUrl, scope);
+        ProviderModelCacheService.RefreshAttempt attempt = cacheService.tryBeginRefreshIfNeeded(
+                "Together",
+                baseUrl,
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(cacheService.update(attempt, List.of(availableModel))).isTrue();
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of("Together", provider));
+            setField(subject, "selectedProviderName", "Together");
+            setField(subject, "selectedModelId", unavailableModel);
+            setField(subject, "installedProviderScope", scope);
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("current model list");
+    }
+
+    @Test
+    @DisplayName("Together admission rejects a reviewed model when the current catalog is truly empty")
+    void onSend_whenTogetherCatalogIsTrulyEmpty_rejectsBeforeProviderCreation() throws Exception {
+        String providerName = "Together";
+        String modelId = "Qwen/Qwen3.5-9B";
+        String baseUrl = "https://api.together.ai/v1";
+        var providerCalls = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                providerName,
+                "TOGETHER_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> {
+                    providerCalls.incrementAndGet();
+                    return immediateProvider("answer");
+                },
+                List::of
+        );
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long scope = cacheService.nextScopeVersion();
+        cacheService.synchronizeScope(providerName, baseUrl, scope);
+        assertThat(cacheService.findUsableModels(providerName, baseUrl)).contains(emptyList());
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(providerName, provider));
+            setField(subject, "selectedProviderName", providerName);
+            setField(subject, "selectedModelId", modelId);
+            setField(subject, "installedProviderScope", scope);
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("current model list");
+    }
+
+    @Test
+    @DisplayName("Together admission accepts a snapshot-bounded fallback after an empty refresh")
+    void onSend_whenTogetherRefreshIsEmpty_admitsRetainedReviewedFallback() throws Exception {
+        String providerName = "Together";
+        String modelId = "Qwen/Qwen3.5-9B";
+        String baseUrl = "https://api.together.ai/v1";
+        var providerCalls = new AtomicInteger();
+        var provider = new ProviderRegistry.ProviderDef(
+                providerName,
+                "TOGETHER_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> providerReturning("answer", providerCalls),
+                List::of
+        );
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long scope = cacheService.nextScopeVersion();
+        cacheService.synchronizeScope(providerName, baseUrl, scope);
+        ProviderModelCacheService.RefreshAttempt initial = cacheService.tryBeginRefreshIfNeeded(
+                providerName,
+                baseUrl,
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(cacheService.update(initial, List.of(modelId, "unreviewed/model"))).isTrue();
+        cacheService.invalidate(providerName);
+        ProviderModelCacheService.RefreshAttempt emptyRefresh = cacheService.tryBeginRefreshIfNeeded(
+                providerName,
+                baseUrl,
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(cacheService.update(emptyRefresh, emptyList())).isFalse();
+        assertThat(cacheService.findUsableModels(providerName, baseUrl)).contains(List.of(modelId));
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(providerName, provider));
+            setField(subject, "selectedProviderName", providerName);
+            setField(subject, "selectedModelId", modelId);
+            setField(subject, "installedProviderScope", scope);
+            subject.getInputBar().setText("message");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerCalls.get() == 1);
+
+        assertThat(providerCalls).hasValue(1);
+    }
+
+    @Test
+    @DisplayName("Custom Together endpoints present allowlisted models as text only on initial selection")
+    void setSelectedModel_whenTogetherUsesCustomBaseUrl_keepsReasoningAndAgentModeUnavailable() throws Exception {
+        var provider = new ProviderRegistry.ProviderDef(
+                "Together",
+                "TOGETHER_API_KEY",
+                "https://proxy.example/v1",
+                "https://api.together.ai/v1",
+                List.of("Qwen/Qwen3.5-9B"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("answer"),
+                List::of
+        );
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of("Together", provider));
+            subject.setSelectedModel("Together > Qwen/Qwen3.5-9B");
+        });
+
+        assertThat(callOnEdt(() -> readThinkingButton(subject.getInputBar()).isVisible())).isFalse();
+        assertThat(callOnEdt(() -> readAgentModeButton(subject.getInputBar()).isVisible())).isFalse();
+    }
+
+    @Test
     @DisplayName("Removing the panel invalidates provider send authority")
     void removeNotify_whenProviderWasInstalled_blocksSendUntilRefresh() throws Exception {
         setCurrentProvider(subject, immediateProvider("answer"));
@@ -2021,49 +2162,179 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Credential settlement does not start provider resolution during shutdown")
-    void settleSelectedProviderCredentialChange_whenShutdownStarted_doesNotLaunchSettlement() throws Exception {
+    @DisplayName("Credential completion clears pending state without refreshing during shutdown")
+    void settleSelectedProviderCredentialChange_whenShutdownStarted_clearsPendingState() throws Exception {
         setCurrentProvider(subject, immediateProvider("answer"));
         String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
         runOnEdt(() -> {
             subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
             subject.beginShutdown();
+            subject.settleSelectedProviderCredentialChange(Set.of(providerName));
         });
-        long settlementGeneration = ((AtomicLong) readField(subject, "credentialSettlementCounter")).get();
 
-        runOnEdt(() -> subject.settleSelectedProviderCredentialChange(Set.of(providerName)));
-
-        assertThat(((AtomicLong) readField(subject, "credentialSettlementCounter"))).hasValue(settlementGeneration);
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "credentialChangesPending"))).isEmpty();
     }
 
     @Test
-    @DisplayName("Transient credential settlement failures trigger a provider refresh")
-    void settleSelectedProviderCredentialChange_whenResolutionFails_recoversThroughRefresh() throws Exception {
+    @DisplayName("Credential completion starts an authoritative full provider refresh")
+    void settleSelectedProviderCredentialChange_whenFinalChangeCompletes_refreshesAllProviders() throws Exception {
         setCurrentProvider(subject, immediateProvider("answer"));
         String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
         ProviderRegistry.ProviderDef selectedProvider = callOnEdt(() ->
                 ((Map<String, ProviderRegistry.ProviderDef>) readField(subject, "providerMap")).get(providerName)
         );
+        ProviderRegistry.ProviderDef otherProvider = new ProviderRegistry.ProviderDef(
+                "Together",
+                "TOGETHER_API_KEY",
+                "https://api.together.ai/v1",
+                "https://api.together.ai/v1",
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> immediateProvider("other"),
+                List::of
+        );
         ProviderRegistry registry = mock(ProviderRegistry.class);
         var providerResolutionCalls = new AtomicInteger();
         when(registry.availableProviders()).thenAnswer(ignored -> {
-            if (providerResolutionCalls.incrementAndGet() == 1) {
-                throw new IllegalStateException("temporary credential lookup failure");
-            }
-            return List.of(selectedProvider);
+            providerResolutionCalls.incrementAndGet();
+            return List.of(selectedProvider, otherProvider);
         });
-        setField(subject, "providerRegistry", registry);
+        runOnEdt(() -> setField(subject, "providerRegistry", registry));
         runOnEdt(() -> {
             subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
             subject.settleSelectedProviderCredentialChange(Set.of(providerName));
         });
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> providerResolutionCalls.get() >= 2 && callOnEdt(() ->
+        awaitCondition(2, TimeUnit.SECONDS, () -> providerResolutionCalls.get() == 1 && callOnEdt(() ->
                 ((Map<?, ?>) readField(subject, "providerMap")).containsKey(providerName)
                         && (long) readField(subject, "installedProviderScope") >= 0L
         ));
 
-        assertThat(providerResolutionCalls).hasValue(2);
+        assertThat(providerResolutionCalls).hasValue(1);
+        assertThat(callOnEdt(() -> {
+            Map<?, ?> providers = (Map<?, ?>) readField(subject, "providerMap");
+            return providers.containsKey(providerName) && providers.containsKey(otherProvider.name());
+        })).isTrue();
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "credentialChangesPending"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Overlapping provider, vault-wide, and OAuth credential changes wait for one final refresh")
+    void settleSelectedProviderCredentialChange_whenDifferentCredentialFlowsOverlap_waitsForGlobalSettlement() throws Exception {
+        ProviderRegistry registry = mock(ProviderRegistry.class);
+        var refreshCalls = new AtomicInteger();
+        when(registry.availableProviders()).thenAnswer(ignored -> {
+            refreshCalls.incrementAndGet();
+            return emptyList();
+        });
+        runOnEdt(() -> setField(subject, "providerRegistry", registry));
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of("OpenAI"));
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of("OpenRouter"));
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of("GitHub Copilot"));
+            subject.settleSelectedProviderCredentialChange(Set.of("OpenAI"));
+            subject.settleSelectedProviderCredentialChange(Set.of("OpenRouter"));
+        });
+
+        assertThat(refreshCalls).hasValue(0);
+        assertThat(callOnEdt(() -> ((Map<?, ?>) readField(subject, "credentialChangesPending"))
+                .containsKey("GitHub Copilot"))).isTrue();
+
+        runOnEdt(() -> subject.settleSelectedProviderCredentialChange(Set.of("GitHub Copilot")));
+        awaitCondition(2, TimeUnit.SECONDS, () -> refreshCalls.get() == 1);
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "credentialChangesPending"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Credential completion while removed clears pending state and addNotify restores providers")
+    void settleSelectedProviderCredentialChange_whenPanelIsRemoved_defersRefreshUntilAddNotify() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        ProviderRegistry.ProviderDef provider = callOnEdt(() ->
+                ((Map<String, ProviderRegistry.ProviderDef>) readField(subject, "providerMap")).get(providerName)
+        );
+        ProviderRegistry registry = mock(ProviderRegistry.class);
+        var refreshCalls = new AtomicInteger();
+        when(registry.availableProviders()).thenAnswer(ignored -> {
+            refreshCalls.incrementAndGet();
+            return List.of(provider);
+        });
+        runOnEdt(() -> setField(subject, "providerRegistry", registry));
+        runOnEdt(() -> {
+            subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName));
+            subject.removeNotify();
+            subject.settleSelectedProviderCredentialChange(Set.of(providerName));
+        });
+
+        assertThat(callOnEdt(() -> (Map<?, ?>) readField(subject, "credentialChangesPending"))).isEmpty();
+        assertThat(refreshCalls).hasValue(0);
+
+        runOnEdt(subject::addNotify);
+        awaitCondition(2, TimeUnit.SECONDS, () -> refreshCalls.get() == 1);
+    }
+
+    @Test
+    @DisplayName("A provider refresh from before credential mutation cannot overwrite the final refresh")
+    void refreshProviders_whenOldRefreshFinishesAfterCredentialCompletion_keepsFinalGeneration() throws Exception {
+        ProviderRegistry.ProviderDef oldProvider = new ProviderRegistry.ProviderDef(
+                "Old provider",
+                null,
+                null,
+                null,
+                List.of("old-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("old"),
+                List::of
+        );
+        ProviderRegistry.ProviderDef finalProvider = new ProviderRegistry.ProviderDef(
+                "Final provider",
+                null,
+                null,
+                null,
+                List.of("final-model"),
+                ProviderCapabilities.chatAndModels(),
+                model -> immediateProvider("final"),
+                List::of
+        );
+        var oldRefreshStarted = new CountDownLatch(1);
+        var releaseOldRefresh = new CountDownLatch(1);
+        var refreshCalls = new AtomicInteger();
+        ProviderRegistry registry = mock(ProviderRegistry.class);
+        when(registry.availableProviders()).thenAnswer(ignored -> {
+            if (refreshCalls.incrementAndGet() == 1) {
+                oldRefreshStarted.countDown();
+                if (!releaseOldRefresh.await(2, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release stale provider refresh");
+                }
+                return List.of(oldProvider);
+            }
+            return List.of(finalProvider);
+        });
+        runOnEdt(() -> setField(subject, "providerRegistry", registry));
+        runOnEdt(subject::refreshProviders);
+        try {
+            assertThat(oldRefreshStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> subject.invalidateSelectedProviderCapabilityEvidence(Set.of("Together")));
+            releaseOldRefresh.countDown();
+            flushEdt();
+            assertThat(callOnEdt(() -> ((Map<?, ?>) readField(subject, "providerMap"))
+                    .containsKey("Old provider"))).isFalse();
+            assertThat(refreshCalls).hasValue(1);
+
+            runOnEdt(() -> subject.settleSelectedProviderCredentialChange(Set.of("Together")));
+            awaitCondition(2, TimeUnit.SECONDS, () -> refreshCalls.get() >= 2 && callOnEdt(() ->
+                    ((Map<?, ?>) readField(subject, "providerMap")).containsKey("Final provider")
+            ));
+            flushEdt();
+
+            assertThat(callOnEdt(() -> {
+                Map<?, ?> providers = (Map<?, ?>) readField(subject, "providerMap");
+                return providers.containsKey("Final provider") && !providers.containsKey("Old provider");
+            })).isTrue();
+        } finally {
+            releaseOldRefresh.countDown();
+        }
     }
 
     @Test
@@ -2384,57 +2655,9 @@ class ChatPanelTest {
     }
 
     @Test
-    @DisplayName("Send is blocked when agent mode is enabled without a valid project folder")
-    void onSend_whenAgentModeEnabledWithoutProjectFolder_showsValidationAndSkipsSend() throws Exception {
-        setCurrentProvider(subject, immediateProvider("pong"));
-        subject.getInputBar().setAgentModeAvailable(true);
-
-        Field enabledField = InputBar.class.getDeclaredField("agentModeEnabled");
-        enabledField.setAccessible(true);
-        enabledField.setBoolean(subject.getInputBar(), true);
-
-        Field projectRootField = InputBar.class.getDeclaredField("agentProjectRoot");
-        projectRootField.setAccessible(true);
-        projectRootField.set(subject.getInputBar(), null);
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
-        invokeOnSend(subject);
-
-        JLabel validationLabel = readValidationLabel(subject.getInputBar());
-        assertThat(validationLabel.isVisible()).isTrue();
-        assertThat(validationLabel.getText()).contains("Select a valid project folder");
-        assertThat(subject.getHistory()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Agent mode routes send flow through orchestrator path")
-    void onSend_whenAgentModeEnabled_routesThroughAgentOrchestrator() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-route");
-
-        subject.getInputBar().setAgentModeAvailable(true);
-        subject.getInputBar().setAgentProjectRoot(projectRoot);
-        subject.getInputBar().setAgentModeEnabled(true);
-
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
-            @Override
-            public AgentProviderAdapter create(
-                    String providerName,
-                    String modelId,
-                    String baseUrl,
-                    String apiKey,
-                    ProviderService providerService,
-                    String agentSystemPromptAppend
-            ) {
-                return (request, callbacks) -> {
-                    callbacks.onToken().accept("agent-response");
-                    return AgentTurnResult.complete();
-                };
-            }
-        }, new LocalToolRuntime()));
-
-        setField(subject, "selectedProviderName", "OpenAI");
-        setField(subject, "selectedModelId", "gpt-5-mini");
+    @DisplayName("Credential changes during durable user persistence prevent ordinary transport with the captured key")
+    void onSend_whenCredentialsChangeDuringPersistence_skipsOrdinaryTransport() throws Exception {
+        var transportCalls = new AtomicInteger();
         setCurrentProvider(subject, new ProviderService() {
             @Override
             public void streamCompletion(
@@ -2446,21 +2669,453 @@ class ChatPanelTest {
                     Consumer<Exception> onError,
                     BooleanSupplier isCancelled
             ) {
-                throw new IllegalStateException("Non-agent provider path should not be called");
+                transportCalls.incrementAndGet();
+                onComplete.run();
             }
-
+        });
+        var persistence = new CompletableFuture<UUID>();
+        controlledFutures.add(persistence);
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> persistence);
+            subject.getInputBar().setText("persist first");
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
         invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
+            Map<Long, SendJob> jobs = (Map<Long, SendJob>) readField(subject, "activeSendJobs");
+            return !jobs.isEmpty() && jobs.values().iterator().next().durableUserMessageSubmissionStarted;
+        }));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName)));
+        persistence.complete(UUID.randomUUID());
+        flushEdt();
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+        assertThat(transportCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).singleElement().satisfies(message ->
+                assertThat(message.role()).isEqualTo(Role.USER)
+        );
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("credentials changed while the message was being saved");
+    }
+
+    @Test
+    @DisplayName("Credential changes during durable user persistence prevent Agent transport with the captured key")
+    void onSend_whenCredentialsChangeDuringPersistence_skipsAgentTransport() throws Exception {
+        Path projectRoot = Files.createDirectories(tempDir.resolve("credential-gap-agent"));
+        var agentTurns = new AtomicInteger();
+        var orchestrator = new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
+            @Override
+            public AgentProviderAdapter create(
+                    String providerName,
+                    String modelId,
+                    String baseUrl,
+                    String apiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    agentTurns.incrementAndGet();
+                    return AgentTurnResult.complete();
+                };
+            }
+        }, new LocalToolRuntime());
+        runOnEdt(() -> {
+            subject.setAgentOrchestratorForTests(orchestrator);
+            setCurrentProvider(subject, immediateProvider("unused"));
+        });
+        var persistence = new CompletableFuture<UUID>();
+        controlledFutures.add(persistence);
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setOnDurableUserMessageSubmitted(event -> persistence);
+            subject.getInputBar().setText("persist agent turn first");
         });
 
-        assertThat(subject.getHistory().get(1).content()).isEqualTo("agent-response");
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
+            Map<Long, SendJob> jobs = (Map<Long, SendJob>) readField(subject, "activeSendJobs");
+            return !jobs.isEmpty() && jobs.values().iterator().next().durableUserMessageSubmissionStarted;
+        }));
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName)));
+        persistence.complete(UUID.randomUUID());
+        flushEdt();
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+
+        assertThat(agentTurns).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).singleElement().satisfies(message ->
+                assertThat(message.role()).isEqualTo(Role.USER)
+        );
+    }
+
+    @Test
+    @DisplayName("Ordinary non-Together sends retain their provider-specific attachment notice")
+    void onSend_whenOrdinaryProviderHasFile_persistsProviderFallbackNotice() throws Exception {
+        setCurrentProvider(subject, immediateProvider("answer"));
+        Path attachmentPath = Files.writeString(tempDir.resolve("ordinary-current.txt"), "attachment");
+        var attachment = new ComposerAttachment(
+                attachmentPath,
+                "text/plain",
+                Files.size(attachmentPath),
+                false
+        );
+        var persistedEvent = new AtomicReference<ChatPanel.UserMessageEvent>();
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistedEvent.set(event);
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setComposerState(new ComposerState("inspect", List.of(attachment), emptyList()));
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> persistedEvent.get() != null);
+
+        assertThat(persistedEvent.get().message().meta().fallbackNotices())
+                .singleElement()
+                .asString()
+                .contains("native file upload")
+                .doesNotContain("Together Agent Mode");
+    }
+
+    @Test
+    @DisplayName("Together Agent sends disclose metadata-only projection for a current attachment")
+    void onSend_whenTogetherAgentHasCurrentAttachment_persistsAccurateNotice() throws Exception {
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+        Path attachmentPath = Files.writeString(tempDir.resolve("together-current.txt"), "attachment");
+        var attachment = new ComposerAttachment(
+                attachmentPath,
+                "text/plain",
+                Files.size(attachmentPath),
+                false
+        );
+        var persistedEvent = new AtomicReference<ChatPanel.UserMessageEvent>();
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistedEvent.set(event);
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setComposerState(new ComposerState("inspect", List.of(attachment), emptyList()));
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> persistedEvent.get() != null && agentTurns.get() == 1);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+
+        assertThat(persistedEvent.get().message().meta().fallbackNotices())
+                .containsExactly("Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.");
+        assertThat(callOnEdt(subject::getHistory).getFirst().meta().fallbackNotices())
+                .isEqualTo(persistedEvent.get().message().meta().fallbackNotices());
+    }
+
+    @Test
+    @DisplayName("Together Agent sends disclose metadata-only projection for an image-only message")
+    void onSend_whenTogetherAgentHasOnlyAnImage_persistsAccurateNotice() throws Exception {
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+        Path imagePath = Files.writeString(tempDir.resolve("together-current.png"), "image");
+        var image = new ComposerAttachment(
+                imagePath,
+                "image/png",
+                Files.size(imagePath),
+                true
+        );
+        var persistedEvent = new AtomicReference<ChatPanel.UserMessageEvent>();
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistedEvent.set(event);
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setComposerState(new ComposerState("inspect", List.of(image), emptyList()));
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> persistedEvent.get() != null && agentTurns.get() == 1);
+
+        assertThat(persistedEvent.get().message().meta().fallbackNotices())
+                .containsExactly("Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.");
+    }
+
+    @Test
+    @DisplayName("Failed durable retry leaving Together Agent replaces its disclosure with the target provider notice")
+    void onSend_whenFailedRetryLeavesTogetherAgent_refinalizesAttachmentNotice() throws Exception {
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+        Path attachmentPath = Files.writeString(tempDir.resolve("retry-leaves-together.txt"), "attachment");
+        var attachment = new ComposerAttachment(
+                attachmentPath,
+                "text/plain",
+                Files.size(attachmentPath),
+                false
+        );
+        var persistenceCalls = new AtomicInteger();
+        List<ChatPanel.UserMessageEvent> events = new CopyOnWriteArrayList<>();
+        var firstPersistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                events.add(event);
+                if (persistenceCalls.incrementAndGet() == 1) {
+                    firstPersistenceCalled.countDown();
+                    return CompletableFuture.failedFuture(new SQLException("forced failure"));
+                }
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setComposerState(new ComposerState("inspect", List.of(attachment), emptyList()));
+        });
+
+        invokeOnSend(subject);
+        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        configureAgent("OpenAI", "gpt-5", "https://api.openai.com/v1", agentTurns);
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> events.size() == 2 && agentTurns.get() == 1);
+
+        assertThat(events.getFirst().message().meta().fallbackNotices())
+                .containsExactly("Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.");
+        assertThat(events.get(1).message().meta().fallbackNotices())
+                .singleElement()
+                .asString()
+                .contains("OpenAI", "native file upload is not mapped")
+                .doesNotContain("Together Agent Mode");
+    }
+
+    @Test
+    @DisplayName("Failed durable retry entering Together Agent replaces the target provider notice with its disclosure")
+    void onSend_whenFailedRetryEntersTogetherAgent_refinalizesAttachmentNotice() throws Exception {
+        var agentTurns = new AtomicInteger();
+        configureAgent("OpenAI", "gpt-5", "https://api.openai.com/v1", agentTurns);
+        Path attachmentPath = Files.writeString(tempDir.resolve("retry-enters-together.txt"), "attachment");
+        var attachment = new ComposerAttachment(
+                attachmentPath,
+                "text/plain",
+                Files.size(attachmentPath),
+                false
+        );
+        var persistenceCalls = new AtomicInteger();
+        List<ChatPanel.UserMessageEvent> events = new CopyOnWriteArrayList<>();
+        var firstPersistenceCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                events.add(event);
+                if (persistenceCalls.incrementAndGet() == 1) {
+                    firstPersistenceCalled.countDown();
+                    return CompletableFuture.failedFuture(new SQLException("forced failure"));
+                }
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setComposerState(new ComposerState("inspect", List.of(attachment), emptyList()));
+        });
+
+        invokeOnSend(subject);
+        assertThat(firstPersistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        configureTogetherAgent(agentTurns);
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> events.size() == 2 && agentTurns.get() == 1);
+
+        assertThat(events.getFirst().message().meta().fallbackNotices())
+                .singleElement()
+                .asString()
+                .contains("OpenAI", "native file upload is not mapped");
+        assertThat(events.get(1).message().meta().fallbackNotices())
+                .containsExactly("Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.");
+    }
+
+    @Test
+    @DisplayName("Together Agent sends disclose metadata-only projection when only history contains an attachment")
+    void onSend_whenTogetherAgentHistoryHasAttachment_persistsAccurateNotice() throws Exception {
+        Path stored = Files.writeString(tempDir.resolve("together-history.txt"), "history");
+        AttachmentRef attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                stored.toString(),
+                "together-history.txt",
+                "text/plain",
+                Files.size(stored),
+                ""
+        );
+        runOnEdt(() -> subject.loadHistory(List.of(new Message(
+                Role.USER,
+                List.of(
+                        new TextPart("earlier"),
+                        new FilePart(attachment),
+                        new ImagePart(attachment, 20, 20),
+                        new GeneratedImagePart(attachment, 20, 20, "generated")
+                ),
+                Instant.now()
+        ))));
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+        var persistedEvent = new AtomicReference<ChatPanel.UserMessageEvent>();
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistedEvent.set(event);
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.getInputBar().setText("continue");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> persistedEvent.get() != null && agentTurns.get() == 1);
+
+        assertThat(persistedEvent.get().message().meta().fallbackNotices())
+                .containsExactly("Attachment contents were not sent to Together Agent Mode; only metadata labels were provided.");
+    }
+
+    @Test
+    @DisplayName("Together Agent regeneration renders attachment disclosure separately from provider activity")
+    void regenerateRecentResponse_whenTogetherAgentHistoryHasAttachment_addsTransientNotice() throws Exception {
+        Path stored = Files.writeString(tempDir.resolve("together-regenerate.txt"), "history");
+        AttachmentRef attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                stored.toString(),
+                "together-regenerate.txt",
+                "text/plain",
+                Files.size(stored),
+                ""
+        );
+        Message userMessage = new Message(
+                Role.USER,
+                List.of(new TextPart("question"), new FilePart(attachment)),
+                Instant.now()
+        );
+        runOnEdt(() -> loadPersistedHistory(userMessage, Message.assistant("old answer")));
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> agentTurns.get() == 1);
+        flushEdt();
+
+        List<ActivityBubble> notices = callOnEdt(() -> findComponents(subject, ActivityBubble.class).stream()
+                .filter(bubble -> "Attachment notice".equals(bubble.getTitleText()))
+                .toList());
+        assertThat(notices).singleElement().satisfies(notice -> {
+            assertThat(callOnEdt(() -> notice == readField(subject, "currentAssistantActivityBubble"))).isFalse();
+            assertThat(callOnEdt(notice::getFullText)).contains("only metadata labels were provided");
+            assertThat(callOnEdt(notice::isCollapsed)).isFalse();
+            assertThat(callOnEdt(() -> readActivityContentPanel(notice).isVisible())).isTrue();
+        });
+    }
+
+    @Test
+    @DisplayName("Together Agent regeneration ignores attachments removed with the discarded assistant tail")
+    void regenerateRecentResponse_whenOnlyDiscardedTailHasAttachment_doesNotAddNotice() throws Exception {
+        Path stored = Files.writeString(tempDir.resolve("discarded-generated.png"), "image");
+        AttachmentRef attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                stored.toString(),
+                "discarded-generated.png",
+                "image/png",
+                Files.size(stored),
+                ""
+        );
+        Message assistantMessage = new Message(
+                Role.ASSISTANT,
+                List.of(
+                        new TextPart("old answer"),
+                        new GeneratedImagePart(attachment, 20, 20, "generated")
+                ),
+                Instant.now()
+        );
+        runOnEdt(() -> loadPersistedHistory(Message.user("question"), assistantMessage));
+        var agentTurns = new AtomicInteger();
+        configureTogetherAgent(agentTurns);
+
+        runOnEdt(subject::regenerateRecentResponse);
+        awaitCondition(2, TimeUnit.SECONDS, () -> agentTurns.get() == 1);
+        flushEdt();
+
+        assertThat(callOnEdt(() -> findComponents(subject, ActivityBubble.class).stream()
+                .map(ActivityBubble::getTitleText)
+                .noneMatch("Attachment notice"::equals))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Send is blocked when agent mode is enabled without a valid project folder")
+    void onSend_whenAgentModeEnabledWithoutProjectFolder_showsValidationAndSkipsSend() throws Exception {
+        runOnEdt(() -> {
+            setCurrentProvider(subject, immediateProvider("pong"));
+            subject.getInputBar().setAgentModeAvailable(true);
+
+            Field enabledField = InputBar.class.getDeclaredField("agentModeEnabled");
+            enabledField.setAccessible(true);
+            enabledField.setBoolean(subject.getInputBar(), true);
+
+            Field projectRootField = InputBar.class.getDeclaredField("agentProjectRoot");
+            projectRootField.setAccessible(true);
+            projectRootField.set(subject.getInputBar(), null);
+            readInputTextArea(subject.getInputBar()).setText("ping");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+                        && readValidationLabel(subject.getInputBar()).isVisible()
+        ));
+
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("Select a valid project folder");
+        assertThat(callOnEdt(subject::getHistory)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Agent mode routes send flow through orchestrator path")
+    void onSend_whenAgentModeEnabled_routesThroughAgentOrchestrator() throws Exception {
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-route"));
+
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
+                @Override
+                public AgentProviderAdapter create(
+                        String providerName,
+                        String modelId,
+                        String baseUrl,
+                        String apiKey,
+                        ProviderService providerService,
+                        String agentSystemPromptAppend
+                ) {
+                    return (request, callbacks) -> {
+                        callbacks.onToken().accept("agent-response");
+                        return AgentTurnResult.complete();
+                    };
+                }
+            }, new LocalToolRuntime()));
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, new ProviderService() {
+                @Override
+                public void streamCompletion(
+                        List<Message> history,
+                        ReasoningLevel reasoningLevel,
+                        Consumer<String> onToken,
+                        Consumer<String> onThinkingToken,
+                        Runnable onComplete,
+                        Consumer<Exception> onError,
+                        BooleanSupplier isCancelled
+                ) {
+                    throw new IllegalStateException("Non-agent provider path should not be called");
+                }
+            });
+            readInputTextArea(subject.getInputBar()).setText("ping");
+        });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
+        assertThat(callOnEdt(subject::getHistory).get(1).content()).isEqualTo("agent-response");
     }
 
     @Test
@@ -2584,81 +3239,71 @@ class ChatPanelTest {
     @Test
     @DisplayName("Agent mode renders tool bubbles before the final answer when tools run first")
     void onSend_whenAgentModeUsesToolsBeforeAnswer_rendersSeparateToolBubblesBeforeAssistantAnswer() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-tools-bubble");
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-tools-bubble"));
         Files.writeString(projectRoot.resolve("note.txt"), "hello tool");
         AtomicInteger turns = new AtomicInteger();
 
-        subject.getInputBar().setAgentModeAvailable(true);
-        subject.getInputBar().setAgentProjectRoot(projectRoot);
-        subject.getInputBar().setAgentModeEnabled(true);
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
+                @Override
+                public AgentProviderAdapter create(
+                        String providerName,
+                        String modelId,
+                        String baseUrl,
+                        String apiKey,
+                        ProviderService providerService,
+                        String agentSystemPromptAppend
+                ) {
+                    return (request, callbacks) -> {
+                        if (turns.incrementAndGet() == 1) {
+                            return AgentTurnResult.continueWithTools(List.of(
+                                    new ToolInvocationRequest("list-root", "ls", "{\"path\":\".\"}"),
+                                    new ToolInvocationRequest("read-note", "read", "{\"path\":\"note.txt\"}")
+                            ));
+                        }
 
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
-            @Override
-            public AgentProviderAdapter create(
-                    String providerName,
-                    String modelId,
-                    String baseUrl,
-                    String apiKey,
-                    ProviderService providerService,
-                    String agentSystemPromptAppend
-            ) {
-                return (request, callbacks) -> {
-                    if (turns.incrementAndGet() == 1) {
-                        return AgentTurnResult.continueWithTools(List.of(
-                                new ToolInvocationRequest(
-                                        "list-root",
-                                        "ls",
-                                        "{\"path\":\".\"}"
-                                ),
-                                new ToolInvocationRequest(
-                                        "read-note",
-                                        "read",
-                                        "{\"path\":\"note.txt\"}"
-                                )
-                        ));
-                    }
-
-                    callbacks.onToken().accept("agent-response");
-                    return AgentTurnResult.complete();
-                };
-            }
-        }, new LocalToolRuntime()));
-
-        setField(subject, "selectedProviderName", "OpenAI");
-        setField(subject, "selectedModelId", "gpt-5-mini");
-        setCurrentProvider(subject, immediateProvider("pong"));
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
-        invokeOnSend(subject);
-
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+                        callbacks.onToken().accept("agent-response");
+                        return AgentTurnResult.complete();
+                    };
+                }
+            }, new LocalToolRuntime()));
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, immediateProvider("pong"));
+            readInputTextArea(subject.getInputBar()).setText("ping");
         });
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
-                .filter(bubble -> thinkingBubbleTitle(bubble).startsWith("✓ "))
-                .toList();
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
 
-        assertThat(toolBubbles).hasSize(2);
-        assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ ls .");
-        assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✓ read note.txt");
-        assertThat(hasVisibleCollapseToggle(toolBubbles.getFirst())).isFalse();
-        assertThat(hasVisibleCollapseToggle(toolBubbles.get(1))).isFalse();
-        assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
-        assertThat(messageRowIndex(messagesPanel, toolBubbles.get(1)))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
+                    .filter(bubble -> thinkingBubbleTitle(bubble).startsWith("✓ "))
+                    .toList();
 
-        Message assistantMessage = subject.getHistory().get(1);
-        assertThat(assistantMessage.meta().agentToolActivities())
-                .extracting(AgentToolActivityMeta::toolName)
-                .containsExactly("ls", "read");
-        assertThat(assistantMessage.meta().agentToolActivities())
-                .extracting(AgentToolActivityMeta::status)
-                .containsExactly("SUCCEEDED", "SUCCEEDED");
+            assertThat(toolBubbles).hasSize(2);
+            assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ ls .");
+            assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✓ read note.txt");
+            assertThat(hasVisibleCollapseToggle(toolBubbles.getFirst())).isFalse();
+            assertThat(hasVisibleCollapseToggle(toolBubbles.get(1))).isFalse();
+            assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
+                    .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+            assertThat(messageRowIndex(messagesPanel, toolBubbles.get(1)))
+                    .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+
+            Message assistantMessage = subject.getHistory().get(1);
+            assertThat(assistantMessage.meta().agentToolActivities())
+                    .extracting(AgentToolActivityMeta::toolName)
+                    .containsExactly("ls", "read");
+            assertThat(assistantMessage.meta().agentToolActivities())
+                    .extracting(AgentToolActivityMeta::status)
+                    .containsExactly("SUCCEEDED", "SUCCEEDED");
+            return null;
+        });
     }
 
     @Test
@@ -2682,32 +3327,35 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(List.of(Message.user("run tools"), assistantMessage)));
+        callOnEdt(() -> {
+            subject.loadHistory(List.of(Message.user("run tools"), assistantMessage));
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
+                    .filter(bubble -> !hasVisibleCollapseToggle(bubble))
+                    .toList();
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> toolBubbles = findComponents(messagesPanel, ActivityBubble.class).stream()
-                .filter(bubble -> !hasVisibleCollapseToggle(bubble))
-                .toList();
-
-        assertThat(toolBubbles).hasSize(2);
-        assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ read note.txt");
-        assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✗ grep . todo — no matches");
-        assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+            assertThat(toolBubbles).hasSize(2);
+            assertThat(thinkingBubbleTitle(toolBubbles.getFirst())).isEqualTo("✓ read note.txt");
+            assertThat(thinkingBubbleTitle(toolBubbles.get(1))).isEqualTo("✗ grep . todo — no matches");
+            assertThat(messageRowIndex(messagesPanel, toolBubbles.getFirst()))
+                    .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Agent mode passes configured prompt addendum to orchestrator")
     void onSend_whenAgentPromptAddendumConfigured_passesAddendumToOrchestrator() throws Exception {
-        Path projectRoot = Files.createTempDirectory("chat4j-agent-route-addendum");
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-route-addendum"));
         AtomicReference<String> observedPromptAppend = new AtomicReference<>();
 
-        subject.getInputBar().setAgentModeAvailable(true);
-        subject.getInputBar().setAgentProjectRoot(projectRoot);
-        subject.getInputBar().setAgentModeEnabled(true);
-        subject.setAgentSystemPromptAppend("Always include key project files.");
+        runOnEdt(() -> {
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+            subject.setAgentSystemPromptAppend("Always include key project files.");
 
-        subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
+            subject.setAgentOrchestratorForTests(new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
             @Override
             public AgentProviderAdapter create(
                     String providerName,
@@ -2723,20 +3371,15 @@ class ChatPanelTest {
                     return AgentTurnResult.complete();
                 };
             }
-        }, new LocalToolRuntime()));
-
-        setField(subject, "selectedProviderName", "OpenAI");
-        setField(subject, "selectedModelId", "gpt-5-mini");
-        setCurrentProvider(subject, immediateProvider("pong"));
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
-        invokeOnSend(subject);
-
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+            }, new LocalToolRuntime()));
+            setField(subject, "selectedProviderName", "OpenAI");
+            setField(subject, "selectedModelId", "gpt-5-mini");
+            setCurrentProvider(subject, immediateProvider("pong"));
+            readInputTextArea(subject.getInputBar()).setText("ping");
         });
+
+        invokeOnSend(subject);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
 
         assertThat(observedPromptAppend.get()).isEqualTo("Always include key project files.");
     }
@@ -2772,11 +3415,13 @@ class ChatPanelTest {
         flushEdt();
 
         assertThat(providerCalls).hasValue(0);
-        assertThat(subject.getHistory()).isEmpty();
-        assertThat(subject.getInputBar().isEnabled()).isFalse();
-
-        SwingUtilities.invokeAndWait(() -> subject.setConversationLoading(false));
-        assertThat(subject.getInputBar().isEnabled()).isTrue();
+        callOnEdt(() -> {
+            assertThat(subject.getHistory()).isEmpty();
+            assertThat(subject.getInputBar().isEnabled()).isFalse();
+            subject.setConversationLoading(false);
+            assertThat(subject.getInputBar().isEnabled()).isTrue();
+            return null;
+        });
     }
 
     @Test
@@ -3079,20 +3724,22 @@ class ChatPanelTest {
         var started = new CountDownLatch(1);
         var releasePreparation = new CountDownLatch(1);
 
-        subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
-            started.countDown();
-            while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
-                if (isCancelled.getAsBoolean()) {
-                    throw new IllegalStateException("Cancelled");
+        JTextArea textArea = callOnEdt(() -> {
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+                started.countDown();
+                while (!releasePreparation.await(20, TimeUnit.MILLISECONDS)) {
+                    if (isCancelled.getAsBoolean()) {
+                        throw new IllegalStateException("Cancelled");
+                    }
                 }
-            }
-            return Message.user(composerState.text());
+                return Message.user(composerState.text());
+            });
+            JTextArea input = readInputTextArea(subject.getInputBar());
+            input.setText("ping");
+            return input;
         });
 
         setCurrentProvider(subject, immediateProvider("pong"));
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
         invokeOnSend(subject);
 
         assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
@@ -3101,10 +3748,13 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(subject::cancelStreamingAndMarkCancelled);
         flushEdt();
 
-        assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
-        assertThat(subject.getHistory()).isEmpty();
-        assertThat(textArea.getText()).isEqualTo("ping");
+        callOnEdt(() -> {
+            assertThat(subject.getInputBar().isEnabled()).isTrue();
+            assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
+            assertThat(subject.getHistory()).isEmpty();
+            assertThat(textArea.getText()).isEqualTo("ping");
+            return null;
+        });
 
         releasePreparation.countDown();
         flushEdt();
@@ -3179,96 +3829,102 @@ class ChatPanelTest {
     @Test
     @DisplayName("Preparation failure keeps composer draft and shows inline error")
     void onSend_whenPreparationFails_keepsDraftAndShowsValidationError() throws Exception {
-        subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
-            throw new IOException("Failed to stage attachment: boom");
+        JTextArea textArea = callOnEdt(() -> {
+            subject.setSendPreparerForTests((composerState, providerSnapshot, isCancelled) -> {
+                throw new IOException("Failed to stage attachment: boom");
+            });
+            JTextArea input = readInputTextArea(subject.getInputBar());
+            input.setText("ping");
+            return input;
         });
 
         setCurrentProvider(subject, immediateProvider("pong"));
-
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getInputBar().isEnabled()
-                    && !subject.getInputBar().isCancelGenerationVisible()
-                    && readValidationLabel(subject.getInputBar()).getText().contains("Failed to stage attachment");
-        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                subject.getInputBar().isEnabled()
+                        && !subject.getInputBar().isCancelGenerationVisible()
+                        && readValidationLabel(subject.getInputBar()).getText().contains("Failed to stage attachment")
+        ));
 
-        assertThat(subject.getHistory()).isEmpty();
-        assertThat(textArea.getText()).isEqualTo("ping");
-        assertThat(readValidationLabel(subject.getInputBar()).getText()).contains("Failed to stage attachment");
+        callOnEdt(() -> {
+            assertThat(subject.getHistory()).isEmpty();
+            assertThat(textArea.getText()).isEqualTo("ping");
+            assertThat(readValidationLabel(subject.getInputBar()).getText()).contains("Failed to stage attachment");
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Auto-scroll setting can be enabled and disabled at runtime")
-    void setAutoScrollEnabled_whenCalled_updatesAutoScrollBehaviorFlag() {
-        subject.setAutoScrollEnabled(false);
-        assertThat(subject.isAutoScrollEnabled()).isFalse();
+    void setAutoScrollEnabled_whenCalled_updatesAutoScrollBehaviorFlag() throws Exception {
+        callOnEdt(() -> {
+            subject.setAutoScrollEnabled(false);
+            assertThat(subject.isAutoScrollEnabled()).isFalse();
 
-        subject.setAutoScrollEnabled(true);
-        assertThat(subject.isAutoScrollEnabled()).isTrue();
+            subject.setAutoScrollEnabled(true);
+            assertThat(subject.isAutoScrollEnabled()).isTrue();
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Jump to latest remains visible when scroll is not at conversation end")
     void setAutoScrollEnabled_whenScrollNotAtBottom_showsJumpToLatestButton() throws Exception {
-        setField(subject, "atBottom", false);
-
-        subject.setAutoScrollEnabled(true);
-
-        JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
-        assertThat(jumpToLatestOverlay.isVisible()).isTrue();
+        callOnEdt(() -> {
+            setField(subject, "atBottom", false);
+            subject.setAutoScrollEnabled(true);
+            JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
+            assertThat(jumpToLatestOverlay.isVisible()).isTrue();
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Jump to latest stays hidden when streaming at conversation end")
     void setAutoScrollEnabled_whenStreamingAtBottom_keepsJumpToLatestHidden() throws Exception {
-        setField(subject, "atBottom", true);
-        setField(subject, "streaming", true);
-
         Method method = ChatPanel.class.getDeclaredMethod("refreshJumpOverlay");
         method.setAccessible(true);
-        method.invoke(subject);
-
-        JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
-        assertThat(jumpToLatestOverlay.isVisible()).isFalse();
+        callOnEdt(() -> {
+            setField(subject, "atBottom", true);
+            setField(subject, "streaming", true);
+            method.invoke(subject);
+            JComponent jumpToLatestOverlay = (JComponent) readField(subject, "jumpToLatestOverlay");
+            assertThat(jumpToLatestOverlay.isVisible()).isFalse();
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Jump to latest stops animating when streaming ends away from bottom")
     void updateGenerationIndicator_whenStreamingEndsAwayFromBottom_stopsJumpAnimation() throws Exception {
-        setField(subject, "atBottom", false);
-        JumpToLatestButton jumpToLatestOverlay = (JumpToLatestButton) readField(subject, "jumpToLatestOverlay");
-        SwingUtilities.invokeAndWait(() -> {
-            jumpToLatestOverlay.setVisible(true);
-            jumpToLatestOverlay.setStreaming(true);
-        });
-
         Method method = ChatPanel.class.getDeclaredMethod("updateGenerationIndicator");
         method.setAccessible(true);
-        SwingUtilities.invokeAndWait(() -> {
-            try {
-                method.invoke(subject);
-            } catch (ReflectiveOperationException e) {
-                throw new RuntimeException(e);
-            }
+        callOnEdt(() -> {
+            setField(subject, "atBottom", false);
+            JumpToLatestButton jumpToLatestOverlay = (JumpToLatestButton) readField(
+                    subject,
+                    "jumpToLatestOverlay"
+            );
+            jumpToLatestOverlay.setVisible(true);
+            jumpToLatestOverlay.setStreaming(true);
+            method.invoke(subject);
+            assertThat(jumpToLatestOverlay.isVisible()).isTrue();
+            assertThat(jumpToLatestOverlay.isStreaming()).isFalse();
+            return null;
         });
-
-        assertThat(jumpToLatestOverlay.isVisible()).isTrue();
-        assertThat(jumpToLatestOverlay.isStreaming()).isFalse();
     }
 
     @Test
     @DisplayName("Render mode switch updates state and emits change callback")
-    void setRenderMode_whenChanged_updatesStateAndNotifiesListener() {
+    void setRenderMode_whenChanged_updatesStateAndNotifiesListener() throws Exception {
         var capturedMode = new AtomicReference<RenderMode>();
-        subject.setOnRenderModeChanged(capturedMode::set);
-
-        subject.setRenderMode(RenderMode.MARKDOWN, true);
-
-        assertThat(subject.getRenderMode()).isEqualTo(RenderMode.MARKDOWN);
+        callOnEdt(() -> {
+            subject.setOnRenderModeChanged(capturedMode::set);
+            subject.setRenderMode(RenderMode.MARKDOWN, true);
+            assertThat(subject.getRenderMode()).isEqualTo(RenderMode.MARKDOWN);
+            return null;
+        });
         assertThat(capturedMode.get()).isEqualTo(RenderMode.MARKDOWN);
     }
 
@@ -3567,7 +4223,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud action passes canonical Markdown to Text to Speech")
     void readAloudButton_whenClicked_invokesTextToSpeechServiceWithCanonicalMarkdown() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         String markdown = """
                 Intro.
@@ -3597,7 +4253,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Messages containing only excluded content have no Read aloud action")
     void loadHistory_whenAssistantContentIsOnlyExcluded_omitsReadAloudButton() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("```smiles\nCCO\n```\n$x = y$"))));
         awaitReadAloudAvailability();
@@ -3613,7 +4269,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Excluded-only assistant context menus hide Read aloud and its separator")
     void contextMenu_whenAssistantContentIsOnlyExcluded_hidesReadAloudSection() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("```smiles\nCCO\n```"))));
         awaitReadAloudAvailability();
@@ -3644,7 +4300,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Panel removal preserves application speech services until explicit disposal")
     void removeNotify_whenPanelIsRemoved_defersSpeechDisposalToOwner() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
 
         runOnEdt(subject::removeNotify);
@@ -3666,6 +4322,28 @@ class ChatPanelTest {
 
         runOnEdt(subject::disposeViewResources);
         verify(systemWebView).dispose();
+    }
+
+    @Test
+    @DisplayName("Permanent panel disposal releases loaded activity renderers")
+    void disposeViewResources_whenActivityBubbleIsLoaded_disposesItsRenderer() throws Exception {
+        Message assistant = new Message(
+                Role.ASSISTANT,
+                List.of(new TextPart("answer")),
+                Instant.now(),
+                new MessageMeta(emptyList(), emptyList(), false, "", "reasoning")
+        );
+        runOnEdt(() -> subject.loadHistory(List.of(Message.user("question"), assistant)));
+        ActivityBubble bubble = callOnEdt(() -> findComponents(subject, ActivityBubble.class).getFirst());
+        MessageBubble assistantBubble = callOnEdt(() -> findComponents(subject, MessageBubble.class).stream()
+                .filter(messageBubble -> "answer".equals(messageBubble.getFullText()))
+                .findFirst()
+                .orElseThrow());
+
+        runOnEdt(subject::disposeViewResources);
+
+        assertThat(callOnEdt(bubble::isDisposed)).isTrue();
+        assertThat(callOnEdt(assistantBubble::isDisposed)).isTrue();
     }
 
     @Test
@@ -3736,7 +4414,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud web transcript action uses message indexes without duplicate action bars")
     void handleWebTranscriptAction_whenReadAloudAfterUserMessage_invokesTextToSpeechService() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(
                 Message.user("question"),
@@ -3755,7 +4433,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud web transcript action uses stored message text for valid indexes")
     void handleWebTranscriptAction_whenReadAloudIndexIsValid_usesStoredMessageText() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("stored assistant answer"))));
         flushEdt();
@@ -3771,7 +4449,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud rejects a callback from a transcript replaced at the same index")
     void handleWebTranscriptAction_whenTranscriptChangesBeforeDispatch_rejectsStaleMessageToken() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("old assistant answer"))));
         flushEdt();
@@ -3791,7 +4469,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud rejects browser text without a canonical message index")
     void handleWebTranscriptAction_whenReadAloudIndexUnavailable_ignoresTextPayload() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Method method = ChatPanel.class.getDeclaredMethod("handleWebTranscriptAction", String.class, int.class, String.class);
         method.setAccessible(true);
@@ -3806,7 +4484,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud rejects stale callback indexes")
     void handleWebTranscriptAction_whenIndexIsOutsideTranscript_ignoresCallback() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(Message.assistant("assistant answer"))));
         flushEdt();
@@ -3823,7 +4501,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud ignores callbacks resolved to user messages")
     void handleWebTranscriptAction_whenIndexResolvesToUser_doesNotSelectEarlierAssistant() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         runOnEdt(() -> subject.loadHistory(List.of(
                 Message.assistant("earlier assistant answer"),
@@ -3843,7 +4521,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud rejects pre-normalization indexes for merged activity-only messages")
     void handleWebTranscriptAction_whenActivityOnlyAssistantIsMerged_rejectsStaleIndex() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Message activityOnlyAssistant = new Message(
                 Role.ASSISTANT,
@@ -3870,7 +4548,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Read aloud web transcript action resolves visible indexes shifted by skipped activity messages")
     void handleWebTranscriptAction_whenVisibleIndexIsShiftedByActivity_resolvesAssistantBubbleIndex() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Message activityOnlyAssistant = new Message(
                 Role.ASSISTANT,
@@ -3897,7 +4575,7 @@ class ChatPanelTest {
     @Test
     @DisplayName("Web transcript actions use visible message indexes when web search activity is present")
     void handleWebTranscriptAction_whenWebSearchActivityPresent_usesVisibleMessageIndex() throws Exception {
-        var textToSpeechService = new RecordingTextToSpeechService();
+        var textToSpeechService = new RecordingTextToSpeechService(tempDir.resolve("tts-settings.properties"));
         subject = chatPanelWithTextToSpeech(textToSpeechService);
         Message assistantMessage = new Message(
                 Role.ASSISTANT,
@@ -4883,6 +5561,83 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Canonical Together reconciliation retains initial model admission after the catalog changes")
+    void resolveIndeterminateUserMessage_whenTogetherCatalogChangesAfterPersistence_doesNotReadmitModel() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        String providerName = "Together";
+        String modelId = "Qwen/Qwen3.5-9B";
+        String baseUrl = "https://api.together.ai/v1";
+        var persistenceCalled = new CountDownLatch(1);
+        var factoryCalls = new AtomicInteger();
+        var transportCalls = new AtomicInteger();
+        ProviderService providerService = new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                transportCalls.incrementAndGet();
+                onComplete.run();
+            }
+        };
+        var provider = new ProviderRegistry.ProviderDef(
+                providerName,
+                "TOGETHER_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> {
+                    factoryCalls.incrementAndGet();
+                    return providerService;
+                },
+                List::of
+        );
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long scope = cacheService.nextScopeVersion();
+        cacheService.synchronizeScope(providerName, baseUrl, scope);
+        ProviderModelCacheService.RefreshAttempt attempt = cacheService.tryBeginRefreshIfNeeded(
+                providerName,
+                baseUrl,
+                Duration.ZERO
+        ).orElseThrow();
+        assertThat(cacheService.update(attempt, List.of(modelId))).isTrue();
+        runOnEdt(() -> {
+            setField(subject, "providerMap", Map.of(providerName, provider));
+            setField(subject, "selectedProviderName", providerName);
+            setField(subject, "selectedModelId", modelId);
+            setField(subject, "installedProviderScope", scope);
+            subject.setActiveConversationId(conversationId);
+            subject.setConversationIdSupplier(() -> conversationId);
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                persistenceCalled.countDown();
+                return CompletableFuture.failedFuture(new ConversationPersistenceIndeterminateException(
+                        new SQLException("read unavailable")
+                ));
+            });
+            subject.getInputBar().setText("canonical Together message");
+        });
+
+        invokeOnSend(subject);
+        assertThat(persistenceCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        flushEdt();
+        cacheService.invalidate(providerName);
+        runOnEdt(() -> subject.resolveIndeterminateUserMessage(conversationId, true));
+        awaitCondition(2, TimeUnit.SECONDS, () -> transportCalls.get() == 1);
+        flushEdt();
+
+        assertThat(factoryCalls).hasValue(2);
+        assertThat(transportCalls).hasValue(1);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                .containsExactly("canonical Together message");
+    }
+
+    @Test
     @DisplayName("Canonical reconciliation adopts the saved message when provider recreation fails")
     void resolveIndeterminateUserMessage_whenProviderRecreationFails_keepsCanonicalMessage() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -5171,6 +5926,42 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Credential changes during durable regeneration prevent transport after committed truncation")
+    void regenerateRecentResponse_whenCredentialsChangeDuringPersistence_skipsTransportAfterTruncation() throws Exception {
+        UUID conversationId = UUID.randomUUID();
+        CompletableFuture<Void> persistence = controlledFuture();
+        var mutationCalled = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.loadConversationHistoryEntries(conversationId, List.of(
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 1, Message.user("question")),
+                    new ConversationRepository.MessageRecord(UUID.randomUUID(), 2, Message.assistant("old answer"))
+            ));
+            subject.setOnDurableHistoryMutation(event -> {
+                mutationCalled.countDown();
+                return persistence;
+            });
+        });
+        var providerCalls = new AtomicInteger();
+        setCurrentProvider(subject, providerReturning("new answer", providerCalls));
+        flushEdt();
+
+        runOnEdt(subject::regenerateRecentResponse);
+        assertThat(mutationCalled.await(2, TimeUnit.SECONDS)).isTrue();
+        String providerName = callOnEdt(() -> (String) readField(subject, "selectedProviderName"));
+        runOnEdt(() -> subject.invalidateSelectedProviderCapabilityEvidence(Set.of(providerName)));
+        persistence.complete(null);
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+        ));
+        flushEdt();
+
+        assertThat(providerCalls).hasValue(0);
+        assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("question");
+        assertThat(callOnEdt(() -> readValidationLabel(subject.getInputBar()).getText()))
+                .contains("credentials changed while the conversation change was being saved");
+    }
+
+    @Test
     @DisplayName("Cancelling after durable regeneration submission applies committed truncation without invoking the provider")
     void regenerateRecentResponse_whenCancelledAfterSubmission_appliesCommittedTruncationOnly() throws Exception {
         UUID conversationId = UUID.randomUUID();
@@ -5402,15 +6193,17 @@ class ChatPanelTest {
     void onSend_whenStreamCompletes_notifiesMessageSubmittedForAssistantResponse() throws Exception {
         var callbackCount = new AtomicInteger();
         var callbacks = new CountDownLatch(2);
-        subject.setOnDurableUserMessageSubmitted(event -> {
-            callbackCount.incrementAndGet();
-            callbacks.countDown();
-            return CompletableFuture.completedFuture(event.conversationId());
-        });
-        subject.setOnDurableAssistantMessageCompleted(event -> {
-            callbackCount.incrementAndGet();
-            callbacks.countDown();
-            return CompletableFuture.completedFuture(null);
+        runOnEdt(() -> {
+            subject.setOnDurableUserMessageSubmitted(event -> {
+                callbackCount.incrementAndGet();
+                callbacks.countDown();
+                return CompletableFuture.completedFuture(event.conversationId());
+            });
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                callbackCount.incrementAndGet();
+                callbacks.countDown();
+                return CompletableFuture.completedFuture(null);
+            });
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -5430,16 +6223,18 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
         assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
         assertThat(callbackCount.get()).isEqualTo(2);
-        assertThat(subject.getHistory()).hasSize(2);
-        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
-        assertThat(subject.getHistory().get(1).content()).isEqualTo("pong");
+        assertThat(callOnEdt(subject::getHistory))
+                .hasSize(2)
+                .element(1)
+                .satisfies(message -> {
+                    assertThat(message.role()).isEqualTo(Role.ASSISTANT);
+                    assertThat(message.content()).isEqualTo("pong");
+                });
     }
 
     @Test
@@ -5447,17 +6242,15 @@ class ChatPanelTest {
     void onSend_whenProviderDoesNotEmitThinking_doesNotRenderActivityBubble() throws Exception {
         setCurrentProvider(subject, immediateProvider("pong"));
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
-        });
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
+        assertThat(callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class);
+        })).isEmpty();
     }
 
     @Test
@@ -5501,10 +6294,12 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+        runOnEdt(() -> subject.loadHistory(messages));
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
+        assertThat(callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class);
+        })).isEmpty();
     }
 
     @Test
@@ -5520,12 +6315,15 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+        runOnEdt(() -> subject.loadHistory(messages));
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-        assertThat(thinkingBubbles.getFirst().isCollapsed()).isTrue();
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
+            assertThat(thinkingBubbles.getFirst().isCollapsed()).isTrue();
+            return null;
+        });
     }
 
     @Test
@@ -5553,10 +6351,11 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
+        runOnEdt(() -> subject.loadHistory(messages));
 
-        assertThat(subject.getHistory()).hasSize(2);
-        Message assistant = subject.getHistory().get(1);
+        List<Message> history = callOnEdt(subject::getHistory);
+        assertThat(history).hasSize(2);
+        Message assistant = history.get(1);
         assertThat(assistant.content()).isEqualTo("final answer");
         assertThat(assistant.meta().assistantThinking()).contains("first thinking");
         assertThat(assistant.meta().assistantThinking()).contains("artifact thinking");
@@ -5583,20 +6382,25 @@ class ChatPanelTest {
         });
         flushEdt();
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
 
-        List<JEditorPane> panes = findComponents(thinkingBubbles.getFirst(), JEditorPane.class);
-        assertThat(panes).isNotEmpty();
-        assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(1);
+            List<JEditorPane> panes = findComponents(thinkingBubbles.getFirst(), JEditorPane.class);
+            assertThat(panes).isNotEmpty();
+            assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(1);
+            return null;
+        });
     }
 
     @Test
     @DisplayName("Thinking bubble renders without nested inner scroll containers")
     void onSend_whenProviderEmitsThinking_usesSingleRenderedPath() throws Exception {
-        subject.getInputBar().setThinkingAvailable(true);
-        subject.getInputBar().setThinkingEnabled(true);
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -5620,21 +6424,21 @@ class ChatPanelTest {
         SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
+
+            ActivityBubble thinkingBubble = thinkingBubbles.getFirst();
+            assertThat(findComponents(thinkingBubble, JScrollPane.class)).isEmpty();
+
+            List<JEditorPane> panes = findComponents(thinkingBubble, JEditorPane.class);
+            assertThat(panes).isNotEmpty();
+            assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(5);
+            return null;
         });
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-
-        ActivityBubble thinkingBubble = thinkingBubbles.getFirst();
-        assertThat(findComponents(thinkingBubble, JScrollPane.class)).isEmpty();
-
-        List<JEditorPane> panes = findComponents(thinkingBubble, JEditorPane.class);
-        assertThat(panes).isNotEmpty();
-        assertThat(panes.getFirst().getDocument().getLength()).isGreaterThan(5);
     }
 
     @Test
@@ -5668,9 +6472,10 @@ class ChatPanelTest {
         assertThat(callOnEdt(() -> (List<?>) readField(subject, "assistantBubbles"))).isEmpty();
         assertThat(callOnEdt(() -> {
             JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-            return findComponents(messagesPanel, ActivityBubble.class);
-        })).singleElement().satisfies(bubble -> assertThat(bubble.getFullText())
-                .contains("Thinking without a text answer"));
+            return findComponents(messagesPanel, ActivityBubble.class).stream()
+                    .map(ActivityBubble::getFullText)
+                    .toList();
+        })).singleElement().asString().contains("Thinking without a text answer");
     }
 
     @Test
@@ -5686,32 +6491,33 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).getFirst();
-        JButton copyButton = findComponents(thinkingBubble, JButton.class).stream()
+        ActivityBubble thinkingBubble = callOnEdt(() -> {
+            subject.loadHistory(messages);
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class).getFirst();
+        });
+        JButton copyButton = callOnEdt(() -> findComponents(thinkingBubble, JButton.class).stream()
                 .filter(button -> "Copy thinking".equals(button.getToolTipText()))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow());
 
-        assertThat(copyButton.isVisible()).isFalse();
+        assertThat(callOnEdt(copyButton::isVisible)).isFalse();
 
-        MouseEvent hoverEvent = new MouseEvent(
-                thinkingBubble,
-                MouseEvent.MOUSE_ENTERED,
-                System.currentTimeMillis(),
-                0,
-                2,
-                2,
-                0,
-                false
-        );
-        for (var listener : thinkingBubble.getMouseListeners()) {
-            listener.mouseEntered(hoverEvent);
-        }
+        runOnEdt(() -> {
+            MouseEvent hoverEvent = new MouseEvent(
+                    thinkingBubble,
+                    MouseEvent.MOUSE_ENTERED,
+                    System.currentTimeMillis(),
+                    0,
+                    2,
+                    2,
+                    0,
+                    false
+            );
+            Arrays.stream(thinkingBubble.getMouseListeners()).forEach(listener -> listener.mouseEntered(hoverEvent));
+        });
 
-        assertThat(copyButton.isVisible()).isTrue();
+        assertThat(callOnEdt(copyButton::isVisible)).isTrue();
     }
 
     @Test
@@ -5727,46 +6533,25 @@ class ChatPanelTest {
                 )
         );
 
-        SwingUtilities.invokeAndWait(() -> subject.loadHistory(messages));
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).getFirst();
-        JLabel titleLabel = findComponents(thinkingBubble, JLabel.class).stream()
+        ActivityBubble thinkingBubble = callOnEdt(() -> {
+            subject.loadHistory(messages);
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            return findComponents(messagesPanel, ActivityBubble.class).getFirst();
+        });
+        JLabel titleLabel = callOnEdt(() -> findComponents(thinkingBubble, JLabel.class).stream()
                 .filter(label -> "Thinking".equals(label.getText()))
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow());
 
-        assertThat(thinkingBubble.isCollapsed()).isTrue();
+        assertThat(callOnEdt(thinkingBubble::isCollapsed)).isTrue();
 
-        MouseEvent clickEvent = new MouseEvent(
-                titleLabel,
-                MouseEvent.MOUSE_CLICKED,
-                System.currentTimeMillis(),
-                0,
-                2,
-                2,
-                1,
-                false
-        );
-        for (var listener : titleLabel.getMouseListeners()) {
-            listener.mouseClicked(clickEvent);
-        }
+        runOnEdt(() -> clickLabel(titleLabel));
+        awaitCondition(1, TimeUnit.SECONDS, () -> callOnEdt(() -> !thinkingBubble.isCollapsed()));
+        assertThat(callOnEdt(thinkingBubble::isCollapsed)).isFalse();
 
-        awaitCondition(1, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return !thinkingBubble.isCollapsed();
-        });
-        assertThat(thinkingBubble.isCollapsed()).isFalse();
-
-        for (var listener : titleLabel.getMouseListeners()) {
-            listener.mouseClicked(clickEvent);
-        }
-
-        awaitCondition(1, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return thinkingBubble.isCollapsed();
-        });
-        assertThat(thinkingBubble.isCollapsed()).isTrue();
+        runOnEdt(() -> clickLabel(titleLabel));
+        awaitCondition(1, TimeUnit.SECONDS, () -> callOnEdt(thinkingBubble::isCollapsed));
+        assertThat(callOnEdt(thinkingBubble::isCollapsed)).isTrue();
     }
 
     @Test
@@ -5790,29 +6575,29 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
         invokeOnSend(subject);
 
         // Allow headroom for asynchronous send/completion dispatch on slower CI.
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+        awaitCondition(5, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
+        callOnEdt(() -> {
+            Message assistant = subject.getHistory().get(1);
+            assertThat(assistant.content()).contains("final answer");
+            assertThat(assistant.meta().assistantThinking()).isEmpty();
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
+            return null;
         });
-
-        Message assistant = subject.getHistory().get(1);
-        assertThat(assistant.content()).contains("final answer");
-        assertThat(assistant.meta().assistantThinking()).isEmpty();
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(findComponents(messagesPanel, ActivityBubble.class)).isEmpty();
     }
 
     @Test
     @DisplayName("Thinking stream ignores non-visible control tokens and keeps visible text")
     void onSend_whenThinkingIncludesControlSequences_keepsVisibleThinkingText() throws Exception {
-        subject.getInputBar().setThinkingAvailable(true);
-        subject.getInputBar().setThinkingEnabled(true);
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -5834,25 +6619,24 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
+        callOnEdt(() -> {
+            Message assistant = subject.getHistory().get(1);
+            assertThat(assistant.meta().assistantThinking()).contains("First visible part");
+            assertThat(assistant.meta().assistantThinking()).contains("second visible part");
+            assertThat(assistant.meta().assistantThinking()).doesNotContain("\u001B");
+
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
+            assertThat(thinkingBubbles.getFirst().getFullText()).contains("First visible part");
+            assertThat(thinkingBubbles.getFirst().getFullText()).contains("second visible part");
+            return null;
         });
-
-        Message assistant = subject.getHistory().get(1);
-        assertThat(assistant.meta().assistantThinking()).contains("First visible part");
-        assertThat(assistant.meta().assistantThinking()).contains("second visible part");
-        assertThat(assistant.meta().assistantThinking()).doesNotContain("\u001B");
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-        assertThat(thinkingBubbles.getFirst().getFullText()).contains("First visible part");
-        assertThat(thinkingBubbles.getFirst().getFullText()).contains("second visible part");
     }
 
     @Test
@@ -5877,20 +6661,18 @@ class ChatPanelTest {
 
         });
 
-        subject.getInputBar().setThinkingAvailable(true);
-        subject.getInputBar().setThinkingEnabled(true);
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+            readInputTextArea(subject.getInputBar()).setText("question");
+        });
         invokeOnSend(subject);
 
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
-        });
+        awaitCondition(5, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
 
-        long assistantCount = subject.getHistory().stream()
+        long assistantCount = callOnEdt(() -> subject.getHistory().stream()
                 .filter(message -> message.role() == Role.ASSISTANT)
-                .count();
+                .count());
         assertThat(assistantCount).isEqualTo(1);
     }
 
@@ -5913,24 +6695,22 @@ class ChatPanelTest {
             }
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
-        });
+        awaitCondition(5, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
 
-        Message assistant = subject.getHistory().get(1);
-        assertThat(assistant.content()).contains("answer<thi", "provider failed");
+        assertThat(callOnEdt(() -> subject.getHistory().get(1).content()))
+                .contains("answer<thi", "provider failed");
     }
 
     @Test
     @DisplayName("Think tags emitted in answer tokens are rendered as thinking for any provider")
     void onSend_whenProviderEmitsThinkTagsInAnswerTokens_extractsThinkingModelAgnostically() throws Exception {
-        subject.getInputBar().setThinkingAvailable(true);
-        subject.getInputBar().setThinkingEnabled(true);
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -5951,60 +6731,36 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
-        });
-
-        Message assistant = subject.getHistory().get(1);
-        assertThat(assistant.content()).isEqualTo("visible answer");
-        assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-        assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
-        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+        awaitCondition(5, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+        assertRenderedThinking("visible answer", "hidden reasoning");
     }
 
     @Test
     @DisplayName("Think tags in answer tokens render as thinking even when reasoning is disabled")
     void onSend_whenReasoningDisabledAndProviderEmitsThinkTags_rendersActivityBubble() throws Exception {
-        subject.getInputBar().setThinkingAvailable(false);
-        subject.getInputBar().setThinkingEnabled(false);
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(false);
+            subject.getInputBar().setThinkingEnabled(false);
+        });
         setCurrentProvider(subject, immediateProvider("<think>hidden reasoning</think>visible answer"));
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("question"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("question"));
         invokeOnSend(subject);
 
-        awaitCondition(5, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2;
-        });
-
-        Message assistant = subject.getHistory().get(1);
-        assertThat(assistant.content()).isEqualTo("visible answer");
-        assertThat(assistant.meta().assistantThinking()).contains("hidden reasoning");
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-        assertThat(thinkingBubbles.getFirst().getFullText()).contains("hidden reasoning");
-        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+        awaitCondition(5, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+        assertRenderedThinking("visible answer", "hidden reasoning");
     }
 
     @Test
     @DisplayName("Native thinking tokens are rendered and persisted separately from assistant answer text")
     void onSend_whenProviderEmitsThinking_persistsThinkingInAssistantMetaAndRendersActivityBubble() throws Exception {
-        subject.getInputBar().setThinkingAvailable(true);
-        subject.getInputBar().setThinkingEnabled(true);
+        runOnEdt(() -> {
+            subject.getInputBar().setThinkingAvailable(true);
+            subject.getInputBar().setThinkingEnabled(true);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -6037,12 +6793,15 @@ class ChatPanelTest {
         assertThat(assistant.content()).contains("Java enums are classes");
         assertThat(assistant.meta().assistantThinking()).contains("compare enum features");
 
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
-        assertThat(thinkingBubbles).hasSize(1);
-        assertThat(thinkingBubbles.getFirst().getFullText()).contains("compare enum features");
-        assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
-                .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+        callOnEdt(() -> {
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
+            assertThat(thinkingBubbles.getFirst().getFullText()).contains("compare enum features");
+            assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
+                    .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+            return null;
+        });
     }
 
     @Test
@@ -6085,12 +6844,10 @@ class ChatPanelTest {
 
         setCurrentProvider(subject, immediateProvider("pong"));
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
         awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
             List<Message> history = callOnEdt(subject::getHistory);
             return history.size() == 2
                     && history.get(1).role() == Role.ASSISTANT
@@ -6144,31 +6901,34 @@ class ChatPanelTest {
 
         setCurrentProvider(subject, immediateProvider("pong"));
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(preparationStarted.await(2, TimeUnit.SECONDS)).isTrue();
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(visibleConversationId);
-            subject.loadHistory(List.of(Message.user("visible conversation")));
-        });
+        try {
+            assertThat(preparationStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            callOnEdt(() -> {
+                subject.setActiveConversationId(visibleConversationId);
+                subject.loadHistory(List.of(Message.user("visible conversation")));
+                assertThat(subject.getInputBar().isEnabled()).isTrue();
+                assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
+                return null;
+            });
 
-        assertThat(subject.getInputBar().isEnabled()).isTrue();
-        assertThat(subject.getInputBar().isCancelGenerationVisible()).isFalse();
+            releasePreparation.countDown();
+            assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
 
-        releasePreparation.countDown();
-        assertThat(completion.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
+            synchronized (persistedMessages) {
+                assertThat(persistedMessages).hasSize(2);
+                assertThat(persistedMessages).extracting(Message::role)
+                        .containsExactlyInAnyOrder(Role.USER, Role.ASSISTANT);
+            }
 
-        synchronized (persistedMessages) {
-            assertThat(persistedMessages).hasSize(2);
-            assertThat(persistedMessages).extracting(Message::role)
-                    .containsExactlyInAnyOrder(Role.USER, Role.ASSISTANT);
+            assertThat(callOnEdt(subject::getHistory)).hasSize(1);
+            assertThat(callOnEdt(() -> subject.getHistory().getFirst().content()))
+                    .isEqualTo("visible conversation");
+        } finally {
+            releasePreparation.countDown();
         }
-
-        assertThat(callOnEdt(subject::getHistory)).hasSize(1);
-        assertThat(callOnEdt(() -> subject.getHistory().getFirst().content())).isEqualTo("visible conversation");
     }
 
     @Test
@@ -6419,8 +7179,10 @@ class ChatPanelTest {
         var firstTokenDelivered = new CountDownLatch(1);
         var releaseSecondToken = new CountDownLatch(1);
 
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -6446,30 +7208,31 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
+        try {
+            assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+            callOnEdt(() -> {
+                subject.setActiveConversationId(visibleConversationId);
+                subject.loadHistory(List.of(Message.user("other chat")));
+                subject.setActiveConversationId(originalConversationId);
+                subject.loadHistory(List.of(Message.user("ping")));
+                JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+                assertThat(assistantBubble(messagesPanel).getFullText()).isEqualTo("first ");
+                return null;
+            });
 
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(visibleConversationId);
-            subject.loadHistory(List.of(Message.user("other chat")));
-            subject.setActiveConversationId(originalConversationId);
-            subject.loadHistory(List.of(Message.user("ping")));
-        });
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        assertThat(assistantBubble(messagesPanel).getFullText()).isEqualTo("first ");
-
-        releaseSecondToken.countDown();
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2
-                    && "first second".equals(subject.getHistory().get(1).content())
-                    && "first second".equals(assistantBubble(messagesPanel).getFullText());
-        });
+            releaseSecondToken.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
+                JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+                return subject.getHistory().size() == 2
+                        && "first second".equals(subject.getHistory().get(1).content())
+                        && "first second".equals(assistantBubble(messagesPanel).getFullText());
+            }));
+        } finally {
+            releaseSecondToken.countDown();
+        }
     }
 
     @Test
@@ -6480,8 +7243,10 @@ class ChatPanelTest {
         var thinkingDelivered = new CountDownLatch(1);
         var releaseAnswer = new CountDownLatch(1);
 
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+        });
 
         setCurrentProvider(subject, new ProviderService() {
             @Override
@@ -6507,34 +7272,35 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(thinkingDelivered.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
+        try {
+            assertThat(thinkingDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+            callOnEdt(() -> {
+                subject.setActiveConversationId(visibleConversationId);
+                subject.loadHistory(List.of(Message.user("other chat")));
+                subject.setActiveConversationId(originalConversationId);
+                subject.loadHistory(List.of(Message.user("ping")));
+                JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+                ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).stream()
+                        .filter(bubble -> bubble.getFullText().contains("hidden reasoning"))
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(thinkingBubble.isVisible()).isTrue();
+                return null;
+            });
 
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(visibleConversationId);
-            subject.loadHistory(List.of(Message.user("other chat")));
-            subject.setActiveConversationId(originalConversationId);
-            subject.loadHistory(List.of(Message.user("ping")));
-        });
-
-        JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
-        ActivityBubble thinkingBubble = findComponents(messagesPanel, ActivityBubble.class).stream()
-                .filter(bubble -> bubble.getFullText().contains("hidden reasoning"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(thinkingBubble.isVisible()).isTrue();
-
-        releaseAnswer.countDown();
-        awaitCondition(2, TimeUnit.SECONDS, () -> {
-            flushEdt();
-            return subject.getHistory().size() == 2
-                    && "visible answer".equals(subject.getHistory().get(1).content())
-                    && assistantBubble(messagesPanel).getFullText().equals("visible answer");
-        });
+            releaseAnswer.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> {
+                JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+                return subject.getHistory().size() == 2
+                        && "visible answer".equals(subject.getHistory().get(1).content())
+                        && assistantBubble(messagesPanel).getFullText().equals("visible answer");
+            }));
+        } finally {
+            releaseAnswer.countDown();
+        }
     }
 
     @Test
@@ -6546,13 +7312,15 @@ class ChatPanelTest {
         var releaseCompletion = new CountDownLatch(1);
         var persistedAssistant = new CountDownLatch(1);
 
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
-        subject.setOnDurableAssistantMessageCompleted(event -> {
-            if (event.message().role() == Role.ASSISTANT) {
-                persistedAssistant.countDown();
-            }
-            return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                if (event.message().role() == Role.ASSISTANT) {
+                    persistedAssistant.countDown();
+                }
+                return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
+            });
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -6578,39 +7346,43 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(visibleConversationId);
-            subject.loadHistory(List.of(Message.user("other chat")));
-        });
+        try {
+            assertThat(firstTokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+                subject.setActiveConversationId(visibleConversationId);
+                subject.loadHistory(List.of(Message.user("other chat")));
+            });
 
-        releaseCompletion.countDown();
-        assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
+            releaseCompletion.countDown();
+            assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
 
-        var originalUserRecord = new ConversationRepository.MessageRecord(
-                UUID.randomUUID(),
-                1,
-                Message.user("ping")
-        );
-        SwingUtilities.invokeAndWait(() ->
-                subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
-        );
+            var originalUserRecord = new ConversationRepository.MessageRecord(
+                    UUID.randomUUID(),
+                    1,
+                    Message.user("ping")
+            );
+            runOnEdt(() ->
+                    subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
+            );
+            assertThat(callOnEdt(subject::getHistory))
+                    .hasSize(2)
+                    .element(1)
+                    .satisfies(message -> {
+                        assertThat(message.role()).isEqualTo(Role.ASSISTANT);
+                        assertThat(message.content()).isEqualTo("saved answer");
+                    });
 
-        assertThat(subject.getHistory()).hasSize(2);
-        assertThat(subject.getHistory().get(1).role()).isEqualTo(Role.ASSISTANT);
-        assertThat(subject.getHistory().get(1).content()).isEqualTo("saved answer");
-
-        SwingUtilities.invokeAndWait(() ->
-                subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
-        );
-
-        assertThat(subject.getHistory()).extracting(Message::content)
-                .containsExactly("ping", "saved answer");
+            runOnEdt(() ->
+                    subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
+            );
+            assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                    .containsExactly("ping", "saved answer");
+        } finally {
+            releaseCompletion.countDown();
+        }
     }
 
     @Test
@@ -6623,13 +7395,15 @@ class ChatPanelTest {
         var persistedAssistant = new CountDownLatch(1);
         var cancellationObserved = new AtomicReference<Boolean>();
 
-        subject.setActiveConversationId(originalConversationId);
-        subject.setConversationIdSupplier(() -> originalConversationId);
-        subject.setOnDurableAssistantMessageCompleted(event -> {
-            if (event.message().role() == Role.ASSISTANT) {
-                persistedAssistant.countDown();
-            }
-            return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+            subject.setOnDurableAssistantMessageCompleted(event -> {
+                if (event.message().role() == Role.ASSISTANT) {
+                    persistedAssistant.countDown();
+                }
+                return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
+            });
         });
 
         setCurrentProvider(subject, new ProviderService() {
@@ -6656,35 +7430,34 @@ class ChatPanelTest {
 
         });
 
-        JTextArea textArea = readInputTextArea(subject.getInputBar());
-        SwingUtilities.invokeAndWait(() -> textArea.setText("ping"));
+        runOnEdt(() -> readInputTextArea(subject.getInputBar()).setText("ping"));
         invokeOnSend(subject);
 
-        assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
-        SwingUtilities.invokeAndWait(() -> {
-            subject.setActiveConversationId(visibleConversationId);
-            subject.loadHistory(List.of(Message.user("other chat")));
-        });
+        try {
+            assertThat(tokenDelivered.await(2, TimeUnit.SECONDS)).isTrue();
+            runOnEdt(() -> {
+                subject.setActiveConversationId(visibleConversationId);
+                subject.loadHistory(List.of(Message.user("other chat")));
+            });
 
-        releaseCompletion.countDown();
-        assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
-        flushEdt();
+            releaseCompletion.countDown();
+            assertThat(persistedAssistant.await(2, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(cancellationObserved.get()).isFalse();
-        assertThat(subject.getHistory()).extracting(Message::content).containsExactly("other chat");
+            assertThat(cancellationObserved.get()).isFalse();
+            assertThat(callOnEdt(subject::getHistory)).extracting(Message::content).containsExactly("other chat");
 
-        SwingUtilities.invokeAndWait(() ->
-                subject.loadConversationHistoryEntries(originalConversationId, List.of(
-                        new ConversationRepository.MessageRecord(
-                                UUID.randomUUID(),
-                                1,
-                                Message.user("ping")
-                        )
-                ))
-        );
-
-        assertThat(subject.getHistory()).extracting(Message::content)
-                .containsExactly("ping", "background answer");
+            runOnEdt(() -> subject.loadConversationHistoryEntries(originalConversationId, List.of(
+                    new ConversationRepository.MessageRecord(
+                            UUID.randomUUID(),
+                            1,
+                            Message.user("ping")
+                    )
+            )));
+            assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                    .containsExactly("ping", "background answer");
+        } finally {
+            releaseCompletion.countDown();
+        }
     }
 
 
@@ -6766,6 +7539,20 @@ class ChatPanelTest {
         };
     }
 
+    private static void clickLabel(JLabel label) {
+        MouseEvent event = new MouseEvent(
+                label,
+                MouseEvent.MOUSE_CLICKED,
+                System.currentTimeMillis(),
+                0,
+                2,
+                2,
+                1,
+                false
+        );
+        Arrays.stream(label.getMouseListeners()).forEach(listener -> listener.mouseClicked(event));
+    }
+
     private static JLabel readValidationLabel(InputBar inputBar) throws Exception {
         Field field = InputBar.class.getDeclaredField("validationLabel");
         field.setAccessible(true);
@@ -6782,6 +7569,68 @@ class ChatPanelTest {
         Field field = InputBar.class.getDeclaredField("agentModeButton");
         field.setAccessible(true);
         return (JToggleButton) field.get(inputBar);
+    }
+
+    private void configureTogetherAgent(AtomicInteger agentTurns) throws Exception {
+        configureAgent("Together", "Qwen/Qwen3.5-9B", "https://api.together.ai/v1", agentTurns);
+    }
+
+    private void configureAgent(
+            String providerName,
+            String modelId,
+            String baseUrl,
+            AtomicInteger agentTurns
+    ) throws Exception {
+        ProviderModelCacheService cacheService = (ProviderModelCacheService) readField(subject, "modelCacheService");
+        long scope = cacheService.nextScopeVersion();
+        if ("Together".equals(providerName)) {
+            cacheService.synchronizeScope(providerName, baseUrl, scope);
+            ProviderModelCacheService.RefreshAttempt attempt = cacheService.tryBeginRefreshIfNeeded(
+                    providerName,
+                    baseUrl,
+                    Duration.ZERO
+            ).orElseThrow();
+            assertThat(cacheService.update(attempt, List.of(modelId))).isTrue();
+        }
+        var provider = new ProviderRegistry.ProviderDef(
+                providerName,
+                "Together".equals(providerName) ? "TOGETHER_API_KEY" : "OPENAI_API_KEY",
+                baseUrl,
+                baseUrl,
+                emptyList(),
+                ProviderCapabilities.chatAndModels(),
+                ignored -> immediateProvider("unused"),
+                List::of
+        );
+        var orchestrator = new AgentOrchestrator(new AgentProviderAdapterFactory(attachmentSupport) {
+            @Override
+            public AgentProviderAdapter create(
+                    String ignoredProviderName,
+                    String ignoredModelId,
+                    String ignoredBaseUrl,
+                    String ignoredApiKey,
+                    ProviderService providerService,
+                    String agentSystemPromptAppend
+            ) {
+                return (request, callbacks) -> {
+                    agentTurns.incrementAndGet();
+                    callbacks.onToken().accept("agent answer");
+                    return AgentTurnResult.complete();
+                };
+            }
+        }, new LocalToolRuntime());
+        Path projectRoot = Files.createDirectories(tempDir.resolve("agent-project"));
+        runOnEdt(() -> {
+            subject.setAgentOrchestratorForTests(orchestrator);
+            setField(subject, "providerMap", Map.of(providerName, provider));
+            setField(subject, "selectedProviderName", providerName);
+            setField(subject, "selectedModelId", modelId);
+            setField(subject, "installedProviderScope", scope);
+            setField(subject, "nativeWebSearchOutcome", NativeWebSearchOutcome.UNSUPPORTED);
+            subject.getInputBar().setAgentModeAvailable(true);
+            subject.getInputBar().setAgentProjectRoot(projectRoot);
+            subject.getInputBar().setAgentModeEnabled(true);
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -6828,6 +7677,12 @@ class ChatPanelTest {
         Field field = InputBar.class.getDeclaredField(fieldName);
         field.setAccessible(true);
         return field.get(inputBar);
+    }
+
+    private static JComponent readActivityContentPanel(ActivityBubble activityBubble) throws Exception {
+        Field field = ActivityBubble.class.getDeclaredField("contentPanel");
+        field.setAccessible(true);
+        return (JComponent) field.get(activityBubble);
     }
 
     private static Object readField(ChatPanel chatPanel, String fieldName) throws Exception {
@@ -7056,14 +7911,6 @@ class ChatPanelTest {
             throw new AssertionError(error.get());
         }
         return result.get();
-    }
-
-    private static void restoreUiDefault(String key, Object value) {
-        if (value == null) {
-            UIManager.getDefaults().remove(key);
-        } else {
-            UIManager.put(key, value);
-        }
     }
 
     @FunctionalInterface
@@ -7475,6 +8322,21 @@ class ChatPanelTest {
         return false;
     }
 
+    private void assertRenderedThinking(String answer, String thinking) throws Exception {
+        callOnEdt(() -> {
+            Message assistant = subject.getHistory().get(1);
+            assertThat(assistant.content()).isEqualTo(answer);
+            assertThat(assistant.meta().assistantThinking()).contains(thinking);
+            JPanel messagesPanel = (JPanel) readField(subject, "messagesPanel");
+            List<ActivityBubble> thinkingBubbles = findComponents(messagesPanel, ActivityBubble.class);
+            assertThat(thinkingBubbles).hasSize(1);
+            assertThat(thinkingBubbles.getFirst().getFullText()).contains(thinking);
+            assertThat(messageRowIndex(messagesPanel, thinkingBubbles.getFirst()))
+                    .isLessThan(messageRowIndex(messagesPanel, assistantBubble(messagesPanel)));
+            return null;
+        });
+    }
+
     private static int messageRowIndex(JPanel messagesPanel, Component component) {
         Component row = component;
         while (row != null && row.getParent() != messagesPanel) {
@@ -7486,8 +8348,18 @@ class ChatPanelTest {
         return layout.getConstraints(row).gridy;
     }
 
+    private void disposePanel(ChatPanel panel) throws Exception {
+        callOnEdt(panel::cancelAllRequestsAsync).join();
+        runOnEdt(() -> {
+            panel.disposeViewResources();
+            panel.removeNotify();
+        });
+        runOnEdt(() -> {});
+    }
+
     private ChatPanel chatPanelWithTextToSpeech(TextToSpeechService textToSpeechService) throws Exception {
-        runOnEdt(subject::removeNotify);
+        disposePanel(subject);
+        testTextToSpeechServices.add(textToSpeechService);
         var panelRef = new AtomicReference<ChatPanel>();
         ProviderModelCacheService cacheService = modelCacheService(tempDir.resolve("tts-subject-cache"));
         runOnEdt(() -> panelRef.set(new ChatPanel(
@@ -7579,10 +8451,10 @@ class ChatPanelTest {
         private int stopCount;
         private boolean disposed;
 
-        private RecordingTextToSpeechService() throws IOException {
+        private RecordingTextToSpeechService(Path settingsFile) {
             super(
                     new TextToSpeechSettings(
-                            new SettingsRepository(Files.createTempFile("chat4j-tts-chat-panel", ".properties")),
+                            new SettingsRepository(settingsFile),
                             new TextToSpeechProviderRegistry(emptyList())
                     ),
                     new AudioPlaybackService() {

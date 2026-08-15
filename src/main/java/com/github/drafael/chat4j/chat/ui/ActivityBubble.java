@@ -9,9 +9,12 @@ import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.net.URL;
+import java.util.Locale;
 import java.util.regex.Pattern;
 import javax.swing.*;
 import org.apache.commons.lang3.ObjectUtils;
@@ -76,7 +79,7 @@ public class ActivityBubble extends JPanel {
         foldButton.putClientProperty("JButton.buttonType", "toolBarButton");
         foldButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
         foldButton.setMargin(new Insets(0, 0, 0, 0));
-        foldButton.setFocusable(false);
+        foldButton.setFocusable(true);
         Dimension toggleButtonSize = new Dimension(TOGGLE_BUTTON_SIZE, TOGGLE_BUTTON_SIZE);
         foldButton.setPreferredSize(toggleButtonSize);
         foldButton.setMinimumSize(toggleButtonSize);
@@ -88,7 +91,7 @@ public class ActivityBubble extends JPanel {
         titleLabel = new JLabel(titleText);
         Fonts.apply(titleLabel, Font.PLAIN, Fonts.SIZE_BODY);
         titleLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        titleLabel.setToolTipText("Toggle %s".formatted(titleText.toLowerCase()));
+        titleLabel.setToolTipText("Toggle %s".formatted(accessibleTitle(titleText)));
         titleLabel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -100,11 +103,12 @@ public class ActivityBubble extends JPanel {
         copyButton.putClientProperty("JButton.buttonType", "borderless");
         copyButton.putClientProperty(FlatClientProperties.STYLE, "focusWidth:0;innerFocusWidth:0;arc:999");
         copyButton.setMargin(new Insets(0, 0, 0, 0));
-        copyButton.setFocusable(false);
+        copyButton.setFocusable(true);
         copyButton.setBorderPainted(false);
         copyButton.setContentAreaFilled(false);
         copyButton.setOpaque(false);
-        copyButton.setToolTipText("Copy %s".formatted(titleText.toLowerCase()));
+        copyButton.setToolTipText("Copy %s".formatted(accessibleTitle(titleText)));
+        copyButton.getAccessibleContext().setAccessibleName("Copy %s".formatted(accessibleTitle(titleText)));
         copyButton.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent e) {
@@ -180,6 +184,7 @@ public class ActivityBubble extends JPanel {
         copyButtonCheckFeedbackTimer.setRepeats(false);
 
         installHoverListener();
+        installKeyboardFocusListener();
 
         updateColors();
         this.collapsed = !defaultCollapsed;
@@ -219,8 +224,10 @@ public class ActivityBubble extends JPanel {
         String titleText = StringUtils.defaultIfBlank(title, "Thinking");
         statusTone = resolveStatusTone(titleText);
         titleLabel.setText(titleText);
-        titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(titleText.toLowerCase()) : null);
-        copyButton.setToolTipText("Copy %s".formatted(titleText.toLowerCase()));
+        titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(accessibleTitle(titleText)) : null);
+        updateFoldAccessibleName();
+        copyButton.setToolTipText("Copy %s".formatted(accessibleTitle(titleText)));
+        copyButton.getAccessibleContext().setAccessibleName("Copy %s".formatted(accessibleTitle(titleText)));
         updateColors();
     }
 
@@ -234,10 +241,13 @@ public class ActivityBubble extends JPanel {
         titleLabel.setCursor(collapsible
                 ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 : Cursor.getDefaultCursor());
-        titleLabel.setToolTipText(collapsible ? "Toggle %s".formatted(titleLabel.getText().toLowerCase()) : null);
+        titleLabel.setToolTipText(collapsible
+                ? "Toggle %s".formatted(accessibleTitle(titleLabel.getText()))
+                : null);
         if (!collapsible) {
             applyCollapsedState(true);
         }
+        setCopyButtonVisible(!collapsible);
     }
 
     public void setRenderMode(RenderMode renderMode) {
@@ -301,6 +311,7 @@ public class ActivityBubble extends JPanel {
         this.collapsed = effectiveCollapsed;
         contentPanel.setVisible(!effectiveCollapsed);
         foldButton.setText(effectiveCollapsed ? "▸" : "▾");
+        updateFoldAccessibleName();
         foldButton.setVisible(collapsible);
 
         setBorder(BorderFactory.createEmptyBorder(
@@ -538,7 +549,37 @@ public class ActivityBubble extends JPanel {
         }
     }
 
+    private void updateFoldAccessibleName() {
+        String action = collapsed ? "Expand" : "Collapse";
+        foldButton.getAccessibleContext().setAccessibleName(
+                "%s %s".formatted(action, accessibleTitle(titleLabel.getText()))
+        );
+    }
+
+    private String accessibleTitle(String title) {
+        return StringUtils.defaultIfBlank(title, "Thinking").toLowerCase(Locale.ROOT);
+    }
+
+    private void installKeyboardFocusListener() {
+        FocusAdapter focusListener = new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                setCopyButtonVisible(true);
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+                SwingUtilities.invokeLater(() -> setCopyButtonVisible(false));
+            }
+        };
+        foldButton.addFocusListener(focusListener);
+        copyButton.addFocusListener(focusListener);
+    }
+
     private void setCopyButtonVisible(boolean visible) {
+        if (!visible && (!collapsible || foldButton.isFocusOwner() || copyButton.isFocusOwner())) {
+            return;
+        }
         if (copyButton.isVisible() == visible) {
             return;
         }

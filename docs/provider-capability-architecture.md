@@ -29,7 +29,7 @@ This document describes the provider architecture under `src/main/java/com/githu
 
 - `provider/modules`
   - `AnthropicModule`
-  - `OpenAiCompatibleModule`
+  - `OpenAiCompatibleModule`, which owns narrow protocol-client selection when an otherwise compatible provider has a different catalog or chat contract.
 
 - `provider/registry`
   - `ProviderCatalog`: provider module inventory and factory/fetcher creation.
@@ -58,6 +58,17 @@ This document describes the provider architecture under `src/main/java/com/githu
 - Model catalogs are loaded dynamically from provider APIs.
 - Model IDs are sanitized and sorted through shared `ModelOrdering` rules.
 - Cached model lists use the same sanitize/order logic for consistency.
+- Together's authenticated `GET /models` response is a top-level array, so `OpenAiCompatibleModule` selects a dedicated `TogetherModelCatalogClient` instead of the generic OpenAI catalog client.
+- Together publication intersects structurally valid returned chat IDs with the dated exact hosted-serverless snapshot in `TogetherModelSupport`. `ModelOrdering` applies that intersection to fresh, seeded, overlaid, and disk-cached lists. An empty refresh can still expose the existing snapshot-bounded last-known cache under the shared cache contract.
+- The Together ID intersection also applies to custom base URLs for this initial integration. Matching an ID there is not proof that the custom endpoint is hosted serverless or has Together's deployment semantics.
+
+## Capability Specialization
+
+Provider registries remain provider-neutral. Provider-specific capability evidence belongs at the resolver or protocol-client boundary. Hosted Together uses exact, case-sensitive dated model sets before generic probes and hints. Custom Together base URLs remain text-only and do not inherit hosted capability, reasoning, response-schema, or HTTP-status semantics.
+
+Ordinary OpenAI-compatible chat streams through `OpenAiChatCompletionClient`. Agent Mode tool turns use the separate non-streaming `OpenAiToolAgentAdapter`; support proven on one transport does not establish support on the other.
+
+Together reasoning levels are intentionally lossy because provider models expose different controls. Binary hybrid models map every non-Off level to enabled; GPT-OSS maps High and Extra High to `high`; Nemotron maps Low and Medium to its medium-effort flag and higher levels to the provider default; and the reviewed DeepSeek/GLM models map enabled levels to `high`, except Extra High maps to `max`. Together documents `high`/`max` for those models but does not define a stable semantic equivalence to Chat4J's High and Extra High labels, so the mapping is a product policy rather than a claim of identical reasoning depth.
 
 ## Error Handling
 
@@ -78,7 +89,7 @@ For OpenAI-compatible endpoints:
 
 1. Add a descriptor entry in `ProviderCatalog` using `OpenAiCompatibleModule`.
 2. Set provider name, env var expression, fallback key (if any), and base URL.
-3. No registry branching or provider-specific switch statements required.
+3. Keep the registry provider-neutral. Most providers need no additional branching; when a documented protocol difference exists, `OpenAiCompatibleModule` may select a narrow provider-specific client, as it does for Together's top-level-array model catalog.
 
 For non-OpenAI protocols:
 

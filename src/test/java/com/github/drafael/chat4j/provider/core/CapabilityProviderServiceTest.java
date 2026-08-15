@@ -12,6 +12,7 @@ import com.github.drafael.chat4j.provider.api.content.CitationRef;
 import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.WebSearchSource;
 import com.github.drafael.chat4j.provider.capability.chat.ChatCompletionClient;
+import com.github.drafael.chat4j.provider.core.error.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -360,6 +361,89 @@ class CapabilityProviderServiceTest {
         assertThat(observedQuery).hasValue(expectedQuery);
         assertThat(observedSource).hasValue(expectedSource);
         assertThat(completed).isTrue();
+    }
+
+    @Test
+    @DisplayName("Basic and general service boundaries preserve typed transport failures")
+    void streamCompletion_whenTransportFailureIsTyped_preservesDomainTypeAcrossBothBoundaries() {
+        ChatCompletionClient client = new ChatCompletionClient() {
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) throws Exception {
+                throw new InvalidRequestException("typed transport failure", null);
+            }
+
+            @Override
+            public void streamCompletion(
+                    ProviderRuntime runtime,
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    Consumer<String> onWebSearchQuery,
+                    Consumer<WebSearchSource> onWebSearchSource,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) throws Exception {
+                throw new InvalidRequestException("typed transport failure", null);
+            }
+        };
+        var subject = new CapabilityProviderService(runtime(), client);
+        AtomicReference<Exception> basicError = new AtomicReference<>();
+        AtomicReference<Exception> generalError = new AtomicReference<>();
+
+        subject.streamCompletion(
+                List.of(Message.user("basic")),
+                ReasoningLevel.OFF,
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> {
+                },
+                basicError::set,
+                () -> false
+        );
+        subject.streamCompletion(
+                List.of(Message.user("general")),
+                ReasoningLevel.OFF,
+                WebSearchRequestOptions.disabled(),
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                ignored -> {
+                },
+                () -> {
+                },
+                generalError::set,
+                () -> false,
+                ignored -> {
+                },
+                () -> {
+                }
+        );
+
+        assertThat(basicError.get()).isInstanceOf(InvalidRequestException.class);
+        assertThat(generalError.get()).isInstanceOf(InvalidRequestException.class);
     }
 
     private static ProviderRuntime runtime() {

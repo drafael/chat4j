@@ -10,6 +10,8 @@ import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotAuthResolver;
 import com.github.drafael.chat4j.provider.support.CopilotModelMetadataStore;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
+import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentSupport;
 import com.github.drafael.chat4j.provider.support.ProviderAttachmentTestSupport;
@@ -53,6 +55,83 @@ class ProviderCatalogTest {
                         "sonar-reasoning-pro",
                         "sonar-deep-research"
                 ));
+    }
+
+    @Test
+    @DisplayName("Together is registered immediately after OpenRouter with its exact descriptor")
+    void allProviders_whenCatalogInitialized_registersTogetherDescriptorInOrder() {
+        var subject = newCatalog();
+        List<String> providerNames = subject.allProviders().stream()
+                .map(ProviderDefinition::name)
+                .toList();
+        int openRouterIndex = providerNames.indexOf("OpenRouter");
+
+        assertThat(providerNames.get(openRouterIndex + 1)).isEqualTo("Together");
+        assertThat(subject.allProviders())
+                .filteredOn(providerDefinition -> "Together".equals(providerDefinition.name()))
+                .singleElement()
+                .satisfies(providerDefinition -> {
+                    assertThat(providerDefinition.descriptor().authType()).isEqualTo(AuthType.ENV_VAR);
+                    assertThat(providerDefinition.descriptor().credentialEnvVar()).isEqualTo("TOGETHER_API_KEY");
+                    assertThat(providerDefinition.descriptor().fallbackApiKey()).isNull();
+                    assertThat(providerDefinition.descriptor().defaultBaseUrl()).isEqualTo("https://api.together.ai/v1");
+                    assertThat(providerDefinition.seedModels()).isEmpty();
+                    assertThat(providerDefinition.descriptor().capabilities().supportsImageInput()).isFalse();
+                });
+    }
+
+    @Test
+    @DisplayName("Together model fetches resolve the latest saved key and configured base URL at invocation time")
+    void createFetcher_whenTogetherCredentialsChange_usesLatestRuntimeConfiguration() throws Exception {
+        var authorization = new AtomicReference<String>();
+        var requestPath = new AtomicReference<String>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/custom/models", exchange -> {
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            requestPath.set(exchange.getRequestURI().toString());
+            byte[] body = """
+                    [{"id":"Qwen/Qwen3.5-9B","object":"model","created":1,"type":"chat"}]
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("together-credentials")));
+        var credentialResolver = new CredentialResolver(
+                vault,
+                Map.of("TOGETHER_API_KEY", "environment-key"),
+                emptyMap()
+        );
+        var credentialMutationService = new CredentialMutationService(vault, credentialResolver);
+        try {
+            var subject = new ProviderCatalog(
+                    new CopilotAuthResolver(tempDir.resolve("together-copilot-home"), emptyMap(), HttpClient.newHttpClient()),
+                    new CodexAuthResolver(tempDir.resolve("together-codex-home"), emptyMap(), HttpClient.newHttpClient()),
+                    new CopilotModelMetadataStore(tempDir.resolve("together-metadata")),
+                    credentialResolver,
+                    emptyMap(),
+                    ProviderAttachmentTestSupport.authority()
+            );
+            String baseUrl = "http://127.0.0.1:%d/custom".formatted(server.getAddress().getPort());
+            var fetcher = subject.createFetcher("Together", "TOGETHER_API_KEY", baseUrl);
+            assertThat(credentialMutationService.saveTokenOverride(
+                    "TOGETHER_API_KEY",
+                    "latest-saved-key".toCharArray(),
+                    CredentialMutationListener.NO_OP
+            ).applied()).isTrue();
+
+            List<String> models = fetcher.fetchModels();
+
+            assertThat(models).containsExactly("Qwen/Qwen3.5-9B");
+            assertThat(authorization).hasValue("Bearer latest-saved-key");
+            assertThat(requestPath).hasValue("/custom/models");
+        } finally {
+            credentialMutationService.closeSecrets();
+            server.stop(0);
+        }
     }
 
     @Test
@@ -264,6 +343,7 @@ class ProviderCatalogTest {
                         "OpenAI",
                         "Perplexity",
                         "OpenRouter",
+                        "Together",
                         "Groq",
                         "DeepSeek",
                         "Mistral",

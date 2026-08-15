@@ -127,6 +127,7 @@ public class SidebarPanel extends JPanel {
         Map.entry("GitHub Copilot", "/icons/providers/githubcopilot.svg"),
         Map.entry("Google AI", "/icons/providers/google.svg"),
         Map.entry("OpenRouter", "/icons/providers/openrouter.svg"),
+        Map.entry("Together", "/icons/providers/together.svg"),
         Map.entry("Groq", "/icons/providers/groq.svg"),
         Map.entry("DeepSeek", "/icons/providers/deepseek.svg"),
         Map.entry("Mistral", "/icons/providers/mistral.svg"),

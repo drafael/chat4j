@@ -65,6 +65,16 @@ class CredentialChangeEffectsTest {
     }
 
     @Test
+    @DisplayName("Together token invalidates only the Together chat provider")
+    void forTokenId_whenTogether_returnsTogetherChatTarget() {
+        var effect = CredentialChangeEffects.forTokenId("TOGETHER_API_KEY");
+
+        assertThat(effect.chatProviders()).containsExactly("Together");
+        assertThat(effect.speechToTextProviderIds()).isEmpty();
+        assertThat(effect.textToSpeechProviderIds()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Perplexity token invalidates the standalone chat provider")
     void forTokenId_whenPerplexity_returnsStandaloneProvider() {
         assertThat(CredentialChangeEffects.forTokenId("PERPLEXITY_API_KEY").chatProviders())
