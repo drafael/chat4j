@@ -31,6 +31,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
 import javax.swing.JList;
 import javax.swing.JTable;
 import javax.swing.JTextField;
@@ -52,8 +53,8 @@ class SettingsDialogWindowTest {
     Path tempDirectory;
 
     @Test
-    @DisplayName("Leaving MCP through the real Settings sidebar commits the active argument editor")
-    void sectionSelectionChanged_whenMcpArgumentIsEditing_commitsBeforeHidingMcp() throws Exception {
+    @DisplayName("The Settings sidebar shows Agent Mode before MCP and commits active MCP edits")
+    void sectionSelectionChanged_whenNavigatingAgentModeAndMcp_showsAgentModeAndCommitsMcpEdit() throws Exception {
         assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for Settings dialog behavior.");
         StoragePaths storagePaths = StoragePaths.ofConfigHome(tempDirectory);
         var settings = new SettingsRepository(storagePaths);
@@ -120,6 +121,18 @@ class SettingsDialogWindowTest {
 
             runOnEdt(() -> {
                 JList<?> sections = field(createdSubject, "sectionList", JList.class);
+                List<String> sectionTitles = IntStream.range(0, sections.getModel().getSize())
+                        .mapToObj(index -> field(sections.getModel().getElementAt(index), "title", String.class))
+                        .toList();
+                assertThat(sectionTitles).containsSubsequence("Prompts", "Agent Mode", "MCP");
+
+                sections.setSelectedIndex(sectionTitles.indexOf("Agent Mode"));
+                AgentModePanel agentModePanel = components(
+                        createdSubject.getContentPane(),
+                        AgentModePanel.class
+                ).getFirst();
+                assertThat(agentModePanel.isVisible()).isTrue();
+
                 sections.setSelectedIndex(sections.getModel().getSize() - 1);
                 JTable arguments = component(createdSubject.getContentPane(), "Ordered MCP arguments", JTable.class);
                 assertThat(arguments.editCellAt(0, 0)).isTrue();

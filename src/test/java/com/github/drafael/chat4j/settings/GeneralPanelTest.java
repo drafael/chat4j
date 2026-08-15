@@ -7,7 +7,6 @@ import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Component;
 import java.awt.Container;
 import java.nio.file.Path;
-import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -17,7 +16,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
-import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -29,42 +27,6 @@ class GeneralPanelTest {
 
     @TempDir
     Path tempDir;
-
-    @Test
-    @DisplayName("Prompt addendum updates persist to Agent Mode system prompt setting")
-    void updatePromptAddendum_whenTextChanges_persistsSetting() throws Exception {
-        SettingsRepository settingsRepo = settingsRepo("general-panel-agent-prompt-append");
-        GeneralPanel subject = callOnEdt(() -> new GeneralPanel(settingsRepo));
-        try {
-            JTextArea promptArea = callOnEdt(() -> findComponentByName(subject, "agentSystemPromptAppendArea", JTextArea.class));
-            runOnEdt(() -> promptArea.setText("Always include key files in summaries."));
-
-            assertThat(awaitSave(subject)).isTrue();
-            assertThat(settingsRepo.get("chat4j.chat.agent.systemPromptAppend"))
-                    .contains("Always include key files in summaries.");
-        } finally {
-            runOnEdt(subject::disposePanel);
-            flushEdt();
-        }
-    }
-
-    @Test
-    @DisplayName("Prompt addendum save failures show an error without reporting saved")
-    void updatePromptAddendum_whenSaveFails_showsErrorOnly() throws Exception {
-        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-prompt-failure.properties"), false);
-        GeneralPanel subject = callOnEdt(() -> new GeneralPanel(settingsRepo));
-        try {
-            JTextArea promptArea = callOnEdt(() -> findComponentByName(subject, "agentSystemPromptAppendArea", JTextArea.class));
-            runOnEdt(() -> promptArea.setText("Always include key files in summaries."));
-
-            assertThat(awaitSave(subject)).isFalse();
-            assertThat(callOnEdt(() -> subject.statusLabel().getText()))
-                    .contains("Failed to save prompt addendum setting");
-        } finally {
-            runOnEdt(subject::disposePanel);
-            flushEdt();
-        }
-    }
 
     @Test
     @DisplayName("Invalid initial send-key value is normalized and persisted to the default")
@@ -95,19 +57,16 @@ class GeneralPanelTest {
     }
 
     @Test
-    @DisplayName("Prompt read failures keep the General panel available with an empty addendum")
-    void constructor_whenPromptReadFails_usesEmptyPromptAddendum() throws Exception {
-        var settingsRepo = new ThrowingSettingsRepo(
-                tempDir.resolve("general-panel-prompt-read-failure.properties"),
-                true
-        );
+    @DisplayName("General settings no longer contain the Agent Mode prompt addendum")
+    void constructor_whenPanelCreated_excludesAgentModePrompt() throws Exception {
+        SettingsRepository settingsRepo = settingsRepo("general-panel-without-agent-mode");
         GeneralPanel subject = callOnEdt(() -> new GeneralPanel(settingsRepo));
         try {
-            JTextArea promptArea = callOnEdt(
-                    () -> findComponentByName(subject, "agentSystemPromptAppendArea", JTextArea.class)
-            );
-
-            assertThat(callOnEdt(() -> promptArea.getText())).isEmpty();
+            assertThat(callOnEdt(() -> findComponentByNameOrNull(
+                    subject,
+                    "agentSystemPromptAppendArea",
+                    Component.class
+            ))).isNull();
         } finally {
             runOnEdt(subject::disposePanel);
             flushEdt();
@@ -117,7 +76,7 @@ class GeneralPanelTest {
     @Test
     @DisplayName("Combo binding save failures show an error without reporting saved")
     void updateSendKey_whenSaveFails_showsErrorOnly() throws Exception {
-        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-combo-failure.properties"), false);
+        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-combo-failure.properties"));
         GeneralPanel subject = callOnEdt(() -> new GeneralPanel(settingsRepo));
         try {
             JComboBox<String> sendKey = callOnEdt(() -> findComponentByName(subject, "sendKeyComboBox", JComboBox.class));
@@ -184,7 +143,7 @@ class GeneralPanelTest {
     @Test
     @DisplayName("Checkbox binding save failures show an error without reporting saved")
     void updateAutoScroll_whenSaveFails_showsErrorOnly() throws Exception {
-        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-checkbox-failure.properties"), false);
+        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-checkbox-failure.properties"));
         GeneralPanel subject = callOnEdt(() -> new GeneralPanel(settingsRepo));
         try {
             JCheckBox autoScroll = callOnEdt(() -> findComponentByName(subject, "autoScrollCheckBox", JCheckBox.class));
@@ -202,14 +161,13 @@ class GeneralPanelTest {
     @DisplayName("Failed pending storage writes do not open restart prompt or report saved")
     void updateStorageBackend_whenPendingWriteFails_doesNotPromptOrShowSaved() throws Exception {
         var promptCalled = new AtomicBoolean(false);
-        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-storage-failure.properties"), false);
+        var settingsRepo = new ThrowingSettingsRepo(tempDir.resolve("general-panel-storage-failure.properties"));
         GeneralPanel subject = callOnEdt(() -> new GeneralPanel(
                 settingsRepo,
                 () -> {
                 },
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     promptCalled.set(true);
@@ -243,7 +201,6 @@ class GeneralPanelTest {
                 () -> exitCalled.set(true),
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     promptCalled.set(true);
@@ -289,7 +246,6 @@ class GeneralPanelTest {
                 },
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     if (promptCalls.incrementAndGet() == 1) {
@@ -339,7 +295,6 @@ class GeneralPanelTest {
                 },
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     throw new IllegalStateException("forced callback failure");
@@ -372,7 +327,6 @@ class GeneralPanelTest {
                 },
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     promptCalled.set(true);
@@ -445,7 +399,6 @@ class GeneralPanelTest {
                 },
                 new ChatBehaviorSettings(settingsRepo),
                 new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo),
                 new ChatStorageSettings(settingsRepo),
                 (activeBackend, selectedBackend) -> {
                     promptCalled.set(true);
@@ -648,19 +601,9 @@ class GeneralPanelTest {
     }
 
     private static class ThrowingSettingsRepo extends SettingsRepository {
-        private final boolean failReads;
 
-        private ThrowingSettingsRepo(Path settingsFile, boolean failReads) {
+        private ThrowingSettingsRepo(Path settingsFile) {
             super(settingsFile);
-            this.failReads = failReads;
-        }
-
-        @Override
-        public Optional<String> get(String key) {
-            if (failReads) {
-                throw new IllegalStateException("forced failure");
-            }
-            return Optional.empty();
         }
 
         @Override

@@ -286,6 +286,12 @@ public class SettingsDialog extends JDialog {
                         "Prompts",
                         "/icons/settings/message-square-text.svg",
                         new PromptsPanel(promptCatalogRepo)
+                ),
+                new SettingsSection(
+                        "agent-mode",
+                        "Agent Mode",
+                        "/icons/input/agent.svg",
+                        new AgentModePanel(settingsRepo)
                 )
         ));
         created.add(new SettingsSection("mcp", "MCP", "/icons/settings/mcp.svg", new McpPanel(mcpManager)));
@@ -485,6 +491,8 @@ public class SettingsDialog extends JDialog {
 
     private void disposeSection(JComponent content) {
         if (content instanceof GeneralPanel panel) {
+            panel.disposePanel();
+        } else if (content instanceof AgentModePanel panel) {
             panel.disposePanel();
         } else if (content instanceof AppearancePanel panel) {
             panel.disposePanel();

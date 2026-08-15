@@ -7,10 +7,7 @@ import com.github.drafael.chat4j.persistence.db.PersistenceBackendConfig;
 import com.github.drafael.chat4j.persistence.db.StorageBackend;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import java.awt.Component;
-import java.awt.Dimension;
 import java.awt.GridBagConstraints;
-import java.awt.event.FocusAdapter;
-import java.awt.event.FocusEvent;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -27,13 +24,7 @@ import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
-import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 
 import static java.util.stream.Collectors.toSet;
 
@@ -41,12 +32,10 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
 
     private static final String SEND_ENTER = ChatBehaviorSettings.SEND_ENTER;
     private static final String SEND_CTRL_ENTER = ChatBehaviorSettings.SEND_CTRL_ENTER;
-    private static final int PROMPT_SAVE_DEBOUNCE_MILLIS = 300;
 
     private final Runnable exitAction;
     private final ChatBehaviorSettings chatBehaviorSettings;
     private final RenderModeSettings renderModeSettings;
-    private final AgentModeSettings agentModeSettings;
     private final ChatStorageSettings chatStorageSettings;
     private final StorageRestartPrompt storageRestartPrompt;
     private final SettingsWriteQueue writeQueue = new SettingsWriteQueue("general-settings-save-");
@@ -54,9 +43,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
     private final Map<String, SaveRequest> failedRequests = new HashMap<>();
     private boolean disposed;
     private String lastSaveError = "";
-    private JTextArea agentPromptAppendArea;
-    private Timer promptSaveTimer;
-    private String lastEnqueuedPrompt;
     private DeferredStorageAction deferredStorageAction;
 
     public GeneralPanel(SettingsRepository settingsRepo) {
@@ -65,7 +51,7 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
 
     public GeneralPanel(SettingsRepository settingsRepo, Runnable exitAction) {
         this(settingsRepo, exitAction, new ChatBehaviorSettings(settingsRepo), new RenderModeSettings(settingsRepo),
-                new AgentModeSettings(settingsRepo), new ChatStorageSettings(settingsRepo), null);
+                new ChatStorageSettings(settingsRepo), null);
     }
 
     GeneralPanel(
@@ -73,7 +59,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
             Runnable exitAction,
             ChatBehaviorSettings chatBehaviorSettings,
             RenderModeSettings renderModeSettings,
-            AgentModeSettings agentModeSettings,
             ChatStorageSettings chatStorageSettings,
             StorageRestartPrompt storageRestartPrompt
     ) {
@@ -81,7 +66,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
         this.exitAction = exitAction == null ? () -> System.exit(0) : exitAction;
         this.chatBehaviorSettings = chatBehaviorSettings;
         this.renderModeSettings = renderModeSettings;
-        this.agentModeSettings = agentModeSettings;
         this.chatStorageSettings = chatStorageSettings;
         this.storageRestartPrompt = storageRestartPrompt == null ? this::showStorageBackendChangePrompt : storageRestartPrompt;
 
@@ -137,21 +121,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
                 renderModeSettings::persistDefaultModeValue, RenderMode.PREVIEW.settingValue(), renderModeValidator(),
                 "message display mode");
         row = addSectionHint(form, gbc, row, "Chat settings are applied immediately.");
-
-        row = addSectionHeader(form, gbc, row, "Agent Mode");
-        agentPromptAppendArea = new JTextArea(6, 40);
-        agentPromptAppendArea.setName("agentSystemPromptAppendArea");
-        agentPromptAppendArea.setLineWrap(true);
-        agentPromptAppendArea.setWrapStyleWord(true);
-        agentPromptAppendArea.setText(readPromptAppend());
-        lastEnqueuedPrompt = agentPromptAppendArea.getText();
-        JScrollPane promptScrollPane = new JScrollPane(agentPromptAppendArea);
-        promptScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-        promptScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        promptScrollPane.setPreferredSize(new Dimension(420, 130));
-        addRow(form, gbc, row++, "Prompt addendum", promptScrollPane);
-        installPromptPersistence();
-        row = addSectionHint(form, gbc, row, "Prompt addendum is appended to the default Agent Mode system prompt.");
 
         row = addSectionHeader(form, gbc, row, "Storage");
         JComboBox<StorageBackend> storageBackend = withPreferredWidth(new JComboBox<>(StorageBackend.values()), 220);
@@ -307,38 +276,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
         }
     }
 
-    private void installPromptPersistence() {
-        promptSaveTimer = new Timer(PROMPT_SAVE_DEBOUNCE_MILLIS, e -> enqueuePromptSave());
-        promptSaveTimer.setRepeats(false);
-        agentPromptAppendArea.addFocusListener(new FocusAdapter() {
-            @Override
-            public void focusLost(FocusEvent e) {
-                enqueuePromptSave();
-            }
-        });
-        agentPromptAppendArea.getDocument().addDocumentListener(new DocumentListener() {
-            @Override public void insertUpdate(DocumentEvent e) { promptSaveTimer.restart(); }
-            @Override public void removeUpdate(DocumentEvent e) { promptSaveTimer.restart(); }
-            @Override public void changedUpdate(DocumentEvent e) { promptSaveTimer.restart(); }
-        });
-    }
-
-    private void enqueuePromptSave() {
-        promptSaveTimer.stop();
-        String prompt = agentPromptAppendArea.getText();
-        if (prompt.equals(lastEnqueuedPrompt)) {
-            return;
-        }
-        lastEnqueuedPrompt = prompt;
-        enqueueSave(
-                "prompt addendum",
-                () -> agentModeSettings.persistSystemPromptAppend(prompt),
-                () -> {
-                },
-                () -> setStatusInfo(STATUS_SAVED)
-        );
-    }
-
     private void enqueueSave(String target, Runnable mutation, Runnable onDurableSuccess, Runnable onCurrentSuccess) {
         enqueueSave(target, mutation, onDurableSuccess, onCurrentSuccess, false);
     }
@@ -434,7 +371,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
 
     @Override
     public CompletableFuture<Boolean> savePendingChangesAsync() {
-        enqueuePromptSave();
         List.copyOf(failedRequests.entrySet()).forEach(entry -> {
             SaveRequest request = entry.getValue();
             enqueueSave(
@@ -495,7 +431,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
         }
         disposed = true;
         deferredStorageAction = null;
-        promptSaveTimer.stop();
         writeQueue.close();
         disposeSettingsPanel();
     }
@@ -533,15 +468,6 @@ public class GeneralPanel extends AbstractSettingsPanel implements AsyncPendingS
         } catch (Exception e) {
             setStatusError("Failed to read chat storage setting");
             return new PersistenceBackendConfig(PersistenceBackendConfig.DEFAULT_BACKEND, null);
-        }
-    }
-
-    private String readPromptAppend() {
-        try {
-            return agentModeSettings.resolveSystemPromptAppend();
-        } catch (Exception e) {
-            setStatusError("Failed to read prompt addendum setting");
-            return "";
         }
     }
 
