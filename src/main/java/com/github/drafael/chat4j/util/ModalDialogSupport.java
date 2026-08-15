@@ -109,27 +109,30 @@ public final class ModalDialogSupport {
                 ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         );
-        int verticalScrollBarWidth = exceedsHeight
-                ? scrollPane.getVerticalScrollBar().getPreferredSize().width
-                : 0;
-        int maxViewportWidth = max(1, maxMessageWidth - verticalScrollBarWidth);
+        scrollPane.setBorder(null);
+        scrollPane.setViewportBorder(null);
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.setFocusable(false);
+
+        int viewportOverhead = 0;
+        if (exceedsHeight) {
+            scrollPane.setSize(new Dimension(maxMessageWidth, maxMessageHeight));
+            scrollPane.doLayout();
+            viewportOverhead = max(0, maxMessageWidth - scrollPane.getViewport().getExtentSize().width);
+        }
+        int maxViewportWidth = max(1, maxMessageWidth - viewportOverhead);
         boolean requiresWrapping = naturalSize.width > maxViewportWidth;
         int preferredWidth = requiresWrapping
                 ? maxMessageWidth
-                : min(maxMessageWidth, naturalSize.width + verticalScrollBarWidth);
+                : min(maxMessageWidth, naturalSize.width + viewportOverhead);
         if (requiresWrapping) {
             textArea.setLineWrap(true);
             textArea.setWrapStyleWord(true);
             textArea.setSize(new Dimension(maxViewportWidth, Short.MAX_VALUE));
         }
         int preferredHeight = min(textArea.getPreferredSize().height, maxMessageHeight);
-
         scrollPane.setPreferredSize(new Dimension(preferredWidth, preferredHeight));
-        scrollPane.setBorder(null);
-        scrollPane.setViewportBorder(null);
-        scrollPane.setOpaque(false);
-        scrollPane.getViewport().setOpaque(false);
-        scrollPane.setFocusable(false);
         return scrollPane;
     }
 
