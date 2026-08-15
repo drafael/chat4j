@@ -47,6 +47,37 @@ class CredentialMutationServiceTest {
     }
 
     @Test
+    @DisplayName("ListenHub saved tokens override environments and clearing restores the process credential")
+    void saveTokenOverride_whenListenHubTokenIsSavedAndCleared_preservesCredentialPrecedence() {
+        var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));
+        Map<String, String> processEnvironment = Map.of("LISTENHUB_API_KEY", "process-key");
+        var subject = mutationService(vault, processEnvironment, Map.of("LISTENHUB_API_KEY", "shell-key"));
+        var resolver = new CredentialResolver(
+                vault,
+                processEnvironment,
+                Map.of("LISTENHUB_API_KEY", "shell-key")
+        );
+
+        CredentialMutationResult saved = subject.saveTokenOverride(
+                "LISTENHUB_API_KEY",
+                "saved-key".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+
+        assertThat(saved.status()).isEqualTo(CredentialMutationStatus.APPLIED);
+        assertThat(resolver.resolveRequiredApiKey("LISTENHUB_API_KEY", null)).isEqualTo("saved-key");
+
+        CredentialMutationResult cleared = subject.saveTokenOverride(
+                "LISTENHUB_API_KEY",
+                new char[0],
+                CredentialMutationListener.NO_OP
+        );
+
+        assertThat(cleared.status()).isEqualTo(CredentialMutationStatus.APPLIED);
+        assertThat(resolver.resolveRequiredApiKey("LISTENHUB_API_KEY", null)).isEqualTo("process-key");
+    }
+
+    @Test
     @DisplayName("Saving the same override reports unchanged without replacing the record")
     void saveTokenOverride_whenSavedTokenAlreadyMatches_reportsUnchanged() {
         var vault = new ApiTokenVault(StoragePaths.ofConfigHome(tempDir));

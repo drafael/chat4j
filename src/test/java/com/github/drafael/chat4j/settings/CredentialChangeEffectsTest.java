@@ -46,6 +46,16 @@ class CredentialChangeEffectsTest {
     }
 
     @Test
+    @DisplayName("ListenHub credentials invalidate only the ListenHub TTS catalog")
+    void forTokenId_whenListenHub_returnsOnlyListenHubTtsTarget() {
+        var effect = CredentialChangeEffects.forTokenId("LISTENHUB_API_KEY");
+
+        assertThat(effect.chatProviders()).isEmpty();
+        assertThat(effect.speechToTextProviderIds()).isEmpty();
+        assertThat(effect.textToSpeechProviderIds()).containsExactly("listenhub");
+    }
+
+    @Test
     @DisplayName("Credential mappings never target local speech providers")
     void forTokenId_whenAnySupportedCredential_excludesLocalSpeechProviders() {
         assertThat(CredentialChangeEffects.forTokenId("GROQ_API_KEY").speechToTextProviderIds())

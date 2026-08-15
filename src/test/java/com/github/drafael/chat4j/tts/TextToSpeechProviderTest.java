@@ -1,17 +1,18 @@
 package com.github.drafael.chat4j.tts;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
+import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.drafael.chat4j.provider.support.CredentialResolver;
-import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.listenhub.ListenHubTextToSpeechProvider;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -43,15 +44,16 @@ class TextToSpeechProviderTest {
     }
 
     @Test
-    @DisplayName("Default registry includes Deepgram without changing existing HTTP provider order")
-    void createDefault_whenCalled_includesDeepgramBeforeExistingNetworkProviders() {
+    @DisplayName("Default registry includes Deepgram and ListenHub without changing HTTP provider order")
+    void createDefault_whenCalled_includesNewProvidersInExpectedNetworkOrder() {
         var subject = TextToSpeechProviderRegistry.createDefault(credentialResolver, emptyMap());
 
         assertThat(subject.providers()).extracting(TextToSpeechProvider::id)
                 .containsSubsequence(
                         DeepgramTextToSpeechProvider.ID,
                         GroqTextToSpeechProvider.ID,
-                        ElevenLabsTextToSpeechProvider.ID
+                        ElevenLabsTextToSpeechProvider.ID,
+                        ListenHubTextToSpeechProvider.ID
                 );
     }
 

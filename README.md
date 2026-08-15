@@ -125,6 +125,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - `OPENROUTER_API_KEY`
 - `GROQ_API_KEY`
 - `ELEVENLABS_API_KEY` (speech-to-text/text-to-speech)
+- `LISTENHUB_API_KEY` (text-to-speech)
 - `DEEPGRAM_API_KEY` (speech-to-text/text-to-speech)
 - `ASSEMBLYAI_API_KEY` (speech-to-text)
 - `DEEPSEEK_API_KEY`

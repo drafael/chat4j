@@ -8,6 +8,7 @@ import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.listenhub.ListenHubTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +34,8 @@ public class TextToSpeechProviderRegistry {
                 SystemTextToSpeechProvider.createDefault(subprocessEnvironment),
                 new DeepgramTextToSpeechProvider(transport, credentialResolver),
                 new GroqTextToSpeechProvider(transport, credentialResolver),
-                new ElevenLabsTextToSpeechProvider(transport, credentialResolver)
+                new ElevenLabsTextToSpeechProvider(transport, credentialResolver),
+                new ListenHubTextToSpeechProvider(transport, credentialResolver)
         ));
     }
 

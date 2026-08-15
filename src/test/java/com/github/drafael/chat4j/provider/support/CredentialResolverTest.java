@@ -38,6 +38,20 @@ class CredentialResolverTest {
     }
 
     @Test
+    @DisplayName("ListenHub credentials resolve from process and shell environments")
+    void resolveRequiredApiKey_whenListenHubEnvironmentIsConfigured_respectsEnvironmentPrecedence() {
+        var processSubject = resolver(
+                Map.of("LISTENHUB_API_KEY", "process-key"),
+                Map.of("LISTENHUB_API_KEY", "shell-key")
+        );
+        var shellSubject = resolver(emptyMap(), Map.of("LISTENHUB_API_KEY", "shell-key"));
+
+        assertThat(CredentialTokenIds.supportedProviderEnvVars()).contains("LISTENHUB_API_KEY");
+        assertThat(processSubject.resolveRequiredApiKey("LISTENHUB_API_KEY", null)).isEqualTo("process-key");
+        assertThat(shellSubject.resolveRequiredApiKey("LISTENHUB_API_KEY", null)).isEqualTo("shell-key");
+    }
+
+    @Test
     @DisplayName("Canonical Google credentials resolve through the legacy alias expression")
     void resolveRequiredApiKey_whenOnlyCanonicalAliasIsConfigured_returnsCanonicalValue() {
         var subject = resolver(Map.of("GEMINI_API_KEY", "gemini-key"), emptyMap());

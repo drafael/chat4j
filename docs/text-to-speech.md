@@ -29,6 +29,7 @@ Supported providers:
 | Deepgram | `DEEPGRAM_API_KEY` | WAV | Uses Aura TTS voice models, Thalia as the bundled default voice, 140-character chunking, and WAV RIFF normalization during playback. |
 | Groq | `GROQ_API_KEY` | WAV | Uses Orpheus models, Hannah as the default English voice, model-scoped English/Arabic voice lists, 200-character chunking, and WAV RIFF normalization during playback. |
 | ElevenLabs | `ELEVENLABS_API_KEY` | MP3 | Uses ElevenLabs model/voice catalogs when available and stores selected voice IDs separately from labels. |
+| ListenHub | `LISTENHUB_API_KEY` | MP3 | Uses the fixed ListenHub TTS model, Mia as the bundled fallback, and live public/private voice discovery. Read Aloud uses 1,000-character operational chunks below ListenHub's 20,000-character upstream ceiling. |
 
 Provider availability must use `CredentialResolver`, not direct `System.getenv`, so macOS shell-environment loading continues to work. System provider subprocesses also use the merged shell environment so packaged desktop launches can find tools such as `espeak-ng` on the user's PATH.
 
@@ -39,7 +40,7 @@ Settings are file-backed through `SettingsRepository`; no database table is invo
 Persisted keys:
 
 ```text
-chat4j.tts.provider                         # off | system | deepgram | groq | elevenlabs
+chat4j.tts.provider                         # off | system | deepgram | groq | elevenlabs | listenhub
 chat4j.tts.<provider>.model.id
 chat4j.tts.<provider>.model.label
 chat4j.tts.<provider>.voice.id
@@ -119,6 +120,7 @@ Coverage should include:
 - provider response parsing and safe error extraction,
 - Groq chunking/voice filtering/WAV normalization,
 - ElevenLabs MP3 synthesis request shape,
+- ListenHub HTTP-200 application envelopes and strict MP3 media-type handling,
 - playback stop/toggle/stale-result behavior,
 - Swing and WebView read-aloud visibility/action dispatch,
 - Settings UI catalog refresh and unavailable-provider behavior.
