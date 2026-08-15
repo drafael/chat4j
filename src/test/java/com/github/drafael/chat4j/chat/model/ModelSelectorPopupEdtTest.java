@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.JDialog;
 import javax.swing.SwingUtilities;
+import java.awt.GraphicsEnvironment;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +37,8 @@ class ModelSelectorPopupEdtTest {
     @Test
     @DisplayName("Blocked dynamic capability discovery does not block the event dispatch thread")
     void preload_whenDynamicCapabilityDiscoveryBlocks_keepsEdtResponsive() throws Exception {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "A desktop display is required for model selector behavior.");
+
         var requestStarted = new CountDownLatch(1);
         var releaseResponse = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
