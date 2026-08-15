@@ -10,6 +10,7 @@ import javax.swing.JTextArea;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dialog;
 import java.awt.Dimension;
@@ -29,28 +30,15 @@ import static java.lang.Math.round;
 
 public final class ModalDialogSupport {
 
-    private static final double MIN_WIDTH_RATIO = 0.20;
-    private static final double MAX_WIDTH_RATIO = 0.30;
-    private static final double MAX_HEIGHT_RATIO = 0.30;
+    private static final double MIN_WIDTH_RATIO = 0.30;
+    private static final double MAX_WIDTH_RATIO = 0.75;
+    private static final double MAX_HEIGHT_RATIO = 0.50;
     private static final int FALLBACK_OWNER_WIDTH = 640;
     private static final int FALLBACK_OWNER_HEIGHT = 480;
-    private static final int SOFT_MIN_HEIGHT = 140;
-    private static final int MESSAGE_COLUMNS = 18;
+    private static final int OPTION_PANE_HORIZONTAL_RESERVE = 160;
+    private static final int OPTION_PANE_VERTICAL_RESERVE = 120;
 
     private ModalDialogSupport() {
-    }
-
-    public static void prepareCompactModal(JDialog dialog, Component parent) {
-        Window owner = resolveMainOwner(parent, dialog);
-        Rectangle ownerBounds = owner == null ? fallbackScreenBounds() : owner.getBounds();
-
-        dialog.pack();
-        dialog.setSize(readableCompactSize(
-                dialog.getSize(),
-                dialog.getContentPane().getMinimumSize(),
-                ownerBounds
-        ));
-        dialog.setLocationRelativeTo(owner == null ? parent : owner);
     }
 
     public static void showMessageDialog(Component parent, Object message, int messageType) {
@@ -72,34 +60,121 @@ public final class ModalDialogSupport {
         return callOnEventDispatchThread(() -> showOptionPaneOnEventDispatchThread(parent, optionPane));
     }
 
-    static Dimension readableCompactSize(
+    static Dimension readableAdaptiveSize(
             Dimension packedSize,
             Dimension minimumContentSize,
             Rectangle ownerBounds
     ) {
-        Dimension compactSize = compactSize(packedSize, ownerBounds);
+        Dimension adaptiveSize = adaptiveDialogSize(packedSize, ownerBounds);
         Dimension safeMinimumContentSize = minimumContentSize == null ? new Dimension(0, 0) : minimumContentSize;
         return new Dimension(
-                max(compactSize.width, safeMinimumContentSize.width),
-                max(compactSize.height, safeMinimumContentSize.height)
+                max(adaptiveSize.width, safeMinimumContentSize.width),
+                max(adaptiveSize.height, safeMinimumContentSize.height)
         );
     }
 
-    static Dimension compactSize(Dimension packedSize, Rectangle ownerBounds) {
+    static Dimension adaptiveDialogSize(Dimension packedSize, Rectangle ownerBounds) {
         Dimension safePackedSize = packedSize == null ? new Dimension(0, 0) : packedSize;
-        Rectangle safeOwnerBounds = ownerBounds == null
-                ? new Rectangle(0, 0, FALLBACK_OWNER_WIDTH, FALLBACK_OWNER_HEIGHT)
-                : ownerBounds;
+        Rectangle safeOwnerBounds = usableOwnerBounds(ownerBounds);
 
-        int ownerWidth = max(safeOwnerBounds.width, FALLBACK_OWNER_WIDTH);
-        int ownerHeight = max(safeOwnerBounds.height, FALLBACK_OWNER_HEIGHT);
-        int maxWidth = max(1, (int) round(ownerWidth * MAX_WIDTH_RATIO));
-        int minWidth = min(maxWidth, max(1, (int) round(ownerWidth * MIN_WIDTH_RATIO)));
-        int maxHeight = max(SOFT_MIN_HEIGHT, (int) round(ownerHeight * MAX_HEIGHT_RATIO));
+        int minWidth = max(1, (int) round(safeOwnerBounds.width * MIN_WIDTH_RATIO));
+        int maxWidth = max(minWidth, (int) round(safeOwnerBounds.width * MAX_WIDTH_RATIO));
 
         int targetWidth = clamp(safePackedSize.width, minWidth, maxWidth);
-        int targetHeight = min(max(safePackedSize.height, SOFT_MIN_HEIGHT), maxHeight);
+        int targetHeight = max(safePackedSize.height, 1);
         return new Dimension(targetWidth, targetHeight);
+    }
+
+    static Object adaptiveMessage(Object message, Rectangle ownerBounds) {
+        if (!(message instanceof String text) || Strings.CI.startsWith(text, "<html>")) {
+            return message;
+        }
+
+        Rectangle safeOwnerBounds = usableOwnerBounds(ownerBounds);
+        int maxDialogWidth = max(1, (int) round(safeOwnerBounds.width * MAX_WIDTH_RATIO));
+        int maxDialogHeight = max(1, (int) round(safeOwnerBounds.height * MAX_HEIGHT_RATIO));
+        int maxMessageWidth = max(1, maxDialogWidth - OPTION_PANE_HORIZONTAL_RESERVE);
+        int maxMessageHeight = max(1, maxDialogHeight - OPTION_PANE_VERTICAL_RESERVE);
+
+        JTextArea textArea = createMessageTextArea(text);
+        Dimension naturalSize = textArea.getPreferredSize();
+        boolean exceedsWidth = naturalSize.width > maxMessageWidth;
+        boolean exceedsHeight = naturalSize.height > maxMessageHeight;
+        if (!exceedsWidth && !exceedsHeight) {
+            return textArea;
+        }
+
+        var scrollPane = new JScrollPane(
+                textArea,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        );
+        int verticalScrollBarWidth = exceedsHeight
+                ? scrollPane.getVerticalScrollBar().getPreferredSize().width
+                : 0;
+        int maxViewportWidth = max(1, maxMessageWidth - verticalScrollBarWidth);
+        boolean requiresWrapping = naturalSize.width > maxViewportWidth;
+        int preferredWidth = requiresWrapping
+                ? maxMessageWidth
+                : min(maxMessageWidth, naturalSize.width + verticalScrollBarWidth);
+        if (requiresWrapping) {
+            textArea.setLineWrap(true);
+            textArea.setWrapStyleWord(true);
+            textArea.setSize(new Dimension(maxViewportWidth, Short.MAX_VALUE));
+        }
+        int preferredHeight = min(textArea.getPreferredSize().height, maxMessageHeight);
+
+        scrollPane.setPreferredSize(new Dimension(preferredWidth, preferredHeight));
+        scrollPane.setBorder(null);
+        scrollPane.setOpaque(false);
+        scrollPane.getViewport().setOpaque(false);
+        scrollPane.setFocusable(false);
+        return scrollPane;
+    }
+
+    public static void configureTitlelessDialog(@NonNull JDialog dialog) {
+        dialog.setUndecorated(true);
+    }
+
+    static void configureTitlelessOptionPaneDialog(JDialog dialog, JOptionPane optionPane) {
+        configureTitlelessDialog(dialog);
+        dialog.setContentPane(optionPane);
+        optionPane.addPropertyChangeListener(event -> {
+            if (dialog.isVisible()
+                    && event.getSource() == optionPane
+                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
+                dialog.setVisible(false);
+            }
+        });
+    }
+
+    static Window dialogOwner(Component parent) {
+        if (parent instanceof Window window) {
+            return window;
+        }
+        return parent == null ? null : SwingUtilities.getWindowAncestor(parent);
+    }
+
+    private static JTextArea createMessageTextArea(String text) {
+        var textArea = new JTextArea(text);
+        textArea.setLineWrap(false);
+        textArea.setWrapStyleWord(false);
+        textArea.setEditable(false);
+        textArea.setFocusable(false);
+        textArea.setOpaque(false);
+        textArea.setBorder(null);
+
+        Font messageFont = UIManager.getFont("OptionPane.messageFont");
+        Font fallbackFont = UIManager.getFont("Label.font");
+        if (messageFont != null || fallbackFont != null) {
+            textArea.setFont(messageFont == null ? fallbackFont : messageFont);
+        }
+
+        Color messageForeground = UIManager.getColor("OptionPane.messageForeground");
+        if (messageForeground != null) {
+            textArea.setForeground(messageForeground);
+        }
+        return textArea;
     }
 
     private static Object callOnEventDispatchThread(Supplier<Object> action) {
@@ -128,16 +203,19 @@ public final class ModalDialogSupport {
     }
 
     private static Object showOptionPaneOnEventDispatchThread(Component parent, JOptionPane optionPane) {
-        Object message = optionPane.getMessage();
-        Object compactMessage = compactMessage(message);
-        if (compactMessage != message) {
-            optionPane.setMessage(compactMessage);
-        }
-
         Window owner = dialogOwner(parent);
         var dialog = new JDialog(owner, Dialog.ModalityType.APPLICATION_MODAL);
+        Window mainOwner = resolveMainOwner(parent, dialog);
+        Rectangle ownerBounds = mainOwner == null ? fallbackScreenBounds() : usableOwnerBounds(mainOwner.getBounds());
+
+        Object message = optionPane.getMessage();
+        Object adaptiveMessage = adaptiveMessage(message, ownerBounds);
+        if (adaptiveMessage != message) {
+            optionPane.setMessage(adaptiveMessage);
+        }
+
         configureTitlelessOptionPaneDialog(dialog, optionPane);
-        prepareCompactModal(dialog, parent);
+        prepareModal(dialog, mainOwner == null ? parent : mainOwner, ownerBounds);
         try {
             dialog.setVisible(true);
             return optionPane.getValue();
@@ -146,54 +224,14 @@ public final class ModalDialogSupport {
         }
     }
 
-    static Object compactMessage(Object message) {
-        if (!(message instanceof String text) || Strings.CI.startsWith(text, "<html>")) {
-            return message;
-        }
-
-        var textArea = new JTextArea(text);
-        textArea.setColumns(MESSAGE_COLUMNS);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
-        textArea.setEditable(false);
-        textArea.setFocusable(false);
-        textArea.setOpaque(false);
-        textArea.setBorder(null);
-        Font messageFont = UIManager.getFont("OptionPane.messageFont");
-        textArea.setFont(messageFont == null ? UIManager.getFont("Label.font") : messageFont);
-        textArea.setForeground(UIManager.getColor("OptionPane.messageForeground"));
-
-        int preferredWidth = textArea.getFontMetrics(textArea.getFont()).charWidth('m') * MESSAGE_COLUMNS;
-        textArea.setSize(new Dimension(preferredWidth, Short.MAX_VALUE));
-        int preferredHeight = min(textArea.getPreferredSize().height, SOFT_MIN_HEIGHT);
-
-        var scrollPane = new JScrollPane(
-                textArea,
-                ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-        );
-        scrollPane.setPreferredSize(new Dimension(preferredWidth, preferredHeight));
-        scrollPane.setBorder(null);
-        scrollPane.setOpaque(false);
-        scrollPane.getViewport().setOpaque(false);
-        scrollPane.setFocusable(false);
-        return scrollPane;
-    }
-
-    public static void configureTitlelessDialog(@NonNull JDialog dialog) {
-        dialog.setUndecorated(true);
-    }
-
-    static void configureTitlelessOptionPaneDialog(JDialog dialog, JOptionPane optionPane) {
-        configureTitlelessDialog(dialog);
-        dialog.setContentPane(optionPane);
-        optionPane.addPropertyChangeListener(event -> {
-            if (dialog.isVisible()
-                    && event.getSource() == optionPane
-                    && JOptionPane.VALUE_PROPERTY.equals(event.getPropertyName())) {
-                dialog.setVisible(false);
-            }
-        });
+    private static void prepareModal(JDialog dialog, Component locationParent, Rectangle ownerBounds) {
+        dialog.pack();
+        dialog.setSize(readableAdaptiveSize(
+                dialog.getSize(),
+                dialog.getContentPane().getMinimumSize(),
+                ownerBounds
+        ));
+        dialog.setLocationRelativeTo(locationParent);
     }
 
     private static void rethrowDialogFailure(Throwable failure) {
@@ -206,13 +244,6 @@ public final class ModalDialogSupport {
         if (failure != null) {
             throw new IllegalStateException("Could not show a modal dialog", failure);
         }
-    }
-
-    static Window dialogOwner(Component parent) {
-        if (parent instanceof Window window) {
-            return window;
-        }
-        return parent == null ? null : SwingUtilities.getWindowAncestor(parent);
     }
 
     private static int clamp(int value, int minValue, int maxValue) {
@@ -243,10 +274,17 @@ public final class ModalDialogSupport {
         return resolvedOwner == null ? window : resolvedOwner;
     }
 
+    private static Rectangle usableOwnerBounds(Rectangle ownerBounds) {
+        if (ownerBounds == null || ownerBounds.width <= 0 || ownerBounds.height <= 0) {
+            return new Rectangle(0, 0, FALLBACK_OWNER_WIDTH, FALLBACK_OWNER_HEIGHT);
+        }
+        return ownerBounds;
+    }
+
     private static Rectangle fallbackScreenBounds() {
         try {
             Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-            return new Rectangle(0, 0, screenSize.width, screenSize.height);
+            return usableOwnerBounds(new Rectangle(0, 0, screenSize.width, screenSize.height));
         } catch (HeadlessException e) {
             return new Rectangle(0, 0, FALLBACK_OWNER_WIDTH, FALLBACK_OWNER_HEIGHT);
         }
