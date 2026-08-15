@@ -1,7 +1,9 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
@@ -16,6 +18,8 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
+import java.awt.BorderLayout;
+import java.awt.Color;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -33,6 +37,9 @@ import java.util.function.Consumer;
 import java.util.stream.IntStream;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JPanel;
+import javax.swing.JLabel;
+import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,6 +69,44 @@ class TextToSpeechPanelTest {
     @AfterEach
     void closeCredentials() {
         credentialMutationService.closeSecrets();
+    }
+
+    @Test
+    @DisplayName("Available cloud provider shows credential status below its token field and privacy warning separately")
+    void updateControlAvailability_whenCloudProviderIsAvailable_separatesCredentialStatusFromPrivacyWarning() throws Exception {
+        var repo = new SettingsRepository(tempDir.resolve("tts-helper-styling.properties"));
+        repo.put(TextToSpeechSettings.PROVIDER_KEY, AvailableCloudProvider.ID);
+        credentialMutationService.saveTokenOverride(
+                "DEEPGRAM_API_KEY",
+                "test-token".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+        var subject = createPanel(repo, new TextToSpeechProviderRegistry(List.of(new AvailableCloudProvider())));
+        try {
+            HelperAppearance result = callOnEdt(() -> {
+                var helper = (JTextArea) fieldValue(subject, "helperLabel");
+                var status = (JLabel) fieldValue(subject, "credentialStatusLabel");
+                var tokenRow = (JPanel) fieldValue(subject, "tokenRowPanel");
+                var panel = (JPanel) fieldValue(subject, "helperPanel");
+                return new HelperAppearance(
+                        helper.getText(),
+                        status.getText(),
+                        status.isVisible(),
+                        BorderLayout.SOUTH.equals(((BorderLayout) tokenRow.getLayout()).getConstraints(status)),
+                        panel.getBackground()
+                );
+            });
+
+            var backgroundHsl = new HSLColor(result.background());
+            assertThat(result.helperText()).isEqualTo("Text is sent to Cloud for speech synthesis.");
+            assertThat(result.credentialStatus()).isEqualTo("Using entered/stored API token.");
+            assertThat(result.credentialStatusVisible()).isTrue();
+            assertThat(result.credentialStatusBelowTokenField()).isTrue();
+            assertThat(backgroundHsl.getHue()).isBetween(35f, 60f);
+            assertThat(backgroundHsl.getSaturation()).isGreaterThanOrEqualTo(18f);
+        } finally {
+            removePanel(subject);
+        }
     }
 
     @Test
@@ -874,6 +919,15 @@ class TextToSpeechPanelTest {
         assertThat(condition.getAsBoolean()).isTrue();
     }
 
+    private record HelperAppearance(
+            String helperText,
+            String credentialStatus,
+            boolean credentialStatusVisible,
+            boolean credentialStatusBelowTokenField,
+            Color background
+    ) {
+    }
+
     @FunctionalInterface
     private interface ThrowingAction {
         void run() throws Exception;
@@ -933,6 +987,25 @@ class TextToSpeechPanelTest {
         @Override
         public TextToSpeechAudio synthesize(TextToSpeechRequest request) {
             return new TextToSpeechAudio(new byte[]{1}, "audio/wav", "wav");
+        }
+    }
+
+    private static final class AvailableCloudProvider extends AvailableSystemProvider {
+        private static final String ID = "cloud";
+
+        @Override
+        public String id() {
+            return ID;
+        }
+
+        @Override
+        public String displayName() {
+            return "Cloud";
+        }
+
+        @Override
+        public String requiredEnvVar() {
+            return "DEEPGRAM_API_KEY";
         }
     }
 

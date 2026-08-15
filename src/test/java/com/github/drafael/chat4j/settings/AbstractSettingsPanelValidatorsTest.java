@@ -2,7 +2,6 @@ package com.github.drafael.chat4j.settings;
 
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.persistence.settings.SettingsStorageException;
-import java.awt.Color;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -10,7 +9,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JTextField;
-import javax.swing.UIManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -60,29 +58,6 @@ class AbstractSettingsPanelValidatorsTest {
 
         assertThat(result.valid()).isFalse();
         assertThat(result.message()).isEqualTo("required");
-    }
-
-    @Test
-    @DisplayName("Message box colors use FlatLaf tooltip foreground and background")
-    void messageBoxColors_whenTooltipColorsConfigured_useTooltipColorPair() {
-        Object previousBackground = UIManager.get("ToolTip.background");
-        Object previousForeground = UIManager.get("ToolTip.foreground");
-        Color expectedBackground = new Color(30, 32, 33);
-        Color expectedForeground = new Color(187, 187, 187);
-        try {
-            UIManager.put("ToolTip.background", expectedBackground);
-            UIManager.put("ToolTip.foreground", expectedForeground);
-            var subject = new TestSettingsPanel(new SettingsRepository(tempDir.resolve("settings.properties")));
-
-            assertThat(subject.infoBackground()).isEqualTo(expectedBackground);
-            assertThat(subject.warningBackground()).isEqualTo(expectedBackground);
-            assertThat(subject.infoTitleForeground()).isEqualTo(expectedForeground);
-            assertThat(subject.warningTitleForeground()).isEqualTo(expectedForeground);
-            assertThat(subject.messageForeground()).isEqualTo(expectedForeground);
-        } finally {
-            UIManager.put("ToolTip.background", previousBackground);
-            UIManager.put("ToolTip.foreground", previousForeground);
-        }
     }
 
     @Test
@@ -171,25 +146,6 @@ class AbstractSettingsPanelValidatorsTest {
             return removeSetting(key);
         }
 
-        private Color infoBackground() {
-            return infoBoxBackground();
-        }
-
-        private Color warningBackground() {
-            return warningBoxBackground();
-        }
-
-        private Color infoTitleForeground() {
-            return infoBoxTitleForeground();
-        }
-
-        private Color warningTitleForeground() {
-            return warningBoxTitleForeground();
-        }
-
-        private Color messageForeground() {
-            return messageBoxForeground();
-        }
     }
 
     private static final class FailingSettingsRepository extends SettingsRepository {

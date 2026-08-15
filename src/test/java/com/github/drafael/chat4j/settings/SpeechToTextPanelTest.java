@@ -1,8 +1,10 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
 import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
@@ -36,6 +38,8 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import io.github.freshsupasulley.whisperjni.WhisperFullParams;
+import java.awt.BorderLayout;
+import java.awt.Color;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
@@ -1937,16 +1941,31 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Deepgram helper copy explains cloud upload and token storage options")
-    void updateAvailability_whenDeepgramAvailable_showsDeepgramPrivacyCopy() throws Exception {
+    @DisplayName("Deepgram credential status appears below its token field and privacy warning separately")
+    void updateAvailability_whenDeepgramAvailable_separatesCredentialStatusFromPrivacyWarning() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-helper.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
-        var subject = callOnEdt(() -> newPanel(repo, tempDir.resolve("default-models"), new SpeechToTextProviderRegistry(List.of(new DeepgramTestProvider()))));
+        credentialMutationService.saveTokenOverride(
+                "DEEPGRAM_API_KEY",
+                "test-token".toCharArray(),
+                CredentialMutationListener.NO_OP
+        );
+        var subject = callOnEdt(() -> newPanel(
+                repo,
+                tempDir.resolve("default-models"),
+                new SpeechToTextProviderRegistry(List.of(new CredentialDeepgramTestProvider()))
+        ));
         try {
-            assertThat(helperLabelText(subject))
-                    .contains("Using Deepgram.")
-                    .contains("Recorded audio is sent to Deepgram for transcription.");
+            HelperAppearance result = helperAppearance(subject);
+
+            var backgroundHsl = new HSLColor(result.background());
+            assertThat(result.helperText()).isEqualTo("Recorded audio is sent to Deepgram for transcription.");
+            assertThat(result.credentialStatus()).isEqualTo("Using entered/stored API token.");
+            assertThat(result.credentialStatusVisible()).isTrue();
+            assertThat(result.credentialStatusBelowTokenField()).isTrue();
+            assertThat(backgroundHsl.getHue()).isBetween(35f, 60f);
+            assertThat(backgroundHsl.getSaturation()).isGreaterThanOrEqualTo(18f);
         } finally {
             runOnEdt(subject::removeNotify);
         }
@@ -1992,9 +2011,9 @@ class SpeechToTextPanelTest {
                     whisperModels
             ));
             try {
-                assertThat(helperLabelText(subject))
-                        .contains("Using AssemblyAI.")
-                        .contains("Recorded audio is sent to AssemblyAI for transcription.");
+                HelperAppearance result = helperAppearance(subject);
+                assertThat(result.helperText()).isEqualTo("Recorded audio is sent to AssemblyAI for transcription.");
+                assertThat(result.credentialStatusVisible()).isFalse();
             } finally {
                 runOnEdt(subject::removeNotify);
             }
@@ -2313,6 +2332,22 @@ class SpeechToTextPanelTest {
 
     private String helperLabelText(SpeechToTextPanel subject) throws Exception {
         return callOnEdt(() -> ((JTextArea) fieldValue(subject, "helperLabel")).getText());
+    }
+
+    private HelperAppearance helperAppearance(SpeechToTextPanel subject) throws Exception {
+        return callOnEdt(() -> {
+            var helper = (JTextArea) fieldValue(subject, "helperLabel");
+            var status = (JLabel) fieldValue(subject, "credentialStatusLabel");
+            var tokenRow = (JPanel) fieldValue(subject, "tokenRowPanel");
+            var panel = (JPanel) fieldValue(subject, "helperPanel");
+            return new HelperAppearance(
+                    helper.getText(),
+                    status.getText(),
+                    status.isVisible(),
+                    BorderLayout.SOUTH.equals(((BorderLayout) tokenRow.getLayout()).getConstraints(status)),
+                    panel.getBackground()
+            );
+        });
     }
 
     private void waitUntil(Condition condition) throws Exception {
@@ -3027,6 +3062,13 @@ class SpeechToTextPanelTest {
         }
     }
 
+    private static final class CredentialDeepgramTestProvider extends DeepgramTestProvider {
+        @Override
+        public String requiredEnvVar() {
+            return "DEEPGRAM_API_KEY";
+        }
+    }
+
     private static final class CapturingDeepgramProvider extends DeepgramTestProvider {
         private final CountDownLatch refreshed = new CountDownLatch(1);
         private final AtomicReference<SpeechToTextProviderContext> context = new AtomicReference<>();
@@ -3151,6 +3193,15 @@ class SpeechToTextPanelTest {
         public SpeechToTextResult transcribe(SpeechToTextRequest request, SpeechToTextProviderContext context) {
             return new SpeechToTextResult("test");
         }
+    }
+
+    private record HelperAppearance(
+            String helperText,
+            String credentialStatus,
+            boolean credentialStatusVisible,
+            boolean credentialStatusBelowTokenField,
+            Color background
+    ) {
     }
 
     @FunctionalInterface

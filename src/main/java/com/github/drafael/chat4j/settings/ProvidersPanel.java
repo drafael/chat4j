@@ -114,6 +114,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
     private final Map<String, Boolean> authAvailabilityByProvider = new ConcurrentHashMap<>();
     private final Map<String, String> configuredBaseUrlByProvider = new LinkedHashMap<>();
+    private final Map<JLabel, StatusTone> providerStatusTones = new LinkedHashMap<>();
     private final List<Runnable> authStatusRefreshers = new ArrayList<>();
     private final JList<String> providerList;
     private final ApiTokenFieldRegistry tokenFieldRegistry;
@@ -231,10 +232,24 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     @Override
+    public void updateUI() {
+        super.updateUI();
+        // JPanel invokes updateUI before subclass fields are initialized.
+        if (providerStatusTones != null) {
+            SwingUtilities.invokeLater(() -> {
+                if (!removed) {
+                    refreshProviderStatusColors();
+                }
+            });
+        }
+    }
+
+    @Override
     public void addNotify() {
         super.addNotify();
         authLifecycle.activate();
         removed = false;
+        refreshProviderStatusColors();
         authStatusRefreshers.forEach(Runnable::run);
     }
 
@@ -452,7 +467,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
         if (info.authType() == AuthType.COPILOT_OAUTH || info.authType() == AuthType.CODEX_OAUTH) {
             status.setText("Checking authorization...");
-            status.setForeground(warningForeground());
+            applyProviderStatusTone(status, StatusTone.WARNING);
             return status;
         }
 
@@ -494,23 +509,23 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         switch (credentialStatus.source()) {
             case SAVED_TOKEN -> {
                 status.setText("\u2713 Saved token configured");
-                status.setForeground(successForeground());
+                applyProviderStatusTone(status, StatusTone.SUCCESS);
             }
             case PROCESS_ENV -> {
                 status.setText("\u2713 %s from environment".formatted(credentialStatus.credentialId()));
-                status.setForeground(successForeground());
+                applyProviderStatusTone(status, StatusTone.SUCCESS);
             }
             case SHELL_ENV -> {
                 status.setText("\u2713 %s from shell environment".formatted(credentialStatus.credentialId()));
-                status.setForeground(successForeground());
+                applyProviderStatusTone(status, StatusTone.SUCCESS);
             }
             case ERROR -> {
                 status.setText("\u26A0 Could not read saved token");
-                status.setForeground(warningForeground());
+                applyProviderStatusTone(status, StatusTone.WARNING);
             }
             default -> {
                 status.setText("\u2717 %s not set".formatted(formatEnvVarNames(info.envVar())));
-                status.setForeground(errorForeground());
+                applyProviderStatusTone(status, StatusTone.ERROR);
             }
         }
     }
@@ -518,11 +533,28 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     private void applyLocalStatus(JLabel status, String configuredBaseUrl, boolean reachable) {
         if (reachable) {
             status.setText("\u2713 Running at %s".formatted(configuredBaseUrl));
-            status.setForeground(successForeground());
+            applyProviderStatusTone(status, StatusTone.SUCCESS);
         } else {
             status.setText("\u2717 Not running at %s".formatted(configuredBaseUrl));
-            status.setForeground(errorForeground());
+            applyProviderStatusTone(status, StatusTone.ERROR);
         }
+    }
+
+    private void applyProviderStatusTone(JLabel status, StatusTone tone) {
+        providerStatusTones.put(status, tone);
+        status.setForeground(providerStatusForeground(tone));
+    }
+
+    private void refreshProviderStatusColors() {
+        providerStatusTones.forEach((status, tone) -> status.setForeground(providerStatusForeground(tone)));
+    }
+
+    private Color providerStatusForeground(StatusTone tone) {
+        return switch (tone) {
+            case SUCCESS -> successForeground();
+            case WARNING -> warningForeground();
+            case ERROR -> errorForeground();
+        };
     }
 
     private boolean shouldShowApiTokenField(ProviderInfo info) {
@@ -537,14 +569,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private JComponent createMissingApiKeyInfoPanel(String providerName, ProviderInfo info) {
-        JPanel infoPanel = new JPanel(new BorderLayout(0, 8));
-        infoPanel.setOpaque(true);
-        infoPanel.setBorder(warningBoxBorder());
-        infoPanel.setBackground(warningBoxBackground());
+        JPanel infoPanel = createWarningBoxPanel(new BorderLayout(0, 8));
 
         JLabel header = new JLabel("\u26A0 API token setup required");
         Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
-        header.setForeground(warningBoxTitleForeground());
         infoPanel.add(header, BorderLayout.NORTH);
 
         String primaryEnvVar = CredentialResolver.envVarCandidates(info.envVar()).stream()
@@ -570,7 +598,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         instructions.setOpaque(false);
         instructions.setBorder(null);
         Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
-        instructions.setForeground(messageBoxForeground());
         infoPanel.add(instructions, BorderLayout.CENTER);
 
         String portalUrl = API_KEY_PORTAL_URLS.get(providerName);
@@ -595,14 +622,10 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
     private LocalProviderInfo createLocalProviderInfo(String providerName) {
         LocalProviderHelp localHelp = LOCAL_PROVIDER_HELP.get(providerName);
-        JPanel infoPanel = new JPanel(new BorderLayout(0, 8));
-        infoPanel.setOpaque(true);
-        infoPanel.setBorder(infoBoxBorder());
-        infoPanel.setBackground(infoBoxBackground());
+        JPanel infoPanel = createInfoBoxPanel(new BorderLayout(0, 8));
 
         JLabel header = new JLabel("\u2139 Local server setup");
         Fonts.apply(header, Font.BOLD, Fonts.SIZE_BODY);
-        header.setForeground(infoBoxTitleForeground());
         infoPanel.add(header, BorderLayout.NORTH);
 
         JTextArea instructions = new JTextArea();
@@ -612,7 +635,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         instructions.setOpaque(false);
         instructions.setBorder(null);
         Fonts.apply(instructions, Font.PLAIN, Fonts.SIZE_COMPACT);
-        instructions.setForeground(messageBoxForeground());
         infoPanel.add(instructions, BorderLayout.CENTER);
 
         if (StringUtils.isNotBlank(localHelp.docsUrl())) {
@@ -948,7 +970,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             authButton.setEnabled(false);
             authButton.setText("Working...");
             statusLabel.setText("Preparing OpenAI Codex login...");
-            statusLabel.setForeground(warningForeground());
+            applyProviderStatusTone(statusLabel, StatusTone.WARNING);
             if (!notifyProviderAuthChangingSafely(providerName)) {
                 notifyProviderAuthChangeCompletedSafely(providerName);
                 refreshCodexAuthControls(providerName, statusLabel, authButton);
@@ -1334,7 +1356,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         String message = "Complete GitHub Copilot sign-in using code %s at %s."
                 .formatted(challenge.userCode(), challenge.verificationUri());
         statusLabel.setText(message);
-        statusLabel.setForeground(warningForeground());
+        applyProviderStatusTone(statusLabel, StatusTone.WARNING);
         setStatusInfo("GitHub Copilot login is waiting for browser authorization.");
 
         JDialog dialog = new JDialog(
@@ -1485,7 +1507,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(copilotAuthResolver.oauthClientConfigurationHint());
-                statusLabel.setForeground(warningForeground());
+                applyProviderStatusTone(statusLabel, StatusTone.WARNING);
             }
         } else {
             authButton.setText("Login");
@@ -1497,7 +1519,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
         if (StringUtils.isNotBlank(failureMessage)) {
             statusLabel.setText(failureMessage);
-            statusLabel.setForeground(errorForeground());
+            applyProviderStatusTone(statusLabel, StatusTone.ERROR);
         }
 
         providerList.repaint();
@@ -1533,7 +1555,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
             if (!status.authorized() && StringUtils.isBlank(failureMessage)) {
                 statusLabel.setText(codexAuthResolver.oauthClientConfigurationHint());
-                statusLabel.setForeground(warningForeground());
+                applyProviderStatusTone(statusLabel, StatusTone.WARNING);
             }
         } else {
             authButton.setText("Login");
@@ -1545,7 +1567,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
         if (StringUtils.isNotBlank(failureMessage)) {
             statusLabel.setText(failureMessage);
-            statusLabel.setForeground(errorForeground());
+            applyProviderStatusTone(statusLabel, StatusTone.ERROR);
         }
 
         providerList.repaint();
@@ -1553,12 +1575,12 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
 
     private void applyCopilotAuthStatus(JLabel statusLabel, CopilotAuthResolver.CopilotAuthStatus status) {
         statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
-        statusLabel.setForeground(status.authorized() ? successForeground() : errorForeground());
+        applyProviderStatusTone(statusLabel, status.authorized() ? StatusTone.SUCCESS : StatusTone.ERROR);
     }
 
     private void applyCodexAuthStatus(JLabel statusLabel, CodexAuthResolver.CodexAuthStatus status) {
         statusLabel.setText(status.authorized() ? "Authorized" : "Not authorized");
-        statusLabel.setForeground(status.authorized() ? successForeground() : errorForeground());
+        applyProviderStatusTone(statusLabel, status.authorized() ? StatusTone.SUCCESS : StatusTone.ERROR);
     }
 
     private JPanel createOpenRouterUsagePanel(ProviderInfo info) {
@@ -1976,6 +1998,12 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         label.setPreferredSize(alignedSize);
         label.setMinimumSize(alignedSize);
         return label;
+    }
+
+    private enum StatusTone {
+        SUCCESS,
+        WARNING,
+        ERROR
     }
 
     private record OpenRouterUsageComponents(

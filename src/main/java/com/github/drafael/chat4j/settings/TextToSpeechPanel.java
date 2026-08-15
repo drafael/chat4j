@@ -13,8 +13,8 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
-import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import com.github.drafael.chat4j.util.Fonts;
+import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.awt.*;
 import java.net.URL;
 import java.util.List;
@@ -57,6 +57,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
     private JPanel helperPanel;
     private JTextArea helperLabel;
     private SettingsFormRow tokenFormRow;
+    private JLabel credentialStatusLabel;
     private JPanel tokenRowPanel;
     private ApiTokenFieldPanel tokenField;
     private boolean updating;
@@ -132,8 +133,11 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         providerComboBox.addActionListener(e -> onProviderSelected());
         addRow(form, gbc, row++, "Provider", providerComboBox);
 
-        tokenRowPanel = withPreferredWidth(new JPanel(new BorderLayout()), FIELD_WIDTH);
+        tokenRowPanel = new JPanel(new BorderLayout(0, 4));
         tokenRowPanel.setOpaque(false);
+        credentialStatusLabel = createSuccessStatusLabel();
+        credentialStatusLabel.setVisible(false);
+        tokenRowPanel.add(credentialStatusLabel, BorderLayout.SOUTH);
         tokenFormRow = addManagedRow(form, gbc, row++, "API token", tokenRowPanel);
         tokenFormRow.setVisible(false);
 
@@ -707,7 +711,9 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         if (tokenField != null) {
             tokenField.unregisterFromRegistry();
         }
-        tokenRowPanel.removeAll();
+        if (tokenField != null) {
+            tokenRowPanel.remove(tokenField);
+        }
         tokenField = null;
     }
 
@@ -717,25 +723,34 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         voiceComboBox.setEnabled(enabled);
         previewButton.setEnabled(enabled);
         refreshButton.setEnabled(enabled);
+        updateCredentialStatus(selection);
         if (!selection.enabled()) {
             setHelperText("Text to Speech is off.");
         } else if (!selection.available()) {
             setHelperText(selection.provider().unavailableMessage());
         } else if (StringUtils.isNotBlank(selection.provider().requiredEnvVar())) {
-            setHelperText("%s Text is sent to %s for speech synthesis.".formatted(
-                    selection.provider().availableMessage(),
-                    selection.provider().displayName()
-            ));
+            setHelperText("Text is sent to %s for speech synthesis.".formatted(selection.provider().displayName()));
         } else {
             setHelperText(selection.provider().availableMessage());
         }
+    }
+
+    private void updateCredentialStatus(TextToSpeechSettings.Selection selection) {
+        String requiredEnvVar = selection.enabled() ? selection.provider().requiredEnvVar() : null;
+        String statusText = StringUtils.isBlank(requiredEnvVar)
+                ? ""
+                : credentialStatusText(credentialResolver.resolveCredentialStatus(requiredEnvVar, null));
+        boolean visible = selection.available() && StringUtils.isNotBlank(statusText);
+        credentialStatusLabel.setText(visible ? statusText : " ");
+        credentialStatusLabel.setVisible(visible);
+        tokenRowPanel.revalidate();
+        tokenRowPanel.repaint();
     }
 
     private void setHelperText(String message) {
         String text = StringUtils.defaultString(message);
         helperLabel.setText(text);
         int rows = estimatedHelperRows(text);
-        helperLabel.setRows(rows);
         int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
         helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
         helperPanel.revalidate();
@@ -749,10 +764,7 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
     }
 
     private JPanel createHelperInfoPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setOpaque(true);
-        panel.setBorder(infoBoxBorder());
-        panel.setBackground(infoBoxBackground());
+        JPanel panel = createWarningBoxPanel(new BorderLayout());
         helperLabel = createWrappingHelperTextArea();
         panel.add(helperLabel, BorderLayout.CENTER);
         return panel;
@@ -767,7 +779,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         textArea.setWrapStyleWord(true);
         textArea.setBorder(null);
         Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
-        textArea.setForeground(messageBoxForeground());
         return textArea;
     }
 

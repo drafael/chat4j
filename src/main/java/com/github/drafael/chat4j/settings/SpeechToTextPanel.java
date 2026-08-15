@@ -98,6 +98,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private SettingsFormRow tokenFormRow;
     private JPanel tokenRowPanel;
     private ApiTokenFieldPanel tokenField;
+    private JLabel credentialStatusLabel;
     private JTextField modelDirectoryField;
     private JButton modelDirectoryBrowseButton;
     private JPanel localModelsPanel;
@@ -381,8 +382,11 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         providerComboBox.addActionListener(e -> onProviderSelected());
         addRow(form, gbc, row++, "Provider", providerComboBox);
 
-        tokenRowPanel = withPreferredWidth(new JPanel(new BorderLayout()), FIELD_WIDTH);
+        tokenRowPanel = new JPanel(new BorderLayout(0, 4));
         tokenRowPanel.setOpaque(false);
+        credentialStatusLabel = createSuccessStatusLabel();
+        credentialStatusLabel.setVisible(false);
+        tokenRowPanel.add(credentialStatusLabel, BorderLayout.SOUTH);
         tokenFormRow = addManagedRow(form, gbc, row++, "API token", tokenRowPanel);
         tokenFormRow.setVisible(false);
 
@@ -1179,7 +1183,9 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         if (tokenField != null) {
             tokenField.unregisterFromRegistry();
         }
-        tokenRowPanel.removeAll();
+        if (tokenField != null) {
+            tokenRowPanel.remove(tokenField);
+        }
         tokenField = null;
     }
 
@@ -1814,6 +1820,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         modelComboBox.setEnabled(snapshot.enabled() && ((!isVosk(snapshot) && !isWhisper(snapshot)) || modelComboBox.getItemCount() > 0 && !localBusy));
         refreshButton.setEnabled(snapshot.enabled() && ((isVosk(snapshot) || isWhisper(snapshot)) ? !localBusy : snapshot.available()));
         boolean localProvider = isVosk(snapshot) || isWhisper(snapshot);
+        updateCredentialStatus(snapshot, localProvider);
         helperPanel.setVisible(!localProvider);
         if (localProvider) {
             return;
@@ -1823,23 +1830,34 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         } else if (!snapshot.available()) {
             setHelperText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
         } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to Groq for transcription.".formatted(snapshot.statusMessage()));
+            setHelperText("Recorded audio is sent to Groq for transcription.");
         } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to ElevenLabs for transcription.".formatted(snapshot.statusMessage()));
+            setHelperText("Recorded audio is sent to ElevenLabs for transcription.");
         } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to Deepgram for transcription.".formatted(snapshot.statusMessage()));
+            setHelperText("Recorded audio is sent to Deepgram for transcription.");
         } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("%s Recorded audio is sent to AssemblyAI for transcription.".formatted(snapshot.statusMessage()));
+            setHelperText("Recorded audio is sent to AssemblyAI for transcription.");
         } else {
             setHelperText(snapshot.statusMessage());
         }
+    }
+
+    private void updateCredentialStatus(SpeechToTextSettingsSnapshot snapshot, boolean localProvider) {
+        String requiredEnvVar = snapshot.enabled() ? snapshot.provider().requiredEnvVar() : null;
+        String statusText = StringUtils.isBlank(requiredEnvVar)
+                ? ""
+                : credentialStatusText(credentialResolver.resolveCredentialStatus(requiredEnvVar, null));
+        boolean visible = snapshot.available() && !localProvider && StringUtils.isNotBlank(statusText);
+        credentialStatusLabel.setText(visible ? statusText : " ");
+        credentialStatusLabel.setVisible(visible);
+        tokenRowPanel.revalidate();
+        tokenRowPanel.repaint();
     }
 
     private void setHelperText(String message) {
         String text = StringUtils.defaultString(message);
         helperLabel.setText(text);
         int rows = estimatedHelperRows(text);
-        helperLabel.setRows(rows);
         int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
         helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
         helperPanel.revalidate();
@@ -1853,10 +1871,7 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     }
 
     private JPanel createHelperInfoPanel() {
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.setOpaque(true);
-        panel.setBorder(infoBoxBorder());
-        panel.setBackground(infoBoxBackground());
+        JPanel panel = createWarningBoxPanel(new BorderLayout());
         helperLabel = createWrappingHelperTextArea();
         panel.add(helperLabel, BorderLayout.CENTER);
         return panel;
@@ -1871,7 +1886,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         textArea.setWrapStyleWord(true);
         textArea.setBorder(null);
         Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
-        textArea.setForeground(messageBoxForeground());
         return textArea;
     }
 

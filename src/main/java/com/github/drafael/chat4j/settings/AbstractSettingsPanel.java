@@ -1,7 +1,9 @@
 package com.github.drafael.chat4j.settings;
 
 import com.formdev.flatlaf.extras.components.FlatSeparator;
+import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
+import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.awt.event.FocusAdapter;
@@ -17,7 +19,12 @@ import java.util.stream.Stream;
 import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.ColorUIResource;
+import javax.swing.text.JTextComponent;
 import org.apache.commons.lang3.StringUtils;
+
+import static java.util.stream.IntStream.rangeClosed;
+import static org.apache.commons.lang3.ObjectUtils.firstNonNull;
 
 public abstract class AbstractSettingsPanel extends JPanel {
 
@@ -33,6 +40,33 @@ public abstract class AbstractSettingsPanel extends JPanel {
     private static final int STATUS_CLEAR_DELAY_MILLIS = 1400;
     private static final int DEFAULT_STATUS_WRAP_WIDTH = 900;
     private static final int STATUS_WRAP_CHARACTERS = 96;
+    private static final double MINIMUM_TEXT_CONTRAST_RATIO = 4.5;
+    private static final float MINIMUM_SUCCESS_SATURATION = 55f;
+    private static final int MINIMUM_SUCCESS_LUMINANCE = 5;
+    private static final int MAXIMUM_SUCCESS_LUMINANCE = 95;
+    private static final float INFO_NOTE_HUE = 223f;
+    private static final float INFO_NOTE_SATURATION = 92f;
+    private static final float INFO_NOTE_BACKGROUND_LUMINANCE = 85f;
+    private static final float INFO_NOTE_BORDER_LUMINANCE = 80f;
+    private static final float MINIMUM_INFO_HUE = 218f;
+    private static final float MAXIMUM_INFO_HUE = 230f;
+    private static final float MINIMUM_INFO_SATURATION = 80f;
+    private static final float MINIMUM_INFO_BACKGROUND_LUMINANCE = 83f;
+    private static final float MAXIMUM_INFO_BACKGROUND_LUMINANCE = 88f;
+    private static final float MINIMUM_INFO_BORDER_LUMINANCE = 76f;
+    private static final float MAXIMUM_INFO_BORDER_LUMINANCE = 83f;
+    private static final float STICKY_NOTE_HUE = 53f;
+    private static final float STICKY_NOTE_SATURATION = 98f;
+    private static final float STICKY_NOTE_BACKGROUND_LUMINANCE = 82f;
+    private static final float STICKY_NOTE_BORDER_LUMINANCE = 68f;
+    private static final float MINIMUM_WARNING_HUE = 50f;
+    private static final float MAXIMUM_WARNING_HUE = 58f;
+    private static final float MINIMUM_WARNING_SATURATION = 90f;
+    private static final float MINIMUM_WARNING_BACKGROUND_LUMINANCE = 80f;
+    private static final float MAXIMUM_WARNING_BACKGROUND_LUMINANCE = 86f;
+    private static final float MINIMUM_WARNING_BORDER_LUMINANCE = 64f;
+    private static final float MAXIMUM_WARNING_BORDER_LUMINANCE = 72f;
+    private static final float NOTE_THEME_INFLUENCE = 0.1f;
 
     private final SettingsRepository settingsRepo;
     private final JLabel statusLabel = new JLabel(" ");
@@ -188,36 +222,137 @@ public abstract class AbstractSettingsPanel extends JPanel {
         return field;
     }
 
+    protected JPanel createInfoBoxPanel(LayoutManager layout) {
+        return new MessageBoxPanel(layout, MessageBoxType.INFO);
+    }
+
+    protected JPanel createWarningBoxPanel(LayoutManager layout) {
+        return new MessageBoxPanel(layout, MessageBoxType.WARNING);
+    }
+
+    protected JLabel createSuccessStatusLabel() {
+        return new SuccessStatusLabel();
+    }
+
+    protected String credentialStatusText(ApiCredentialStatus status) {
+        return switch (status.source()) {
+            case SAVED_TOKEN -> "Using entered/stored API token.";
+            case PROCESS_ENV -> "Using environment variable %s.".formatted(status.credentialId());
+            case SHELL_ENV -> "Using shell environment variable %s.".formatted(status.credentialId());
+            case FALLBACK -> "Using configured API token.";
+            case MISSING, ERROR -> "";
+        };
+    }
+
     protected Border infoBoxBorder() {
-        return messageBoxBorder("Component.focusColor", "Actions.Blue", "Separator.foreground");
+        return messageBoxBorder(noteColor(
+                INFO_NOTE_HUE,
+                INFO_NOTE_SATURATION,
+                INFO_NOTE_BORDER_LUMINANCE,
+                MINIMUM_INFO_HUE,
+                MAXIMUM_INFO_HUE,
+                MINIMUM_INFO_SATURATION,
+                MINIMUM_INFO_BORDER_LUMINANCE,
+                MAXIMUM_INFO_BORDER_LUMINANCE,
+                "Actions.Blue",
+                "Component.accentColor",
+                "Component.focusColor",
+                "Label.foreground"
+        ));
     }
 
     protected Color infoBoxBackground() {
-        return toolTipBackground();
+        return noteColor(
+                INFO_NOTE_HUE,
+                INFO_NOTE_SATURATION,
+                INFO_NOTE_BACKGROUND_LUMINANCE,
+                MINIMUM_INFO_HUE,
+                MAXIMUM_INFO_HUE,
+                MINIMUM_INFO_SATURATION,
+                MINIMUM_INFO_BACKGROUND_LUMINANCE,
+                MAXIMUM_INFO_BACKGROUND_LUMINANCE,
+                "Actions.Blue",
+                "Component.accentColor",
+                "Component.focusColor",
+                "Label.foreground"
+        );
     }
 
-    protected Color infoBoxTitleForeground() {
-        return toolTipForeground();
+    protected Color infoBoxForeground() {
+        return noteForeground(infoBoxBackground());
     }
 
     protected Border warningBoxBorder() {
-        return messageBoxBorder("Component.warning.borderColor", "Component.warning.focusedBorderColor", "Actions.Yellow", "Separator.foreground");
+        return messageBoxBorder(noteColor(
+                STICKY_NOTE_HUE,
+                STICKY_NOTE_SATURATION,
+                STICKY_NOTE_BORDER_LUMINANCE,
+                MINIMUM_WARNING_HUE,
+                MAXIMUM_WARNING_HUE,
+                MINIMUM_WARNING_SATURATION,
+                MINIMUM_WARNING_BORDER_LUMINANCE,
+                MAXIMUM_WARNING_BORDER_LUMINANCE,
+                "Actions.Yellow",
+                "Component.warning.focusedBorderColor",
+                "Component.warning.borderColor",
+                "Label.foreground"
+        ));
     }
 
     protected Color warningBoxBackground() {
-        return toolTipBackground();
+        return noteColor(
+                STICKY_NOTE_HUE,
+                STICKY_NOTE_SATURATION,
+                STICKY_NOTE_BACKGROUND_LUMINANCE,
+                MINIMUM_WARNING_HUE,
+                MAXIMUM_WARNING_HUE,
+                MINIMUM_WARNING_SATURATION,
+                MINIMUM_WARNING_BACKGROUND_LUMINANCE,
+                MAXIMUM_WARNING_BACKGROUND_LUMINANCE,
+                "Actions.Yellow",
+                "Component.warning.focusedBorderColor",
+                "Component.warning.borderColor",
+                "Label.foreground"
+        );
     }
 
-    protected Color warningBoxTitleForeground() {
-        return toolTipForeground();
-    }
-
-    protected Color messageBoxForeground() {
-        return toolTipForeground();
+    protected Color warningBoxForeground() {
+        return noteForeground(warningBoxBackground());
     }
 
     protected Color successForeground() {
-        return uiColor("Component.success.foreground", "Component.success.focusedBorderColor", "Actions.Green", "Label.foreground");
+        Color background = firstNonNull(UIManager.getColor("Panel.background"), getBackground(), Color.WHITE);
+        Color themeForeground = firstNonNull(UIManager.getColor("Label.foreground"), getForeground());
+        Color normalForeground = themeForeground == null
+                || contrastRatio(themeForeground, background) < MINIMUM_TEXT_CONTRAST_RATIO
+                ? readableForegroundOn(background)
+                : themeForeground;
+        Color semanticGreen = Stream.of(
+                        UIManager.getColor("Component.success.foreground"),
+                        UIManager.getColor("Component.success.focusedBorderColor"),
+                        UIManager.getColor("Actions.Green")
+                )
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+        if (semanticGreen == null) {
+            return new ColorUIResource(normalForeground);
+        }
+
+        var themeGreen = new HSLColor(semanticGreen);
+        float hue = themeGreen.getHue();
+        float saturation = Math.max(themeGreen.getSaturation(), MINIMUM_SUCCESS_SATURATION);
+        float luminance = themeGreen.getLuminance();
+        return rangeClosed(MINIMUM_SUCCESS_LUMINANCE, MAXIMUM_SUCCESS_LUMINANCE)
+                .mapToObj(candidateLuminance -> new ColorUIResource(
+                        HSLColor.toRGB(hue, saturation, candidateLuminance)
+                ))
+                .filter(candidate -> new HSLColor(candidate).getSaturation() >= MINIMUM_SUCCESS_SATURATION)
+                .filter(candidate -> contrastRatio(candidate, background) >= MINIMUM_TEXT_CONTRAST_RATIO)
+                .min(Comparator.comparingDouble(candidate -> Math.abs(
+                        new HSLColor(candidate).getLuminance() - luminance
+                )))
+                .orElseGet(() -> new ColorUIResource(normalForeground));
     }
 
     protected Color warningForeground() {
@@ -259,19 +394,53 @@ public abstract class AbstractSettingsPanel extends JPanel {
                 : Math.pow((normalized + 0.055) / 1.055, 2.4);
     }
 
-    private Border messageBoxBorder(String... colorKeys) {
+    private Border messageBoxBorder(Color color) {
         return BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(uiColor(colorKeys)),
+                BorderFactory.createLineBorder(color),
                 BorderFactory.createEmptyBorder(10, 12, 10, 12)
         );
     }
 
-    private Color toolTipBackground() {
-        return uiColor("ToolTip.background", "info", "Panel.background");
+    private Color noteColor(
+            float targetHue,
+            float targetSaturation,
+            float targetLuminance,
+            float minimumHue,
+            float maximumHue,
+            float minimumSaturation,
+            float minimumLuminance,
+            float maximumLuminance,
+            String... semanticColorKeys
+    ) {
+        var semanticHsl = new HSLColor(uiColor(semanticColorKeys));
+        float semanticHue = semanticHsl.getHue() >= minimumHue && semanticHsl.getHue() <= maximumHue
+                ? semanticHsl.getHue()
+                : targetHue;
+        float hue = blend(targetHue, semanticHue, NOTE_THEME_INFLUENCE);
+        float saturation = Math.max(
+                minimumSaturation,
+                blend(targetSaturation, semanticHsl.getSaturation(), NOTE_THEME_INFLUENCE)
+        );
+        float luminance = Math.max(
+                minimumLuminance,
+                Math.min(
+                        maximumLuminance,
+                        blend(targetLuminance, semanticHsl.getLuminance(), NOTE_THEME_INFLUENCE)
+                )
+        );
+        return new ColorUIResource(HSLColor.toRGB(hue, saturation, luminance));
     }
 
-    private Color toolTipForeground() {
-        return uiColor("ToolTip.foreground", "infoText", "Label.foreground");
+    private Color noteForeground(Color background) {
+        Color themeForeground = firstNonNull(UIManager.getColor("Label.foreground"), getForeground(), Color.BLACK);
+        Color foreground = contrastRatio(themeForeground, background) >= MINIMUM_TEXT_CONTRAST_RATIO
+                ? themeForeground
+                : Color.BLACK;
+        return new Color(foreground.getRGB(), true);
+    }
+
+    private float blend(float base, float themeValue, float themeInfluence) {
+        return base * (1 - themeInfluence) + themeValue * themeInfluence;
     }
 
     private Color uiColor(String... keys) {
@@ -282,6 +451,83 @@ public abstract class AbstractSettingsPanel extends JPanel {
             }
         }
         return getForeground();
+    }
+
+    private final class SuccessStatusLabel extends JLabel {
+        private boolean initialized;
+
+        private SuccessStatusLabel() {
+            Fonts.apply(this, Font.PLAIN, Fonts.SIZE_SMALL);
+            initialized = true;
+            setForeground(successForeground());
+        }
+
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            if (initialized) {
+                setForeground(successForeground());
+            }
+        }
+    }
+
+    private final class MessageBoxPanel extends JPanel {
+        private final MessageBoxType type;
+
+        private MessageBoxPanel(LayoutManager layout, MessageBoxType type) {
+            super(layout);
+            this.type = type;
+            setOpaque(true);
+            applyTheme();
+        }
+
+        @Override
+        protected void addImpl(Component component, Object constraints, int index) {
+            super.addImpl(component, constraints, index);
+            if (type != null) {
+                applyNoteForeground(component);
+            }
+        }
+
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            // JPanel invokes updateUI before MessageBoxPanel fields are initialized.
+            if (type != null) {
+                applyTheme();
+            }
+        }
+
+        private void applyTheme() {
+            switch (type) {
+                case INFO -> {
+                    setBorder(infoBoxBorder());
+                    setBackground(infoBoxBackground());
+                }
+                case WARNING -> {
+                    setBorder(warningBoxBorder());
+                    setBackground(warningBoxBackground());
+                }
+            }
+            Stream.of(getComponents()).forEach(this::applyNoteForeground);
+        }
+
+        private void applyNoteForeground(Component component) {
+            if (component instanceof JLabel || component instanceof JTextComponent) {
+                component.setForeground(switch (type) {
+                    case INFO -> infoBoxForeground();
+                    case WARNING -> warningBoxForeground();
+                });
+            }
+            if (component instanceof Container container) {
+                Stream.of(container.getComponents()).forEach(this::applyNoteForeground);
+            }
+        }
+    }
+
+    private enum MessageBoxType {
+        INFO,
+        WARNING
     }
 
     protected void bindCheckBox(

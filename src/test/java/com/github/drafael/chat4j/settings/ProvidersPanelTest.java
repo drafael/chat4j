@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
+import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CodexAuthResolver;
@@ -9,6 +10,7 @@ import com.github.drafael.chat4j.provider.support.CredentialMutationService;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.sun.net.httpserver.HttpServer;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.lang.reflect.Field;
@@ -35,6 +37,8 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.UIDefaults;
+import javax.swing.UIManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -123,6 +127,70 @@ class ProvidersPanelTest {
             });
         } finally {
             runOnEdt(subject::removeNotify);
+            runOnEdt(() -> {
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Provider success status remains semantic after a live theme update")
+    void updateUI_whenThemeChanges_reappliesProviderSuccessColor() throws Exception {
+        char[] token = "saved-token".toCharArray();
+        try {
+            credentialMutationService.saveTokenOverride("OPENAI_API_KEY", token, CredentialMutationListener.NO_OP);
+        } finally {
+            fill(token, '\0');
+        }
+
+        ProvidersPanel subject = callOnEdt(() -> newPanel(
+                new SettingsRepository(tempDir.resolve("theme-colors.properties"))
+        ));
+        UIDefaults lookAndFeelDefaults = callOnEdt(UIManager::getLookAndFeelDefaults);
+        String successKey = "Component.success.foreground";
+        String labelKey = "Label.foreground";
+        String panelKey = "Panel.background";
+        UiDefaultState previousSuccess = callOnEdt(() -> defaultState(lookAndFeelDefaults, successKey));
+        UiDefaultState previousLabel = callOnEdt(() -> defaultState(lookAndFeelDefaults, labelKey));
+        UiDefaultState previousPanel = callOnEdt(() -> defaultState(lookAndFeelDefaults, panelKey));
+        Color normalForeground = new Color(29, 29, 29);
+        Color background = new Color(228, 230, 235);
+        try {
+            JLabel status = callOnEdt(() -> findLabel(subject, "\u2713 Saved token configured"));
+            assertThat(status).isNotNull();
+            runOnEdt(subject::addNotify);
+
+            runOnEdt(() -> {
+                lookAndFeelDefaults.put(successKey, new Color(20, 220, 146));
+                lookAndFeelDefaults.put(labelKey, normalForeground);
+                lookAndFeelDefaults.put(panelKey, background);
+                SwingUtilities.updateComponentTreeUI(subject);
+            });
+            runOnEdt(() -> {
+            });
+
+            Color refreshedForeground = callOnEdt(status::getForeground);
+            assertThat(refreshedForeground).isNotEqualTo(normalForeground);
+            assertThat(refreshedForeground.getGreen())
+                    .isGreaterThan(refreshedForeground.getRed())
+                    .isGreaterThan(refreshedForeground.getBlue());
+            assertThat(new HSLColor(refreshedForeground).getSaturation()).isGreaterThanOrEqualTo(55f);
+            assertThat(contrastRatio(refreshedForeground, background)).isGreaterThanOrEqualTo(4.5);
+
+            runOnEdt(subject::removeNotify);
+            runOnEdt(() -> SwingUtilities.updateComponentTreeUI(subject));
+            runOnEdt(() -> {
+            });
+            assertThat(callOnEdt(status::getForeground)).isEqualTo(normalForeground);
+
+            runOnEdt(subject::addNotify);
+            assertThat(callOnEdt(status::getForeground)).isEqualTo(refreshedForeground);
+        } finally {
+            runOnEdt(() -> {
+                restoreDefault(lookAndFeelDefaults, successKey, previousSuccess);
+                restoreDefault(lookAndFeelDefaults, labelKey, previousLabel);
+                restoreDefault(lookAndFeelDefaults, panelKey, previousPanel);
+                subject.removeNotify();
+            });
             runOnEdt(() -> {
             });
         }
@@ -919,6 +987,20 @@ class ProvidersPanelTest {
         return null;
     }
 
+    private static JLabel findLabel(Component component, String expectedText) {
+        if (component instanceof JLabel label && expectedText.equals(label.getText())) {
+            return label;
+        }
+        if (component instanceof Container container) {
+            return stream(container.getComponents())
+                    .map(child -> findLabel(child, expectedText))
+                    .filter(Objects::nonNull)
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
+    }
+
     private static boolean containsLabelText(Component component, String expectedText) {
         if (component instanceof JLabel label && expectedText.equals(label.getText())) {
             return true;
@@ -979,6 +1061,37 @@ class ProvidersPanelTest {
         return (AtomicLong) field.get(subject);
     }
 
+    private static UiDefaultState defaultState(UIDefaults defaults, String key) {
+        return new UiDefaultState(defaults.get(key), defaults.containsKey(key));
+    }
+
+    private static void restoreDefault(UIDefaults defaults, String key, UiDefaultState previous) {
+        if (previous.present()) {
+            defaults.put(key, previous.value());
+        } else {
+            defaults.remove(key);
+        }
+    }
+
+    private static double contrastRatio(Color first, Color second) {
+        double lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+        double darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+        return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    private static double relativeLuminance(Color color) {
+        return 0.2126 * linearColor(color.getRed())
+                + 0.7152 * linearColor(color.getGreen())
+                + 0.0722 * linearColor(color.getBlue());
+    }
+
+    private static double linearColor(int component) {
+        double normalized = component / 255.0;
+        return normalized <= 0.03928
+                ? normalized / 12.92
+                : Math.pow((normalized + 0.055) / 1.055, 2.4);
+    }
+
     private static void runOnEdt(ThrowingAction action) throws Exception {
         callOnEdt(() -> {
             action.run();
@@ -1010,6 +1123,9 @@ class ProvidersPanelTest {
             throw new AssertionError(error.get());
         }
         return result.get();
+    }
+
+    private record UiDefaultState(Object value, boolean present) {
     }
 
     @FunctionalInterface
