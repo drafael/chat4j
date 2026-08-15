@@ -15,10 +15,6 @@ import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogStore;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
-import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
-import com.github.drafael.chat4j.stt.provider.deepgram.DeepgramSpeechToTextProvider;
-import com.github.drafael.chat4j.stt.provider.elevenlabs.ElevenLabsSpeechToTextProvider;
-import com.github.drafael.chat4j.stt.provider.groq.GroqSpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskLocalModelRow;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementService;
 import com.github.drafael.chat4j.stt.provider.vosk.VoskModelManagementSnapshot;
@@ -29,7 +25,6 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementServ
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperNativeRuntime;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelManagementSnapshot;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
-import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.io.File;
 import java.nio.file.Files;
@@ -110,8 +105,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
     private JProgressBar localModelProgressBar;
     private JSpinner maxDurationSpinner;
     private JButton refreshButton;
-    private JPanel helperPanel;
-    private JTextArea helperLabel;
     private boolean updating;
     private boolean updatingLocalModels;
     private List<SpeechToTextCatalogItem> localModelItems = emptyList();
@@ -407,9 +400,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         refreshButton.addActionListener(e -> refreshCatalogs(true));
         buttons.add(refreshButton);
         row = addFullWidthRow(form, gbc, row, buttons);
-
-        helperPanel = createHelperInfoPanel();
-        row = addFullWidthRow(form, gbc, row, withPreferredWidth(helperPanel, FIELD_WIDTH));
 
         localModelsPanel = createLocalModelsPanel();
         row = addLocalModelsRow(form, gbc, row);
@@ -1821,25 +1811,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         refreshButton.setEnabled(snapshot.enabled() && ((isVosk(snapshot) || isWhisper(snapshot)) ? !localBusy : snapshot.available()));
         boolean localProvider = isVosk(snapshot) || isWhisper(snapshot);
         updateCredentialStatus(snapshot, localProvider);
-        helperPanel.setVisible(!localProvider);
-        if (localProvider) {
-            return;
-        }
-        if (!snapshot.enabled()) {
-            setHelperText("Speech to Text is off.");
-        } else if (!snapshot.available()) {
-            setHelperText(StringUtils.defaultIfBlank(snapshot.statusMessage(), snapshot.provider().unavailableMessage()));
-        } else if (GroqSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("Recorded audio is sent to Groq for transcription.");
-        } else if (ElevenLabsSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("Recorded audio is sent to ElevenLabs for transcription.");
-        } else if (DeepgramSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("Recorded audio is sent to Deepgram for transcription.");
-        } else if (AssemblyAiSpeechToTextProvider.ID.equals(snapshot.providerId())) {
-            setHelperText("Recorded audio is sent to AssemblyAI for transcription.");
-        } else {
-            setHelperText(snapshot.statusMessage());
-        }
     }
 
     private void updateCredentialStatus(SpeechToTextSettingsSnapshot snapshot, boolean localProvider) {
@@ -1852,41 +1823,6 @@ public class SpeechToTextPanel extends AbstractSettingsPanel implements AsyncPen
         credentialStatusLabel.setVisible(visible);
         tokenRowPanel.revalidate();
         tokenRowPanel.repaint();
-    }
-
-    private void setHelperText(String message) {
-        String text = StringUtils.defaultString(message);
-        helperLabel.setText(text);
-        int rows = estimatedHelperRows(text);
-        int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
-        helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
-        helperPanel.revalidate();
-        helperPanel.repaint();
-    }
-
-    private int estimatedHelperRows(String text) {
-        FontMetrics metrics = helperLabel.getFontMetrics(helperLabel.getFont());
-        int textWidth = metrics.stringWidth(StringUtils.defaultString(text));
-        return Math.max(1, (int) Math.ceil(textWidth / (double) Math.max(1, FIELD_WIDTH - 24)));
-    }
-
-    private JPanel createHelperInfoPanel() {
-        JPanel panel = createWarningBoxPanel(new BorderLayout());
-        helperLabel = createWrappingHelperTextArea();
-        panel.add(helperLabel, BorderLayout.CENTER);
-        return panel;
-    }
-
-    private JTextArea createWrappingHelperTextArea() {
-        JTextArea textArea = new JTextArea(" ");
-        textArea.setEditable(false);
-        textArea.setFocusable(false);
-        textArea.setOpaque(false);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
-        textArea.setBorder(null);
-        Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
-        return textArea;
     }
 
     private ProviderOption findProviderOption(String providerId) {

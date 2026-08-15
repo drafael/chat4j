@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
@@ -39,7 +38,8 @@ import com.github.drafael.chat4j.stt.provider.whisper.WhisperModelUsageTracker;
 import com.github.drafael.chat4j.stt.provider.whisper.WhisperSpeechToTextProvider;
 import io.github.freshsupasulley.whisperjni.WhisperFullParams;
 import java.awt.BorderLayout;
-import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
@@ -61,7 +61,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
+import javax.swing.text.JTextComponent;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
@@ -70,6 +70,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Arrays.stream;
 import static java.util.Collections.emptyList;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -918,12 +919,10 @@ class SpeechToTextPanelTest {
                 runOnEdt(() -> {
                     JTextField modelDirectoryField = (JTextField) fieldValue(subject, "modelDirectoryField");
                     JButton browseButton = (JButton) fieldValue(subject, "modelDirectoryBrowseButton");
-                    JPanel helperPanel = (JPanel) fieldValue(subject, "helperPanel");
                     JProgressBar progressBar = (JProgressBar) fieldValue(subject, "localModelProgressBar");
 
                     assertThat(modelDirectoryField.isEnabled()).isFalse();
                     assertThat(browseButton.isEnabled()).isFalse();
-                    assertThat(helperPanel.isVisible()).isFalse();
                     assertThat(progressBar.isVisible()).isTrue();
                     assertThat(progressBar.isIndeterminate()).isTrue();
                     assertThat(progressBar.isStringPainted()).isFalse();
@@ -1941,8 +1940,8 @@ class SpeechToTextPanelTest {
     }
 
     @Test
-    @DisplayName("Deepgram credential status appears below its token field and privacy warning separately")
-    void updateAvailability_whenDeepgramAvailable_separatesCredentialStatusFromPrivacyWarning() throws Exception {
+    @DisplayName("Deepgram credential status appears below its token field without privacy guidance")
+    void updateAvailability_whenDeepgramAvailable_showsCredentialStatusWithoutPrivacyGuidance() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("settings-deepgram-helper.properties"));
         repo.put(SpeechToTextSettings.PROVIDER_KEY, DeepgramSpeechToTextProvider.ID);
         new SpeechToTextCatalogStore(repo).saveModels(DeepgramSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("nova-3", "Deepgram Nova 3")));
@@ -1957,15 +1956,12 @@ class SpeechToTextPanelTest {
                 new SpeechToTextProviderRegistry(List.of(new CredentialDeepgramTestProvider()))
         ));
         try {
-            HelperAppearance result = helperAppearance(subject);
+            CredentialStatusAppearance result = credentialStatusAppearance(subject);
 
-            var backgroundHsl = new HSLColor(result.background());
-            assertThat(result.helperText()).isEqualTo("Recorded audio is sent to Deepgram for transcription.");
             assertThat(result.credentialStatus()).isEqualTo("Using entered/stored API token.");
             assertThat(result.credentialStatusVisible()).isTrue();
             assertThat(result.credentialStatusBelowTokenField()).isTrue();
-            assertThat(backgroundHsl.getHue()).isBetween(35f, 60f);
-            assertThat(backgroundHsl.getSaturation()).isGreaterThanOrEqualTo(18f);
+            assertThat(result.privacyGuidanceVisible()).isFalse();
         } finally {
             runOnEdt(subject::removeNotify);
         }
@@ -1989,34 +1985,6 @@ class SpeechToTextPanelTest {
             assertThat(provider.context.get().transcriptionUri()).hasToString("https://api.assemblyai.com/v2/transcript");
         } finally {
             runOnEdt(subject::removeNotify);
-        }
-    }
-
-    @Test
-    @DisplayName("AssemblyAI helper copy explains cloud upload and token storage options")
-    void updateAvailability_whenAssemblyAiAvailable_showsAssemblyAiPrivacyCopy() throws Exception {
-        var repo = new SettingsRepository(tempDir.resolve("settings-assemblyai-helper.properties"));
-        repo.put(SpeechToTextSettings.PROVIDER_KEY, AssemblyAiSpeechToTextProvider.ID);
-        new SpeechToTextCatalogStore(repo).saveModels(AssemblyAiSpeechToTextProvider.ID, new AssemblyAiTestProvider().bundledModels());
-        Path defaultModels = tempDir.resolve("assemblyai-helper-models");
-        try (
-                var voskModels = new VoskModelManagementService(repo, defaultModels, tempDir.resolve("assemblyai-helper-vosk-temp"));
-                var whisperModels = new WhisperModelManagementService(repo, defaultModels, tempDir.resolve("assemblyai-helper-whisper-temp"), fakeWhisperRuntime(), new WhisperModelUsageTracker())
-        ) {
-            var subject = callOnEdt(() -> newPanel(
-                    repo,
-                    defaultModels,
-                    new SpeechToTextProviderRegistry(List.of(new AssemblyAiTestProvider())),
-                    voskModels,
-                    whisperModels
-            ));
-            try {
-                HelperAppearance result = helperAppearance(subject);
-                assertThat(result.helperText()).isEqualTo("Recorded audio is sent to AssemblyAI for transcription.");
-                assertThat(result.credentialStatusVisible()).isFalse();
-            } finally {
-                runOnEdt(subject::removeNotify);
-            }
         }
     }
 
@@ -2330,24 +2298,28 @@ class SpeechToTextPanelTest {
         return callOnEdt(() -> subject.statusLabel().getText());
     }
 
-    private String helperLabelText(SpeechToTextPanel subject) throws Exception {
-        return callOnEdt(() -> ((JTextArea) fieldValue(subject, "helperLabel")).getText());
-    }
-
-    private HelperAppearance helperAppearance(SpeechToTextPanel subject) throws Exception {
+    private CredentialStatusAppearance credentialStatusAppearance(SpeechToTextPanel subject) throws Exception {
         return callOnEdt(() -> {
-            var helper = (JTextArea) fieldValue(subject, "helperLabel");
             var status = (JLabel) fieldValue(subject, "credentialStatusLabel");
             var tokenRow = (JPanel) fieldValue(subject, "tokenRowPanel");
-            var panel = (JPanel) fieldValue(subject, "helperPanel");
-            return new HelperAppearance(
-                    helper.getText(),
+            return new CredentialStatusAppearance(
                     status.getText(),
                     status.isVisible(),
                     BorderLayout.SOUTH.equals(((BorderLayout) tokenRow.getLayout()).getConstraints(status)),
-                    panel.getBackground()
+                    containsText(subject, "Recorded audio is sent to")
             );
         });
+    }
+
+    private boolean containsText(Component component, String expectedText) {
+        if (component instanceof JLabel label && label.getText() != null && label.getText().contains(expectedText)) {
+            return true;
+        }
+        if (component instanceof JTextComponent textComponent && textComponent.getText().contains(expectedText)) {
+            return true;
+        }
+        return component instanceof Container container
+                && stream(container.getComponents()).anyMatch(child -> containsText(child, expectedText));
     }
 
     private void waitUntil(Condition condition) throws Exception {
@@ -3195,12 +3167,11 @@ class SpeechToTextPanelTest {
         }
     }
 
-    private record HelperAppearance(
-            String helperText,
+    private record CredentialStatusAppearance(
             String credentialStatus,
             boolean credentialStatusVisible,
             boolean credentialStatusBelowTokenField,
-            Color background
+            boolean privacyGuidanceVisible
     ) {
     }
 

@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.formdev.flatlaf.util.HSLColor;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
@@ -19,7 +18,8 @@ import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvi
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.awt.BorderLayout;
-import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -39,7 +39,7 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JPanel;
 import javax.swing.JLabel;
-import javax.swing.JTextArea;
+import javax.swing.text.JTextComponent;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +47,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static java.util.Arrays.stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -72,8 +73,8 @@ class TextToSpeechPanelTest {
     }
 
     @Test
-    @DisplayName("Available cloud provider shows credential status below its token field and privacy warning separately")
-    void updateControlAvailability_whenCloudProviderIsAvailable_separatesCredentialStatusFromPrivacyWarning() throws Exception {
+    @DisplayName("Available cloud provider shows credential status without privacy guidance")
+    void updateControlAvailability_whenCloudProviderIsAvailable_showsCredentialStatusWithoutPrivacyGuidance() throws Exception {
         var repo = new SettingsRepository(tempDir.resolve("tts-helper-styling.properties"));
         repo.put(TextToSpeechSettings.PROVIDER_KEY, AvailableCloudProvider.ID);
         credentialMutationService.saveTokenOverride(
@@ -83,27 +84,21 @@ class TextToSpeechPanelTest {
         );
         var subject = createPanel(repo, new TextToSpeechProviderRegistry(List.of(new AvailableCloudProvider())));
         try {
-            HelperAppearance result = callOnEdt(() -> {
-                var helper = (JTextArea) fieldValue(subject, "helperLabel");
+            CredentialStatusAppearance result = callOnEdt(() -> {
                 var status = (JLabel) fieldValue(subject, "credentialStatusLabel");
                 var tokenRow = (JPanel) fieldValue(subject, "tokenRowPanel");
-                var panel = (JPanel) fieldValue(subject, "helperPanel");
-                return new HelperAppearance(
-                        helper.getText(),
+                return new CredentialStatusAppearance(
                         status.getText(),
                         status.isVisible(),
                         BorderLayout.SOUTH.equals(((BorderLayout) tokenRow.getLayout()).getConstraints(status)),
-                        panel.getBackground()
+                        containsText(subject, "Text is sent to")
                 );
             });
 
-            var backgroundHsl = new HSLColor(result.background());
-            assertThat(result.helperText()).isEqualTo("Text is sent to Cloud for speech synthesis.");
             assertThat(result.credentialStatus()).isEqualTo("Using entered/stored API token.");
             assertThat(result.credentialStatusVisible()).isTrue();
             assertThat(result.credentialStatusBelowTokenField()).isTrue();
-            assertThat(backgroundHsl.getHue()).isBetween(35f, 60f);
-            assertThat(backgroundHsl.getSaturation()).isGreaterThanOrEqualTo(18f);
+            assertThat(result.privacyGuidanceVisible()).isFalse();
         } finally {
             removePanel(subject);
         }
@@ -919,12 +914,22 @@ class TextToSpeechPanelTest {
         assertThat(condition.getAsBoolean()).isTrue();
     }
 
-    private record HelperAppearance(
-            String helperText,
+    private boolean containsText(Component component, String expectedText) {
+        if (component instanceof JLabel label && label.getText() != null && label.getText().contains(expectedText)) {
+            return true;
+        }
+        if (component instanceof JTextComponent textComponent && textComponent.getText().contains(expectedText)) {
+            return true;
+        }
+        return component instanceof Container container
+                && stream(container.getComponents()).anyMatch(child -> containsText(child, expectedText));
+    }
+
+    private record CredentialStatusAppearance(
             String credentialStatus,
             boolean credentialStatusVisible,
             boolean credentialStatusBelowTokenField,
-            Color background
+            boolean privacyGuidanceVisible
     ) {
     }
 

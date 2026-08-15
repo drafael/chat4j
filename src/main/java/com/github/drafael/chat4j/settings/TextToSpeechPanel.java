@@ -13,7 +13,6 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.TextToSpeechProviderRegistry;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.TextToSpeechSettings;
-import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.awt.*;
 import java.net.URL;
@@ -54,8 +53,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
     private JComboBox<TextToSpeechCatalogItem> voiceComboBox;
     private JButton previewButton;
     private JButton refreshButton;
-    private JPanel helperPanel;
-    private JTextArea helperLabel;
     private SettingsFormRow tokenFormRow;
     private JLabel credentialStatusLabel;
     private JPanel tokenRowPanel;
@@ -163,9 +160,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         buttons.add(previewButton);
         buttons.add(refreshButton);
         row = addFullWidthRow(form, gbc, row, buttons);
-
-        helperPanel = createHelperInfoPanel();
-        row = addFullWidthRow(form, gbc, row, withPreferredWidth(helperPanel, FIELD_WIDTH));
         addVerticalSpacer(form, gbc, row);
 
         reloadProviderOptions();
@@ -724,15 +718,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         previewButton.setEnabled(enabled);
         refreshButton.setEnabled(enabled);
         updateCredentialStatus(selection);
-        if (!selection.enabled()) {
-            setHelperText("Text to Speech is off.");
-        } else if (!selection.available()) {
-            setHelperText(selection.provider().unavailableMessage());
-        } else if (StringUtils.isNotBlank(selection.provider().requiredEnvVar())) {
-            setHelperText("Text is sent to %s for speech synthesis.".formatted(selection.provider().displayName()));
-        } else {
-            setHelperText(selection.provider().availableMessage());
-        }
     }
 
     private void updateCredentialStatus(TextToSpeechSettings.Selection selection) {
@@ -745,41 +730,6 @@ public class TextToSpeechPanel extends AbstractSettingsPanel implements AsyncPen
         credentialStatusLabel.setVisible(visible);
         tokenRowPanel.revalidate();
         tokenRowPanel.repaint();
-    }
-
-    private void setHelperText(String message) {
-        String text = StringUtils.defaultString(message);
-        helperLabel.setText(text);
-        int rows = estimatedHelperRows(text);
-        int lineHeight = helperLabel.getFontMetrics(helperLabel.getFont()).getHeight();
-        helperPanel.setPreferredSize(new Dimension(FIELD_WIDTH, Math.max(44, rows * lineHeight + 22)));
-        helperPanel.revalidate();
-        helperPanel.repaint();
-    }
-
-    private int estimatedHelperRows(String text) {
-        FontMetrics metrics = helperLabel.getFontMetrics(helperLabel.getFont());
-        int textWidth = metrics.stringWidth(StringUtils.defaultString(text));
-        return Math.max(1, (int) Math.ceil(textWidth / (double) Math.max(1, FIELD_WIDTH - 24)));
-    }
-
-    private JPanel createHelperInfoPanel() {
-        JPanel panel = createWarningBoxPanel(new BorderLayout());
-        helperLabel = createWrappingHelperTextArea();
-        panel.add(helperLabel, BorderLayout.CENTER);
-        return panel;
-    }
-
-    private JTextArea createWrappingHelperTextArea() {
-        JTextArea textArea = new JTextArea(" ");
-        textArea.setEditable(false);
-        textArea.setFocusable(false);
-        textArea.setOpaque(false);
-        textArea.setLineWrap(true);
-        textArea.setWrapStyleWord(true);
-        textArea.setBorder(null);
-        Fonts.apply(textArea, Font.PLAIN, Fonts.SIZE_SMALL);
-        return textArea;
     }
 
     private ProviderOption findProviderOption(String providerId) {
