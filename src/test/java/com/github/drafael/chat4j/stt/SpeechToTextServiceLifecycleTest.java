@@ -98,35 +98,42 @@ class SpeechToTextServiceLifecycleTest {
         var edtBlocked = new CountDownLatch(1);
         var releaseEdt = new CountDownLatch(1);
 
-        subject.startRecording(callbacks);
-        assertThat(capture.firstStarted.await(2, TimeUnit.SECONDS)).isTrue();
-        SwingUtilities.invokeAndWait(() -> {
-        });
-        SwingUtilities.invokeLater(() -> {
-            edtBlocked.countDown();
-            await(releaseEdt);
-        });
-        assertThat(edtBlocked.await(2, TimeUnit.SECONDS)).isTrue();
         try {
-            capture.first.completion.complete(new CapturedAudio(
-                    Files.createFile(tempDir.resolve("terminal-audio.wav")),
-                    1_000,
-                    1_024
-            ));
-            assertThat(provider.transcribed.await(2, TimeUnit.SECONDS)).isTrue();
-            awaitCondition(() -> !subject.active());
-
             subject.startRecording(callbacks);
-            assertThat(capture.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(capture.firstStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            SwingUtilities.invokeAndWait(() -> {
+            });
+            SwingUtilities.invokeLater(() -> {
+                edtBlocked.countDown();
+                await(releaseEdt);
+            });
+            assertThat(edtBlocked.await(2, TimeUnit.SECONDS)).isTrue();
+            try {
+                capture.first.completion.complete(new CapturedAudio(
+                        Files.createFile(tempDir.resolve("terminal-audio.wav")),
+                        1_000,
+                        1_024
+                ));
+                assertThat(provider.transcribed.await(2, TimeUnit.SECONDS)).isTrue();
+                awaitCondition(() -> !subject.active());
+
+                subject.startRecording(callbacks);
+                assertThat(capture.secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                awaitCondition(subject::recording);
+            } finally {
+                releaseEdt.countDown();
+            }
+            SwingUtilities.invokeAndWait(() -> {
+            });
+
+            assertThat(callbacks.transcripts).isEmpty();
+            assertThat(subject.recording()).isTrue();
         } finally {
             releaseEdt.countDown();
+            subject.disposeAsync().get(2, TimeUnit.SECONDS);
+            SwingUtilities.invokeAndWait(() -> {
+            });
         }
-        SwingUtilities.invokeAndWait(() -> {
-        });
-
-        assertThat(callbacks.transcripts).isEmpty();
-        assertThat(subject.recording()).isTrue();
-        subject.dispose();
     }
 
     @Test
