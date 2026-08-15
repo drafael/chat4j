@@ -126,6 +126,7 @@ public final class ModalDialogSupport {
 
         scrollPane.setPreferredSize(new Dimension(preferredWidth, preferredHeight));
         scrollPane.setBorder(null);
+        scrollPane.setViewportBorder(null);
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);
         scrollPane.setFocusable(false);
