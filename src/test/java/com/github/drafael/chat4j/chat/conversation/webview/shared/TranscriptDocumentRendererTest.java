@@ -34,6 +34,33 @@ class TranscriptDocumentRendererTest {
     Path tempDir;
 
     @Test
+    @DisplayName("Typing entries render an accessible non-interactive status after activity")
+    void renderEntriesHtml_whenTypingFollowsActivity_rendersStatusAsLastRow() {
+        List<ConversationEntry> entries = List.of(
+                ConversationEntry.activity("Thinking", "Reviewing the request", false),
+                ConversationEntry.typing(42L)
+        );
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(entries, RenderMode.PREVIEW, false, false);
+
+        String html = new TranscriptEntryRenderer().renderEntriesHtml(snapshot);
+        var document = Jsoup.parseBodyFragment(html);
+        var rows = document.select(".row");
+        var typingRow = document.selectFirst("div.row.typing");
+        var typingPill = typingRow.selectFirst(".typing-pill");
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.getFirst().hasClass("activity")).isTrue();
+        assertThat(rows.getLast()).isSameAs(typingRow);
+        assertThat(typingRow.attr("data-stream-session-id")).isEqualTo("42");
+        assertThat(typingPill.attr("role")).isEqualTo("status");
+        assertThat(typingPill.attr("aria-live")).isEqualTo("polite");
+        assertThat(typingPill.attr("aria-label")).isEqualTo("Assistant is responding");
+        assertThat(typingPill.select(".typing-dot[aria-hidden=true]")).hasSize(3);
+        assertThat(typingRow.hasAttr("data-message-index")).isFalse();
+        assertThat(typingRow.select(".message-actions, button, .message-shell")).isEmpty();
+    }
+
+    @Test
     @DisplayName("Activity entries render an accessible inline header and separate expanded content")
     void renderEntriesHtml_whenActivitiesRendered_usesReferenceHeaderStructureAndNativeOpenState() {
         List<ConversationEntry> entries = List.of(

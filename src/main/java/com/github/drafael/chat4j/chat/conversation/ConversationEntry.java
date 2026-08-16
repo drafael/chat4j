@@ -100,4 +100,18 @@ public record ConversationEntry(
                 MessageMeta.empty()
         );
     }
+
+    public static ConversationEntry typing(long streamSessionId) {
+        return new ConversationEntry(
+                ConversationEntryKind.TYPING,
+                Role.ASSISTANT,
+                Long.toString(streamSessionId),
+                "",
+                false,
+                -1,
+                emptyList(),
+                emptyList(),
+                MessageMeta.empty()
+        );
+    }
 }

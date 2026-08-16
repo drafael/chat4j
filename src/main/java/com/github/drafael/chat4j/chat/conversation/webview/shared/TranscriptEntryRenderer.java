@@ -70,6 +70,10 @@ public final class TranscriptEntryRenderer {
     }
 
     private static String renderFallbackEntry(ConversationEntry entry) {
+        if (entry.kind() == ConversationEntryKind.TYPING) {
+            return renderTypingEntry(entry);
+        }
+
         String text = escapeHtml(entry.text()).replace("\n", "<br>");
         if (entry.kind() == ConversationEntryKind.ACTIVITY) {
             return renderActivityEntry(entry, text);
@@ -88,6 +92,9 @@ public final class TranscriptEntryRenderer {
     }
 
     private String renderEntry(ConversationEntry entry, TranscriptRenderSnapshot snapshot) {
+        if (entry.kind() == ConversationEntryKind.TYPING) {
+            return renderTypingEntry(entry);
+        }
         if (entry.kind() == ConversationEntryKind.ACTIVITY) {
             String renderedActivity = renderEntryContentHtml(Role.ASSISTANT, entry.text(), snapshot);
             Document activityDocument = Jsoup.parse(renderedActivity);
@@ -131,6 +138,18 @@ public final class TranscriptEntryRenderer {
                   </div>
                 </section>
                 """.formatted(roleClass, entry.messageIndex(), attachments, actions, roleClass, body);
+    }
+
+    private static String renderTypingEntry(ConversationEntry entry) {
+        return """
+                <div class="row typing" data-stream-session-id="%s">
+                  <div class="typing-pill" role="status" aria-live="polite" aria-label="Assistant is responding">
+                    <span class="typing-dot" aria-hidden="true"></span>
+                    <span class="typing-dot" aria-hidden="true"></span>
+                    <span class="typing-dot" aria-hidden="true"></span>
+                  </div>
+                </div>
+                """.formatted(escapeHtmlAttribute(entry.title()));
     }
 
     private static String renderActivityEntry(ConversationEntry entry, String activityBody) {

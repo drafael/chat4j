@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -281,11 +282,16 @@ class TranscriptBrowserAssetsTest {
     }
 
     private static String cssRule(String css, String selector) {
-        return css.lines()
-                .map(String::strip)
-                .filter(line -> line.startsWith("%s {".formatted(selector)))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("Missing CSS rule: %s".formatted(selector)));
+        var matcher = Pattern.compile("(?m)^\\s*%s\\s*\\{".formatted(Pattern.quote(selector))).matcher(css);
+        if (!matcher.find()) {
+            throw new AssertionError("Missing CSS rule: %s".formatted(selector));
+        }
+        int startIndex = matcher.start();
+        int endIndex = css.indexOf('}', startIndex);
+        if (endIndex < 0) {
+            throw new AssertionError("Unterminated CSS rule: %s".formatted(selector));
+        }
+        return css.substring(startIndex, endIndex + 1);
     }
 
     @Test
@@ -503,8 +509,14 @@ class TranscriptBrowserAssetsTest {
 
         assertThat(script)
                 .contains("document.querySelector('.transcript')")
-                .contains("transcript.innerHTML = \"<p>hello</p>\"")
-                .contains("window.chat4jRenderEnhancements")
+                .contains("function directTypingRow(root)")
+                .contains("template.innerHTML = \"<p>hello</p>\"")
+                .contains("currentTyping && nextTyping")
+                .contains("data-stream-session-id")
+                .contains("transcript.insertBefore(template.content, currentTyping)")
+                .contains("transcript.innerHTML = ''")
+                .contains("transcript.appendChild(template.content)")
+                .contains("} else if (window.chat4jRenderEnhancements) {")
                 .contains("jump.classList.toggle('streaming', true)")
                 .contains("if (false)");
         assertThat(jumpScript)
@@ -522,6 +534,9 @@ class TranscriptBrowserAssetsTest {
         assertThat(scrollScript)
                 .contains("window.scrollTo")
                 .contains("document.documentElement.scrollHeight");
+        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
+            context.parse("js", script);
+        }
     }
 
     @Test
@@ -566,6 +581,54 @@ class TranscriptBrowserAssetsTest {
         assertThat(document)
                 .contains(".activity-title {", ".activity-content {")
                 .contains("<span class=\"activity-title\">Thinking</span>");
+    }
+
+    @Test
+    @DisplayName("Typing styles use fixed opacity-only dots with a print fallback")
+    void transcriptTypingStyles_whenLoaded_matchReferenceAnimationAndPrintFallback() {
+        String bubbleCss = TranscriptResources.requiredResourceText("/web/chat/transcript-message-bubbles.css");
+        String actionsCss = TranscriptResources.requiredResourceText("/web/chat/transcript-actions.css");
+
+        assertThat(cssRule(bubbleCss, ".typing-pill"))
+                .contains(
+                        "width: 62px",
+                        "height: 30px",
+                        "border-radius: 8px",
+                        "background: var(--chat4j-button-bg)",
+                        "color: var(--chat4j-icon-color)"
+                )
+                .doesNotContain("cursor:", "box-shadow:");
+        assertThat(cssRule(bubbleCss, ".typing-dot"))
+                .contains("width: 6px", "height: 6px", "animation: chat4j-typing-dot")
+                .doesNotContain("transform:");
+        assertThat(cssRule(bubbleCss, ".typing-dot:nth-child(2)"))
+                .contains("animation-delay: 0.16s");
+        assertThat(cssRule(bubbleCss, ".typing-dot:nth-child(3)"))
+                .contains("animation-delay: 0.32s");
+        assertThat(bubbleCss)
+                .contains("@keyframes chat4j-typing-dot")
+                .doesNotContain("prefers-reduced-motion");
+        assertThat(actionsCss).containsPattern(
+                "(?s)@media print\\s*\\{.*?\\.row\\.activity,\\s*\\.row\\.typing,.*?\\.chat4j-scrollbar\\s*\\{\\s*display: none !important;\\s*}"
+        );
+
+        TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(
+                List.of(ConversationEntry.typing(42L)),
+                RenderMode.PREVIEW,
+                false,
+                false
+        );
+        String document = new TranscriptDocumentRenderer().renderDocument(new TranscriptDocumentRequest(
+                false,
+                snapshot,
+                TranscriptAssetMode.INLINE_ALL,
+                "",
+                ""
+        ));
+
+        assertThat(document)
+                .contains(".typing-pill {", "@keyframes chat4j-typing-dot")
+                .contains("<div class=\"row typing\" data-stream-session-id=\"42\">");
     }
 
     @Test

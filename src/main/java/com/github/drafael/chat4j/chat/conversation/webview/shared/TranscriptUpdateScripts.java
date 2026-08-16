@@ -63,13 +63,39 @@ public final class TranscriptUpdateScripts {
                 (function() {
                   var transcript = document.querySelector('.transcript');
                   if (transcript) {
-                    transcript.innerHTML = %s;
-                  }
-                  if (window.chat4jRenderEnhancements) {
-                    window.chat4jRenderEnhancements(transcript);
+                    function directTypingRow(root) {
+                      for (var child = root.firstElementChild; child; child = child.nextElementSibling) {
+                        if (child.classList.contains('row') && child.classList.contains('typing')) {
+                          return child;
+                        }
+                      }
+                      return null;
+                    }
+                    var currentTyping = directTypingRow(transcript);
+                    var template = document.createElement('template');
+                    template.innerHTML = %s;
+                    var nextTyping = directTypingRow(template.content);
+                    var sameTypingSession = currentTyping && nextTyping
+                        && currentTyping.getAttribute('data-stream-session-id')
+                            === nextTyping.getAttribute('data-stream-session-id');
+                    if (sameTypingSession) {
+                      nextTyping.remove();
+                      while (transcript.firstChild && transcript.firstChild !== currentTyping) {
+                        transcript.removeChild(transcript.firstChild);
+                      }
+                      while (currentTyping.nextSibling) {
+                        transcript.removeChild(currentTyping.nextSibling);
+                      }
+                      transcript.insertBefore(template.content, currentTyping);
+                    } else {
+                      transcript.innerHTML = '';
+                      transcript.appendChild(template.content);
+                    }
                   }
                   if (window.chat4jInstallTranscriptActions) {
                     window.chat4jInstallTranscriptActions();
+                  } else if (window.chat4jRenderEnhancements) {
+                    window.chat4jRenderEnhancements(transcript);
                   }
                   if (window.chat4jUpdateFadeOverlays) {
                     window.chat4jUpdateFadeOverlays();

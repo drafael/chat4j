@@ -2,6 +2,7 @@ package com.github.drafael.chat4j.chat;
 
 import com.github.drafael.chat4j.chat.conversation.ConversationAttachment;
 import com.github.drafael.chat4j.chat.conversation.ConversationEntry;
+import com.github.drafael.chat4j.chat.conversation.ConversationEntryKind;
 import com.github.drafael.chat4j.chat.composer.AttachmentStager;
 import com.github.drafael.chat4j.chat.composer.ComposerAttachment;
 import com.github.drafael.chat4j.chat.composer.FileAttachmentChip;
@@ -11,6 +12,7 @@ import com.github.drafael.chat4j.chat.composer.InputBar;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import com.github.drafael.chat4j.chat.ui.ActivityBubble;
 import com.github.drafael.chat4j.chat.agent.AgentOrchestrator;
+import com.github.drafael.chat4j.chat.agent.AgentToolActivity;
 import com.github.drafael.chat4j.chat.message.ChatMessageViewFactory;
 import com.github.drafael.chat4j.chat.message.MessageBubble;
 import com.github.drafael.chat4j.chat.model.ModelSelectorPopup;
@@ -27,10 +29,12 @@ import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderService;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
+import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
 import com.github.drafael.chat4j.provider.api.content.AgentToolActivityMeta;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
 import com.github.drafael.chat4j.provider.api.content.CitationKind;
 import com.github.drafael.chat4j.provider.api.content.CitationRef;
+import com.github.drafael.chat4j.provider.api.content.ContentPart;
 import com.github.drafael.chat4j.provider.api.content.FilePart;
 import com.github.drafael.chat4j.provider.api.content.GeneratedImagePart;
 import com.github.drafael.chat4j.provider.api.content.ImagePart;
@@ -71,9 +75,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.event.PopupMenuEvent;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -114,6 +120,12 @@ import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -3425,6 +3437,466 @@ class ChatPanelTest {
     }
 
     @Test
+    @DisplayName("Browser typing remains through thinking and whitespace until visible answer content")
+    void onSend_whenBrowserStreamAwaitsVisibleAnswer_updatesTransientTypingLifecycle() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        var streamStarted = new CountDownLatch(1);
+        var releaseThinking = new CountDownLatch(1);
+        var thinkingSent = new CountDownLatch(1);
+        var releaseWhitespace = new CountDownLatch(1);
+        var whitespaceSent = new CountDownLatch(1);
+        var releaseAnswer = new CountDownLatch(1);
+        var streamFinished = new CountDownLatch(1);
+        String invisiblePrefix = " \n\u200B\u00A0";
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseThinking.await();
+                    onToken.accept("<think>Reviewing the request</think>");
+                    thinkingSent.countDown();
+                    releaseWhitespace.await();
+                    onToken.accept(invisiblePrefix);
+                    whitespaceSent.countDown();
+                    releaseAnswer.await();
+                    onToken.accept("Visible answer");
+                    onComplete.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    streamFinished.countDown();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("Question"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(ConversationEntryKind.MESSAGE, ConversationEntryKind.TYPING);
+            assertThat(transcript.get().getLast().messageIndex()).isEqualTo(-1);
+
+            releaseThinking.countDown();
+            assertThat(thinkingSent.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(
+                            ConversationEntryKind.MESSAGE,
+                            ConversationEntryKind.ACTIVITY,
+                            ConversationEntryKind.TYPING
+                    );
+
+            releaseWhitespace.countDown();
+            assertThat(whitespaceSent.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(
+                            ConversationEntryKind.MESSAGE,
+                            ConversationEntryKind.ACTIVITY,
+                            ConversationEntryKind.TYPING
+                    );
+
+            releaseAnswer.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactlyInAnyOrder(
+                            ConversationEntryKind.MESSAGE,
+                            ConversationEntryKind.MESSAGE,
+                            ConversationEntryKind.ACTIVITY
+                    )
+                    .doesNotContain(ConversationEntryKind.TYPING);
+            assertThat(transcript.get()).filteredOn(entry -> entry.role() == Role.ASSISTANT)
+                    .filteredOn(entry -> entry.kind() == ConversationEntryKind.MESSAGE)
+                    .singleElement()
+                    .extracting(ConversationEntry::text)
+                    .isEqualTo("%sVisible answer".formatted(invisiblePrefix));
+        } finally {
+            releaseThinking.countDown();
+            releaseWhitespace.countDown();
+            releaseAnswer.countDown();
+            assertThat(streamFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Browser typing clears when a generated image becomes visible in preview mode")
+    void setRenderMode_whenBrowserGeneratedImageBecomesVisible_replacesTypingEntry() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        runOnEdt(() -> subject.setRenderMode(RenderMode.MARKDOWN, true));
+        var streamStarted = new CountDownLatch(1);
+        var releaseFilePart = new CountDownLatch(1);
+        var filePartSent = new CountDownLatch(1);
+        var releaseGeneratedImage = new CountDownLatch(1);
+        var generatedImageSent = new CountDownLatch(1);
+        var releaseComplete = new CountDownLatch(1);
+        var streamFinished = new CountDownLatch(1);
+        Path output = tempDir.resolve("generated.png");
+        assertThat(ImageIO.write(
+                new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB),
+                "png",
+                output.toFile()
+        )).isTrue();
+        var attachment = new AttachmentRef(
+                UUID.randomUUID(),
+                output.toString(),
+                "generated.png",
+                "image/png",
+                Files.size(output),
+                "sha"
+        );
+        var filePart = new FilePart(attachment);
+        var generatedImagePart = new GeneratedImagePart(attachment, 512, 512, "Generated image");
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                throw new AssertionError("Legacy stream overload should not be used");
+            }
+
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    WebSearchRequestOptions webSearchOptions,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Consumer<ContentPart> onPart,
+                    Consumer<CitationRef> onCitation,
+                    Consumer<String> onWebSearchQuery,
+                    Consumer<WebSearchSource> onWebSearchSource,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled,
+                    Consumer<AutoCloseable> registerActiveStream,
+                    Runnable clearActiveStream
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseFilePart.await();
+                    onPart.accept(filePart);
+                    filePartSent.countDown();
+                    releaseGeneratedImage.await();
+                    onPart.accept(generatedImagePart);
+                    generatedImageSent.countDown();
+                    releaseComplete.await();
+                    onComplete.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    streamFinished.countDown();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("Create a file"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            releaseFilePart.countDown();
+            assertThat(filePartSent.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            releaseGeneratedImage.countDown();
+            assertThat(generatedImageSent.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            runOnEdt(() -> subject.setRenderMode(RenderMode.PREVIEW, true));
+            flushEdt();
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+
+            releaseComplete.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+            assertThat(transcript.get()).filteredOn(entry -> entry.role() == Role.ASSISTANT)
+                    .filteredOn(entry -> entry.kind() == ConversationEntryKind.MESSAGE)
+                    .singleElement()
+                    .extracting(ConversationEntry::parts)
+                    .asList()
+                    .containsExactly(filePart, generatedImagePart);
+        } finally {
+            releaseFilePart.countDown();
+            releaseGeneratedImage.countDown();
+            releaseComplete.countDown();
+            assertThat(streamFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Browser typing follows its streaming conversation when the visible conversation changes")
+    void setActiveConversationId_whenBrowserStreamHasNoAnswer_movesTypingWithConversation() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        var originalConversationId = UUID.randomUUID();
+        var otherConversationId = UUID.randomUUID();
+        var streamStarted = new CountDownLatch(1);
+        var releaseAnswer = new CountDownLatch(1);
+        var streamFinished = new CountDownLatch(1);
+        runOnEdt(() -> {
+            subject.setActiveConversationId(originalConversationId);
+            subject.setConversationIdSupplier(() -> originalConversationId);
+        });
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseAnswer.await();
+                    onToken.accept("Answer");
+                    onComplete.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    streamFinished.countDown();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("Question"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            runOnEdt(() -> {
+                subject.setActiveConversationId(otherConversationId);
+                subject.loadHistory(List.of(Message.user("Other conversation")));
+            });
+            flushEdt();
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(ConversationEntryKind.MESSAGE)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+
+            runOnEdt(() -> {
+                subject.setActiveConversationId(originalConversationId);
+                subject.loadHistory(List.of(Message.user("Question")));
+            });
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            releaseAnswer.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+            flushEdt();
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+        } finally {
+            releaseAnswer.countDown();
+            assertThat(streamFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Agent tool activity does not expose an orphaned provisional assistant row")
+    @SuppressWarnings("unchecked")
+    void handleAgentToolActivity_whenRegenerationBubbleBecomesOrphaned_keepsOnlyActivityAndTyping() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        UUID conversationId = UUID.randomUUID();
+        var session = new StreamingSession(42L, conversationId, null);
+        Method prepareRegeneration = ChatPanel.class.getDeclaredMethod("prepareRegenerationBubbles");
+        prepareRegeneration.setAccessible(true);
+        Method appendVisibleToken = ChatPanel.class.getDeclaredMethod(
+                "appendAssistantVisibleToken",
+                StreamingSession.class,
+                String.class
+        );
+        appendVisibleToken.setAccessible(true);
+        Method handleActivity = ChatPanel.class.getDeclaredMethod(
+                "handleAgentToolActivity",
+                StreamingSession.class,
+                AgentToolActivity.class
+        );
+        handleActivity.setAccessible(true);
+
+        try {
+            runOnEdt(() -> {
+                subject.setActiveConversationId(conversationId);
+                ((Map<Long, StreamingSession>) readField(subject, "activeSessions")).put(session.sessionId, session);
+                setField(subject, "activeStreamSessionId", session.sessionId);
+                setField(subject, "streaming", true);
+                prepareRegeneration.invoke(subject);
+            });
+            appendVisibleToken.invoke(subject, session, " \n");
+            flushEdt();
+            handleActivity.invoke(subject, session, new AgentToolActivity(
+                    "invocation-1",
+                    "read_file",
+                    AgentToolActivity.Status.STARTED,
+                    "README.md",
+                    ""
+            ));
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(ConversationEntryKind.ACTIVITY, ConversationEntryKind.TYPING);
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            runOnEdt(subject::cancelStreaming);
+            flushEdt();
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(ConversationEntryKind.ACTIVITY);
+        } finally {
+            if (session.isLive()) {
+                runOnEdt(subject::cancelStreaming);
+                flushEdt();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Browser typing clears when a stream completes without visible output")
+    void onSend_whenBrowserStreamCompletesWithoutOutput_removesTypingEntry() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        var streamStarted = new CountDownLatch(1);
+        var releaseCompletion = new CountDownLatch(1);
+        var streamFinished = new CountDownLatch(1);
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseCompletion.await();
+                    onComplete.run();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    streamFinished.countDown();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("Question"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            releaseCompletion.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> !(boolean) readField(subject, "streaming")));
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .containsExactly(ConversationEntryKind.MESSAGE)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+            assertThat(callOnEdt(subject::getHistory)).extracting(Message::content)
+                    .containsExactly("Question");
+        } finally {
+            releaseCompletion.countDown();
+            assertThat(streamFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Browser typing clears when a stream is cancelled before answer content")
+    void cancelStreamingAndMarkCancelled_whenBrowserAwaitsAnswer_removesTypingEntry() throws Exception {
+        var transcript = new AtomicReference<List<ConversationEntry>>();
+        installSystemWebViewCapture(transcript);
+        var streamStarted = new CountDownLatch(1);
+        var releaseStream = new CountDownLatch(1);
+        var streamFinished = new CountDownLatch(1);
+        setCurrentProvider(subject, new ProviderService() {
+            @Override
+            public void streamCompletion(
+                    List<Message> history,
+                    ReasoningLevel reasoningLevel,
+                    Consumer<String> onToken,
+                    Consumer<String> onThinkingToken,
+                    Runnable onComplete,
+                    Consumer<Exception> onError,
+                    BooleanSupplier isCancelled
+            ) {
+                streamStarted.countDown();
+                try {
+                    releaseStream.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    streamFinished.countDown();
+                }
+            }
+        });
+        JTextArea textArea = callOnEdt(() -> readInputTextArea(subject.getInputBar()));
+        runOnEdt(() -> textArea.setText("Question"));
+
+        try {
+            invokeOnSend(subject);
+            assertThat(streamStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            flushEdt();
+            assertSingleTypingEntryIsLast(transcript.get());
+
+            runOnEdt(subject::cancelStreamingAndMarkCancelled);
+            flushEdt();
+
+            assertThat(transcript.get()).extracting(ConversationEntry::kind)
+                    .doesNotContain(ConversationEntryKind.TYPING);
+            assertThat(transcript.get()).filteredOn(entry -> entry.role() == Role.ASSISTANT)
+                    .filteredOn(entry -> entry.kind() == ConversationEntryKind.MESSAGE)
+                    .singleElement()
+                    .extracting(ConversationEntry::text)
+                    .isEqualTo("\n\n[Cancelled]");
+        } finally {
+            releaseStream.countDown();
+            assertThat(streamFinished.await(2, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("Cancelling an active stream invalidates the session and clears streaming state")
     void cancelStreaming_whenStreamIsActive_invalidatesSessionAndClearsStreamingState() throws Exception {
         runOnEdt(() -> {
@@ -6257,7 +6729,12 @@ class ChatPanelTest {
     @DisplayName("Hidden activity bubbles are omitted from browser transcript entries")
     void toConversationEntry_whenActivityBubbleIsHidden_returnsNoEntry() throws Exception {
         ActivityBubble activityBubble = callOnEdt(() -> new ActivityBubble("Thinking", true));
-        Method method = ChatPanel.class.getDeclaredMethod("toConversationEntry", Component.class, int[].class);
+        Method method = ChatPanel.class.getDeclaredMethod(
+                "toConversationEntry",
+                Component.class,
+                int[].class,
+                boolean.class
+        );
         method.setAccessible(true);
 
         try {
@@ -6266,11 +6743,11 @@ class ChatPanelTest {
                 activityBubble.setVisible(false);
             });
             ConversationEntry hiddenEntry = callOnEdt(() ->
-                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0})
+                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0}, false)
             );
             runOnEdt(() -> activityBubble.setVisible(true));
             ConversationEntry visibleEntry = callOnEdt(() ->
-                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0})
+                    (ConversationEntry) method.invoke(subject, activityBubble, new int[]{0}, false)
             );
 
             assertThat(hiddenEntry).isNull();
@@ -7830,6 +8307,35 @@ class ChatPanelTest {
                 model -> immediateProvider("ok"),
                 List::of
         );
+    }
+
+    private static void assertSingleTypingEntryIsLast(List<ConversationEntry> entries) {
+        assertThat(entries).filteredOn(entry -> entry.kind() == ConversationEntryKind.TYPING)
+                .singleElement()
+                .isSameAs(entries.getLast());
+    }
+
+    private void installSystemWebViewCapture(AtomicReference<List<ConversationEntry>> transcript) throws Exception {
+        SystemWebView systemWebView = mock(SystemWebView.class);
+        doAnswer(invocation -> {
+            assertThat(SwingUtilities.isEventDispatchThread()).isTrue();
+            List<ConversationEntry> entries = invocation.getArgument(0);
+            transcript.set(List.copyOf(entries));
+            return null;
+        }).when(systemWebView).setTranscript(
+                anyList(),
+                any(RenderMode.class),
+                anyBoolean(),
+                anyBoolean(),
+                anyBoolean(),
+                anyBoolean(),
+                anySet(),
+                anyInt()
+        );
+        runOnEdt(() -> {
+            setField(subject, "webViewEngine", WebViewEngine.SYSTEM);
+            setField(subject, "systemWebView", systemWebView);
+        });
     }
 
     private ChatPanel newChatPanel(

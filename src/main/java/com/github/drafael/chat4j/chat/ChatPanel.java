@@ -1562,6 +1562,7 @@ public class ChatPanel extends JPanel {
         sendJob.phase = SendPhase.STREAMING;
         StreamingSession session = beginStreamingSession(sendJob.conversationId, sendJob.provider);
         sendJob.streamSessionId = session.sessionId;
+        refreshWebTranscript(true);
 
         AgentRunCallbacks callbacks = new AgentRunCallbacks(
                 token -> handleAssistantToken(session, sendJob, token),
@@ -1991,6 +1992,9 @@ public class ChatPanel extends JPanel {
                 return;
             }
 
+            if (currentAssistantBubble != null && !hasAssistantPayload(currentAssistantBubble)) {
+                removeMessageComponentFromPanel(currentAssistantBubble.component());
+            }
             currentAssistantBubble = null;
             ActivityBubble toolBubble = currentAssistantAgentToolBubbles.computeIfAbsent(
                     agentToolBubbleKey(activity),
@@ -3910,12 +3914,17 @@ public class ChatPanel extends JPanel {
             return;
         }
 
+        StreamingSession typingSession = typingIndicatorSession();
+        boolean showTypingIndicator = typingSession != null;
         int[] messageIndex = {0};
-        List<ConversationEntry> entries = Arrays.stream(messagesPanel.getComponents())
+        List<ConversationEntry> entries = new ArrayList<>(Arrays.stream(messagesPanel.getComponents())
                 .filter(component -> !"filler".equals(component.getName()))
-                .map(component -> toConversationEntry(component, messageIndex))
+                .map(component -> toConversationEntry(component, messageIndex, showTypingIndicator))
                 .filter(Objects::nonNull)
-                .toList();
+                .toList());
+        if (typingSession != null) {
+            entries.add(ConversationEntry.typing(typingSession.sessionId));
+        }
         boolean shouldScrollToBottom = autoScrollEnabled && scrollToBottom;
         boolean showJumpButton = streaming;
         boolean readAloudAvailable = !speechToTextService.active() && textToSpeechService.isReadAloudAvailable();
@@ -3969,7 +3978,44 @@ public class ChatPanel extends JPanel {
                 .orElse(-1);
     }
 
-    private ConversationEntry toConversationEntry(Component component, int[] messageIndex) {
+    private StreamingSession typingIndicatorSession() {
+        StreamingSession session = visibleStreamingSession();
+        return session != null
+                && isVisibleSession(session)
+                && session.isLive()
+                && !session.terminalCallbackStarted.get()
+                && !session.visibleAssistantOutputRendered
+                ? session
+                : null;
+    }
+
+    private boolean hasVisibleAssistantContent(ChatMessageView messageView) {
+        return messageView != null
+                && (hasVisibleAssistantText(messageView.getFullText())
+                || messageView.contentPartsSnapshot().stream().anyMatch(this::isVisibleAssistantPart));
+    }
+
+    private boolean hasAssistantPayload(ChatMessageView messageView) {
+        return messageView != null
+                && (hasVisibleAssistantText(messageView.getFullText())
+                || messageView.contentPartsSnapshot().stream().anyMatch(part -> !(part instanceof TextPart)));
+    }
+
+    private boolean hasVisibleAssistantText(String text) {
+        return StringUtils.isNotBlank(normalizeThinkingText(text));
+    }
+
+    private boolean isVisibleAssistantPart(ContentPart part) {
+        return renderMode != RenderMode.MARKDOWN
+                && part instanceof GeneratedImagePart generatedImagePart
+                && StringUtils.isNotBlank(generatedImagePart.attachmentRef().storagePath());
+    }
+
+    private ConversationEntry toConversationEntry(
+            Component component,
+            int[] messageIndex,
+            boolean omitProvisionalAssistant
+    ) {
         ActivityBubble activityBubble = findActivityBubble(component);
         if (activityBubble != null) {
             if (!activityBubble.isVisible()) {
@@ -3986,8 +4032,15 @@ public class ChatPanel extends JPanel {
         if (messageView == null) {
             return null;
         }
-        int fallbackMessageIndex = messageIndex[0]++;
         int historyMessageIndex = findHistoryMessageIndex(component);
+        if (omitProvisionalAssistant
+                && (historyMessageIndex < 0 || historyMessageIndex >= history.size())
+                && messageView.getRole() == Role.ASSISTANT
+                && !hasVisibleAssistantContent(messageView)
+        ) {
+            return null;
+        }
+        int fallbackMessageIndex = messageIndex[0]++;
         int transcriptMessageIndex = historyMessageIndex >= 0 ? historyMessageIndex : fallbackMessageIndex;
         List<ConversationAttachment> attachments = messageView.getRole() == Role.USER
                 ? conversationAttachments(component)
@@ -5569,6 +5622,10 @@ public class ChatPanel extends JPanel {
         if (rerenderMessages) {
             collectBubbles().forEach(bubble -> bubble.setRenderMode(mode));
             thinkingBubbles.forEach(bubble -> bubble.setRenderMode(mode));
+            StreamingSession session = visibleStreamingSession();
+            if (session != null && hasVisibleAssistantContent(currentAssistantBubble)) {
+                session.visibleAssistantOutputRendered = true;
+            }
             messagesPanel.revalidate();
             messagesPanel.repaint();
             refreshWebTranscript(false);
@@ -5874,12 +5931,17 @@ public class ChatPanel extends JPanel {
             assistantText = session.response.toString();
         }
         List<ContentPart> assistantParts = assistantResponseParts(session, assistantText);
-        if (StringUtils.isNotBlank(assistantText) || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart))) {
+        boolean hasAssistantOutput = hasVisibleAssistantText(assistantText)
+                || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart));
+        if (hasAssistantOutput) {
             if (currentAssistantBubble == null) {
                 currentAssistantBubble = createMessageView(Role.ASSISTANT);
                 addBubble(currentAssistantBubble, new Message(Role.ASSISTANT, assistantParts, Instant.now()), Role.ASSISTANT, history.size());
             } else {
                 currentAssistantBubble.setContentParts(assistantParts);
+            }
+            if (hasVisibleAssistantText(assistantText) || assistantParts.stream().anyMatch(this::isVisibleAssistantPart)) {
+                session.visibleAssistantOutputRendered = true;
             }
             attachedContent = true;
         }
@@ -6167,6 +6229,9 @@ public class ChatPanel extends JPanel {
                 addAssistantBubble(currentAssistantBubble);
             }
             currentAssistantBubble.appendText(token);
+            if (hasVisibleAssistantText(token)) {
+                session.visibleAssistantOutputRendered = true;
+            }
             refreshWebTranscript(true);
             scrollToBottom();
         });
@@ -6201,6 +6266,9 @@ public class ChatPanel extends JPanel {
                 addAssistantBubble(currentAssistantBubble);
             }
             currentAssistantBubble.appendPart(part);
+            if (isVisibleAssistantPart(part)) {
+                session.visibleAssistantOutputRendered = true;
+            }
             refreshWebTranscript(true);
             scrollToBottom();
         });
@@ -6405,7 +6473,7 @@ public class ChatPanel extends JPanel {
         }
         assistantWebSearch = normalizeWebSearchActivity(assistantWebSearch);
         List<ContentPart> assistantParts = assistantResponseParts(session, assistantText);
-        boolean hasContent = StringUtils.isNotBlank(assistantText)
+        boolean hasContent = hasVisibleAssistantText(assistantText)
                 || assistantParts.stream().anyMatch(part -> !(part instanceof TextPart))
                 || hasVisibleThinkingContent(assistantThinking)
                 || StringUtils.isNotBlank(assistantWebSearch)
@@ -6731,7 +6799,7 @@ public class ChatPanel extends JPanel {
 
     private boolean hasVisibleAssistantMessageContent(Message message) {
         return message != null
-                && (StringUtils.isNotBlank(message.content())
+                && (hasVisibleAssistantText(message.content())
                 || message.parts().stream().anyMatch(part -> !(part instanceof TextPart)));
     }
 
@@ -7074,6 +7142,9 @@ public class ChatPanel extends JPanel {
             }
         } finally {
             session.clearProvider();
+            if (isVisibleConversation(session.conversationId)) {
+                refreshWebTranscript(false);
+            }
         }
     }
 
