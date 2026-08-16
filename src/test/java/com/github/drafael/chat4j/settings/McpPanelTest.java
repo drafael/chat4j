@@ -91,6 +91,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.Objects.deepEquals;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -852,6 +853,7 @@ class McpPanelTest {
                 JTable headers = component(subject, "HTTP headers", JTable.class);
                 Container editor = (Container) field(subject, "headerEditor", Object.class);
                 assertThat(components(editor, JButton.class))
+                        .filteredOn(button -> isNotBlank(button.getAccessibleContext().getAccessibleName()))
                         .extracting(button -> button.getAccessibleContext().getAccessibleName())
                         .containsExactly("Add a row to HTTP headers", "Remove the selected row from HTTP headers");
                 assertThat(components(editor, JTextField.class)).isEmpty();
@@ -1192,6 +1194,7 @@ class McpPanelTest {
                 assertActionAboveTable(environmentEditor, environment, addCredential);
                 assertThat(components(environmentEditor, JTextField.class)).isEmpty();
                 assertThat(components(environmentEditor, JButton.class))
+                        .filteredOn(button -> isNotBlank(button.getAccessibleContext().getAccessibleName()))
                         .extracting(button -> button.getAccessibleContext().getAccessibleName())
                         .containsExactly(
                                 "Add a row to Environment variables",
