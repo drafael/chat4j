@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
+import javax.swing.JList;
+import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.DisplayName;
@@ -148,6 +150,55 @@ class PromptsPanelTest {
     }
 
     @Test
+    @DisplayName("Prompt lists and variables use accessible icon actions with selection-aware removal")
+    void actionToolbars_whenItemsChange_preservePromptAndVariableEditingBehavior() throws Exception {
+        var repo = new RecordingPromptCatalogRepo(promptsFile());
+        PromptsPanel subject = callOnEdt(() -> new PromptsPanel(repo));
+        try {
+            awaitPromptLoad(subject);
+            runOnEdt(() -> {
+                JButton addPrompt = findComponentByAccessibleName(subject, "Add prompt", JButton.class);
+                JButton removePrompt = findComponentByAccessibleName(
+                        subject,
+                        "Remove selected prompt",
+                        JButton.class
+                );
+                JList<?> promptList = findComponentByName(subject, "promptList", JList.class);
+                assertThat(addPrompt.getText()).isNull();
+                assertThat(addPrompt.getIcon()).isNotNull();
+                assertThat(removePrompt.isEnabled()).isTrue();
+                int promptCount = promptList.getModel().getSize();
+
+                addPrompt.doClick();
+
+                assertThat(promptList.getModel().getSize()).isEqualTo(promptCount + 1);
+                assertThat(((PromptTemplate) promptList.getSelectedValue()).title()).isEqualTo("New Prompt");
+
+                JTable variables = findComponentByAccessibleName(subject, "Prompt variables", JTable.class);
+                JButton addVariable = findComponentByAccessibleName(subject, "Add variable", JButton.class);
+                JButton removeVariable = findComponentByAccessibleName(
+                        subject,
+                        "Remove selected variable",
+                        JButton.class
+                );
+                int variableCount = variables.getRowCount();
+                assertThat(removeVariable.isEnabled()).isFalse();
+
+                addVariable.doClick();
+                variables.setRowSelectionInterval(variableCount, variableCount);
+
+                assertThat(variables.getRowCount()).isEqualTo(variableCount + 1);
+                assertThat(removeVariable.isEnabled()).isTrue();
+                removeVariable.doClick();
+                assertThat(variables.getRowCount()).isEqualTo(variableCount);
+            });
+        } finally {
+            runOnEdt(subject::disposePanel);
+            flushEdt();
+        }
+    }
+
+    @Test
     @DisplayName("Prompt catalog loading does not block the event dispatch thread")
     void constructor_whenPromptLoadBlocks_keepsEdtResponsive() throws Exception {
         var repo = new BlockingPromptCatalogRepo(promptsFile());
@@ -202,6 +253,27 @@ class PromptsPanelTest {
         });
         assertThat(loadedOnEdt.await(5, TimeUnit.SECONDS)).isTrue();
         flushEdt();
+    }
+
+    private <T extends Component> T findComponentByAccessibleName(Container root, String name, Class<T> type) {
+        return components(root, type).stream()
+                .filter(component -> component.getAccessibleContext() != null)
+                .filter(component -> name.equals(component.getAccessibleContext().getAccessibleName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Component not found: %s".formatted(name)));
+    }
+
+    private <T extends Component> List<T> components(Container root, Class<T> type) {
+        var result = new ArrayList<T>();
+        for (Component component : root.getComponents()) {
+            if (type.isInstance(component)) {
+                result.add(type.cast(component));
+            }
+            if (component instanceof Container child) {
+                result.addAll(components(child, type));
+            }
+        }
+        return List.copyOf(result);
     }
 
     private <T extends Component> T findComponentByName(Container root, String name, Class<T> type) {

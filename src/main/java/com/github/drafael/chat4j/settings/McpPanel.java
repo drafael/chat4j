@@ -17,6 +17,10 @@ import com.github.drafael.chat4j.mcp.McpSecretReference;
 import com.github.drafael.chat4j.mcp.McpServerConfiguration;
 import com.github.drafael.chat4j.mcp.McpTransportType;
 import com.github.drafael.chat4j.mcp.McpVerificationResult;
+import com.github.drafael.chat4j.ui.components.ActionIcon;
+import com.github.drafael.chat4j.ui.components.ActionToolbar;
+import com.github.drafael.chat4j.ui.components.ListTableActionPanel;
+import com.github.drafael.chat4j.ui.components.ToolbarPlacement;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
@@ -105,10 +109,11 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final DefaultListModel<McpServerConfiguration> serverModel = new DefaultListModel<>();
     private final JList<McpServerConfiguration> serverList = new JList<>(serverModel);
     private final JTextField searchField = new JTextField();
-    private final JButton addButton = compactTextButton("+", "New MCP server");
-    private final JButton emptyAddButton = new JButton("Add server");
-    private final JButton removeButton = compactTextButton("−", "Remove selected MCP server");
     private final JPopupMenu serverCreationMenu = new JPopupMenu();
+    private final Action addServerAction = toolbarAction("New MCP server", () -> {
+    });
+    private final Action removeServerAction = toolbarAction("Remove selected MCP server", this::removeServer);
+    private final JButton emptyAddButton = new JButton("Add server");
     private final JMenuItem importJsonItem = new JMenuItem("Import JSON from Clipboard");
     private final JTextField nameField = new JTextField();
     private final JCheckBox enabledBox = new JCheckBox("Enabled");
@@ -261,6 +266,9 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         if (toolTable.isEditing()) {
             toolTable.getCellEditor().cancelCellEditing();
         }
+        addServerAction.setEnabled(false);
+        removeServerAction.setEnabled(false);
+        emptyAddButton.setEnabled(false);
         importJsonItem.setEnabled(false);
         serverCreationMenu.setVisible(false);
         if (activeSchemaDialog != null) {
@@ -303,13 +311,17 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         serverList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         serverList.setCellRenderer(new ServerRenderer());
         serverList.getAccessibleContext().setAccessibleName("MCP servers");
-        JScrollPane scroll = new JScrollPane(serverList);
-        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        rail.add(scroll, BorderLayout.CENTER);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        actions.add(addButton);
-        actions.add(removeButton);
-        rail.add(actions, BorderLayout.SOUTH);
+        var toolbar = new ActionToolbar();
+        toolbar.addDropdownAction(addServerAction, ActionIcon.ADD, serverCreationMenu);
+        toolbar.addIconAction(removeServerAction, ActionIcon.REMOVE);
+        var actionPanel = new ListTableActionPanel(
+                serverList,
+                toolbar,
+                ToolbarPlacement.BOTTOM,
+                "No MCP servers"
+        );
+        actionPanel.scrollPane().setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        rail.add(actionPanel, BorderLayout.CENTER);
         return rail;
     }
 
@@ -460,9 +472,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 loadSelected();
             }
         });
-        addButton.addActionListener(event -> showServerCreationMenu(addButton));
         emptyAddButton.addActionListener(event -> showServerCreationMenu(emptyAddButton));
-        removeButton.addActionListener(event -> removeServer());
         automaticBox.addActionListener(event -> toggleAutomaticExecution());
         verifyButton.addActionListener(event -> verifySelected());
         replaceInvalidButton.addActionListener(event -> repairInvalidConfiguration());
@@ -2084,7 +2094,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         verifyButton.setEnabled(!disposed && selected && publicationIdle && actionIdle);
         replaceInvalidButton.setEnabled(!disposed && invalidBase && publicationIdle && actionIdle);
         showSchemaButton.setEnabled(!disposed && selected && toolTable.getSelectedRow() >= 0);
-        removeButton.setEnabled(!disposed && selected);
+        removeServerAction.setEnabled(!disposed && selected);
         importJsonItem.setEnabled(canAdmitImport());
         headerEditor.refreshActionStates();
         environmentEditor.refreshActionStates();
@@ -2439,12 +2449,13 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         panel.add(field, constraints);
     }
 
-    private static JButton compactTextButton(String text, String accessibleName) {
-        JButton button = new JButton(text);
-        button.putClientProperty(FlatClientProperties.BUTTON_TYPE, FlatClientProperties.BUTTON_TYPE_SQUARE);
-        button.setToolTipText(accessibleName);
-        button.getAccessibleContext().setAccessibleName(accessibleName);
-        return button;
+    private static Action toolbarAction(String name, Runnable callback) {
+        return new AbstractAction(name) {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                callback.run();
+            }
+        };
     }
 
     private static Icon loadIcon(String resource, int size) {
@@ -2493,10 +2504,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
     private final class ArgumentTableEditor extends JPanel {
         private final ArgumentTableModel model = new ArgumentTableModel();
         private final JTable table = new JTable(model);
-        private final JButton add = new JButton("Add");
-        private final JButton remove = new JButton("Remove");
-        private final JButton up = new JButton("Move Up");
-        private final JButton down = new JButton("Move Down");
+        private final Action addAction = toolbarAction("Add argument", this::addArgument);
+        private final Action removeAction = toolbarAction("Remove selected argument", this::removeArgument);
+        private final Action moveUpAction = toolbarAction("Move selected argument up", () -> moveArgument(-1));
+        private final Action moveDownAction = toolbarAction("Move selected argument down", () -> moveArgument(1));
         private boolean loading;
 
         private ArgumentTableEditor() {
@@ -2512,14 +2523,17 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                 }
             }));
             table.setDefaultEditor(String.class, new DefaultCellEditor(editorField));
-            add(new JScrollPane(table), BorderLayout.CENTER);
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            List.of(add, remove, up, down).forEach(actions::add);
-            add(actions, BorderLayout.SOUTH);
-            add.addActionListener(event -> addArgument());
-            remove.addActionListener(event -> removeArgument());
-            up.addActionListener(event -> moveArgument(-1));
-            down.addActionListener(event -> moveArgument(1));
+            var toolbar = new ActionToolbar();
+            toolbar.addIconAction(addAction, ActionIcon.ADD);
+            toolbar.addIconAction(removeAction, ActionIcon.REMOVE);
+            toolbar.addIconAction(moveUpAction, ActionIcon.MOVE_UP);
+            toolbar.addIconAction(moveDownAction, ActionIcon.MOVE_DOWN);
+            add(new ListTableActionPanel(
+                    table,
+                    toolbar,
+                    ToolbarPlacement.TOP,
+                    "No arguments"
+            ), BorderLayout.CENTER);
             table.getSelectionModel().addListSelectionListener(event -> refreshActionStates());
         }
 
@@ -2589,10 +2603,10 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         private void refreshActionStates() {
             int row = table.getSelectedRow();
             boolean active = !disposed && editingTransportIs(McpTransportType.STDIO);
-            add.setEnabled(active);
-            remove.setEnabled(active && row >= 0);
-            up.setEnabled(active && row > 0);
-            down.setEnabled(active && row >= 0 && row < model.getRowCount() - 1);
+            addAction.setEnabled(active);
+            removeAction.setEnabled(active && row >= 0);
+            moveUpAction.setEnabled(active && row > 0);
+            moveDownAction.setEnabled(active && row >= 0 && row < model.getRowCount() - 1);
         }
 
         private void disposeEditor() {
@@ -2607,12 +2621,17 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         private final CredentialTableModel model = new CredentialTableModel();
         private final JTable table = new JTable(model);
         private final CredentialPasswordCellEditor valueEditor;
-        private final JButton add = new JButton("Add");
-        private final JButton remove = new JButton("Remove");
+        private final Action addAction;
+        private final Action removeAction;
         private boolean loading;
 
         private CredentialRowsEditor(String accessibleName) {
             valueEditor = new CredentialPasswordCellEditor("%s value".formatted(accessibleName));
+            addAction = toolbarAction("Add a row to %s".formatted(accessibleName), this::addRow);
+            removeAction = toolbarAction(
+                    "Remove the selected row from %s".formatted(accessibleName),
+                    this::removeRow
+            );
             JTextField nameEditorField = new JTextField();
             setLayout(new BorderLayout(4, 4));
             table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -2630,26 +2649,22 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     markDraftMutation();
                 }
             }));
-            add.setToolTipText("Add a row to %s".formatted(accessibleName));
-            add.getAccessibleContext().setAccessibleName("Add a row to %s".formatted(accessibleName));
-            remove.setToolTipText("Remove the selected row from %s".formatted(accessibleName));
-            remove.getAccessibleContext().setAccessibleName(
-                    "Remove the selected row from %s".formatted(accessibleName)
-            );
             table.setPreferredScrollableViewportSize(new Dimension(0, 82));
-            add(new JScrollPane(table), BorderLayout.CENTER);
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            actions.add(add);
-            actions.add(remove);
-            add(actions, BorderLayout.SOUTH);
+            var toolbar = new ActionToolbar();
+            toolbar.addIconAction(addAction, ActionIcon.ADD);
+            toolbar.addIconAction(removeAction, ActionIcon.REMOVE);
+            add(new ListTableActionPanel(
+                    table,
+                    toolbar,
+                    ToolbarPlacement.TOP,
+                    "No rows"
+            ), BorderLayout.CENTER);
             table.getSelectionModel().addListSelectionListener(event -> {
                 if (!event.getValueIsAdjusting() && !loading) {
                     stopEditing();
                 }
                 refreshActionStates();
             });
-            add.addActionListener(event -> addRow());
-            remove.addActionListener(event -> removeRow());
         }
 
         private void load(List<McpSecretReference> source) {
@@ -2745,8 +2760,8 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
                     : editingTransportIs(McpTransportType.STDIO);
             boolean active = !disposed && visibleTransport;
             table.setEnabled(active);
-            add.setEnabled(active);
-            remove.setEnabled(active && model.rowAt(table.getSelectedRow()) != null);
+            addAction.setEnabled(active);
+            removeAction.setEnabled(active && model.rowAt(table.getSelectedRow()) != null);
         }
 
         private void disposeEditor() {

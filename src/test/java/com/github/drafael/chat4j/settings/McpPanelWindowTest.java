@@ -92,7 +92,8 @@ class McpPanelWindowTest {
                 JPopupMenu creationMenu = field(createdSubject, "serverCreationMenu", JPopupMenu.class);
                 JList<?> servers = component(createdSubject, "MCP servers", JList.class);
                 assertThat(railAdd.isShowing()).isTrue();
-                assertThat(railAdd.getText()).isEqualTo("+");
+                assertThat(railAdd.getText()).isNull();
+                assertThat(railAdd.getIcon()).isNotNull();
                 assertThat(emptyAdd.isShowing()).isTrue();
 
                 emptyAdd.doClick();
@@ -132,6 +133,10 @@ class McpPanelWindowTest {
                 assertThat(creationMenu.isShowing()).isTrue();
                 assertThat(creationMenu.getInvoker()).isSameAs(railAdd);
                 createdSubject.disposePanel();
+                assertThat(creationMenu.isVisible()).isFalse();
+                assertThat(railAdd.isEnabled()).isFalse();
+                assertThat(emptyAdd.isEnabled()).isFalse();
+                railAdd.doClick();
                 assertThat(creationMenu.isVisible()).isFalse();
                 assertThat(menuItem(creationMenu, "Import JSON from Clipboard").isEnabled()).isFalse();
                 menuItem(creationMenu, "Command-line (stdio)").doClick();
@@ -222,7 +227,7 @@ class McpPanelWindowTest {
                 assertCredentialValue(headers, 0, "••••••••", "committed header value should render as masked");
 
                 Container editor = (Container) field(createdSubject, "headerEditor", Object.class);
-                findTextButton(editor, "Add").doClick();
+                button(editor, "Add a row to HTTP headers").doClick();
                 assertThat(headers.getEditingColumn()).isZero();
                 assertThat(headers.getEditorComponent()).isInstanceOf(JTextField.class);
                 assertThat(headers.getEditorComponent().isShowing()).isTrue();

@@ -5,6 +5,10 @@ import com.github.drafael.chat4j.prompts.PromptCatalogRepo;
 import com.github.drafael.chat4j.prompts.PromptTemplate;
 import com.github.drafael.chat4j.prompts.PromptVariable;
 import com.github.drafael.chat4j.prompts.PromptVariableType;
+import com.github.drafael.chat4j.ui.components.ActionIcon;
+import com.github.drafael.chat4j.ui.components.ActionToolbar;
+import com.github.drafael.chat4j.ui.components.ListTableActionPanel;
+import com.github.drafael.chat4j.ui.components.ToolbarPlacement;
 import com.github.drafael.chat4j.util.Fonts;
 import java.awt.*;
 import java.util.ArrayList;
@@ -38,6 +42,10 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
     private JScrollPane promptScrollPane;
     private final VariableTableModel variableTableModel = new VariableTableModel();
     private final JTable variableTable = new JTable(variableTableModel);
+    private final Action addPromptAction = toolbarAction("Add prompt", this::addPrompt);
+    private final Action removePromptAction = toolbarAction("Remove selected prompt", this::removeSelectedPrompt);
+    private final Action addVariableAction = toolbarAction("Add variable", variableTableModel::addVariable);
+    private final Action removeVariableAction = toolbarAction("Remove selected variable", this::removeSelectedVariable);
     private final JLabel statusLabel = new JLabel(" ");
     private boolean loadingSelection;
     private boolean dirty;
@@ -88,22 +96,21 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
         promptList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 loadSelectedPrompt();
+                refreshActionStates();
             }
         });
-        panel.add(new JScrollPane(promptList), BorderLayout.CENTER);
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
-        JButton addButton = new JButton("+");
-        JButton removeButton = new JButton("−");
-        JButton resetButton = new JButton("Reset to Built-ins");
+        var toolbar = new ActionToolbar();
+        toolbar.addIconAction(addPromptAction, ActionIcon.ADD);
+        toolbar.addIconAction(removePromptAction, ActionIcon.REMOVE);
+        toolbar.addGap(4);
+        JButton resetButton = toolbar.addLabeledAction(toolbarAction("Reset to Built-ins", this::resetToBuiltIns));
         resetButton.setName("resetPromptsButton");
-        addButton.addActionListener(e -> addPrompt());
-        removeButton.addActionListener(e -> removeSelectedPrompt());
-        resetButton.addActionListener(e -> resetToBuiltIns());
-        buttons.add(addButton);
-        buttons.add(removeButton);
-        buttons.add(resetButton);
-        panel.add(buttons, BorderLayout.SOUTH);
+        panel.add(new ListTableActionPanel(
+                promptList,
+                toolbar,
+                ToolbarPlacement.BOTTOM,
+                "No prompts"
+        ), BorderLayout.CENTER);
         return panel;
     }
 
@@ -131,19 +138,25 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
         promptScrollPane.setMinimumSize(new Dimension(0, 180));
         addRow(form, gbc, row++, "Prompt", promptScrollPane);
 
-        JPanel variableToolbar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        JButton addVariableButton = new JButton("+ New Variable");
-        JButton removeVariableButton = new JButton("Remove Variable");
-        addVariableButton.addActionListener(e -> variableTableModel.addVariable());
-        removeVariableButton.addActionListener(e -> removeSelectedVariable());
-        variableToolbar.add(addVariableButton);
-        variableToolbar.add(removeVariableButton);
+        var variableToolbar = new ActionToolbar();
+        variableToolbar.addIconAction(addVariableAction, ActionIcon.ADD);
+        variableToolbar.addIconAction(removeVariableAction, ActionIcon.REMOVE);
 
         JPanel variablesPanel = new JPanel(new BorderLayout(0, 4));
-        variablesPanel.add(variableToolbar, BorderLayout.NORTH);
-        variablesPanel.add(new JScrollPane(variableTable), BorderLayout.CENTER);
+        variablesPanel.add(new ListTableActionPanel(
+                variableTable,
+                variableToolbar,
+                ToolbarPlacement.TOP,
+                "No variables"
+        ), BorderLayout.CENTER);
         variableTable.setFillsViewportHeight(true);
         variableTable.putClientProperty("terminateEditOnFocusLost", true);
+        variableTable.getAccessibleContext().setAccessibleName("Prompt variables");
+        variableTable.getSelectionModel().addListSelectionListener(event -> {
+            if (!event.getValueIsAdjusting()) {
+                refreshActionStates();
+            }
+        });
 
         gbc.gridx = 0;
         gbc.gridy = row++;
@@ -252,6 +265,7 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
         loadThread = null;
         loadingSelection = false;
         setPanelEnabled(true);
+        refreshActionStates();
         if (error != null) {
             lastSaveError = "Failed to load prompt settings";
             setStatus(lastSaveError, true);
@@ -470,6 +484,20 @@ public class PromptsPanel extends JPanel implements AsyncPendingSettingsSavePart
         );
         Object value = showOptionPane(this, pane);
         return value instanceof Integer selectedValue && selectedValue == JOptionPane.OK_OPTION;
+    }
+
+    private void refreshActionStates() {
+        removePromptAction.setEnabled(!disposed && promptList.getSelectedIndex() >= 0);
+        removeVariableAction.setEnabled(!disposed && variableTable.getSelectedRow() >= 0);
+    }
+
+    private static Action toolbarAction(String name, Runnable callback) {
+        return new AbstractAction(name) {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                callback.run();
+            }
+        };
     }
 
     private void removeSelectedVariable() {

@@ -91,7 +91,6 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
 import static java.util.Objects.deepEquals;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -322,10 +321,12 @@ class McpPanelTest {
                 JButton add = button(fixture.subject(), "New MCP server");
                 JButton remove = button(fixture.subject(), "Remove selected MCP server");
                 assertThat(add.isEnabled()).isTrue();
-                assertThat(add.getText()).isEqualTo("+");
+                assertThat(add.getText()).isNull();
+                assertThat(add.getIcon()).isNotNull();
                 assertThat(add.getToolTipText()).isEqualTo("New MCP server");
                 assertThat(remove.isEnabled()).isFalse();
-                assertThat(remove.getText()).isEqualTo("−");
+                assertThat(remove.getText()).isNull();
+                assertThat(remove.getIcon()).isNotNull();
                 assertThat(remove.getToolTipText()).isEqualTo("Remove selected MCP server");
                 JPopupMenu creationMenu = field(fixture.subject(), "serverCreationMenu", JPopupMenu.class);
                 assertThat(creationMenu.getComponentCount()).isEqualTo(4);
@@ -389,8 +390,8 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("FlatLaf keeps the server action buttons square without clipping enlarged text")
-    void serverRail_whenFlatLafIsActive_keepsTextActionsSquareAndUnclipped() throws Exception {
+    @DisplayName("FlatLaf keeps the server toolbar actions square when fonts change")
+    void serverRail_whenFlatLafIsActive_keepsIconActionsSquare() throws Exception {
         LookAndFeel originalLookAndFeel = callOnEdt(UIManager::getLookAndFeel);
         PanelFixture fixture = null;
         try {
@@ -403,14 +404,12 @@ class McpPanelTest {
                 JButton remove = button(subject, "Remove selected MCP server");
                 for (JButton action : List.of(add, remove)) {
                     assertThat(action.getClientProperty(FlatClientProperties.BUTTON_TYPE))
-                            .isEqualTo(FlatClientProperties.BUTTON_TYPE_SQUARE);
+                            .isEqualTo(FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
                     assertThat(action.getPreferredSize().width).isEqualTo(action.getPreferredSize().height);
 
-                    var enlarged = action.getFont().deriveFont(32f);
-                    action.setFont(enlarged);
+                    action.setFont(action.getFont().deriveFont(32f));
                     assertThat(action.getPreferredSize().width).isEqualTo(action.getPreferredSize().height);
-                    assertThat(action.getPreferredSize().height)
-                            .isGreaterThan(action.getFontMetrics(enlarged).getHeight());
+                    assertThat(action.getIcon()).isNotNull();
                 }
             });
         } finally {
@@ -497,6 +496,58 @@ class McpPanelTest {
                 assertThat(fixture.manager().generation()).isZero();
                 assertThat(findCheckBox(fixture.subject(), "Long-running").isSelected()).isTrue();
                 assertThat(tableValues(arguments)).containsExactly("<html>精🔧é</html>", "", "--flag", "  ", "value");
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("Argument toolbar actions add, remove, and reorder the selected row")
+    void argumentToolbar_whenSelectionChanges_updatesRowsAndActionStates() throws Exception {
+        McpServerConfiguration configured = new McpServerConfiguration(
+                UUID.randomUUID().toString(),
+                "Argument actions",
+                "argument_actions",
+                false,
+                false,
+                McpTransportType.STDIO,
+                "",
+                "java",
+                List.of("one", "two"),
+                emptyList(),
+                emptyList(),
+                false,
+                emptySet()
+        );
+        try (var fixture = fixture("argument-actions", new McpConfiguration(1, List.of(configured)))) {
+            runOnEdt(() -> {
+                JTable arguments = component(fixture.subject(), "Ordered MCP arguments", JTable.class);
+                JButton add = button(fixture.subject(), "Add argument");
+                JButton remove = button(fixture.subject(), "Remove selected argument");
+                JButton moveUp = button(fixture.subject(), "Move selected argument up");
+                JButton moveDown = button(fixture.subject(), "Move selected argument down");
+                assertThat(add.isEnabled()).isTrue();
+                assertThat(remove.isEnabled()).isFalse();
+                assertThat(moveUp.isEnabled()).isFalse();
+                assertThat(moveDown.isEnabled()).isFalse();
+
+                arguments.setRowSelectionInterval(1, 1);
+                assertThat(remove.isEnabled()).isTrue();
+                assertThat(moveUp.isEnabled()).isTrue();
+                assertThat(moveDown.isEnabled()).isFalse();
+                moveUp.doClick();
+                assertThat(tableValues(arguments)).containsExactly("two", "one");
+                assertThat(arguments.getSelectedRow()).isZero();
+                assertThat(moveUp.isEnabled()).isFalse();
+                assertThat(moveDown.isEnabled()).isTrue();
+
+                add.doClick();
+                assertThat(arguments.getRowCount()).isEqualTo(3);
+                assertThat(arguments.getSelectedRow()).isEqualTo(2);
+                assertThat(arguments.isEditing()).isTrue();
+                ((JTextField) arguments.getEditorComponent()).setText("three");
+                assertThat(arguments.getCellEditor().stopCellEditing()).isTrue();
+                remove.doClick();
+                assertThat(tableValues(arguments)).containsExactly("two", "one");
             });
         }
     }
@@ -801,13 +852,12 @@ class McpPanelTest {
                 JTable headers = component(subject, "HTTP headers", JTable.class);
                 Container editor = (Container) field(subject, "headerEditor", Object.class);
                 assertThat(components(editor, JButton.class))
-                        .filteredOn(button -> isNotBlank(button.getText()))
-                        .extracting(JButton::getText)
-                        .containsExactly("Add", "Remove");
+                        .extracting(button -> button.getAccessibleContext().getAccessibleName())
+                        .containsExactly("Add a row to HTTP headers", "Remove the selected row from HTTP headers");
                 assertThat(components(editor, JTextField.class)).isEmpty();
                 assertThat(components(editor, JPasswordField.class)).isEmpty();
-                JButton addRow = findButton(editor, "Add");
-                JButton removeRow = findButton(editor, "Remove");
+                JButton addRow = button(editor, "Add a row to HTTP headers");
+                JButton removeRow = button(editor, "Remove the selected row from HTTP headers");
                 assertThat(addRow.getAccessibleContext().getAccessibleName()).isEqualTo("Add a row to HTTP headers");
                 assertThat(removeRow.getAccessibleContext().getAccessibleName())
                         .isEqualTo("Remove the selected row from HTTP headers");
@@ -824,7 +874,7 @@ class McpPanelTest {
                 assertThat(headers.editCellAt(0, 1)).isTrue();
                 JPasswordField password = (JPasswordField) headers.getEditorComponent();
                 password.setText("must-not-survive");
-                findButton(editor, "Remove").doClick();
+                removeRow.doClick();
 
                 assertPasswordEmpty(password, "removed credential editor should be empty");
                 assertThat(headers.isEditing()).isFalse();
@@ -1109,7 +1159,7 @@ class McpPanelTest {
     }
 
     @Test
-    @DisplayName("Settings groups use the full editor width and place credential actions below their table")
+    @DisplayName("Settings groups use the full editor width and place row actions above their tables")
     void layout_whenSettingsTabIsNarrow_keepsGroupsAlignedAndOrdered() throws Exception {
         McpServerConfiguration stdio = server("STDIO layout", "stdio_layout", McpTransportType.STDIO);
         McpServerConfiguration http = server("HTTP layout", "http_layout", McpTransportType.STREAMABLE_HTTP);
@@ -1121,39 +1171,32 @@ class McpPanelTest {
                 JScrollPane settingsScroll = settingsScroll(fixture.subject());
                 Container content = (Container) settingsScroll.getViewport().getView();
                 JTextField executable = component(fixture.subject(), "MCP executable", JTextField.class);
+                JTable arguments = component(fixture.subject(), "Ordered MCP arguments", JTable.class);
+                Container argumentsEditor = (Container) field(fixture.subject(), "argumentsEditor", Object.class);
+                JButton addArgument = button(argumentsEditor, "Add argument");
                 JTable environment = component(fixture.subject(), "Environment variables", JTable.class);
-                Object environmentEditor = field(fixture.subject(), "environmentEditor", Object.class);
-                JButton addCredential = findButton((Container) environmentEditor, "Add");
+                Container environmentEditor = (Container) field(
+                        fixture.subject(),
+                        "environmentEditor",
+                        Object.class
+                );
+                JButton addCredential = button(environmentEditor, "Add a row to Environment variables");
                 java.awt.Rectangle executableBounds = SwingUtilities.convertRectangle(
                         executable.getParent(),
                         new java.awt.Rectangle(0, 0, executable.getParent().getWidth(), executable.getParent().getHeight()),
                         content
                 );
-                JScrollPane environmentScroll = (JScrollPane) SwingUtilities.getAncestorOfClass(
-                        JScrollPane.class,
-                        environment
-                );
-                int tableBottom = SwingUtilities.convertPoint(
-                        environmentScroll,
-                        0,
-                        environmentScroll.getHeight(),
-                        (Container) environmentEditor
-                ).y;
-                int actionsTop = SwingUtilities.convertPoint(
-                        addCredential,
-                        0,
-                        0,
-                        (Container) environmentEditor
-                ).y;
-
                 assertThat(executableBounds.x).isLessThanOrEqualTo(8);
                 assertThat(executableBounds.width).isGreaterThan(content.getWidth() * 4 / 5);
-                assertThat(actionsTop).isGreaterThanOrEqualTo(tableBottom);
-                assertThat(components((Container) environmentEditor, JTextField.class)).isEmpty();
-                assertThat(components((Container) environmentEditor, JButton.class))
-                        .filteredOn(button -> isNotBlank(button.getText()))
-                        .extracting(JButton::getText)
-                        .containsExactly("Add", "Remove");
+                assertActionAboveTable(argumentsEditor, arguments, addArgument);
+                assertActionAboveTable(environmentEditor, environment, addCredential);
+                assertThat(components(environmentEditor, JTextField.class)).isEmpty();
+                assertThat(components(environmentEditor, JButton.class))
+                        .extracting(button -> button.getAccessibleContext().getAccessibleName())
+                        .containsExactly(
+                                "Add a row to Environment variables",
+                                "Remove the selected row from Environment variables"
+                        );
                 JPanel transportCards = field(fixture.subject(), "transportCards", JPanel.class);
                 Component visibleStdioCard = stream(transportCards.getComponents())
                         .filter(Component::isVisible)
@@ -1175,6 +1218,10 @@ class McpPanelTest {
                 );
                 assertThat(endpointBounds.x).isLessThanOrEqualTo(8);
                 assertThat(endpointBounds.width).isGreaterThan(content.getWidth() * 4 / 5);
+                JTable headers = component(fixture.subject(), "HTTP headers", JTable.class);
+                Container headerEditor = (Container) field(fixture.subject(), "headerEditor", Object.class);
+                JButton addHeader = button(headerEditor, "Add a row to HTTP headers");
+                assertActionAboveTable(headerEditor, headers, addHeader);
                 Component visibleHttpCard = stream(transportCards.getComponents())
                         .filter(Component::isVisible)
                         .findFirst()
@@ -4072,6 +4119,13 @@ class McpPanelTest {
         return List.copyOf(values);
     }
 
+    private void assertActionAboveTable(Container editor, JTable table, JButton action) {
+        JScrollPane tableScroll = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, table);
+        int tableTop = SwingUtilities.convertPoint(tableScroll, 0, 0, editor).y;
+        int actionBottom = SwingUtilities.convertPoint(action, 0, action.getHeight(), editor).y;
+        assertThat(actionBottom).isLessThanOrEqualTo(tableTop);
+    }
+
     private JScrollPane settingsScroll(Container root) {
         return components(root, JScrollPane.class).stream()
                 .filter(scroll -> scroll.getViewport().getView() != null)
@@ -4114,13 +4168,6 @@ class McpPanelTest {
                 .toList();
         assertThat(matches).as("component named %s", accessibleName).hasSize(1);
         return matches.getFirst();
-    }
-
-    private JButton findButton(Container root, String text) {
-        return components(root, JButton.class).stream()
-                .filter(button -> text.equals(button.getText()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("Button not found: %s".formatted(text)));
     }
 
     private <T extends Component> List<T> components(Container root, Class<T> type) {
