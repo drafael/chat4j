@@ -22,6 +22,18 @@
         var selection = window.getSelection ? window.getSelection() : null;
         return selection ? String(selection.toString()) : '';
     }
+    function suppressUnsupportedKeyFeedback(event) {
+        if (!event || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+            return;
+        }
+        var editableTarget = closest(event.target, 'input, textarea, select, [contenteditable]');
+        var activatableTarget = closest(event.target, 'button, a[href]');
+        if (editableTarget || (activatableTarget && (event.key === ' ' || event.key === 'Enter'))) {
+            return;
+        }
+        // WKWebView otherwise plays the macOS error sound for printable keys that have no browser action.
+        event.preventDefault();
+    }
     function dispatchTranscriptAction(action, messageIndex, text) {
         var normalizedAction = String(action || '');
         var payloadText = text || '';
@@ -381,6 +393,7 @@
     document.addEventListener('mousedown', function() {
         dispatchTranscriptAction('webview-pointer-down', -1, '');
     }, true);
+    document.addEventListener('keypress', suppressUnsupportedKeyFeedback, true);
     document.addEventListener('toggle', function(event) {
         if (closest(event.target, '.activity-box')) {
             setTimeout(updateCustomScrollbar, 0);
