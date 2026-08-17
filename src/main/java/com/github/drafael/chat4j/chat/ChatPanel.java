@@ -5406,10 +5406,17 @@ public class ChatPanel extends JPanel {
                     return recovery == null || recovery.entry().equals(record.historyEntry());
                 })
                 .toList();
+        Set<UUID> activeAssistantMessageIds = activeSessions.values().stream()
+                .filter(StreamingSession::isLive)
+                .filter(session -> Objects.equals(session.conversationId, conversationId))
+                .map(session -> session.assistantMessageId)
+                .filter(Objects::nonNull)
+                .collect(toUnmodifiableSet());
         List<Message> messages = new ArrayList<>(displayedRecords.stream()
                 .map(ConversationRepository.MessageRecord::message)
                 .toList());
         missingRecoveries.stream()
+                .filter(entry -> !activeAssistantMessageIds.contains(entry.messageId()))
                 .map(ConversationHistoryEntry::message)
                 .forEach(messages::add);
         loadHistory(messages);
@@ -6499,6 +6506,7 @@ public class ChatPanel extends JPanel {
         );
         int assistantOrdinal = sendJob == null ? Math.max(1, history.size()) : sendJob.assistantMessageOrdinal;
         var assistantEntry = new ConversationHistoryEntry(UUID.randomUUID(), assistantOrdinal, assistantMessage);
+        session.assistantMessageId = assistantEntry.messageId();
         if (session.conversationId != null) {
             queuePendingAssistantRecovery(session.conversationId, assistantEntry);
         }

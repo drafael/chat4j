@@ -7788,6 +7788,7 @@ class ChatPanelTest {
         var firstTokenDelivered = new CountDownLatch(1);
         var releaseCompletion = new CountDownLatch(1);
         var persistedAssistant = new CountDownLatch(1);
+        var releasePersistenceCallback = new CountDownLatch(1);
 
         runOnEdt(() -> {
             subject.setActiveConversationId(originalConversationId);
@@ -7795,6 +7796,7 @@ class ChatPanelTest {
             subject.setOnDurableAssistantMessageCompleted(event -> {
                 if (event.message().role() == Role.ASSISTANT) {
                     persistedAssistant.countDown();
+                    awaitLatch(releasePersistenceCallback);
                 }
                 return CompletableFuture.failedFuture(new SQLException("forced persistence failure"));
             });
@@ -7844,6 +7846,12 @@ class ChatPanelTest {
             runOnEdt(() ->
                     subject.loadConversationHistoryEntries(originalConversationId, List.of(originalUserRecord))
             );
+            releasePersistenceCallback.countDown();
+            awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() ->
+                    ((Map<?, ?>) readField(subject, "activeSendJobs")).isEmpty()
+                            && ((Map<?, ?>) readField(subject, "activeSessions")).isEmpty()));
+            flushEdt();
+
             assertThat(callOnEdt(subject::getHistory))
                     .hasSize(2)
                     .element(1)
@@ -7859,6 +7867,7 @@ class ChatPanelTest {
                     .containsExactly("ping", "saved answer");
         } finally {
             releaseCompletion.countDown();
+            releasePersistenceCallback.countDown();
         }
     }
 

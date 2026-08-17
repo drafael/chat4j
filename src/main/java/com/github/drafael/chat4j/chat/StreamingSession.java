@@ -37,6 +37,7 @@ final class StreamingSession {
     final List<AgentToolActivity> agentToolActivities = synchronizedList(new ArrayList<>());
     final ThinkTagStreamParser thinkTagParser = new ThinkTagStreamParser();
     boolean visibleAssistantOutputRendered;
+    volatile UUID assistantMessageId;
     volatile Thread worker;
     volatile boolean finished = false;
 
