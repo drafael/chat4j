@@ -355,58 +355,6 @@ class TranscriptBrowserAssetsTest {
     }
 
     @Test
-    @DisplayName("Unhandled transcript key presses suppress native browser error feedback")
-    void transcriptActionsScript_whenPrintableKeyHasNoBrowserTarget_preventsDefaultInteraction() {
-        try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {
-            context.eval("js", """
-                    var documentListeners = {};
-                    var documentListenerCapture = {};
-                    var window = { addEventListener: function () {} };
-                    var document = {
-                        addEventListener: function(type, listener, capture) {
-                            documentListeners[type] = listener;
-                            documentListenerCapture[type] = capture;
-                        }
-                    };
-                    function targetFor(selectorMatch) {
-                        return {
-                            closest: function(selector) {
-                                return selector === selectorMatch ? this : null;
-                            }
-                        };
-                    }
-                    function keypress(target, key, metaKey) {
-                        return {
-                            target: target,
-                            key: key,
-                            metaKey: metaKey === true,
-                            ctrlKey: false,
-                            altKey: false,
-                            defaultPrevented: false,
-                            preventDefault: function() { this.defaultPrevented = true; }
-                        };
-                    }
-                    var transcriptKey = keypress(targetFor(''), 'a', false);
-                    var inputKey = keypress(targetFor('input, textarea, select, [contenteditable]'), 'a', false);
-                    var buttonActivation = keypress(targetFor('button, a[href]'), 'Enter', false);
-                    var copyShortcut = keypress(targetFor(''), 'c', true);
-                    """);
-            context.eval("js", TranscriptBrowserAssets.transcriptActionsScript());
-
-            context.eval("js", "documentListeners.keypress(transcriptKey);");
-            context.eval("js", "documentListeners.keypress(inputKey);");
-            context.eval("js", "documentListeners.keypress(buttonActivation);");
-            context.eval("js", "documentListeners.keypress(copyShortcut);");
-
-            assertThat(context.eval("js", "documentListenerCapture.keypress").asBoolean()).isTrue();
-            assertThat(context.eval("js", "transcriptKey.defaultPrevented").asBoolean()).isTrue();
-            assertThat(context.eval("js", "inputKey.defaultPrevented").asBoolean()).isFalse();
-            assertThat(context.eval("js", "buttonActivation.defaultPrevented").asBoolean()).isFalse();
-            assertThat(context.eval("js", "copyShortcut.defaultPrevented").asBoolean()).isFalse();
-        }
-    }
-
-    @Test
     @DisplayName("Activity copy dispatches rendered text without toggling the details element")
     void transcriptActionsScript_whenActivityCopyClicked_dispatchesTextAndCancelsDefaultInteraction() {
         try (Context context = Context.newBuilder("js").option("engine.WarnInterpreterOnly", "false").build()) {

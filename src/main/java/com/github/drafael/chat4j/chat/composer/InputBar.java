@@ -16,6 +16,10 @@ import com.github.drafael.chat4j.chat.ui.InputIconToggleButton;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.util.Fonts;
 import com.github.drafael.chat4j.util.PopupMenuSupport;
+import com.sun.jna.Callback;
+import com.sun.jna.Function;
+import com.sun.jna.NativeLibrary;
+import com.sun.jna.Pointer;
 import java.awt.*;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
@@ -1167,6 +1171,10 @@ public class InputBar extends JPanel {
 
     public void requestInputFocus() {
         Runnable request = () -> {
+            // AWT can still report this text area as focused while WKWebView remains AppKit's first responder.
+            if (SystemInfo.isMacOS) {
+                MacAwtFocusBridge.restoreAwtFirstResponder();
+            }
             if (textArea.isShowing()) {
                 textArea.requestFocusInWindow();
                 return;
@@ -2723,6 +2731,55 @@ public class InputBar extends JPanel {
             )));
             return svgIcon.hasFound() ? svgIcon : null;
         });
+    }
+
+    private static final class MacAwtFocusBridge {
+
+        private static final NativeLibrary SYSTEM_LIBRARY = NativeLibrary.getInstance("System");
+        private static final NativeLibrary OBJECTIVE_C_RUNTIME = NativeLibrary.getInstance("objc");
+        private static final Function DISPATCH_ASYNC = SYSTEM_LIBRARY.getFunction("dispatch_async_f");
+        private static final Pointer MAIN_QUEUE = SYSTEM_LIBRARY.getGlobalVariableAddress("_dispatch_main_q");
+        private static final Function GET_CLASS = OBJECTIVE_C_RUNTIME.getFunction("objc_getClass");
+        private static final Function REGISTER_SELECTOR = OBJECTIVE_C_RUNTIME.getFunction("sel_registerName");
+        private static final Function SEND_MESSAGE = OBJECTIVE_C_RUNTIME.getFunction("objc_msgSend");
+        // Window/view lookup and mutation are AppKit-main-thread confined.
+        private static final DispatchCallback RESTORE_AWT_FIRST_RESPONDER = ignored -> {
+            try {
+                Pointer applicationClass = GET_CLASS.invokePointer(new Object[]{"NSApplication"});
+                Pointer application = sendPointer(applicationClass, "sharedApplication");
+                Pointer window = sendPointer(application, "mainWindow");
+                Pointer contentView = sendPointer(window, "contentView");
+                if (contentView != null) {
+                    SEND_MESSAGE.invokeInt(new Object[]{window, selector("makeFirstResponder:"), contentView});
+                }
+            } catch (RuntimeException | LinkageError ignoredError) {
+            }
+        };
+
+        private MacAwtFocusBridge() {
+        }
+
+        private static void restoreAwtFirstResponder() {
+            try {
+                DISPATCH_ASYNC.invokeVoid(new Object[]{MAIN_QUEUE, null, RESTORE_AWT_FIRST_RESPONDER});
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+        }
+
+        private static Pointer sendPointer(Pointer receiver, String selectorName) {
+            return receiver == null
+                    ? null
+                    : SEND_MESSAGE.invokePointer(new Object[]{receiver, selector(selectorName)});
+        }
+
+        private static Pointer selector(String name) {
+            return REGISTER_SELECTOR.invokePointer(new Object[]{name});
+        }
+
+        @FunctionalInterface
+        private interface DispatchCallback extends Callback {
+            void invoke(Pointer context);
+        }
     }
 
 }

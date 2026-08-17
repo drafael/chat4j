@@ -600,8 +600,8 @@ public class ModelSelectorPopup extends JDialog {
             currentProvider = row.providerName();
             currentModel = row.modelId();
             updateSelectionMarkers();
-            onSelect.accept(row.providerName(), row.modelId());
             hidePopup();
+            onSelect.accept(row.providerName(), row.modelId());
         }
     }
 
@@ -1167,8 +1167,8 @@ public class ModelSelectorPopup extends JDialog {
                         currentProvider = p;
                         currentModel = m;
                         updateSelectionMarkers();
-                        onSelect.accept(p, m);
                         hidePopup();
+                        onSelect.accept(p, m);
                     }
 
                     @Override
