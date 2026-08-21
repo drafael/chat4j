@@ -22,7 +22,7 @@
         <commons-lang3.version>3.20.0</commons-lang3.version>
         <commons-text.version>1.15.0</commons-text.version>
         <jackson.version>2.22.1</jackson.version>
-        <zt-exec.version>1.12</zt-exec.version>
+        <zt-exec.version>1.13.0</zt-exec.version>
         <jsoup.version>1.23.1</jsoup.version>
         <jsvg.version>2.1.0</jsvg.version>
         <pdfbox.version>3.0.8</pdfbox.version>
