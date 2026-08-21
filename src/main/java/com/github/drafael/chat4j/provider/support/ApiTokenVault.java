@@ -6,7 +6,6 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.StoragePaths;
-import com.sun.nio.file.ExtendedOpenOption;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -993,9 +992,9 @@ public class ApiTokenVault {
         readRegularFileAttributes(lockFile, false);
         FileChannel channel;
         try {
-            channel = FileChannel.open(lockFile, lockOpenOptions(lockFile, true), ownerOnlyFileAttributes());
+            channel = FileChannel.open(lockFile, lockOpenOptions(true), ownerOnlyFileAttributes());
         } catch (FileAlreadyExistsException e) {
-            channel = FileChannel.open(lockFile, lockOpenOptions(lockFile, false));
+            channel = FileChannel.open(lockFile, lockOpenOptions(false));
         }
         try {
             applyOwnerOnlyFilePermissions(lockFile);
@@ -1007,7 +1006,7 @@ public class ApiTokenVault {
         }
     }
 
-    private static Set<OpenOption> lockOpenOptions(Path lockFile, boolean create) {
+    private static Set<OpenOption> lockOpenOptions(boolean create) {
         Set<OpenOption> options = new HashSet<>();
         if (create) {
             options.add(StandardOpenOption.CREATE_NEW);
@@ -1015,9 +1014,6 @@ public class ApiTokenVault {
         options.add(StandardOpenOption.READ);
         options.add(StandardOpenOption.WRITE);
         options.add(LinkOption.NOFOLLOW_LINKS);
-        if (usesNativeWindowsFileSystem(lockFile)) {
-            options.add(ExtendedOpenOption.NOSHARE_DELETE);
-        }
         return Set.copyOf(options);
     }
 
@@ -1074,7 +1070,7 @@ public class ApiTokenVault {
             throw new IOException("Token vault lock path changed during mutation.");
         }
         if (usesNativeWindowsFileSystem(binding.path())) {
-            // NOSHARE_DELETE pins the visible lock path while Windows prevents a second content read.
+            // Windows file locks prevent a second content read; the identity check above verifies the visible path.
             return;
         }
         BoundedFile pathFile = readBoundedRegularFile(binding.path(), LOCK_MARKER_BYTES, "token vault lock");

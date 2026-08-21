@@ -3,8 +3,6 @@ package com.github.drafael.chat4j.provider.support;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.google.common.jimfs.Configuration;
 import com.google.common.jimfs.Jimfs;
-import com.sun.nio.file.ExtendedOpenOption;
-import org.apache.commons.lang3.SystemUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -85,25 +83,6 @@ class ApiTokenVaultTest {
                 Arguments.of(Configuration.windows(), "C:\\config"),
                 Arguments.of(Configuration.unix(), "/config")
         );
-    }
-
-    @Test
-    @DisplayName("Native Windows no-share-delete channels pin the visible lock path")
-    void openLockFile_whenNativeWindowsChannelIsOpen_preventsPathRemoval() throws Exception {
-        assumeTrue(SystemUtils.IS_OS_WINDOWS);
-        Path lockFile = tempDir.resolve("native-windows.lock");
-
-        try (FileChannel ignored = FileChannel.open(
-                lockFile,
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.READ,
-                StandardOpenOption.WRITE,
-                ExtendedOpenOption.NOSHARE_DELETE
-        )) {
-            assertThatThrownBy(() -> Files.delete(lockFile)).isInstanceOf(IOException.class);
-        }
-
-        assertThat(Files.deleteIfExists(lockFile)).isTrue();
     }
 
     @Test
