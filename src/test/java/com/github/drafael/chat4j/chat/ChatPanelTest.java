@@ -6699,6 +6699,8 @@ class ChatPanelTest {
         invokeOnSend(subject);
 
         assertThat(callbacks.await(2, TimeUnit.SECONDS)).isTrue();
+        awaitCondition(2, TimeUnit.SECONDS, () -> callOnEdt(() -> subject.getHistory().size() == 2));
+
         assertThat(callbackCount.get()).isEqualTo(2);
         assertThat(callOnEdt(subject::getHistory))
                 .hasSize(2)

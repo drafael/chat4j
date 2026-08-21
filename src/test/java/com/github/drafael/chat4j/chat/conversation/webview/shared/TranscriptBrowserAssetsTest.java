@@ -303,7 +303,7 @@ class TranscriptBrowserAssetsTest {
     @Test
     @DisplayName("Transcript action bridge exposes dispatch and Mermaid context menu actions")
     void transcriptActionsScript_whenRendered_exposesDiagramActionDispatcher() {
-        String script = TranscriptBrowserAssets.transcriptActionsScript();
+        String script = normalizeNewlines(TranscriptBrowserAssets.transcriptActionsScript());
 
         assertThat(script)
                 .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
@@ -548,8 +548,8 @@ class TranscriptBrowserAssetsTest {
     @Test
     @DisplayName("Activity styles keep the header borderless and the copy action visible")
     void transcriptActivityStyles_whenLoaded_matchReferenceLayoutWithoutChangingCodeCopyBehavior() {
-        String activityCss = TranscriptResources.requiredResourceText("/web/chat/transcript-activity.css");
-        String codeCss = TranscriptResources.requiredResourceText("/web/chat/transcript-code.css");
+        String activityCss = normalizeNewlines(TranscriptResources.requiredResourceText("/web/chat/transcript-activity.css"));
+        String codeCss = normalizeNewlines(TranscriptResources.requiredResourceText("/web/chat/transcript-code.css"));
 
         assertThat(cssRule(activityCss, ".activity-box"))
                 .contains("width: 100%", "background: transparent")
