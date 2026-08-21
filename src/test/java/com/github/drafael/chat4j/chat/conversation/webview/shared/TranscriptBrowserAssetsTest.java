@@ -157,8 +157,8 @@ class TranscriptBrowserAssetsTest {
                 .contains("SmilesDrawer")
                 .contains("scale: 1.35")
                 .contains("compactDrawing: false")
-                .contains("drawer.draw(tree, svg, 'chat4j', null)")
-                .doesNotContain("drawer.draw(tree, svg, 'chat4j', false)")
+                .contains("drawer.draw(tree, svg, \"chat4j\", null)")
+                .doesNotContain("drawer.draw(tree, svg, \"chat4j\", false)")
                 .contains("parseMolV2000")
                 .contains("renderMolLikeBlock")
                 .contains("SDF_MAX_RECORDS = 12")
@@ -171,7 +171,7 @@ class TranscriptBrowserAssetsTest {
                 .doesNotContain("new XMLSerializer()")
                 .contains("chat4j-mermaid-display")
                 .contains("diagram-open-button")
-                .contains("window.chat4jDispatchTranscriptAction('open-diagram-html', -1, payload)")
+                .contains("window.chat4jDispatchTranscriptAction(\"open-diagram-html\", -1, payload)")
                 .contains("pageBackground: colors.background")
                 .contains("sourceBackground: colors.secondarySurface")
                 .contains("themeVariables: mermaidTheme(colors).themeVariables")
@@ -183,7 +183,7 @@ class TranscriptBrowserAssetsTest {
                 .contains("window.mermaid.parse(candidate)")
                 .contains("normalizeMermaidEscapedLineBreaks(source)")
                 .contains("repairMermaidSource(renderableSource)")
-                .contains("renderSource(repaired, '-repaired')")
+                .contains("renderSource(repaired, \"-repaired\")")
                 .contains("installMermaidOpenButton(target, rendered.source)")
                 .contains("mermaidErrorSvg(svg)")
                 .contains("friendlyDiagramError")
@@ -195,26 +195,26 @@ class TranscriptBrowserAssetsTest {
                 .contains("MOL must be complete V2000 source — source shown below")
                 .contains("SDF must be complete V2000 source — source shown below")
                 .contains("chat4j-chem-record-summary")
-                .contains("text = cssColor('--chat4j-mermaid-text', bodyColor('currentColor'))")
-                .contains("diagramBackground = cssColor('--chat4j-mermaid-canvas-bg', cssColor('--chat4j-code-bg', background))")
-                .contains("primarySurface = cssColor('--chat4j-mermaid-primary-bg', cssColor('--chat4j-menu-bg', diagramBackground))")
-                .contains("secondarySurface = cssColor('--chat4j-mermaid-secondary-bg', cssColor('--chat4j-inline-code-bg', primarySurface))")
-                .contains("tertiarySurface = cssColor('--chat4j-mermaid-tertiary-bg', cssColor('--chat4j-code-header-bg', secondarySurface))")
-                .contains("border = cssColor('--chat4j-mermaid-border', cssColor('--chat4j-scrollbar-thumb', cssColor('--chat4j-border', text)))")
-                .contains("line = cssColor('--chat4j-mermaid-line', cssColor('--chat4j-muted-text', text))")
-                .contains("edgeLabelBackground = cssColor('--chat4j-mermaid-edge-label-bg', diagramBackground)")
+                .contains("text = cssColor(\"--chat4j-mermaid-text\", bodyColor(\"currentColor\"))")
+                .contains("diagramBackground = cssColor(\n      \"--chat4j-mermaid-canvas-bg\",")
+                .contains("primarySurface = cssColor(\n      \"--chat4j-mermaid-primary-bg\",")
+                .contains("secondarySurface = cssColor(\n      \"--chat4j-mermaid-secondary-bg\",")
+                .contains("tertiarySurface = cssColor(\n      \"--chat4j-mermaid-tertiary-bg\",")
+                .contains("border = cssColor(\n      \"--chat4j-mermaid-border\",")
+                .contains("line = cssColor(\n      \"--chat4j-mermaid-line\",")
+                .contains("edgeLabelBackground = cssColor(\n      \"--chat4j-mermaid-edge-label-bg\",")
                 .contains("readableColor(line, text, diagramBackground)")
                 .contains("sequenceLine = readableColor(diagramBackground, line, text)")
-                .contains("sequenceSurface = readableColor(diagramBackground, secondarySurface, tertiarySurface)")
-                .contains("sequenceLabelSurface = readableColor(diagramBackground, primarySurface, secondarySurface)")
+                .contains("sequenceSurface = readableColor(\n      diagramBackground,\n      secondarySurface,\n      tertiarySurface,")
+                .contains("sequenceLabelSurface = readableColor(\n      diagramBackground,\n      primarySurface,\n      secondarySurface,")
                 .contains("MERMAID_CATEGORY_COLOR_COUNT = 12")
                 .contains("mermaidCategoricalThemeVariables(colors)")
-                .contains("colors.tertiarySurface\n        ];")
-                .contains("variables['cScale' + index] = surface")
-                .contains("variables['cScaleLabel' + index] = colors.text")
-                .contains("variables['lineColor' + index] = colors.line")
-                .contains("variables['git' + index] = colors.line")
-                .contains("variables['gitBranchLabel' + index] = colors.branchLabelText")
+                .contains("colors.tertiarySurface,\n    ];")
+                .contains("variables[\"cScale\" + index] = surface")
+                .contains("variables[\"cScaleLabel\" + index] = colors.text")
+                .contains("variables[\"lineColor\" + index] = colors.line")
+                .contains("variables[\"git\" + index] = colors.line")
+                .contains("variables[\"gitBranchLabel\" + index] = colors.branchLabelText")
                 .contains("mermaidQuadrantThemeVariables(colors)")
                 .contains("quadrant1Fill: colors.secondarySurface")
                 .contains("quadrantPointFill: colors.line")
@@ -240,7 +240,7 @@ class TranscriptBrowserAssetsTest {
                 .contains("commitLabelBackground: edgeLabelBackground")
                 .contains("tagLabelBackground: secondarySurface")
                 .contains("appendMermaidThemeStyle(renderedSvg)")
-                .contains("replaceSource(table, target);\n                applyReadableNodeLabelTheme(renderedSvg)")
+                .contains("replaceSource(table, target);\n          applyReadableNodeLabelTheme(renderedSvg)")
                 .contains("applyMindmapLabelTheme(renderedSvg)")
                 .contains("data-chat4j-mermaid-theme")
                 .contains("svg path.flowchart-link")
@@ -258,16 +258,16 @@ class TranscriptBrowserAssetsTest {
                 .contains("svg .branchLabel text, svg .branchLabel tspan")
                 .contains("svg .commit-merge, svg .commit-reverse, svg .commit-highlight-inner")
                 .contains("function applyReadableNodeLabelTheme(svg)")
-                .contains("svg.querySelectorAll('g.node')")
+                .contains("svg.querySelectorAll(\"g.node\")")
                 .contains("mermaidNodeFillColor(node)")
-                .contains("readableColor(fill, colors.text, colors.diagramBackground)")
+                .contains("readableColor(\n          fill,\n          colors.text,\n          colors.diagramBackground,")
                 .contains("setImportantColor(label, labelColor)")
-                .contains("svg.querySelectorAll('.mindmap-node-label, .mindmap-node-label *, .mindmap-node .nodeLabel")
+                .contains("svg.querySelectorAll(\n        \".mindmap-node-label, .mindmap-node-label *, .mindmap-node .nodeLabel")
                 .doesNotContain("svg text, svg tspan")
                 .doesNotContain("svg .edgeLabel, svg .edgeLabel p, svg .label, svg .nodeLabel")
                 .doesNotContain("svg .er.attributeBoxEven")
                 .doesNotContain("svg .task, svg .task0")
-                .doesNotContain("svg [class*='mindmap'] rect")
+                .doesNotContain("svg [class*=\"mindmap\"] rect")
                 .doesNotContain("svg .git0, svg .git1")
                 .contains("code.md-latex-inline:not([data-chat4j-math-rendered])")
                 .contains("table.md-latex-block:not([data-chat4j-math-rendered])")
@@ -282,16 +282,22 @@ class TranscriptBrowserAssetsTest {
     }
 
     private static String cssRule(String css, String selector) {
-        var matcher = Pattern.compile("(?m)^\\s*%s\\s*\\{".formatted(Pattern.quote(selector))).matcher(css);
-        if (!matcher.find()) {
-            throw new AssertionError("Missing CSS rule: %s".formatted(selector));
+        var matcher = Pattern.compile("(?m)^[ \\t]*%s[ \\t]*\\{".formatted(Pattern.quote(selector))).matcher(css);
+        while (matcher.find()) {
+            int startIndex = matcher.start();
+            int previousLineEnd = startIndex > 0 ? startIndex - 1 : 0;
+            int previousLineStart = css.lastIndexOf('\n', Math.max(0, previousLineEnd - 1)) + 1;
+            String previousLine = css.substring(previousLineStart, previousLineEnd).trim();
+            if (previousLine.endsWith(",")) {
+                continue;
+            }
+            int endIndex = css.indexOf('}', startIndex);
+            if (endIndex < 0) {
+                throw new AssertionError("Unterminated CSS rule: %s".formatted(selector));
+            }
+            return css.substring(startIndex, endIndex + 1);
         }
-        int startIndex = matcher.start();
-        int endIndex = css.indexOf('}', startIndex);
-        if (endIndex < 0) {
-            throw new AssertionError("Unterminated CSS rule: %s".formatted(selector));
-        }
-        return css.substring(startIndex, endIndex + 1);
+        throw new AssertionError("Missing CSS rule: %s".formatted(selector));
     }
 
     @Test
@@ -301,15 +307,15 @@ class TranscriptBrowserAssetsTest {
 
         assertThat(script)
                 .contains("window.chat4jDispatchTranscriptAction = dispatchTranscriptAction")
-                .contains("window.chat4jTranscriptAction(JSON.stringify({args:")
+                .contains("window.chat4jTranscriptAction(\n        JSON.stringify({\n          args:")
                 .contains("dispatchMessageActionButton(actionButton, event)")
-                .contains("button.type = 'button'")
-                .contains("button.setAttribute('aria-label', 'Copy code')")
-                .contains("button.getAttribute('data-read-aloud-token')")
-                .contains("dispatchTranscriptAction(action, Number(button.getAttribute('data-message-index')), text)")
+                .contains("button.type = \"button\"")
+                .contains("button.setAttribute(\"aria-label\", \"Copy code\")")
+                .contains("button.getAttribute(\"data-read-aloud-token\")")
+                .contains("dispatchTranscriptAction(\n      action,\n      Number(button.getAttribute(\"data-message-index\")),\n      text,")
                 .doesNotContain("messageActionText(button)", "function rowText(row)")
                 .contains("function associatedMessageRow(row)")
-                .contains("matches(next, '.row.assistant[data-message-index]')")
+                .contains("matches(next, \".row.assistant[data-message-index]\")")
                 .contains("player-stop")
                 .contains("window.chat4jOpenMermaidDiagram(menu._chat4jDiagram)")
                 .contains("data-action=\"open-diagram\"")
@@ -562,7 +568,7 @@ class TranscriptBrowserAssetsTest {
         assertThat(cssRule(codeCss, ".code-copy-button"))
                 .contains("position: absolute", "opacity: 0", "pointer-events: none");
         assertThat(codeCss)
-                .contains(".code-block-shell:hover .code-copy-button, .code-copy-button:focus-visible")
+                .contains(".code-block-shell:hover .code-copy-button,\n.code-copy-button:focus-visible")
                 .doesNotContain(".activity-box:hover .activity-copy-button");
 
         TranscriptRenderSnapshot snapshot = TranscriptRenderSupport.snapshot(
@@ -827,9 +833,9 @@ class TranscriptBrowserAssetsTest {
         String script = TranscriptBrowserAssets.mathRenderScript();
 
         assertThat(script)
-                .contains("text.slice(0, 2) === '\\\\['")
-                .contains("text.slice(0, 2) === '\\\\('")
-                .doesNotContain("text.slice(0, 2) === '\\\\\\\\['")
-                .doesNotContain("text.slice(0, 2) === '\\\\\\\\('");
+                .contains("text.slice(0, 2) === \"\\\\[\"")
+                .contains("text.slice(0, 2) === \"\\\\(\"")
+                .doesNotContain("text.slice(0, 2) === \"\\\\\\\\[\"")
+                .doesNotContain("text.slice(0, 2) === \"\\\\\\\\(\"");
     }
 }
