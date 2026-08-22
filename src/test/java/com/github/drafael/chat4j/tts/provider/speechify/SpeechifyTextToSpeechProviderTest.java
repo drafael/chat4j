@@ -21,6 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import static java.util.Collections.emptyMap;
@@ -191,7 +192,9 @@ class SpeechifyTextToSpeechProviderTest {
         TtsHttpRequest[] captured = new TtsHttpRequest[1];
         var subject = provider(request -> {
             captured[0] = request;
-            return json("{\"audio_data\":\"AQ==\",\"audio_format\":\"mp3\"}");
+            return json("""
+                    {"audio_data":"AQ==","audio_format":"mp3"}
+                    """);
         }, Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "resolved-key"));
         var request = new TextToSpeechRequest("speechify", " ", " ", "hello", "wav");
 
@@ -221,7 +224,9 @@ class SpeechifyTextToSpeechProviderTest {
         var subject = provider(request -> new TtsHttpResponse(
                 429,
                 Map.of("content-type", List.of("application/json")),
-                "{\"error\":{\"message\":\"Rate limit reached\"}}".getBytes(StandardCharsets.UTF_8)
+                """
+                        {"error":{"message":"Rate limit reached"}}
+                        """.getBytes(StandardCharsets.UTF_8)
         ), emptyMap());
 
         assertThatThrownBy(() -> subject.synthesize(REQUEST, "secret-key"))
@@ -244,23 +249,39 @@ class SpeechifyTextToSpeechProviderTest {
         );
     }
 
-    private static Stream<org.junit.jupiter.params.provider.Arguments> invalidCatalogs() {
+    private static Stream<Arguments> invalidCatalogs() {
         return Stream.of(
-                org.junit.jupiter.params.provider.Arguments.of(true, "not-json"),
-                org.junit.jupiter.params.provider.Arguments.of(true, "{}"),
-                org.junit.jupiter.params.provider.Arguments.of(true, "{\"models\":[{}]}"),
-                org.junit.jupiter.params.provider.Arguments.of(false, "{}"),
-                org.junit.jupiter.params.provider.Arguments.of(false, "{\"voices\":[{}]}")
+                Arguments.of(true, "not-json"),
+                Arguments.of(true, """
+                        {}
+                        """),
+                Arguments.of(true, """
+                        {"models":[{}]}
+                        """),
+                Arguments.of(false, """
+                        {}
+                        """),
+                Arguments.of(false, """
+                        {"voices":[{}]}
+                        """)
         );
     }
 
     private static Stream<String> invalidSpeechResponses() {
         return Stream.of(
                 "not-json",
-                "{}",
-                "{\"audio_data\":\"AQ==\",\"audio_format\":\"wav\"}",
-                "{\"audio_data\":\"not base64!\",\"audio_format\":\"mp3\"}",
-                "{\"audio_data\":\"\",\"audio_format\":\"mp3\"}"
+                """
+                        {}
+                        """,
+                """
+                        {"audio_data":"AQ==","audio_format":"wav"}
+                        """,
+                """
+                        {"audio_data":"not base64!","audio_format":"mp3"}
+                        """,
+                """
+                        {"audio_data":"","audio_format":"mp3"}
+                        """
         );
     }
 
