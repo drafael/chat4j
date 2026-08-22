@@ -56,6 +56,16 @@ class CredentialChangeEffectsTest {
     }
 
     @Test
+    @DisplayName("Speechify credentials invalidate only the Speechify TTS catalog")
+    void forTokenId_whenSpeechify_returnsOnlySpeechifyTtsTarget() {
+        var effect = CredentialChangeEffects.forTokenId("SPEECHIFY_API_KEY");
+
+        assertThat(effect.chatProviders()).isEmpty();
+        assertThat(effect.speechToTextProviderIds()).isEmpty();
+        assertThat(effect.textToSpeechProviderIds()).containsExactly("speechify");
+    }
+
+    @Test
     @DisplayName("Credential mappings never target local speech providers")
     void forTokenId_whenAnySupportedCredential_excludesLocalSpeechProviders() {
         assertThat(CredentialChangeEffects.forTokenId("GROQ_API_KEY").speechToTextProviderIds())
