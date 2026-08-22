@@ -16,6 +16,7 @@ public final class CredentialChangeEffects {
             Map.entry("GROQ_API_KEY", new CredentialChangeEffect(List.of("Groq"), List.of("groq"), List.of("groq"))),
             Map.entry("ELEVENLABS_API_KEY", new CredentialChangeEffect(emptyList(), List.of("elevenlabs"), List.of("elevenlabs"))),
             Map.entry("LISTENHUB_API_KEY", new CredentialChangeEffect(emptyList(), emptyList(), List.of("listenhub"))),
+            Map.entry("SPEECHIFY_API_KEY", new CredentialChangeEffect(emptyList(), emptyList(), List.of("speechify"))),
             Map.entry("DEEPGRAM_API_KEY", new CredentialChangeEffect(emptyList(), List.of("deepgram"), List.of("deepgram"))),
             Map.entry("ASSEMBLYAI_API_KEY", CredentialChangeEffect.none()),
             Map.entry("DEEPSEEK_API_KEY", CredentialChangeEffect.chat(List.of("DeepSeek"))),

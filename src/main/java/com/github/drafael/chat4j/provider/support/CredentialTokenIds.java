@@ -26,6 +26,7 @@ public final class CredentialTokenIds {
             "GROQ_API_KEY",
             "ELEVENLABS_API_KEY",
             "LISTENHUB_API_KEY",
+            "SPEECHIFY_API_KEY",
             "DEEPGRAM_API_KEY",
             "ASSEMBLYAI_API_KEY",
             "DEEPSEEK_API_KEY",

@@ -113,6 +113,7 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - Local history/settings persistence (SQLite by default, optional H2, Flyway migrations)
 - Agent Mode with local workspace tools and configurable MCP tool servers
 - Speech to Text with cloud providers plus local Whisper.cpp/Vosk model management
+- Read Aloud / Text to Speech with local system voices and cloud providers
 
 ## Supported providers
 
@@ -127,13 +128,14 @@ Dependabot is configured in `.github/dependabot.yml` for Maven and GitHub Action
 - `GROQ_API_KEY`
 - `ELEVENLABS_API_KEY` (speech-to-text/text-to-speech)
 - `LISTENHUB_API_KEY` (text-to-speech)
+- `SPEECHIFY_API_KEY` (text-to-speech)
 - `DEEPGRAM_API_KEY` (speech-to-text/text-to-speech)
 - `ASSEMBLYAI_API_KEY` (speech-to-text)
 - `DEEPSEEK_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
 
-Whisper.cpp local speech-to-text does not require an API key after downloading a local model.
+Whisper.cpp local speech-to-text does not require an API key after downloading a local model. Text to Speech supports System, Deepgram, Groq, ElevenLabs, ListenHub, and Speechify; see [Text to Speech / Read Aloud](docs/text-to-speech.md).
 
 ### API tokens
 

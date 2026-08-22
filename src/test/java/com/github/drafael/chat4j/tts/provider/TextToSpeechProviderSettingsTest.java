@@ -6,6 +6,8 @@ import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechSetti
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechSettings;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechSettings;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -90,6 +92,8 @@ class TextToSpeechProviderSettingsTest {
                 .isEqualTo(ElevenLabsTextToSpeechProvider.ID);
         assertThat(TextToSpeechProviderSettingsFactory.forProvider(repo, SystemTextToSpeechProvider.ID).providerId())
                 .isEqualTo(SystemTextToSpeechProvider.ID);
+        assertThat(TextToSpeechProviderSettingsFactory.forProvider(repo, SpeechifyTextToSpeechProvider.ID.toUpperCase()))
+                .isInstanceOf(SpeechifyTextToSpeechSettings.class);
     }
 
     @Test
