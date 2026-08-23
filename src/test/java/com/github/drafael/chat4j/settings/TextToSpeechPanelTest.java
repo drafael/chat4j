@@ -14,6 +14,7 @@ import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogStore;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
@@ -292,9 +293,9 @@ class TextToSpeechPanelTest {
         new TextToSpeechCatalogStore(repo).saveCatalogs(DeepgramTextToSpeechProvider.ID, cachedItems, cachedItems);
         var subject = createPanel(
                 repo,
-                new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(request -> {
+                new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(new TtsHttpClient(request -> {
                     throw new AssertionError("Unavailable Deepgram provider should not refresh catalogs");
-                }, credentialResolver) {
+                }), credentialResolver) {
                     @Override
                     public boolean available() {
                         return false;
@@ -1064,9 +1065,9 @@ class TextToSpeechPanelTest {
         private final AtomicReference<String> modelUsedToScopeVoices = new AtomicReference<>();
 
         private AuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(request -> {
+            super(new TtsHttpClient(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            }, credentialResolver);
+            }), credentialResolver);
         }
 
         @Override
@@ -1110,9 +1111,9 @@ class TextToSpeechPanelTest {
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
         private FailingElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(request -> {
+            super(new TtsHttpClient(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            }, credentialResolver);
+            }), credentialResolver);
         }
 
         @Override
@@ -1135,9 +1136,9 @@ class TextToSpeechPanelTest {
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
         private BlockingAuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(request -> {
+            super(new TtsHttpClient(request -> {
                 throw new AssertionError("HTTP transport should not be called");
-            }, credentialResolver);
+            }), credentialResolver);
         }
 
         @Override

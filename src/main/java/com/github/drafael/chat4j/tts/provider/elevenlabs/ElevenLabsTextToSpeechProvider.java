@@ -5,20 +5,17 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
-
-import static java.util.stream.StreamSupport.stream;
 
 public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
@@ -30,8 +27,8 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public ElevenLabsTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
-        super(transport, credentialResolver);
+    public ElevenLabsTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
+        super(httpClient, credentialResolver);
     }
 
     @Override
@@ -71,47 +68,45 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
 
     @Override
     public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/v1/models".formatted(BASE_URL)), authHeaders());
-        List<TextToSpeechCatalogItem> models = new ArrayList<>();
-        JsonNode root = jsonBody(response);
-        JsonNode modelArray = root == null ? null : (root.isArray() ? root : root.path("models"));
-        if (modelArray == null || !modelArray.isArray()) {
+        ElevenLabsApi.ModelsResponse response = getJson(
+                URI.create("%s/v1/models".formatted(BASE_URL)),
+                authHeaders(),
+                ElevenLabsApi.ModelsResponse.class,
+                "ElevenLabs model catalog response was invalid."
+        );
+        List<ElevenLabsApi.Model> modelArray = response.models();
+        if (modelArray == null) {
             throw new IllegalStateException("ElevenLabs model catalog response was invalid.");
         }
-        if (!modelArray.isEmpty() && stream(modelArray.spliterator(), false)
-                .noneMatch(model -> StringUtils.isNotBlank(firstText(model, "model_id", "id")))) {
+        if (!modelArray.isEmpty() && modelArray.stream().noneMatch(model -> model != null && StringUtils.isNotBlank(modelId(model)))) {
             throw new IllegalStateException("ElevenLabs model catalog response did not contain valid model IDs.");
         }
-        modelArray.forEach(model -> {
-            if (model.has("can_do_text_to_speech") && !model.path("can_do_text_to_speech").asBoolean(false)) {
-                return;
-            }
-            String id = firstText(model, "model_id", "id");
-            String label = firstText(model, "name", "label", "model_id", "id");
-            if (StringUtils.isNotBlank(id)) {
-                models.add(TextToSpeechCatalogItem.of(id, label));
-            }
-        });
+        List<TextToSpeechCatalogItem> models = modelArray.stream()
+                .filter(Objects::nonNull)
+                .filter(model -> !model.textToSpeechCapabilityPresent() || Boolean.TRUE.equals(model.canDoTextToSpeech()))
+                .map(ElevenLabsTextToSpeechProvider::modelItem)
+                .filter(Objects::nonNull)
+                .toList();
         return nonEmptyOrBundled(models, BUNDLED_MODELS);
     }
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/v1/voices".formatted(BASE_URL)), authHeaders());
-        List<TextToSpeechCatalogItem> voices = new ArrayList<>();
-        JsonNode root = jsonBody(response);
-        JsonNode voiceArray = root == null ? null : root.path("voices");
-        if (voiceArray == null || !voiceArray.isArray()) {
+        ElevenLabsApi.VoicesResponse response = getJson(
+                URI.create("%s/v1/voices".formatted(BASE_URL)),
+                authHeaders(),
+                ElevenLabsApi.VoicesResponse.class,
+                "ElevenLabs voice catalog response was invalid."
+        );
+        List<ElevenLabsApi.Voice> voiceArray = response.voices();
+        if (voiceArray == null) {
             throw new IllegalStateException("ElevenLabs voice catalog response was invalid.");
         }
-        voiceArray.forEach(voice -> {
-            String id = firstText(voice, "voice_id", "id");
-            String label = firstText(voice, "name", "label", "voice_id", "id");
-            String description = firstText(voice, "description", "category");
-            if (StringUtils.isNotBlank(id)) {
-                voices.add(new TextToSpeechCatalogItem(id, label, description));
-            }
-        });
+        List<TextToSpeechCatalogItem> voices = voiceArray.stream()
+                .filter(Objects::nonNull)
+                .map(ElevenLabsTextToSpeechProvider::voiceItem)
+                .filter(Objects::nonNull)
+                .toList();
         if (!voiceArray.isEmpty() && voices.isEmpty()) {
             throw new IllegalStateException("ElevenLabs voice catalog response did not contain valid voices.");
         }
@@ -126,9 +121,10 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         String voiceId = StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id());
-        ObjectNode body = OBJECT_MAPPER.createObjectNode();
-        body.put("text", request.text());
-        body.put("model_id", StringUtils.defaultIfBlank(request.modelId(), DEFAULT_MODEL.id()));
+        var body = new ElevenLabsApi.SynthesisRequest(
+                request.text(),
+                StringUtils.defaultIfBlank(request.modelId(), DEFAULT_MODEL.id())
+        );
         String encodedVoiceId = URLEncoder.encode(voiceId, StandardCharsets.UTF_8);
         URI uri = URI.create("%s/v1/text-to-speech/%s?output_format=mp3_44100_128".formatted(BASE_URL, encodedVoiceId));
         TtsHttpResponse response = postJson(uri, jsonHeaders(apiKey), body);
@@ -147,9 +143,31 @@ public class ElevenLabsTextToSpeechProvider extends AbstractHttpTextToSpeechProv
         );
     }
 
-    private static String firstText(JsonNode node, String... fields) {
-        return Arrays.stream(fields)
-                .map(field -> node.path(field).asText(""))
+    private static TextToSpeechCatalogItem modelItem(ElevenLabsApi.Model model) {
+        String id = modelId(model);
+        return StringUtils.isBlank(id) ? null : TextToSpeechCatalogItem.of(id, modelLabel(model));
+    }
+
+    private static String modelId(ElevenLabsApi.Model model) {
+        return firstText(model.modelId(), model.id());
+    }
+
+    private static String modelLabel(ElevenLabsApi.Model model) {
+        return firstText(model.name(), model.label(), model.modelId(), model.id());
+    }
+
+    private static TextToSpeechCatalogItem voiceItem(ElevenLabsApi.Voice voice) {
+        String id = firstText(voice.voiceId(), voice.id());
+        if (StringUtils.isBlank(id)) {
+            return null;
+        }
+        String label = firstText(voice.name(), voice.label(), voice.voiceId(), voice.id());
+        String description = firstText(voice.description(), voice.category());
+        return new TextToSpeechCatalogItem(id, label, description);
+    }
+
+    private static String firstText(String... values) {
+        return Arrays.stream(values)
                 .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse("");

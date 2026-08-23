@@ -4,27 +4,23 @@ import com.github.drafael.chat4j.provider.support.ApiCredentialSource;
 import com.github.drafael.chat4j.provider.support.ApiCredentialStatus;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
-import lombok.NonNull;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechProvider {
 
-    protected static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    private final TtsHttpTransport transport;
+    private final TtsHttpClient httpClient;
     private final CredentialResolver credentialResolver;
 
     protected AbstractHttpTextToSpeechProvider(
-            @NonNull TtsHttpTransport transport,
+            @NonNull TtsHttpClient httpClient,
             @NonNull CredentialResolver credentialResolver
     ) {
-        this.transport = transport;
+        this.httpClient = httpClient;
         this.credentialResolver = credentialResolver;
     }
 
@@ -51,21 +47,36 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
         return "Using %s with environment variable %s.".formatted(displayName(), credentialId);
     }
 
-    protected TtsHttpResponse get(URI uri, Map<String, String> headers) throws Exception {
-        TtsHttpResponse response = transport.send(new TtsHttpRequest("GET", uri, headers, null));
-        requireSuccess(response, displayName());
+    protected final <T> T getJson(
+            URI uri,
+            Map<String, String> headers,
+            Class<T> responseType,
+            String invalidResponseMessage
+    ) throws Exception {
+        TtsHttpResponse response = httpClient.get(uri, headers);
+        requireSuccess(response);
+        return httpClient.readJson(response.body(), responseType, invalidResponseMessage);
+    }
+
+    protected final TtsHttpResponse postJson(URI uri, Map<String, String> headers, Object requestBody) throws Exception {
+        TtsHttpResponse response = httpClient.postJson(uri, headers, requestBody);
+        requireSuccess(response);
         return response;
     }
 
-    protected TtsHttpResponse postJson(URI uri, Map<String, String> headers, JsonNode body) throws Exception {
-        byte[] payload = OBJECT_MAPPER.writeValueAsBytes(body);
-        TtsHttpResponse response = transport.send(new TtsHttpRequest("POST", uri, headers, payload));
-        requireSuccess(response, displayName());
-        return response;
+    protected final <T> T postJson(
+            URI uri,
+            Map<String, String> headers,
+            Object requestBody,
+            Class<T> responseType,
+            String invalidResponseMessage
+    ) throws Exception {
+        TtsHttpResponse response = postJson(uri, headers, requestBody);
+        return httpClient.readJson(response.body(), responseType, invalidResponseMessage);
     }
 
-    protected JsonNode jsonBody(TtsHttpResponse response) throws Exception {
-        return OBJECT_MAPPER.readTree(response.body());
+    protected final <T> Optional<T> tryJson(byte[] body, Class<T> responseType) {
+        return httpClient.tryReadJson(body, responseType);
     }
 
     protected TextToSpeechAudio audioBody(TtsHttpResponse response, String fallbackFormat) {
@@ -77,42 +88,12 @@ public abstract class AbstractHttpTextToSpeechProvider implements TextToSpeechPr
         return discovered == null || discovered.isEmpty() ? bundled : discovered;
     }
 
-    private static void requireSuccess(TtsHttpResponse response, String providerName) {
+    private void requireSuccess(TtsHttpResponse response) {
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
             return;
         }
-        String detail = safeErrorDetail(response);
+        String detail = httpClient.safeErrorDetail(response);
         String suffix = StringUtils.isBlank(detail) ? "" : ": %s".formatted(detail);
-        throw new IllegalStateException("%s TTS request failed with HTTP %d%s".formatted(providerName, response.statusCode(), suffix));
-    }
-
-    private static String safeErrorDetail(TtsHttpResponse response) {
-        String body = new String(response.body(), StandardCharsets.UTF_8);
-        if (StringUtils.isBlank(body) || body.stripLeading().startsWith("<")) {
-            return "";
-        }
-        try {
-            JsonNode root = OBJECT_MAPPER.readTree(body);
-            String message = firstErrorMessage(root);
-            return StringUtils.normalizeSpace(message);
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private static String firstErrorMessage(JsonNode root) {
-        String errorMessage = root.path("error").path("message").asText("");
-        if (StringUtils.isNotBlank(errorMessage)) {
-            return errorMessage;
-        }
-        String detailMessage = root.path("detail").path("message").asText("");
-        if (StringUtils.isNotBlank(detailMessage)) {
-            return detailMessage;
-        }
-        String message = root.path("message").asText("");
-        if (StringUtils.isNotBlank(message)) {
-            return message;
-        }
-        return root.path("detail").asText("");
+        throw new IllegalStateException("%s TTS request failed with HTTP %d%s".formatted(displayName(), response.statusCode(), suffix));
     }
 }

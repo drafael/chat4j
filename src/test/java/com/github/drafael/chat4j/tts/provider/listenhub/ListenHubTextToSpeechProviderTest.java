@@ -1,11 +1,11 @@
 package com.github.drafael.chat4j.tts.provider.listenhub;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
@@ -21,13 +21,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ListenHubTextToSpeechProviderTest {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TextToSpeechRequest REQUEST = new TextToSpeechRequest(
             ListenHubTextToSpeechProvider.ID,
             "listenhub-tts",
@@ -192,13 +192,11 @@ class ListenHubTextToSpeechProviderTest {
                 .containsEntry("Authorization", "Bearer request-key")
                 .containsEntry("Content-Type", "application/json")
                 .containsEntry("Accept", "audio/mpeg");
-        var requestJson = OBJECT_MAPPER.readTree(captured[0].body());
-        assertThat(requestJson).hasSize(3);
-        assertThat(requestJson.path("input").asText()).isEqualTo("Text to read");
-        assertThat(requestJson.path("voice").asText()).isEqualTo("private-clone-1");
-        assertThat(requestJson.path("response_format").asText()).isEqualTo("mp3");
-        assertThat(requestJson.has("model")).isFalse();
-        assertThat(requestJson.has("speed")).isFalse();
+        ListenHubApi.SynthesisRequest requestBody = read(captured[0].body(), ListenHubApi.SynthesisRequest.class);
+        assertThat(requestBody).isEqualTo(new ListenHubApi.SynthesisRequest("Text to read", "private-clone-1", "mp3"));
+        assertThat(new String(captured[0].body(), StandardCharsets.UTF_8))
+                .doesNotContain("model")
+                .doesNotContain("speed");
         assertThat(audio.bytes()).containsExactly(mp3);
         assertThat(audio.contentType()).isEqualTo(" AuDiO/MpEg ; codecs=mp3 ");
         assertThat(audio.format()).isEqualTo("mp3");
@@ -236,8 +234,8 @@ class ListenHubTextToSpeechProviderTest {
 
         subject.synthesize(request, "request-key");
 
-        assertThat(OBJECT_MAPPER.readTree(captured[0].body()).path("voice").asText())
-                .isEqualTo("travel-girl-english");
+        ListenHubApi.SynthesisRequest requestBody = read(captured[0].body(), ListenHubApi.SynthesisRequest.class);
+        assertThat(requestBody.voice()).isEqualTo("travel-girl-english");
     }
 
     @Test
@@ -292,7 +290,7 @@ class ListenHubTextToSpeechProviderTest {
                 emptyMap(),
                 shellEnvironment
         );
-        return new ListenHubTextToSpeechProvider(transport, resolver);
+        return new ListenHubTextToSpeechProvider(new TtsHttpClient(transport), resolver);
     }
 
     private static Stream<String> invalidCatalogResponses() {
