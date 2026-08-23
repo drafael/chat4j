@@ -55,7 +55,8 @@ class TtsHttpClientTest {
         assertThat(captured.get().uri()).isEqualTo(uri);
         assertThat(captured.get().headers()).containsEntry("Content-Type", "application/json");
         assertThat(new String(captured.get().body(), StandardCharsets.UTF_8))
-                .isEqualTo("{\"input\":\"hello\",\"voice_id\":\"voice-1\"}");
+                .isEqualTo("""
+                        {"input":"hello","voice_id":"voice-1"}""");
     }
 
     @Test
@@ -64,7 +65,8 @@ class TtsHttpClientTest {
         var subject = new TtsHttpClient(request -> json("{}"));
 
         TestResponse response = subject.readJson(
-                "{\"value\":\"ok\",\"new_field\":42}".getBytes(StandardCharsets.UTF_8),
+                """
+                        {"value":"ok","new_field":42}""".getBytes(StandardCharsets.UTF_8),
                 TestResponse.class,
                 "Response was invalid."
         );
@@ -120,12 +122,25 @@ class TtsHttpClientTest {
     private static Stream<Arguments> safeErrorDetails() {
         return Stream.of(
                 Arguments.of(
-                        "{\"error\":{\"message\":\" Error   message \"},\"detail\":{\"message\":\"detail\"},\"message\":\"top\"}",
+                        """
+                                {"error":{"message":" Error   message "},"detail":{"message":"detail"},"message":"top"}""",
                         "Error message"
                 ),
-                Arguments.of("{\"detail\":{\"message\":\"Detail message\"},\"message\":\"top\"}", "Detail message"),
-                Arguments.of("{\"message\":\"Top message\",\"detail\":\"string detail\"}", "Top message"),
-                Arguments.of("{\"detail\":\"String detail\"}", "String detail")
+                Arguments.of(
+                        """
+                                {"detail":{"message":"Detail message"},"message":"top"}""",
+                        "Detail message"
+                ),
+                Arguments.of(
+                        """
+                                {"message":"Top message","detail":"string detail"}""",
+                        "Top message"
+                ),
+                Arguments.of(
+                        """
+                                {"detail":"String detail"}""",
+                        "String detail"
+                )
         );
     }
 
