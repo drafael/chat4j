@@ -1,24 +1,23 @@
 package com.github.drafael.chat4j.stt.provider.vosk;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.persistence.catalog.CatalogJsonStructure;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import lombok.NonNull;
 
 public class VoskModelCatalogClient {
 
@@ -28,22 +27,16 @@ public class VoskModelCatalogClient {
     private static final int MAX_CATALOG_ITEMS = 10_000;
     private static final int MAX_CATALOG_TOKENS = 500_000;
     private static final Duration TIMEOUT = Duration.ofSeconds(15);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
-            .streamReadConstraints(StreamReadConstraints.builder()
-                    .maxNestingDepth(100)
-                    .maxStringLength(64 * 1024)
-                    .maxNumberLength(1_000)
-                    .build())
-            .build());
+    private static final HttpTransport DEFAULT_TRANSPORT = JavaNetHttpTransport.create(Duration.ofSeconds(10), RedirectPolicy.NEVER);
 
-    private final HttpClient httpClient;
+    private final HttpTransport transport;
 
     public VoskModelCatalogClient() {
-        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build());
+        this(DEFAULT_TRANSPORT);
     }
 
-    VoskModelCatalogClient(HttpClient httpClient) {
-        this.httpClient = httpClient;
+    VoskModelCatalogClient(@NonNull HttpTransport transport) {
+        this.transport = transport;
     }
 
     public String fetchRawJson(SpeechToTextProviderContext.CancellationToken cancellationToken) throws Exception {
@@ -51,33 +44,46 @@ public class VoskModelCatalogClient {
     }
 
     public List<VoskModelCatalogEntry> parse(String json) throws Exception {
-        if (!CatalogJsonStructure.isBoundedArray(OBJECT_MAPPER, json, MAX_CATALOG_ITEMS, MAX_CATALOG_TOKENS)) {
-            throw new SpeechToTextException("Vosk catalog exceeds structural limits.");
-        }
-        List<VoskModelCatalogEntry> entries = OBJECT_MAPPER.readValue(json, new TypeReference<>() {
-        });
-        return entries.stream()
+        VoskModelCatalogEntry[] entries = CatalogJsonStructure.readBoundedArray(
+                json,
+                VoskModelCatalogEntry[].class,
+                MAX_CATALOG_ITEMS,
+                MAX_CATALOG_TOKENS
+        ).orElseThrow(() -> new SpeechToTextException("Vosk catalog exceeds structural limits."));
+        return java.util.Arrays.stream(entries)
                 .filter(VoskModelCatalogEntry::speechRecognition)
                 .toList();
     }
 
     private String fetchRawJson(URI uri, int redirects, SpeechToTextProviderContext.CancellationToken cancellationToken) throws Exception {
         validateCatalogUri(uri, false);
-        if (cancellationToken != null && cancellationToken.cancelled()) {
+        if (cancelled(cancellationToken)) {
             throw new SpeechToTextException("Catalog refresh canceled.");
         }
-        HttpRequest request = HttpRequest.newBuilder(uri)
-                .GET()
-                .timeout(TIMEOUT)
-                .header("Accept", "application/json")
-                .build();
-        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        var request = new HttpExchangeRequest(
+                "GET",
+                uri,
+                Map.of("Accept", "application/json"),
+                HttpBody.empty(),
+                TIMEOUT,
+                MAX_CATALOG_BYTES
+        );
+        HttpExchangeResponse response;
+        try {
+            response = transport.send(request, () -> cancelled(cancellationToken));
+        } catch (Exception e) {
+            if (cancelled(cancellationToken)) {
+                throw new SpeechToTextException("Catalog refresh canceled.", e);
+            }
+            if ("HTTP response was too large.".equals(e.getMessage())) {
+                throw new SpeechToTextException("Vosk catalog response was too large.", e);
+            }
+            throw e;
+        }
         int status = response.statusCode();
         if (status >= 300 && status < 400) {
-            URI location = response.headers().firstValue("location")
-                    .map(uri::resolve)
-                    .orElse(null);
-            closeResponseBody(response);
+            String locationHeader = response.firstHeader("location");
+            URI location = locationHeader.isBlank() ? null : uri.resolve(locationHeader);
             if (redirects >= MAX_REDIRECTS) {
                 throw new SpeechToTextException("Vosk catalog redirected too many times.");
             }
@@ -87,20 +93,10 @@ public class VoskModelCatalogClient {
             validateCatalogUri(location, true);
             return fetchRawJson(location, redirects + 1, cancellationToken);
         }
-        if (status < 200 || status >= 300) {
-            closeResponseBody(response);
+        if (!response.successful()) {
             throw new SpeechToTextException("Vosk catalog refresh failed: HTTP %d".formatted(status));
         }
-        return boundedString(response.body(), cancellationToken);
-    }
-
-    private void closeResponseBody(HttpResponse<InputStream> response) {
-        try {
-            if (response.body() != null) {
-                response.body().close();
-            }
-        } catch (Exception ignored) {
-        }
+        return decodeUtf8(response.body());
     }
 
     private void validateCatalogUri(URI uri, boolean redirect) throws SpeechToTextException {
@@ -112,30 +108,19 @@ public class VoskModelCatalogClient {
         }
     }
 
-    private String boundedString(InputStream input, SpeechToTextProviderContext.CancellationToken cancellationToken) throws Exception {
-        try (input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            long total = 0;
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                if (cancellationToken != null && cancellationToken.cancelled()) {
-                    throw new SpeechToTextException("Catalog refresh canceled.");
-                }
-                total += read;
-                if (total > MAX_CATALOG_BYTES) {
-                    throw new SpeechToTextException("Vosk catalog response was too large.");
-                }
-                output.write(buffer, 0, read);
-            }
-            try {
-                return StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(output.toByteArray()))
-                        .toString();
-            } catch (CharacterCodingException e) {
-                throw new SpeechToTextException("Vosk catalog response was not valid UTF-8.", e);
-            }
+    private String decodeUtf8(byte[] body) throws SpeechToTextException {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(body))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            throw new SpeechToTextException("Vosk catalog response was not valid UTF-8.", e);
         }
+    }
+
+    private static boolean cancelled(SpeechToTextProviderContext.CancellationToken cancellationToken) {
+        return cancellationToken != null && cancellationToken.cancelled();
     }
 }

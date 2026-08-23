@@ -1,8 +1,6 @@
 package com.github.drafael.chat4j.chat.diagram;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.chat.conversation.webview.shared.TranscriptBrowserAssets;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
@@ -12,6 +10,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,7 +21,7 @@ import static com.github.drafael.chat4j.chat.conversation.webview.shared.Transcr
 
 public final class DiagramHtmlExporter {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
     private static final int MAX_PAYLOAD_CHARS = 100_000;
     private static final int MAX_SOURCE_CHARS = 20_000;
     private static final Pattern HEX_COLOR_PATTERN = Pattern.compile("#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})");
@@ -66,12 +66,17 @@ public final class DiagramHtmlExporter {
             throw new IOException("Diagram is too large.");
         }
 
-        JsonNode root = OBJECT_MAPPER.readTree(raw);
-        if (root == null || !root.isObject() || !Strings.CS.equals(root.path("type").asText(""), "mermaid")) {
+        DiagramWirePayload root;
+        try {
+            root = JSON_CODEC.read(raw, DiagramWirePayload.class);
+        } catch (Exception e) {
+            throw new IOException("Unsupported diagram type.", e);
+        }
+        if (!Strings.CS.equals(root.type(), "mermaid")) {
             throw new IOException("Unsupported diagram type.");
         }
 
-        String source = root.path("source").asText("");
+        String source = StringUtils.defaultString(root.source());
         if (StringUtils.isBlank(source)) {
             throw new IOException("Diagram source is missing.");
         }
@@ -80,14 +85,14 @@ public final class DiagramHtmlExporter {
         }
 
         return new DiagramPayload(
-                StringUtils.defaultIfBlank(root.path("title").asText(""), "Mermaid Diagram"),
+                StringUtils.defaultIfBlank(root.title(), "Mermaid Diagram"),
                 source,
-                requiredCssColor(root, "pageBackground"),
-                requiredCssColor(root, "sourceBackground"),
-                requiredCssColor(root, "background"),
-                requiredCssColor(root, "color"),
-                requiredCssColor(root, "borderColor"),
-                validatedThemeVariables(root.path("themeVariables"))
+                validatedCssColor(root.pageBackground(), "pageBackground"),
+                validatedCssColor(root.sourceBackground(), "sourceBackground"),
+                validatedCssColor(root.background(), "background"),
+                validatedCssColor(root.color(), "color"),
+                validatedCssColor(root.borderColor(), "borderColor"),
+                validatedThemeVariables(root.themeVariables())
         );
     }
 
@@ -100,7 +105,7 @@ public final class DiagramHtmlExporter {
         String textColor = payload.color();
         String borderColor = payload.borderColor();
         String mermaidScript = safeScriptContent(TranscriptBrowserAssets.mermaidScript());
-        String themeVariables = safeScriptContent(payload.themeVariables().toString());
+        String themeVariables = safeScriptContent(JSON_CODEC.writeString(payload.themeVariables()));
         String themeCss = standaloneThemeCss(payload);
         return """
                 <!doctype html>
@@ -246,13 +251,13 @@ public final class DiagramHtmlExporter {
     }
 
     private static String standaloneThemeCss(DiagramPayload payload) {
-        ObjectNode theme = payload.themeVariables();
-        String text = theme.path("textColor").asText();
-        String line = theme.path("lineColor").asText();
-        String actorSurface = theme.path("actorBkg").asText();
-        String actorLine = theme.path("actorBorder").asText();
-        String labelSurface = theme.path("labelBoxBkgColor").asText();
-        String labelLine = theme.path("labelBoxBorderColor").asText();
+        Map<String, Object> theme = payload.themeVariables();
+        String text = String.valueOf(theme.get("textColor"));
+        String line = String.valueOf(theme.get("lineColor"));
+        String actorSurface = String.valueOf(theme.get("actorBkg"));
+        String actorLine = String.valueOf(theme.get("actorBorder"));
+        String labelSurface = String.valueOf(theme.get("labelBoxBkgColor"));
+        String labelLine = String.valueOf(theme.get("labelBoxBorderColor"));
         return """
                 .diagram svg .edgeLabel, .diagram svg .edgeLabel p { color: %1$s !important; background: %2$s !important; }
                 .diagram svg .edgeLabel text, .diagram svg .edgeLabel tspan { fill: %1$s !important; color: %1$s !important; }
@@ -270,9 +275,9 @@ public final class DiagramHtmlExporter {
                 .diagram svg .activation0, .diagram svg .activation1, .diagram svg .activation2 { fill: %8$s !important; stroke: %9$s !important; }
                 """.formatted(
                 text,
-                theme.path("edgeLabelBackground").asText(),
-                theme.path("primaryColor").asText(),
-                theme.path("branchLabelColor").asText(),
+                theme.get("edgeLabelBackground"),
+                theme.get("primaryColor"),
+                theme.get("branchLabelColor"),
                 line,
                 actorSurface,
                 actorLine,
@@ -281,40 +286,34 @@ public final class DiagramHtmlExporter {
         );
     }
 
-    private static ObjectNode validatedThemeVariables(JsonNode themeVariables) throws IOException {
-        if (!themeVariables.isObject() || themeVariables.isEmpty()) {
+    private static Map<String, Object> validatedThemeVariables(Map<String, Object> themeVariables) throws IOException {
+        if (themeVariables == null || themeVariables.isEmpty()) {
             throw new IOException("Diagram theme variables are missing.");
         }
-        ObjectNode validated = OBJECT_MAPPER.createObjectNode();
-        var fields = themeVariables.fields();
-        while (fields.hasNext()) {
-            var field = fields.next();
+        Map<String, Object> validated = new LinkedHashMap<>();
+        for (var field : themeVariables.entrySet()) {
             String name = field.getKey();
-            JsonNode value = field.getValue();
+            Object value = field.getValue();
             if (!THEME_VARIABLE_NAME_PATTERN.matcher(name).matches()) {
                 throw new IOException("Diagram theme variable name is invalid.");
             }
-            if (Strings.CS.equals(name, "darkMode") && value.isBoolean()) {
-                validated.put(name, value.booleanValue());
-            } else if (value.isTextual()) {
-                validated.put(name, validatedCssColor(value.asText(), name));
+            if (Strings.CS.equals(name, "darkMode") && value instanceof Boolean) {
+                validated.put(name, value);
+            } else if (value instanceof String color) {
+                validated.put(name, validatedCssColor(color, name));
             } else {
                 throw new IOException("Diagram theme variable is invalid: %s".formatted(name));
             }
         }
-        if (!validated.path("darkMode").isBoolean()) {
+        if (!(validated.get("darkMode") instanceof Boolean)) {
             throw new IOException("Diagram theme variable is invalid: darkMode");
         }
         for (String name : REQUIRED_THEME_COLORS) {
-            if (!validated.path(name).isTextual()) {
+            if (!(validated.get(name) instanceof String)) {
                 throw new IOException("Diagram theme variable is missing: %s".formatted(name));
             }
         }
-        return validated;
-    }
-
-    private static String requiredCssColor(JsonNode root, String fieldName) throws IOException {
-        return validatedCssColor(root.path(fieldName).asText(""), fieldName);
+        return Map.copyOf(validated);
     }
 
     private static String validatedCssColor(String color, String fieldName) throws IOException {
@@ -337,11 +336,24 @@ public final class DiagramHtmlExporter {
             String background,
             String color,
             String borderColor,
-            ObjectNode themeVariables
+            Map<String, Object> themeVariables
     ) {
         @Override
         public String toString() {
             return "DiagramPayload[title=%s, source=<masked>, background=<masked>, color=<masked>, borderColor=<masked>]".formatted(title);
         }
+    }
+
+    private record DiagramWirePayload(
+            String type,
+            String title,
+            String source,
+            String pageBackground,
+            String sourceBackground,
+            String background,
+            String color,
+            String borderColor,
+            Map<String, Object> themeVariables
+    ) {
     }
 }

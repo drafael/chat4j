@@ -1,18 +1,16 @@
 package com.github.drafael.chat4j.stt.provider.elevenlabs;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProvider;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextResult;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
-import java.net.http.HttpRequest;
-import java.nio.charset.StandardCharsets;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.HttpBody;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -32,11 +30,11 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
     private static final long TRANSCRIPTION_RESPONSE_LIMIT_BYTES = 5L * 1024L * 1024L;
     private static final long MODEL_RESPONSE_LIMIT_BYTES = 2L * 1024L * 1024L;
     private static final int ERROR_DETAIL_LIMIT = 300;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
-    private final SttHttpTransport transport;
+    private final HttpTransport transport;
 
-    public ElevenLabsSpeechToTextProvider(SttHttpTransport transport) {
+    public ElevenLabsSpeechToTextProvider(HttpTransport transport) {
         this.transport = transport;
     }
 
@@ -70,15 +68,15 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         if (!available(context.credentialSource())) {
             throw new SpeechToTextException("ElevenLabs model catalog refresh requires credentials.");
         }
-        SttHttpRequest request = new SttHttpRequest(
+        HttpExchangeRequest request = new HttpExchangeRequest(
                 "GET",
                 ElevenLabsSttEndpointResolver.resolve(context.baseUri()).modelsUri(),
                 authJsonHeaders(context),
-                HttpRequest.BodyPublishers.noBody(),
+                HttpBody.empty(),
                 context.timeout(),
                 MODEL_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(request, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(request, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException("ElevenLabs model catalog refresh failed: %s".formatted(errorDetail(response, context)));
         }
@@ -95,7 +93,7 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
             throw new SpeechToTextException("Recording is too large to upload.");
         }
         String boundary = "----chat4j-stt-%s".formatted(UUID.randomUUID());
-        SttHttpRequest httpRequest = new SttHttpRequest(
+        HttpExchangeRequest httpRequest = new HttpExchangeRequest(
                 "POST",
                 ElevenLabsSttEndpointResolver.resolve(context.baseUri()).transcriptionUri(),
                 multipartHeaders(context, boundary),
@@ -103,7 +101,7 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
                 context.timeout(),
                 TRANSCRIPTION_RESPONSE_LIMIT_BYTES
         );
-        SttHttpResponse response = transport.send(httpRequest, context.cancellationToken());
+        HttpExchangeResponse response = transport.send(httpRequest, context.cancellationToken());
         if (!response.successful()) {
             throw new SpeechToTextException(errorMessage(response, context));
         }
@@ -111,28 +109,32 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private List<SpeechToTextCatalogItem> parseModels(byte[] body) throws Exception {
-        JsonNode root;
+        ElevenLabsSttApi.Model[] decoded;
         try {
-            root = OBJECT_MAPPER.readTree(body);
-        } catch (Exception e) {
-            throw new SpeechToTextException("ElevenLabs model catalog response was invalid.", e);
+            decoded = JSON_CODEC.read(body, ElevenLabsSttApi.Model[].class);
+        } catch (Exception arrayFailure) {
+            try {
+                ElevenLabsSttApi.ModelsResponse envelope = JSON_CODEC.read(body, ElevenLabsSttApi.ModelsResponse.class);
+                decoded = envelope.models() == null ? null : envelope.models().toArray(ElevenLabsSttApi.Model[]::new);
+            } catch (Exception envelopeFailure) {
+                throw new SpeechToTextException("ElevenLabs model catalog response was invalid.", envelopeFailure);
+            }
         }
-        JsonNode modelsNode = root.isArray() ? root : root.path("models");
-        if (!modelsNode.isArray()) {
+        if (decoded == null) {
             throw new SpeechToTextException("ElevenLabs model catalog response was invalid.");
         }
         Map<String, SpeechToTextCatalogItem> models = new LinkedHashMap<>();
-        modelsNode.forEach(model -> addModel(models, model));
+        Arrays.stream(decoded).filter(java.util.Objects::nonNull).forEach(model -> addModel(models, model));
         return models.values().stream().toList();
     }
 
-    private void addModel(Map<String, SpeechToTextCatalogItem> models, JsonNode model) {
-        String id = firstText(model, "model_id", "id");
+    private void addModel(Map<String, SpeechToTextCatalogItem> models, ElevenLabsSttApi.Model model) {
+        String id = StringUtils.trimToEmpty(model.id());
         if (invalidModelId(id) || !supportedBatchModel(model, id)) {
             return;
         }
-        String label = firstText(model, "name", "label", "model_id", "id");
-        String description = StringUtils.trimToEmpty(model.path("description").asText(""));
+        String label = firstNonBlank(model.name(), model.id());
+        String description = StringUtils.trimToEmpty(model.description());
         if (Strings.CS.equals(id, "scribe_v1")) {
             label = deprecatedLabel(label, id);
             description = StringUtils.defaultIfBlank(description, "Deprecated; use Scribe v2.");
@@ -140,7 +142,7 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         models.putIfAbsent(id, new SpeechToTextCatalogItem(id, label, description));
     }
 
-    private boolean supportedBatchModel(JsonNode model, String id) {
+    private boolean supportedBatchModel(ElevenLabsSttApi.Model model, String id) {
         if (explicitNegativeStt(model) || Strings.CS.equals(id, "scribe_v2_realtime")) {
             return false;
         }
@@ -150,18 +152,12 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         return explicitPositiveStt(model);
     }
 
-    private boolean explicitPositiveStt(JsonNode model) {
-        return booleanField(model, true, "can_do_speech_to_text", "can_do_transcription", "can_do_speech_to_text_batch", "can_do_batch_transcription");
+    private boolean explicitPositiveStt(ElevenLabsSttApi.Model model) {
+        return model.hasCapability(true);
     }
 
-    private boolean explicitNegativeStt(JsonNode model) {
-        return booleanField(model, false, "can_do_speech_to_text", "can_do_transcription", "can_do_speech_to_text_batch", "can_do_batch_transcription");
-    }
-
-    private boolean booleanField(JsonNode model, boolean value, String... fields) {
-        return Arrays.stream(fields)
-                .map(model::path)
-                .anyMatch(node -> node.isBoolean() && node.asBoolean() == value);
+    private boolean explicitNegativeStt(ElevenLabsSttApi.Model model) {
+        return model.hasCapability(false);
     }
 
     private boolean invalidModelId(String id) {
@@ -173,47 +169,44 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         return Strings.CI.contains(normalized, "deprecated") ? normalized : "%s (deprecated)".formatted(normalized);
     }
 
-    private SpeechToTextResult parseTranscript(SttHttpResponse response) throws Exception {
-        JsonNode json;
+    private SpeechToTextResult parseTranscript(HttpExchangeResponse response) throws Exception {
+        ElevenLabsSttApi.TranscriptionResponse body;
         try {
-            json = OBJECT_MAPPER.readTree(response.body());
+            body = JSON_CODEC.read(response.body(), ElevenLabsSttApi.TranscriptionResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Transcription response was invalid.", e);
         }
-        String text = StringUtils.trimToEmpty(json.path("text").asText(""));
+        String text = StringUtils.trimToEmpty(body.text());
         if (text.isBlank()) {
             throw new SpeechToTextException("No speech was recorded.");
         }
         return new SpeechToTextResult(text);
     }
 
-    private HttpRequest.BodyPublisher multipartBody(String boundary, Path audioFile, String modelId) throws Exception {
-        return HttpRequest.BodyPublishers.concat(
+    private HttpBody multipartBody(String boundary, Path audioFile, String modelId) {
+        return HttpBody.composite(List.of(
                 stringPart(boundary, "model_id", modelId),
                 filePart(boundary, audioFile),
-                HttpRequest.BodyPublishers.ofString("--%s--\r\n".formatted(boundary), StandardCharsets.UTF_8)
-        );
+                HttpBody.utf8("--%s--\r\n".formatted(boundary))
+        ));
     }
 
-    private HttpRequest.BodyPublisher stringPart(String boundary, String name, String value) {
-        return HttpRequest.BodyPublishers.ofString(
+    private HttpBody stringPart(String boundary, String name, String value) {
+        return HttpBody.utf8(
                 "--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
-                        .formatted(boundary, name, StringUtils.defaultString(value)),
-                StandardCharsets.UTF_8
+                        .formatted(boundary, name, StringUtils.defaultString(value))
         );
     }
 
-    private HttpRequest.BodyPublisher filePart(String boundary, Path audioFile) throws Exception {
-        HttpRequest.BodyPublisher prefix = HttpRequest.BodyPublishers.ofString(
-                "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: audio/wav\r\n\r\n"
-                        .formatted(boundary, safeFileName(audioFile)),
-                StandardCharsets.UTF_8
-        );
-        return HttpRequest.BodyPublishers.concat(
-                prefix,
-                HttpRequest.BodyPublishers.ofFile(audioFile),
-                HttpRequest.BodyPublishers.ofString("\r\n", StandardCharsets.UTF_8)
-        );
+    private HttpBody filePart(String boundary, Path audioFile) {
+        return HttpBody.composite(List.of(
+                HttpBody.utf8(
+                        "--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: audio/wav\r\n\r\n"
+                                .formatted(boundary, safeFileName(audioFile))
+                ),
+                HttpBody.file(audioFile),
+                HttpBody.utf8("\r\n")
+        ));
     }
 
     private String safeFileName(Path audioFile) {
@@ -241,7 +234,7 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         );
     }
 
-    private String errorMessage(SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorMessage(HttpExchangeResponse response, SpeechToTextProviderContext context) {
         return switch (response.statusCode()) {
             case 401, 403 -> "ElevenLabs credentials were rejected.";
             case 404 -> "ElevenLabs speech-to-text endpoint or model was not found.";
@@ -253,15 +246,14 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         };
     }
 
-    private String errorDetail(SttHttpResponse response, SpeechToTextProviderContext context) {
+    private String errorDetail(HttpExchangeResponse response, SpeechToTextProviderContext context) {
         String body = StringUtils.abbreviate(response.bodyText(), 64 * 1024);
         try {
-            JsonNode json = OBJECT_MAPPER.readTree(body);
+            ElevenLabsSttApi.ErrorResponse error = JSON_CODEC.read(body, ElevenLabsSttApi.ErrorResponse.class);
             String message = firstNonBlank(
-                    detailMessage(json.path("detail")),
-                    json.path("message").asText(""),
-                    json.path("error").path("message").asText(""),
-                    json.path("error").asText("")
+                    detailMessage(error.detail()),
+                    error.message(),
+                    detailMessage(error.error())
             );
             return safeDetail(StringUtils.defaultIfBlank(message, "HTTP %d".formatted(response.statusCode())), context);
         } catch (Exception e) {
@@ -269,19 +261,21 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
         }
     }
 
-    private String detailMessage(JsonNode detail) {
-        if (detail.isTextual()) {
-            return detail.asText("");
+    private String detailMessage(Object detail) {
+        if (detail instanceof String text) {
+            return text;
         }
-        if (detail.isObject()) {
-            return detail.path("message").asText("");
+        if (detail instanceof Map<?, ?> object) {
+            return firstNonBlank(stringValue(object.get("message")), stringValue(object.get("msg")));
         }
-        if (detail.isArray()) {
-            return detail.findValuesAsText("msg").stream()
-                    .filter(StringUtils::isNotBlank)
-                    .collect(joining("; "));
+        if (detail instanceof List<?> values) {
+            return values.stream().map(this::detailMessage).filter(StringUtils::isNotBlank).collect(joining("; "));
         }
         return "";
+    }
+
+    private String stringValue(Object value) {
+        return value instanceof String text ? text : "";
     }
 
     private String safeDetail(String message, SpeechToTextProviderContext context) {
@@ -291,14 +285,6 @@ public class ElevenLabsSpeechToTextProvider implements SpeechToTextProvider {
             sanitized = sanitized.replace(apiKey, "****");
         }
         return StringUtils.defaultIfBlank(StringUtils.abbreviate(sanitized, ERROR_DETAIL_LIMIT), "HTTP error");
-    }
-
-    private String firstText(JsonNode node, String... fields) {
-        return Arrays.stream(fields)
-                .map(field -> node.path(field).asText(""))
-                .filter(StringUtils::isNotBlank)
-                .findFirst()
-                .orElse("");
     }
 
     private String firstNonBlank(String... values) {

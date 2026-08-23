@@ -1,10 +1,13 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.chat.render.BoundedUtf8;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpCall;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.WebSearchRequestOptions;
@@ -21,21 +24,17 @@ import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -47,7 +46,7 @@ import static java.util.stream.IntStream.range;
 
 public class PerplexityChatCompletionClient implements ChatCompletionClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final Pattern CITATION_MARKER_PATTERN = Pattern.compile("\\[(\\d+)]");
     private static final Pattern DUPLICATE_LINKED_CITATION_PATTERN = Pattern.compile(
             "(\\s\\[(\\d+)]\\((<[^>]+>|[^)]+)\\))(?:\\s+\\[\\2]\\(\\3\\))+"
@@ -58,9 +57,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
     private static final Duration DEEP_RESEARCH_ASYNC_TIMEOUT = Duration.ofMinutes(15);
     private static final Duration DEEP_RESEARCH_POLL_INTERVAL = Duration.ofSeconds(2);
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    private final HttpTransport transport = new JavaNetHttpTransport();
     private final ProviderAttachmentSupport attachmentSupport;
 
     public PerplexityChatCompletionClient(@NonNull ProviderAttachmentSupport attachmentSupport) {
@@ -138,11 +135,15 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             return;
         }
 
-        HttpRequest request = authorizedRequest(runtime, chatCompletionsEndpoint(runtime.baseUrl()), SYNC_REQUEST_TIMEOUT)
-                .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(runtime, projectionPlan, true)))
-                .build();
+        HttpExchangeRequest request = authorizedRequest(
+                runtime,
+                chatCompletionsEndpoint(runtime.baseUrl()),
+                "POST",
+                buildRequestBody(runtime, projectionPlan, true),
+                SYNC_REQUEST_TIMEOUT
+        );
 
-        HttpResponse<String> response = send(request, isCancelled, registerActiveStream, clearActiveStream);
+        HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
         if (shouldStop(isCancelled)) {
             return;
         }
@@ -151,7 +152,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             throw new IllegalStateException(httpErrorMessage("Perplexity chat failed", response));
         }
 
-        emitFormattedResponse(response.body(), safeOnToken, safeOnCitation, isCancelled);
+        emitFormattedResponse(response.bodyText(), safeOnToken, safeOnCitation, isCancelled);
     }
 
     private void streamDeepResearchCompletion(
@@ -163,11 +164,15 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        HttpRequest request = authorizedRequest(runtime, asyncSonarEndpoint(runtime.baseUrl()), ASYNC_REQUEST_TIMEOUT)
-                .POST(HttpRequest.BodyPublishers.ofString(buildAsyncRequestBody(runtime, projectionPlan)))
-                .build();
+        HttpExchangeRequest request = authorizedRequest(
+                runtime,
+                asyncSonarEndpoint(runtime.baseUrl()),
+                "POST",
+                buildAsyncRequestBody(runtime, projectionPlan),
+                ASYNC_REQUEST_TIMEOUT
+        );
 
-        HttpResponse<String> response = send(request, isCancelled, registerActiveStream, clearActiveStream);
+        HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
         if (shouldStop(isCancelled)) {
             return;
         }
@@ -175,27 +180,40 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             throw new IllegalStateException(httpErrorMessage("Perplexity deep research submit failed", response));
         }
 
-        JsonNode submitted = JSON.readTree(response.body());
-        JsonNode completedResponse = completedAsyncResponse(submitted);
+        Map<String, Object> submitted = readObject(response.body());
+        Map<String, Object> completedResponse = completedAsyncResponse(submitted);
         if (completedResponse != null) {
-            emitFormattedResponse(JSON.writeValueAsString(completedResponse), onToken, onCitation, isCancelled);
+            emitFormattedResponse(JSON.writeString(completedResponse), onToken, onCitation, isCancelled);
             return;
         }
 
-        String requestId = submitted.path("id").asText("");
+        String requestId = stringValue(submitted.get("id"));
         if (StringUtils.isBlank(requestId)) {
             throw new IllegalStateException("Perplexity deep research submit failed: missing async request id");
         }
 
-        JsonNode asyncResponse = pollAsyncResponse(runtime, requestId, isCancelled, registerActiveStream, clearActiveStream);
-        emitFormattedResponse(JSON.writeValueAsString(asyncResponse), onToken, onCitation, isCancelled);
+        Map<String, Object> asyncResponse = pollAsyncResponse(runtime, requestId, isCancelled, registerActiveStream, clearActiveStream);
+        emitFormattedResponse(JSON.writeString(asyncResponse), onToken, onCitation, isCancelled);
     }
 
-    private HttpRequest.Builder authorizedRequest(ProviderRuntime runtime, String endpoint, Duration timeout) {
-        return HttpRequest.newBuilder(URI.create(endpoint))
-                .timeout(timeout)
-                .header("Authorization", "Bearer %s".formatted(runtime.apiKey()))
-                .header("Content-Type", "application/json");
+    private HttpExchangeRequest authorizedRequest(
+            ProviderRuntime runtime,
+            String endpoint,
+            String method,
+            String body,
+            Duration timeout
+    ) {
+        return new HttpExchangeRequest(
+                method,
+                URI.create(endpoint),
+                java.util.Map.of(
+                        "Authorization", "Bearer %s".formatted(runtime.apiKey()),
+                        "Content-Type", "application/json"
+                ),
+                HttpBody.utf8(body),
+                timeout,
+                0
+        );
     }
 
     private void emitFormattedResponse(
@@ -226,43 +244,41 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
             ProviderRuntime runtime,
             AttachmentProjectionPlan projectionPlan,
             boolean includeStream
-    ) throws Exception {
-        ObjectNode root = JSON.createObjectNode();
+    ) {
+        return JSON.writeString(requestBody(runtime, projectionPlan, includeStream));
+    }
+
+    private Map<String, Object> requestBody(
+            ProviderRuntime runtime,
+            AttachmentProjectionPlan projectionPlan,
+            boolean includeStream
+    ) {
+        Map<String, Object> root = new LinkedHashMap<>();
         root.put("model", runtime.selectedModel());
         if (includeStream) {
             root.put("stream", false);
         }
-
-        ArrayNode messages = JSON.createArrayNode();
-        projectionPlan.messages().stream()
-                .map(this::toMessageNode)
-                .forEach(messages::add);
-        root.set("messages", messages);
-        return JSON.writeValueAsString(root);
+        root.put("messages", projectionPlan.messages().stream().map(this::toMessage).toList());
+        return root;
     }
 
-    private String buildAsyncRequestBody(
-            ProviderRuntime runtime,
-            AttachmentProjectionPlan projectionPlan
-    ) throws Exception {
-        ObjectNode root = JSON.createObjectNode();
-        root.set("request", JSON.readTree(buildRequestBody(runtime, projectionPlan, false)));
-        return JSON.writeValueAsString(root);
+    private String buildAsyncRequestBody(ProviderRuntime runtime, AttachmentProjectionPlan projectionPlan) {
+        return JSON.writeString(Map.of("request", requestBody(runtime, projectionPlan, false)));
     }
 
-    private ObjectNode toMessageNode(ProjectedMessage message) {
-        ObjectNode node = JSON.createObjectNode();
-        node.put("role", message.role().name().toLowerCase());
-        node.put("content", message.parts().stream()
-                .map(AttachmentProjectionPlan::textFallback)
-                .filter(StringUtils::isNotBlank)
-                .collect(joining("\n")));
-        return node;
+    private Map<String, Object> toMessage(ProjectedMessage message) {
+        return Map.of(
+                "role", message.role().name().toLowerCase(),
+                "content", message.parts().stream()
+                        .map(AttachmentProjectionPlan::textFallback)
+                        .filter(StringUtils::isNotBlank)
+                        .collect(joining("\n"))
+        );
     }
 
     private FormattedResponse formatResponse(String body) throws Exception {
-        JsonNode root = JSON.readTree(body);
-        String answer = root.path("choices").path(0).path("message").path("content").asText("");
+        Map<String, Object> root = readObject(body);
+        String answer = answer(root);
         List<Source> sources = sources(root);
         List<CitationRef> citations = citations(sources);
         if (sources.isEmpty()) {
@@ -298,32 +314,28 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
                 .toList();
     }
 
-    private List<Source> sources(JsonNode root) {
+    private List<Source> sources(Map<String, Object> root) {
         Set<String> seenUrls = new LinkedHashSet<>();
         List<Source> sources = new ArrayList<>();
 
-        JsonNode searchResults = root.path("search_results");
-        if (searchResults.isArray()) {
-            searchResults.forEach(result -> addSource(
+        if (root.get("search_results") instanceof List<?> searchResults) {
+            searchResults.stream().map(this::objectMap).filter(java.util.Objects::nonNull).forEach(result -> addSource(
                     sources,
                     seenUrls,
-                    result.path("title").asText(""),
-                    result.path("url").asText(""),
+                    stringValue(result.get("title")),
+                    stringValue(result.get("url")),
                     searchResultCitedText(result)
             ));
         }
-
-        JsonNode citations = root.path("citations");
-        if (citations.isArray()) {
-            citations.forEach(citation -> addSource(sources, seenUrls, "", citation.asText(""), ""));
+        if (root.get("citations") instanceof List<?> citations) {
+            citations.forEach(citation -> addSource(sources, seenUrls, "", stringValue(citation), ""));
         }
-
         return sources;
     }
 
-    private String searchResultCitedText(JsonNode result) {
-        String snippet = result.path("snippet").asText("");
-        return StringUtils.isBlank(snippet) ? result.path("content").asText("") : snippet;
+    private String searchResultCitedText(Map<String, Object> result) {
+        String snippet = stringValue(result.get("snippet"));
+        return StringUtils.isBlank(snippet) ? stringValue(result.get("content")) : snippet;
     }
 
     private void addSource(List<Source> sources, Set<String> seenUrls, String title, String url, String snippet) {
@@ -415,7 +427,7 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         return Strings.CS.removeEnd(normalizedBaseUrl, "/");
     }
 
-    private JsonNode pollAsyncResponse(
+    private Map<String, Object> pollAsyncResponse(
             ProviderRuntime runtime,
             String requestId,
             BooleanSupplier isCancelled,
@@ -428,12 +440,14 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
                 throw new InterruptedException("Perplexity deep research cancelled");
             }
 
-            HttpRequest request = authorizedRequest(
+            HttpExchangeRequest request = authorizedRequest(
                     runtime,
                     asyncSonarRequestEndpoint(runtime.baseUrl(), requestId),
+                    "GET",
+                    "",
                     ASYNC_REQUEST_TIMEOUT
-            ).GET().build();
-            HttpResponse<String> response = send(request, isCancelled, registerActiveStream, clearActiveStream);
+            );
+            HttpExchangeResponse response = send(request, isCancelled, registerActiveStream, clearActiveStream);
             if (shouldStop(isCancelled)) {
                 throw new InterruptedException("Perplexity deep research cancelled");
             }
@@ -441,8 +455,8 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
                 throw new IllegalStateException(httpErrorMessage("Perplexity deep research poll failed", response));
             }
 
-            JsonNode root = JSON.readTree(response.body());
-            JsonNode completedResponse = completedAsyncResponse(root);
+            Map<String, Object> root = readObject(response.body());
+            Map<String, Object> completedResponse = completedAsyncResponse(root);
             if (completedResponse != null) {
                 return completedResponse;
             }
@@ -455,26 +469,22 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         );
     }
 
-    private JsonNode completedAsyncResponse(JsonNode root) {
-        String errorMessage = root.path("error_message").asText("");
-        if (hasValue(root.path("failed_at")) || Strings.CI.equals(root.path("status").asText(""), "FAILED")) {
+    private Map<String, Object> completedAsyncResponse(Map<String, Object> root) {
+        String errorMessage = stringValue(root.get("error_message"));
+        if (root.get("failed_at") != null || Strings.CI.equals(stringValue(root.get("status")), "FAILED")) {
             throw new IllegalStateException(StringUtils.defaultIfBlank(errorMessage, "Perplexity deep research failed"));
         }
 
-        JsonNode response = root.path("response");
-        if (!response.isMissingNode() && !response.isNull() && response.has("choices")) {
+        Map<String, Object> response = objectMap(root.get("response"));
+        if (response != null && response.containsKey("choices")) {
             return response;
         }
 
-        if (hasValue(root.path("completed_at"))) {
+        if (root.get("completed_at") != null) {
             throw new IllegalStateException("Perplexity deep research completed without a response");
         }
 
         return null;
-    }
-
-    private boolean hasValue(JsonNode node) {
-        return !node.isMissingNode() && !node.isNull();
     }
 
     private void waitBeforeNextPoll(BooleanSupplier isCancelled) throws InterruptedException {
@@ -493,8 +503,8 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private HttpResponse<String> send(
-            HttpRequest request,
+    private HttpExchangeResponse send(
+            HttpExchangeRequest request,
             BooleanSupplier isCancelled,
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
@@ -502,67 +512,29 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         if (shouldStop(isCancelled)) {
             throw new InterruptedException("Perplexity chat cancelled");
         }
-        CompletableFuture<HttpResponse<String>> future = httpClient.sendAsync(
-                request,
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
-        );
-        try {
-            registerActiveStream.accept(() -> future.cancel(true));
-        } catch (RuntimeException e) {
-            future.cancel(true);
-            throw e;
-        }
-        try {
-            return waitForResponse(future, isCancelled);
-        } finally {
-            clearActiveStream.run();
+        try (HttpCall call = transport.open(request)) {
+            try {
+                registerActiveStream.accept(call);
+            } catch (RuntimeException e) {
+                call.close();
+                throw e;
+            }
+            try {
+                return call.await(isCancelled);
+            } finally {
+                clearActiveStream.run();
+            }
         }
     }
 
-    private HttpResponse<String> waitForResponse(
-            CompletableFuture<HttpResponse<String>> future,
-            BooleanSupplier isCancelled
-    ) throws Exception {
-        boolean logicalCancellation = false;
-        try {
-            while (true) {
-                if (isCancelled.getAsBoolean()) {
-                    logicalCancellation = true;
-                    future.cancel(true);
-                    throw new InterruptedException("Perplexity chat cancelled");
-                }
-                if (Thread.currentThread().isInterrupted()) {
-                    future.cancel(true);
-                    throw new InterruptedException("Perplexity chat interrupted");
-                }
-
-                try {
-                    return future.get(100, TimeUnit.MILLISECONDS);
-                } catch (TimeoutException ignored) {
-                    // Poll cancellation while the HTTP request is in flight.
-                }
-            }
-        } catch (InterruptedException e) {
-            future.cancel(true);
-            if (!logicalCancellation) {
-                Thread.currentThread().interrupt();
-            }
-            throw e;
-        } catch (ExecutionException e) {
-            if (e.getCause() instanceof Exception exception) {
-                throw exception;
-            }
-            throw e;
-        }
-    }
-
-    private String httpErrorMessage(String prefix, HttpResponse<String> response) {
+    private String httpErrorMessage(String prefix, HttpExchangeResponse response) {
         String message = "";
         try {
-            JsonNode root = JSON.readTree(StringUtils.defaultString(response.body()));
+            Map<String, Object> root = readObject(response.body());
+            Map<String, Object> error = objectMap(root.get("error"));
             message = StringUtils.defaultIfBlank(
-                    root.path("error").path("message").asText(""),
-                    root.path("message").asText("")
+                    error == null ? "" : stringValue(error.get("message")),
+                    stringValue(root.get("message"))
             );
         } catch (Exception ignored) {
             // Use the fixed status-only fallback for unrecognized responses.
@@ -571,6 +543,35 @@ public class PerplexityChatCompletionClient implements ChatCompletionClient {
         return StringUtils.isBlank(safeMessage)
                 ? "%s: HTTP %d".formatted(prefix, response.statusCode())
                 : "%s: HTTP %d: %s".formatted(prefix, response.statusCode(), safeMessage);
+    }
+
+    private String answer(Map<String, Object> root) {
+        Object choicesValue = root.get("choices");
+        if (!(choicesValue instanceof List<?> choices) || choices.isEmpty()) {
+            return "";
+        }
+        Map<String, Object> choice = objectMap(choices.getFirst());
+        Map<String, Object> message = choice == null ? null : objectMap(choice.get("message"));
+        return message == null ? "" : stringValue(message.get("content"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readObject(byte[] json) {
+        return JSON.read(json, Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readObject(String json) {
+        return JSON.read(json, Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> objectMap(Object value) {
+        return value instanceof Map<?, ?> ? (Map<String, Object>) value : null;
+    }
+
+    private String stringValue(Object value) {
+        return value instanceof String text ? text : "";
     }
 
     private boolean isDeepResearchModel(String modelId) {

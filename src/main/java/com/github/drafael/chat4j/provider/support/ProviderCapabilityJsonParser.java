@@ -1,6 +1,8 @@
 package com.github.drafael.chat4j.provider.support;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Iterator;
@@ -15,7 +17,142 @@ import static java.util.stream.Collectors.toSet;
 
 final class ProviderCapabilityJsonParser {
 
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .disable(JsonParser.Feature.INCLUDE_SOURCE_IN_LOCATION);
+
     private ProviderCapabilityJsonParser() {
+    }
+
+    static Optional<CapabilityEvidence> nodeEvidence(byte[] payload) {
+        return parse(payload).map(ProviderCapabilityJsonParser::evidence);
+    }
+
+    static Optional<CapabilityEvidence> modelsEvidence(byte[] payload, String modelId) {
+        return parse(payload).flatMap(root -> matchingModel(root, modelId)).map(ProviderCapabilityJsonParser::evidence);
+    }
+
+    static Optional<CapabilityEvidence> lmStudioEvidence(byte[] payload, String modelId) {
+        return parse(payload).flatMap(root -> resolveLmStudioModelNode(root, modelId)).map(ProviderCapabilityJsonParser::evidence);
+    }
+
+    static Optional<CapabilityEvidence> googleModelEvidence(byte[] payload, String modelId, String canonicalModelId) {
+        return parse(payload).flatMap(root -> {
+            if (modelMatches(root, modelId) || modelMatches(root, canonicalModelId)) {
+                return Optional.of(root);
+            }
+            JsonNode models = root.path("models");
+            if (!models.isArray()) {
+                return Optional.empty();
+            }
+            return StreamSupport.stream(models.spliterator(), false)
+                    .filter(model -> modelMatches(model, modelId) || modelMatches(model, canonicalModelId))
+                    .findFirst();
+        }).map(ProviderCapabilityJsonParser::evidence);
+    }
+
+    static Optional<Boolean> ollamaImageSupport(byte[] payload) {
+        return parse(payload).flatMap(root -> {
+            Optional<Boolean> capabilities = resolveImageSupportFromCapabilitiesField(root.path("capabilities"));
+            return capabilities.isPresent()
+                    ? capabilities
+                    : containsOllamaVisionSignals(root) ? Optional.of(true) : Optional.empty();
+        });
+    }
+
+    private static Optional<JsonNode> parse(byte[] payload) {
+        try {
+            return Optional.ofNullable(JSON.readTree(payload));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private static Optional<JsonNode> matchingModel(JsonNode root, String modelId) {
+        JsonNode data = root.path("data");
+        JsonNode models = data.isArray() ? data : root;
+        if (!models.isArray()) {
+            return Optional.empty();
+        }
+        String normalizedModelId = normalize(modelId);
+        return StreamSupport.stream(models.spliterator(), false)
+                .filter(model -> modelMatches(model, normalizedModelId))
+                .findFirst();
+    }
+
+    private static CapabilityEvidence evidence(JsonNode node) {
+        JsonNode capabilities = node.path("capabilities");
+        JsonNode reasoning = capabilities.path("reasoning");
+        Boolean explicitVision = capabilities.path("vision").isBoolean()
+                ? Boolean.valueOf(capabilities.path("vision").booleanValue())
+                : null;
+        Boolean explicitReasoning = reasoning.isObject()
+                ? Boolean.TRUE
+                : reasoning.isBoolean() ? Boolean.valueOf(reasoning.booleanValue()) : null;
+        return new CapabilityEvidence(
+                resolveImageSupportFromNode(node).orElse(null),
+                resolveReasoningSupportFromNode(node).orElse(null),
+                resolveToolSupportFromNode(node).orElse(null),
+                resolveNativeWebSearchSupportFromNode(node).orElse(null),
+                explicitVision,
+                explicitReasoning,
+                node.path("description").asText("")
+        );
+    }
+
+    static final class CapabilityEvidence {
+        private final Boolean image;
+        private final Boolean reasoning;
+        private final Boolean tools;
+        private final Boolean nativeWebSearch;
+        private final Boolean explicitVision;
+        private final Boolean explicitReasoning;
+        private final String description;
+
+        private CapabilityEvidence(
+                Boolean image,
+                Boolean reasoning,
+                Boolean tools,
+                Boolean nativeWebSearch,
+                Boolean explicitVision,
+                Boolean explicitReasoning,
+                String description
+        ) {
+            this.image = image;
+            this.reasoning = reasoning;
+            this.tools = tools;
+            this.nativeWebSearch = nativeWebSearch;
+            this.explicitVision = explicitVision;
+            this.explicitReasoning = explicitReasoning;
+            this.description = StringUtils.defaultString(description);
+        }
+
+        Optional<Boolean> image() {
+            return Optional.ofNullable(image);
+        }
+
+        Optional<Boolean> reasoning() {
+            return Optional.ofNullable(reasoning);
+        }
+
+        Optional<Boolean> tools() {
+            return Optional.ofNullable(tools);
+        }
+
+        Optional<Boolean> nativeWebSearch() {
+            return Optional.ofNullable(nativeWebSearch);
+        }
+
+        Optional<Boolean> explicitVision() {
+            return Optional.ofNullable(explicitVision);
+        }
+
+        Optional<Boolean> explicitReasoning() {
+            return Optional.ofNullable(explicitReasoning);
+        }
+
+        String description() {
+            return description;
+        }
     }
 
     static Optional<JsonNode> resolveLmStudioModelNode(JsonNode root, String modelId) {

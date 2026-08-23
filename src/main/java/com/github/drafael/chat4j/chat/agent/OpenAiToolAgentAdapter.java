@@ -1,7 +1,11 @@
 package com.github.drafael.chat4j.chat.agent;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.core.error.ProviderException;
@@ -17,10 +21,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
 import java.net.http.HttpTimeoutException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -37,11 +39,9 @@ import static java.util.stream.Collectors.toSet;
 
 final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+    private static final HttpTransport HTTP_TRANSPORT = JavaNetHttpTransport.create(Duration.ofSeconds(5), RedirectPolicy.NEVER);
 
     private final String providerName;
     private final String modelId;
@@ -122,27 +122,27 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
             payload.put("stream", false);
             applyTogetherReasoning(payload, request.reasoningLevel());
 
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(chatCompletionsEndpoint(baseUrl)))
-                    .timeout(REQUEST_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(payload), StandardCharsets.UTF_8));
-            applyAuthHeaders(requestBuilder);
-
-            AgentHttpSupport.Response response = AgentHttpSupport.send(
-                    HTTP_CLIENT,
-                    requestBuilder.build(),
-                    request.isCancelled()
+            Map<String, String> headers = authHeaders();
+            headers.put("Content-Type", "application/json");
+            var httpRequest = new HttpExchangeRequest(
+                    "POST",
+                    URI.create(chatCompletionsEndpoint(baseUrl)),
+                    headers,
+                    HttpBody.bytes(JSON.writeBytes(payload)),
+                    REQUEST_TIMEOUT,
+                    0
             );
+            HttpExchangeResponse response = HTTP_TRANSPORT.send(httpRequest, request.isCancelled());
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw mapHttpError(response.statusCode(), response.body());
+                throw mapHttpError(response.statusCode(), response.bodyText());
             }
 
-            JsonNode root = JSON.readTree(response.body());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> root = JSON.read(response.body(), Map.class);
             if (shouldStop(request)) {
                 return new AgentTurnResult(false, emptyList());
             }
@@ -295,46 +295,43 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         };
     }
 
-    private ValidatedResponse validateResponse(JsonNode root, ReasoningLevel reasoningLevel) {
-        JsonNode choices = root == null ? null : root.get("choices");
-        if (choices == null || !choices.isArray() || choices.isEmpty() || !choices.get(0).isObject()) {
+    private ValidatedResponse validateResponse(Map<String, Object> root, ReasoningLevel reasoningLevel) {
+        Object choicesValue = root == null ? null : root.get("choices");
+        if (!(choicesValue instanceof List<?> choices) || choices.isEmpty() || !(choices.getFirst() instanceof Map<?, ?>)) {
             throw invalidResponse("a nonempty choices array is required");
         }
-        JsonNode choice = choices.get(0);
-        JsonNode message = choice.get("message");
-        if (message == null || !message.isObject()) {
+        Map<String, Object> choice = objectMap(choices.getFirst());
+        Map<String, Object> message = objectMap(choice.get("message"));
+        if (message == null) {
             throw invalidResponse("the first choice must contain an object-valued message");
         }
 
         boolean hostedTogether = TogetherModelSupport.isTogether(providerName)
                 && TogetherModelSupport.isHostedEndpoint(baseUrl);
         if (hostedTogether) {
-            JsonNode role = message.get("role");
-            if (role == null || !role.isTextual() || !"assistant".equals(role.asText())) {
+            if (!"assistant".equals(message.get("role"))) {
                 throw invalidResponse("hosted Together requires message.role=assistant");
             }
-            JsonNode content = message.get("content");
-            if (content == null || !content.isNull() && !content.isTextual()) {
+            Object content = message.get("content");
+            if (!message.containsKey("content") || content != null && !(content instanceof String)) {
                 throw invalidResponse("hosted Together requires present null or textual message.content");
             }
         }
 
         ValidatedToolBatch toolBatch = validateToolCalls(message);
         String assistantText = extractAssistantText(message);
-        JsonNode finishReasonNode = choice.get("finish_reason");
-        if (hostedTogether && finishReasonNode != null && !finishReasonNode.isTextual()) {
+        Object finishReasonValue = choice.get("finish_reason");
+        if (hostedTogether && choice.containsKey("finish_reason") && !(finishReasonValue instanceof String)) {
             throw invalidResponse("hosted Together requires a textual finish_reason when present");
         }
-        String finishReason = textualValue(finishReasonNode);
+        String finishReason = textualValue(finishReasonValue);
         if ("length".equals(finishReason)) {
             throw invalidResponse("the response was truncated before completion");
         }
         if (hostedTogether) {
             validateTogetherFinishReason(finishReason, assistantText, toolBatch.invocations());
         }
-        if (message.has("function_call")
-                && !message.path("function_call").isNull()
-                && toolBatch.invocations().isEmpty()) {
+        if (message.containsKey("function_call") && message.get("function_call") != null && toolBatch.invocations().isEmpty()) {
             throw invalidResponse("deprecated function_call responses are unsupported without tool_calls");
         }
         if (StringUtils.isBlank(assistantText) && toolBatch.invocations().isEmpty()) {
@@ -346,20 +343,20 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         PendingAssistantContinuation continuation = toolBatch.invocations().isEmpty()
                 ? null
                 : new PendingAssistantContinuation(
-                        message.has("content"),
-                        jsonValue(message.get("content")),
+                        message.containsKey("content"),
+                        message.get("content"),
                         toolBatch.serializedCalls(),
                         reasoning
                 );
         return new ValidatedResponse(assistantText, reasoningText, toolBatch.invocations(), continuation);
     }
 
-    private ValidatedToolBatch validateToolCalls(JsonNode message) {
-        if (!message.has("tool_calls")) {
+    private ValidatedToolBatch validateToolCalls(Map<String, Object> message) {
+        if (!message.containsKey("tool_calls")) {
             return ValidatedToolBatch.empty();
         }
-        JsonNode toolCalls = message.get("tool_calls");
-        if (toolCalls == null || !toolCalls.isArray()) {
+        Object toolCallsValue = message.get("tool_calls");
+        if (!(toolCallsValue instanceof List<?> toolCalls)) {
             throw invalidResponse("message.tool_calls must be an array when present");
         }
         if (toolCalls.isEmpty()) {
@@ -369,31 +366,26 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         List<ToolInvocationRequest> invocations = new ArrayList<>();
         List<Map<String, Object>> serializedCalls = new ArrayList<>();
         Set<String> ids = new HashSet<>();
-        for (JsonNode toolCall : toolCalls) {
-            if (!toolCall.isObject()) {
+        for (Object toolCallValue : toolCalls) {
+            Map<String, Object> toolCall = objectMap(toolCallValue);
+            if (toolCall == null) {
                 throw invalidResponse("every tool call must be an object");
             }
             String id = textualValue(toolCall.get("id"));
             String type = textualValue(toolCall.get("type"));
-            JsonNode function = toolCall.get("function");
-            String name = function == null || !function.isObject()
-                    ? ""
-                    : textualValue(function.get("name"));
-            JsonNode arguments = function == null || !function.isObject()
-                    ? null
-                    : function.get("arguments");
+            Map<String, Object> function = objectMap(toolCall.get("function"));
+            String name = function == null ? "" : textualValue(function.get("name"));
+            Object arguments = function == null ? null : function.get("arguments");
             if (StringUtils.isBlank(id)
                     || !ids.add(id)
                     || !"function".equals(type)
                     || StringUtils.isBlank(name)
-                    || arguments == null
-                    || !arguments.isTextual()) {
+                    || !(arguments instanceof String argumentsJson)) {
                 throw invalidResponse("tool calls require unique nonblank IDs, function type/name, and textual arguments");
             }
 
-            String argumentsJson = arguments.asText();
             invocations.add(new ToolInvocationRequest(id, name, argumentsJson));
-            serializedCalls.add(toObjectMap(toolCall));
+            serializedCalls.add(new LinkedHashMap<>(toolCall));
         }
         return new ValidatedToolBatch(List.copyOf(invocations), List.copyOf(serializedCalls));
     }
@@ -412,7 +404,7 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         }
     }
 
-    private ReasoningContinuation reasoningContinuation(JsonNode message, ReasoningLevel reasoningLevel) {
+    private ReasoningContinuation reasoningContinuation(Map<String, Object> message, ReasoningLevel reasoningLevel) {
         if (TogetherModelSupport.isTogether(providerName)) {
             if (!reasoningLevel.enabled()) {
                 return null;
@@ -429,53 +421,47 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         return null;
     }
 
-    private ReasoningContinuation firstReasoningContinuation(JsonNode message, List<String> fieldNames) {
+    private ReasoningContinuation firstReasoningContinuation(Map<String, Object> message, List<String> fieldNames) {
         return fieldNames.stream()
-                .filter(message::has)
-                .map(fieldName -> new ReasoningContinuation(fieldName, jsonValue(message.get(fieldName))))
+                .filter(message::containsKey)
+                .map(fieldName -> new ReasoningContinuation(fieldName, message.get(fieldName)))
                 .findFirst()
                 .orElse(null);
     }
 
-    private Object jsonValue(JsonNode node) {
-        return node == null || node.isMissingNode() ? null : JSON.convertValue(node, Object.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> toObjectMap(JsonNode node) {
-        return JSON.convertValue(node, Map.class);
-    }
-
-    private String extractAssistantText(JsonNode message) {
-        JsonNode content = message.get("content");
-        if (content != null && content.isTextual()) {
-            return content.asText("");
+    private String extractAssistantText(Map<String, Object> message) {
+        Object content = message.get("content");
+        if (content instanceof String text) {
+            return text;
         }
-        if (content == null || !content.isArray()) {
+        if (!(content instanceof List<?> parts)) {
             return "";
         }
-        StringBuilder collected = new StringBuilder();
-        content.forEach(part -> {
-            if ("text".equals(part.path("type").asText(""))) {
-                collected.append(part.path("text").asText(""));
-            }
-        });
-        return collected.toString();
+        return parts.stream()
+                .map(this::objectMap)
+                .filter(java.util.Objects::nonNull)
+                .filter(part -> "text".equals(part.get("type")))
+                .map(part -> textualValue(part.get("text")))
+                .collect(joining());
     }
 
-    private String extractReasoningText(JsonNode message) {
+    private String extractReasoningText(Map<String, Object> message) {
         return List.of("reasoning", "reasoning_content", "thinking", "thought").stream()
                 .map(message::get)
-                .filter(Objects::nonNull)
-                .filter(JsonNode::isTextual)
-                .map(JsonNode::asText)
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
                 .filter(StringUtils::isNotBlank)
                 .findFirst()
                 .orElse("");
     }
 
-    private String textualValue(JsonNode node) {
-        return node != null && node.isTextual() ? node.asText("") : "";
+    private String textualValue(Object value) {
+        return value instanceof String text ? text : "";
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> objectMap(Object value) {
+        return value instanceof Map<?, ?> ? (Map<String, Object>) value : null;
     }
 
     private IllegalStateException invalidResponse(String detail) {
@@ -518,10 +504,14 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
         String errorCode = "";
         String message = "";
         try {
-            JsonNode error = JSON.readTree(StringUtils.defaultString(responseBody)).path("error");
-            errorType = error.path("type").asText("");
-            errorCode = error.path("code").asText("");
-            message = error.path("message").asText("");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> root = JSON.read(StringUtils.defaultString(responseBody), Map.class);
+            Map<String, Object> error = objectMap(root.get("error"));
+            if (error != null) {
+                errorType = textualValue(error.get("type"));
+                errorCode = textualValue(error.get("code"));
+                message = textualValue(error.get("message"));
+            }
         } catch (Exception ignored) {
         }
         return ProviderExceptionMapper.mapHttpStatus(
@@ -551,17 +541,18 @@ final class OpenAiToolAgentAdapter implements AgentProviderAdapter {
                 : "%s/chat/completions".formatted(normalizedBaseUrl);
     }
 
-    private void applyAuthHeaders(HttpRequest.Builder requestBuilder) {
+    private Map<String, String> authHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
         if (StringUtils.isNotBlank(apiKey)) {
-            requestBuilder.header("Authorization", "Bearer %s".formatted(apiKey));
+            headers.put("Authorization", "Bearer %s".formatted(apiKey));
             if (Strings.CI.contains(providerName, "google")) {
-                requestBuilder.header("x-goog-api-key", apiKey);
+                headers.put("x-goog-api-key", apiKey);
             }
         }
-
         if (Strings.CS.equals(providerName, "GitHub Copilot")) {
-            CopilotRequestHeaders.asMap().forEach(requestBuilder::header);
+            headers.putAll(CopilotRequestHeaders.asMap());
         }
+        return headers;
     }
 
     private List<Map<String, Object>> toolDefinitions() {

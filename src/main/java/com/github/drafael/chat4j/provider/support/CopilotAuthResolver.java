@@ -1,7 +1,12 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport.RedirectPolicy;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.SecureFileStore;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -15,9 +20,6 @@ import java.awt.datatransfer.StringSelection;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,7 +38,7 @@ import static java.util.Collections.emptyMap;
 @Slf4j
 public class CopilotAuthResolver {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
 
     private static final String CHAT4J_AUTH_FILENAME = "copilot-auth.json";
     private static final String CHAT4J_TOKEN_SOURCE = "Chat4J OAuth";
@@ -70,29 +72,32 @@ public class CopilotAuthResolver {
 
     private final Path userHome;
     private final Map<String, String> environment;
-    private final HttpClient httpClient;
+    private final HttpTransport transport;
     private final UserPromptActions userPromptActions;
     private final AtomicBoolean explicitAuthOperationInProgress = new AtomicBoolean();
     private final ReentrantLock authFileMutationLock = new ReentrantLock();
 
     public CopilotAuthResolver() {
-        this(Path.of(System.getProperty("user.home")), System.getenv(), HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(3))
-                .build(), new DesktopUserPromptActions());
+        this(
+                Path.of(System.getProperty("user.home")),
+                System.getenv(),
+                JavaNetHttpTransport.create(Duration.ofSeconds(3), RedirectPolicy.NEVER),
+                new DesktopUserPromptActions()
+        );
     }
 
     public CopilotAuthResolver(
             @NonNull Path userHome,
             @NonNull Map<String, String> environment,
-            @NonNull HttpClient httpClient
+            @NonNull HttpTransport transport
     ) {
-        this(userHome, environment, httpClient, new DesktopUserPromptActions());
+        this(userHome, environment, transport, new DesktopUserPromptActions());
     }
 
-    CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpClient httpClient, UserPromptActions userPromptActions) {
+    CopilotAuthResolver(Path userHome, Map<String, String> environment, HttpTransport transport, UserPromptActions userPromptActions) {
         this.userHome = userHome;
         this.environment = environment == null ? emptyMap() : Map.copyOf(environment);
-        this.httpClient = httpClient;
+        this.transport = transport;
         this.userPromptActions = userPromptActions == null ? new DesktopUserPromptActions() : userPromptActions;
     }
 
@@ -117,16 +122,19 @@ public class CopilotAuthResolver {
                 return null;
             }
 
-            JsonNode root = JSON.readTree(tokenFile.toFile());
-            String token = normalizeToken(root.path("accessToken").asText(""));
+            CopilotAuthApi.StoredToken stored = JSON.read(
+                    Files.readAllBytes(tokenFile),
+                    CopilotAuthApi.StoredToken.class
+            );
+            String token = normalizeToken(stored.accessToken());
             if (StringUtils.isBlank(token)) {
                 return null;
             }
 
-            String refreshToken = normalizeToken(root.path("refreshToken").asText(""));
-            long expiresAtEpochMs = root.path("expiresAtEpochMs").asLong(0L);
-            String enterpriseDomain = StringUtils.trimToNull(root.path("enterpriseDomain").asText(""));
-            String oauthScopes = root.path("oauthScopes").asText("");
+            String refreshToken = normalizeToken(stored.refreshToken());
+            long expiresAtEpochMs = stored.expiresAtEpochMs() == null ? 0L : stored.expiresAtEpochMs();
+            String enterpriseDomain = StringUtils.trimToNull(stored.enterpriseDomain());
+            String oauthScopes = StringUtils.defaultString(stored.oauthScopes());
 
             if (!isCopilotSessionToken(token)) {
                 if (!isGitHubOAuthToken(token)) {
@@ -387,27 +395,34 @@ public class CopilotAuthResolver {
                 urlEncode(oauthScopes)
         );
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(deviceCodeEndpoint(enterpriseDomain)))
-                .timeout(Duration.ofSeconds(10))
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("User-Agent", "GitHubCopilotChat/0.35.0")
-                .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        HttpExchangeResponse response = send(
+                "POST",
+                URI.create(deviceCodeEndpoint(enterpriseDomain)),
+                Map.of(
+                        "Accept", "application/json",
+                        "Content-Type", "application/x-www-form-urlencoded",
+                        "User-Agent", "GitHubCopilotChat/0.35.0"
+                ),
+                formBody,
+                Duration.ofSeconds(10),
+                null
+        );
         long responseReceivedAtNanos = System.nanoTime();
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+        if (!response.successful()) {
             throw new IllegalStateException("Device login request failed with HTTP %d".formatted(response.statusCode()));
         }
 
-        JsonNode root = JSON.readTree(response.body());
-        String deviceCode = StringUtils.trimToNull(root.path("device_code").asText(""));
-        String userCode = StringUtils.trimToNull(root.path("user_code").asText(""));
-        String verificationUri = StringUtils.trimToNull(root.path("verification_uri").asText(""));
-        int intervalSeconds = root.path("interval").asInt(5);
-        int expiresInSeconds = root.path("expires_in").asInt((int) Duration.ofMinutes(15).toSeconds());
+        CopilotAuthApi.DeviceAuthorizationResponse body = JSON.read(
+                response.body(),
+                CopilotAuthApi.DeviceAuthorizationResponse.class
+        );
+        String deviceCode = StringUtils.trimToNull(body.deviceCode());
+        String userCode = StringUtils.trimToNull(body.userCode());
+        String verificationUri = StringUtils.trimToNull(body.verificationUri());
+        int intervalSeconds = body.interval() == null ? 5 : body.interval();
+        int expiresInSeconds = body.expiresIn() == null
+                ? (int) Duration.ofMinutes(15).toSeconds()
+                : body.expiresIn();
 
         if (StringUtils.isAnyBlank(deviceCode, userCode, verificationUri)) {
             throw new IllegalStateException("Device login response was incomplete");
@@ -448,30 +463,35 @@ public class CopilotAuthResolver {
                     urlEncode("urn:ietf:params:oauth:grant-type:device_code")
             );
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(accessTokenEndpoint(enterpriseDomain)))
-                    .timeout(Duration.ofNanos(Math.min(remainingNanos, Duration.ofSeconds(10).toNanos())))
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("User-Agent", "GitHubCopilotChat/0.35.0")
-                    .POST(HttpRequest.BodyPublishers.ofString(formBody, StandardCharsets.UTF_8))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpExchangeResponse response = send(
+                    "POST",
+                    URI.create(accessTokenEndpoint(enterpriseDomain)),
+                    Map.of(
+                            "Accept", "application/json",
+                            "Content-Type", "application/x-www-form-urlencoded",
+                            "User-Agent", "GitHubCopilotChat/0.35.0"
+                    ),
+                    formBody,
+                    Duration.ofNanos(Math.min(remainingNanos, Duration.ofSeconds(10).toNanos())),
+                    cancellationRequested
+            );
             if (isCancellationRequested(cancellationRequested) || remainingNanos(timeoutDeadlineNanos) == 0L) {
                 return null;
             }
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            if (!response.successful()) {
                 throw new IllegalStateException("OAuth token exchange failed with HTTP %d".formatted(response.statusCode()));
             }
 
-            JsonNode root = JSON.readTree(response.body());
-            String accessToken = normalizeToken(root.path("access_token").asText(""));
+            CopilotAuthApi.AccessTokenResponse body = JSON.read(
+                    response.body(),
+                    CopilotAuthApi.AccessTokenResponse.class
+            );
+            String accessToken = normalizeToken(body.accessToken());
             if (StringUtils.isNotBlank(accessToken)) {
                 return accessToken;
             }
 
-            String error = StringUtils.trimToNull(root.path("error").asText(""));
+            String error = StringUtils.trimToNull(body.error());
             if (Strings.CS.equals(error, "authorization_pending")) {
                 sleepUntilNextPoll(intervalSeconds, timeoutDeadlineNanos);
                 continue;
@@ -531,26 +551,30 @@ public class CopilotAuthResolver {
         }
 
         try {
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(copilotTokenEndpoint(enterpriseDomain)))
-                    .timeout(Duration.ofSeconds(10))
-                    .GET()
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer %s".formatted(githubAccessToken));
-
-            COPILOT_OAUTH_HEADERS.forEach(requestBuilder::header);
-
-            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            Map<String, String> headers = new LinkedHashMap<>(COPILOT_OAUTH_HEADERS);
+            headers.put("Accept", "application/json");
+            headers.put("Authorization", "Bearer %s".formatted(githubAccessToken));
+            HttpExchangeResponse response = send(
+                    "GET",
+                    URI.create(copilotTokenEndpoint(enterpriseDomain)),
+                    headers,
+                    null,
+                    Duration.ofSeconds(10),
+                    null
+            );
+            if (!response.successful()) {
                 if (failOnError) {
                     throw new IllegalStateException("Copilot token exchange failed with HTTP %d".formatted(response.statusCode()));
                 }
                 return null;
             }
 
-            JsonNode root = JSON.readTree(response.body());
-            String sessionToken = normalizeToken(root.path("token").asText(""));
-            long expiresAtSeconds = root.path("expires_at").asLong(0L);
+            CopilotAuthApi.SessionTokenResponse body = JSON.read(
+                    response.body(),
+                    CopilotAuthApi.SessionTokenResponse.class
+            );
+            String sessionToken = normalizeToken(body.token());
+            long expiresAtSeconds = body.expiresAt() == null ? 0L : body.expiresAt();
             if (StringUtils.isBlank(sessionToken) || expiresAtSeconds <= 0L) {
                 if (failOnError) {
                     throw new IllegalStateException("Invalid Copilot token exchange response");
@@ -603,16 +627,16 @@ public class CopilotAuthResolver {
     ) throws Exception {
         Path tokenFile = chat4jAuthFile();
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("accessToken", token);
-        payload.put("refreshToken", StringUtils.trimToNull(refreshToken));
-        payload.put("expiresAtEpochMs", expiresAtEpochMs > 0 ? expiresAtEpochMs : null);
-        payload.put("enterpriseDomain", StringUtils.trimToNull(enterpriseDomain));
-        payload.put("updatedAtEpochMs", System.currentTimeMillis());
-        payload.put("source", CHAT4J_TOKEN_SOURCE);
-        payload.put("oauthScopes", StringUtils.defaultString(oauthScopes));
-
-        String content = JSON.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
+        var payload = new CopilotAuthApi.StoredToken(
+                token,
+                StringUtils.trimToNull(refreshToken),
+                expiresAtEpochMs > 0 ? expiresAtEpochMs : null,
+                StringUtils.trimToNull(enterpriseDomain),
+                System.currentTimeMillis(),
+                CHAT4J_TOKEN_SOURCE,
+                StringUtils.defaultString(oauthScopes)
+        );
+        String content = JSON.writePrettyString(payload);
 
         if (cancellationRequested == null) {
             authFileMutationLock.lock();
@@ -628,6 +652,27 @@ public class CopilotAuthResolver {
         } finally {
             authFileMutationLock.unlock();
         }
+    }
+
+    private HttpExchangeResponse send(
+            String method,
+            URI uri,
+            Map<String, String> headers,
+            String body,
+            Duration timeout,
+            BooleanSupplier cancellationRequested
+    ) throws Exception {
+        return transport.send(
+                new HttpExchangeRequest(
+                        method,
+                        uri,
+                        headers,
+                        body == null ? HttpBody.empty() : HttpBody.utf8(body),
+                        timeout,
+                        0
+                ),
+                cancellationRequested
+        );
     }
 
     private void triggerLoginPromptActions(

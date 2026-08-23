@@ -1,6 +1,6 @@
 package com.github.drafael.chat4j.settings;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.formdev.flatlaf.icons.FlatSearchIcon;
@@ -93,7 +93,7 @@ import static java.util.stream.Stream.concat;
 
 public final class McpPanel extends JPanel implements AsyncPendingSettingsSaveParticipant {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final String EMPTY_CARD = "empty";
     private static final String EDITOR_CARD = "editor";
     private static final String CANCELLED_STATUS = "Verification cancelled because settings or selection changed.";
@@ -2249,7 +2249,7 @@ public final class McpPanel extends JPanel implements AsyncPendingSettingsSavePa
         tools.forEach(tool -> {
             try {
                 schemas.put(tool.name(), BoundedUtf8.multilinePresentation(
-                        JSON.writerWithDefaultPrettyPrinter().writeValueAsString(tool.inputSchema()),
+                        JSON.writePrettyString(tool.inputSchema()),
                         16_384,
                         65_536
                 ));

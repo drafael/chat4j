@@ -1,5 +1,8 @@
 package com.github.drafael.chat4j.tts.provider;
 
+import com.github.drafael.chat4j.http.HttpBody;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
@@ -24,8 +27,8 @@ class TtsHttpClientTest {
     @Test
     @DisplayName("GET requests preserve their URI and headers without a body")
     void get_whenCalled_buildsExpectedRequest() throws Exception {
-        var captured = new AtomicReference<TtsHttpRequest>();
-        var subject = new TtsHttpClient(request -> {
+        var captured = new AtomicReference<HttpExchangeRequest>();
+        var subject = new TtsHttpClient((request, cancellation) -> {
             captured.set(request);
             return json("{}");
         });
@@ -36,14 +39,14 @@ class TtsHttpClientTest {
         assertThat(captured.get().method()).isEqualTo("GET");
         assertThat(captured.get().uri()).isEqualTo(uri);
         assertThat(captured.get().headers()).containsEntry("Authorization", "Bearer secret");
-        assertThat(captured.get().body()).isEmpty();
+        assertThat(captured.get().body()).isInstanceOf(HttpBody.Empty.class);
     }
 
     @Test
     @DisplayName("JSON POST requests serialize record property names and preserve transport metadata")
     void postJson_whenRecordProvided_serializesExpectedRequest() throws Exception {
-        var captured = new AtomicReference<TtsHttpRequest>();
-        var subject = new TtsHttpClient(request -> {
+        var captured = new AtomicReference<HttpExchangeRequest>();
+        var subject = new TtsHttpClient((request, cancellation) -> {
             captured.set(request);
             return json("{}");
         });
@@ -54,7 +57,7 @@ class TtsHttpClientTest {
         assertThat(captured.get().method()).isEqualTo("POST");
         assertThat(captured.get().uri()).isEqualTo(uri);
         assertThat(captured.get().headers()).containsEntry("Content-Type", "application/json");
-        assertThat(new String(captured.get().body(), StandardCharsets.UTF_8))
+        assertThat(new String(((HttpBody.Bytes) captured.get().body()).value(), StandardCharsets.UTF_8))
                 .isEqualTo("""
                         {"input":"hello","voice_id":"voice-1"}""");
     }
@@ -62,7 +65,7 @@ class TtsHttpClientTest {
     @Test
     @DisplayName("Typed decoding ignores additive response properties declared by the wire record")
     void readJson_whenResponseHasUnknownProperties_returnsTypedResponse() {
-        var subject = new TtsHttpClient(request -> json("{}"));
+        var subject = new TtsHttpClient((request, cancellation) -> json("{}"));
 
         TestResponse response = subject.readJson(
                 """
@@ -77,7 +80,7 @@ class TtsHttpClientTest {
     @Test
     @DisplayName("Typed decoding replaces parser diagnostics with the endpoint message")
     void readJson_whenBodyIsMalformed_throwsStableMessage() {
-        var subject = new TtsHttpClient(request -> json("{}"));
+        var subject = new TtsHttpClient((request, cancellation) -> json("{}"));
 
         assertThatThrownBy(() -> subject.readJson(
                 "not-json secret-body".getBytes(StandardCharsets.UTF_8),
@@ -92,7 +95,7 @@ class TtsHttpClientTest {
     @Test
     @DisplayName("Optional typed decoding is empty for binary and malformed bodies")
     void tryReadJson_whenBodyIsNotJson_returnsEmpty() {
-        var subject = new TtsHttpClient(request -> json("{}"));
+        var subject = new TtsHttpClient((request, cancellation) -> json("{}"));
 
         assertThat(subject.tryReadJson(new byte[]{1, 2, 3}, TestResponse.class)).isEmpty();
     }
@@ -101,9 +104,9 @@ class TtsHttpClientTest {
     @MethodSource("safeErrorDetails")
     @DisplayName("Safe error extraction retains supported message shapes and precedence")
     void safeErrorDetail_whenStructuredErrorReturned_extractsExpectedMessage(String body, String expected) {
-        var subject = new TtsHttpClient(request -> json("{}"));
+        var subject = new TtsHttpClient((request, cancellation) -> json("{}"));
 
-        String detail = subject.safeErrorDetail(new TtsHttpResponse(400, emptyMap(), body.getBytes(StandardCharsets.UTF_8)));
+        String detail = subject.safeErrorDetail(new HttpExchangeResponse(400, emptyMap(), body.getBytes(StandardCharsets.UTF_8)));
 
         assertThat(detail).isEqualTo(expected);
     }
@@ -112,9 +115,9 @@ class TtsHttpClientTest {
     @ValueSource(strings = {"", "not-json private-body", "<html>private body</html>"})
     @DisplayName("Safe error extraction suppresses blank, malformed, and HTML bodies")
     void safeErrorDetail_whenBodyIsUnsafe_returnsBlank(String body) {
-        var subject = new TtsHttpClient(request -> json("{}"));
+        var subject = new TtsHttpClient((request, cancellation) -> json("{}"));
 
-        String detail = subject.safeErrorDetail(new TtsHttpResponse(500, emptyMap(), body.getBytes(StandardCharsets.UTF_8)));
+        String detail = subject.safeErrorDetail(new HttpExchangeResponse(500, emptyMap(), body.getBytes(StandardCharsets.UTF_8)));
 
         assertThat(detail).isBlank();
     }
@@ -144,8 +147,8 @@ class TtsHttpClientTest {
         );
     }
 
-    private static TtsHttpResponse json(String body) {
-        return new TtsHttpResponse(
+    private static HttpExchangeResponse json(String body) {
+        return new HttpExchangeResponse(
                 200,
                 Map.of("content-type", List.of("application/json")),
                 body.getBytes(StandardCharsets.UTF_8)

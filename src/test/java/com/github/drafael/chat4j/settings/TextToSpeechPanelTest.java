@@ -293,7 +293,7 @@ class TextToSpeechPanelTest {
         new TextToSpeechCatalogStore(repo).saveCatalogs(DeepgramTextToSpeechProvider.ID, cachedItems, cachedItems);
         var subject = createPanel(
                 repo,
-                new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(new TtsHttpClient(request -> {
+                new TextToSpeechProviderRegistry(List.of(new DeepgramTextToSpeechProvider(new TtsHttpClient((request, cancellation) -> {
                     throw new AssertionError("Unavailable Deepgram provider should not refresh catalogs");
                 }), credentialResolver) {
                     @Override
@@ -1065,7 +1065,7 @@ class TextToSpeechPanelTest {
         private final AtomicReference<String> modelUsedToScopeVoices = new AtomicReference<>();
 
         private AuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(new TtsHttpClient(request -> {
+            super(new TtsHttpClient((request, cancellation) -> {
                 throw new AssertionError("HTTP transport should not be called");
             }), credentialResolver);
         }
@@ -1111,7 +1111,7 @@ class TextToSpeechPanelTest {
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
         private FailingElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(new TtsHttpClient(request -> {
+            super(new TtsHttpClient((request, cancellation) -> {
                 throw new AssertionError("HTTP transport should not be called");
             }), credentialResolver);
         }
@@ -1136,7 +1136,7 @@ class TextToSpeechPanelTest {
         private final AtomicReference<Thread> refreshThread = new AtomicReference<>();
 
         private BlockingAuthoritativeElevenLabsProvider(CredentialResolver credentialResolver) {
-            super(new TtsHttpClient(request -> {
+            super(new TtsHttpClient((request, cancellation) -> {
                 throw new AssertionError("HTTP transport should not be called");
             }), credentialResolver);
         }

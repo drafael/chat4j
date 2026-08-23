@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.core;
 
+import com.github.drafael.chat4j.provider.support.BlockingHttpClientTransport;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
@@ -43,7 +44,7 @@ class ProviderFacadeTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-resolver-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public String resolveBearerToken() {
@@ -99,7 +100,7 @@ class ProviderFacadeTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("source-token-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public String resolveBearerToken() {
@@ -160,7 +161,7 @@ class ProviderFacadeTest {
         CopilotAuthResolver copilotAuthResolver = new CopilotAuthResolver(
                 tempDir.resolve("codex-test-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public String resolveBearerToken() {
@@ -176,7 +177,7 @@ class ProviderFacadeTest {
         CodexAuthResolver codexAuthResolver = new CodexAuthResolver(
                 tempDir.resolve("codex-resolver-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public String resolveBearerToken() {
@@ -214,6 +215,6 @@ class ProviderFacadeTest {
     }
 
     private CodexAuthResolver codexResolver(String homeDirectory) {
-        return new CodexAuthResolver(tempDir.resolve(homeDirectory), emptyMap(), HttpClient.newHttpClient());
+        return new CodexAuthResolver(tempDir.resolve(homeDirectory), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
     }
 }

@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.stt.provider;
 
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import com.github.drafael.chat4j.persistence.catalog.CatalogSnapshotStore;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.stt.provider.assemblyai.AssemblyAiSpeechToTextProvider;
@@ -110,7 +111,7 @@ class SpeechToTextCatalogStoreTest {
     @DisplayName("Deepgram cached alias models are normalized out of the displayed catalog")
     void models_whenDeepgramCachedModelsContainAliases_showsBundledCanonicalModelsOnly() throws Exception {
         var repo = repo("deepgram-aliases.properties");
-        var provider = new DeepgramSpeechToTextProvider((request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0]));
+        var provider = new DeepgramSpeechToTextProvider((request, cancellationToken) -> new HttpExchangeResponse(200, null, new byte[0]));
         var subject = new SpeechToTextCatalogStore(repo);
         subject.saveModels(
                 DeepgramSpeechToTextProvider.ID,
@@ -148,7 +149,7 @@ class SpeechToTextCatalogStoreTest {
     void authoritativeModels_whenSavedModelAbsent_omitsSavedModel() {
         var subject = new SpeechToTextCatalogStore(repo("authoritative-merge.properties"));
         var provider = new ElevenLabsSpeechToTextProvider(
-                (request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0])
+                (request, cancellationToken) -> new HttpExchangeResponse(200, null, new byte[0])
         );
 
         var models = subject.authoritativeModels(
@@ -206,7 +207,7 @@ class SpeechToTextCatalogStoreTest {
     void models_whenAssemblyAiSelected_usesBundledOfficialModelsOnly() throws Exception {
         var repo = repo("assemblyai.properties");
         var subject = new SpeechToTextCatalogStore(repo);
-        var provider = new AssemblyAiSpeechToTextProvider((request, cancellationToken) -> new SttHttpResponse(200, null, new byte[0]));
+        var provider = new AssemblyAiSpeechToTextProvider((request, cancellationToken) -> new HttpExchangeResponse(200, null, new byte[0]));
         subject.saveModels(AssemblyAiSpeechToTextProvider.ID, List.of(SpeechToTextCatalogItem.of("stale-model", "Stale Model")));
 
         var models = subject.models(provider, SpeechToTextCatalogItem.of("selected-stale", "Selected Stale"));

@@ -15,8 +15,7 @@ import com.github.drafael.chat4j.chat.content.ExternalLinkSupport;
 import com.github.drafael.chat4j.chat.export.pdf.PdfPageFormat;
 import com.github.drafael.chat4j.provider.api.Role;
 import com.github.drafael.chat4j.provider.api.content.AttachmentRef;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.formdev.flatlaf.util.SystemInfo;
 import com.github.drafael.chat4j.chat.render.RenderMode;
 import java.awt.*;
@@ -74,7 +73,7 @@ import static java.util.Collections.emptySet;
 
 public final class JcefBrowserView {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
     private static final String MERMAID_SCRIPT_URL = "https://chat4j.local/assets/mermaid/mermaid.min.js";
     private static final String SMILES_DRAWER_SCRIPT_URL = "https://chat4j.local/assets/smilesdrawer/smiles-drawer.min.js";
 
@@ -829,11 +828,11 @@ public final class JcefBrowserView {
             Map<String, String> imageUrls,
             PdfPageFormat pageFormat
     ) throws Exception {
-        String titleJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultIfBlank(title, "Conversation"));
-        String metadataJson = OBJECT_MAPPER.writeValueAsString(StringUtils.defaultString(metadata));
-        String turnsJson = OBJECT_MAPPER.writeValueAsString(turns);
-        String imageUrlsJson = OBJECT_MAPPER.writeValueAsString(imageUrls);
-        String pageSizeCssJson = OBJECT_MAPPER.writeValueAsString(
+        String titleJson = JSON_CODEC.writeString(StringUtils.defaultIfBlank(title, "Conversation"));
+        String metadataJson = JSON_CODEC.writeString(StringUtils.defaultString(metadata));
+        String turnsJson = JSON_CODEC.writeString(turns);
+        String imageUrlsJson = JSON_CODEC.writeString(imageUrls);
+        String pageSizeCssJson = JSON_CODEC.writeString(
                 "@page { size: %s portrait; }".formatted(pageFormat.cssPageSize())
         );
         return """
@@ -1062,17 +1061,16 @@ public final class JcefBrowserView {
             return;
         }
         try {
-            JsonNode node = OBJECT_MAPPER.readTree(StringUtils.defaultString(request));
-            String type = node.path("type").asText("");
-            JsonNode args = node.path("args");
+            BridgeRequest bridgeRequest = JSON_CODEC.read(StringUtils.defaultString(request), BridgeRequest.class);
+            String type = StringUtils.defaultString(bridgeRequest.type());
+            List<Object> args = bridgeRequest.args() == null ? emptyList() : bridgeRequest.args();
             if (Strings.CS.equals(type, "transcript-revision-applied")) {
-                long requestId = args.isArray() && !args.isEmpty() ? args.get(0).asLong(-1L) : -1L;
-                clearPendingTranscriptRender(requestId);
+                clearPendingTranscriptRender(longArg(args, 0));
                 return;
             }
             if (Strings.CS.equals(type, "pdf-export-ready")) {
-                long requestId = args.isArray() && !args.isEmpty() ? args.get(0).asLong(-1L) : -1L;
-                boolean ready = args.isArray() && args.size() >= 2 && args.get(1).asBoolean(false);
+                long requestId = longArg(args, 0);
+                boolean ready = booleanArg(args, 1);
                 PendingPdfExport pending = pendingPdfExport;
                 if (pending != null && pending.requestId() == requestId) {
                     if (ready) {
@@ -1085,20 +1083,49 @@ public final class JcefBrowserView {
                 return;
             }
             if (Strings.CS.equals(type, "open-link")) {
-                String link = args.isArray() && !args.isEmpty() ? args.get(0).asText("") : "";
-                ExternalLinkSupport.openExternalLink(link);
+                ExternalLinkSupport.openExternalLink(stringArg(args, 0));
                 return;
             }
-            if (Strings.CS.equals(type, "transcript-action") && actionListener != null && args.isArray() && args.size() >= 2) {
-                actionListener.handle(
-                        args.get(0).asText(""),
-                        args.get(1).asInt(-1),
-                        args.size() >= 3 ? args.get(2).asText("") : ""
-                );
+            if (Strings.CS.equals(type, "transcript-action") && actionListener != null && args.size() >= 2) {
+                actionListener.handle(stringArg(args, 0), (int) longArg(args, 1), stringArg(args, 2));
             }
         } catch (Exception ignored) {
             // Ignore malformed browser bridge payloads.
         }
+    }
+
+    private static String stringArg(List<Object> args, int index) {
+        if (index >= args.size()) {
+            return "";
+        }
+        Object value = args.get(index);
+        return value instanceof String || value instanceof Number || value instanceof Boolean ? String.valueOf(value) : "";
+    }
+
+    private static long longArg(List<Object> args, int index) {
+        if (index >= args.size()) {
+            return -1L;
+        }
+        Object value = args.get(index);
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        try {
+            return Long.parseLong(stringArg(args, index));
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
+    private static boolean booleanArg(List<Object> args, int index) {
+        if (index >= args.size()) {
+            return false;
+        }
+        Object value = args.get(index);
+        return value instanceof Boolean bool ? bool : Boolean.parseBoolean(stringArg(args, index));
+    }
+
+    private record BridgeRequest(String type, List<Object> args) {
     }
 
     private void executeJavaScript(String script) {

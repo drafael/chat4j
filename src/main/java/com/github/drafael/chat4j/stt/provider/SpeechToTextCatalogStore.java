@@ -1,9 +1,6 @@
 package com.github.drafael.chat4j.stt.provider;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.catalog.CatalogGroup;
 import com.github.drafael.chat4j.persistence.catalog.CatalogJsonStructure;
 import com.github.drafael.chat4j.persistence.catalog.CatalogPayload;
@@ -32,13 +29,7 @@ public class SpeechToTextCatalogStore {
 
     private static final int MAX_CATALOG_ITEMS = 10_000;
     private static final int MAX_CATALOG_TOKENS = 500_000;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
-            .streamReadConstraints(StreamReadConstraints.builder()
-                    .maxNestingDepth(100)
-                    .maxStringLength(64 * 1024)
-                    .maxNumberLength(1_000)
-                    .build())
-            .build());
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
     private static final Duration STALE_AFTER = Duration.ofHours(24);
 
     private final CatalogSnapshotStore snapshots;
@@ -119,7 +110,7 @@ public class SpeechToTextCatalogStore {
             @NonNull BooleanSupplier condition
     ) throws Exception {
         Validate.notBlank(providerId, "providerId should not be blank");
-        String modelsJson = OBJECT_MAPPER.writeValueAsString(models);
+        String modelsJson = JSON_CODEC.writeString(models);
         Validate.isTrue(deserialize(modelsJson).isPresent(), "Speech to Text catalog exceeds structural limits");
         return snapshots.saveIf(
                 SpeechCatalogKeySchema.sttModels(providerId),
@@ -160,16 +151,12 @@ public class SpeechToTextCatalogStore {
     }
 
     private Optional<List<SpeechToTextCatalogItem>> deserialize(String json) {
-        if (!CatalogJsonStructure.isBoundedArray(OBJECT_MAPPER, json, MAX_CATALOG_ITEMS, MAX_CATALOG_TOKENS)) {
-            return Optional.empty();
-        }
-        try {
-            List<SpeechToTextCatalogItem> items = OBJECT_MAPPER.readValue(json, new TypeReference<>() {
-            });
-            return Optional.ofNullable(items);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        return CatalogJsonStructure.readBoundedArray(
+                json,
+                SpeechToTextCatalogItem[].class,
+                MAX_CATALOG_ITEMS,
+                MAX_CATALOG_TOKENS
+        ).map(items -> java.util.Arrays.stream(items).toList());
     }
 
     private boolean isStaleTimestamp(String value) {

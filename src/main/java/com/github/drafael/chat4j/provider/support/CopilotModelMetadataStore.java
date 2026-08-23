@@ -1,9 +1,8 @@
 package com.github.drafael.chat4j.provider.support;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.CacheRootHandle;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -33,7 +31,7 @@ import static java.util.stream.Collectors.toMap;
 
 public class CopilotModelMetadataStore {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final String DEFAULT_COPILOT_BASE_URL = "https://api.githubcopilot.com";
     private static final String STORE_FILE_NAME = "github-copilot-model-metadata.json";
     private static final int MAX_STORE_BYTES = 8 * 1024 * 1024;
@@ -150,15 +148,13 @@ public class CopilotModelMetadataStore {
                         || !cacheRoot.isSafeRegularFile(cacheFile.get())) {
                     return;
                 }
-                JsonNode root = JSON.readTree(readBoundedJson(cacheFile.get()));
-                JsonNode catalogs = root.path("catalogsByBaseUrl");
-                if (catalogs.isObject()) {
-                    catalogs.fields().forEachRemaining(entry -> {
-                        if (!isValidPersistedBaseUrl(entry.getKey())) {
+                MetadataFile root = JSON.read(readBoundedJson(cacheFile.get()), MetadataFile.class);
+                if (root.catalogsByBaseUrl() != null) {
+                    root.catalogsByBaseUrl().forEach((baseUrl, catalog) -> {
+                        if (!isValidPersistedBaseUrl(baseUrl)) {
                             throw new IllegalArgumentException("Copilot metadata base URL is malformed");
                         }
-                        String normalizedBaseUrl = normalizeBaseUrl(entry.getKey());
-                        supportedEndpointsByBaseUrl.put(normalizedBaseUrl, readCatalog(entry.getValue()));
+                        supportedEndpointsByBaseUrl.put(normalizeBaseUrl(baseUrl), readCatalog(catalog));
                     });
                 }
             } catch (Exception e) {
@@ -192,33 +188,25 @@ public class CopilotModelMetadataStore {
         }
     }
 
-    private Map<String, List<String>> readCatalog(JsonNode catalogNode) {
-        JsonNode models = catalogNode.path("models");
-        if (!models.isObject()) {
+    private Map<String, List<String>> readCatalog(Catalog catalog) {
+        if (catalog == null || catalog.models() == null) {
             return emptyMap();
         }
 
         Map<String, List<String>> supportedEndpointsByModel = new LinkedHashMap<>();
-        models.fields().forEachRemaining(entry -> {
-            if (StringUtils.isBlank(entry.getKey())) {
-                return;
+        catalog.models().forEach((modelId, endpoints) -> {
+            if (StringUtils.isNotBlank(modelId)) {
+                supportedEndpointsByModel.put(modelId.trim(), readEndpoints(endpoints));
             }
-
-            supportedEndpointsByModel.put(entry.getKey().trim(), readEndpoints(entry.getValue()));
         });
         return Map.copyOf(supportedEndpointsByModel);
     }
 
-    private List<String> readEndpoints(JsonNode endpointsNode) {
-        if (!endpointsNode.isArray()
-                || StreamSupport.stream(((ArrayNode) endpointsNode).spliterator(), false)
-                        .anyMatch(endpoint -> !endpoint.isTextual() || StringUtils.isBlank(endpoint.asText()))) {
+    private List<String> readEndpoints(List<Object> endpoints) {
+        if (endpoints == null || endpoints.stream().anyMatch(endpoint -> !(endpoint instanceof String text) || StringUtils.isBlank(text))) {
             throw new IllegalArgumentException("Copilot endpoint metadata is malformed");
         }
-
-        return sanitizeEndpoints(StreamSupport.stream(((ArrayNode) endpointsNode).spliterator(), false)
-                .map(JsonNode::asText)
-                .toList());
+        return sanitizeEndpoints(endpoints.stream().map(String.class::cast).toList());
     }
 
     private void persistUnderLock() {
@@ -231,17 +219,16 @@ public class CopilotModelMetadataStore {
             if (Files.exists(file, LinkOption.NOFOLLOW_LINKS) && !cacheRoot.isSafeRegularFile(file)) {
                 return;
             }
-            ObjectNode root = JSON.createObjectNode();
-            ObjectNode catalogs = root.putObject("catalogsByBaseUrl");
+            Map<String, Catalog> catalogs = new LinkedHashMap<>();
             supportedEndpointsByBaseUrl.forEach((baseUrl, models) -> {
-                ObjectNode catalogNode = catalogs.putObject(baseUrl);
-                ObjectNode modelsNode = catalogNode.putObject("models");
-                models.forEach((modelId, supportedEndpoints) -> {
-                    ArrayNode endpointsNode = modelsNode.putArray(modelId);
-                    sanitizeEndpoints(supportedEndpoints).forEach(endpointsNode::add);
-                });
+                Map<String, List<Object>> storedModels = new LinkedHashMap<>();
+                models.forEach((modelId, endpoints) -> storedModels.put(
+                        modelId,
+                        sanitizeEndpoints(endpoints).stream().map(endpoint -> (Object) endpoint).toList()
+                ));
+                catalogs.put(baseUrl, new Catalog(storedModels));
             });
-            byte[] payload = JSON.writerWithDefaultPrettyPrinter().writeValueAsBytes(root);
+            byte[] payload = JSON.writePrettyBytes(new MetadataFile(catalogs));
             if (payload.length > MAX_STORE_BYTES) {
                 return;
             }
@@ -289,6 +276,14 @@ public class CopilotModelMetadataStore {
                 .filter(StringUtils::isNotBlank)
                 .distinct()
                 .toList();
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record MetadataFile(@JsonProperty("catalogsByBaseUrl") Map<String, Catalog> catalogsByBaseUrl) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record Catalog(Map<String, List<Object>> models) {
     }
 
     public record ModelMetadata(String modelId, List<String> supportedEndpoints) {

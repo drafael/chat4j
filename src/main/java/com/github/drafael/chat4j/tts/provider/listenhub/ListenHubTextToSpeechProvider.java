@@ -6,7 +6,7 @@ import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -117,7 +117,7 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
                 StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id()),
                 "mp3"
         );
-        TtsHttpResponse response = postJson(
+        HttpExchangeResponse response = postJson(
                 URI.create("%s/tts".formatted(BASE_URL)),
                 jsonHeaders(apiKey),
                 body
@@ -137,7 +137,7 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
         );
     }
 
-    private TextToSpeechAudio mp3Audio(TtsHttpResponse response) {
+    private TextToSpeechAudio mp3Audio(HttpExchangeResponse response) {
         byte[] bytes = response.body();
         if (bytes.length == 0) {
             throw new IllegalStateException("ListenHub TTS returned an empty audio response.");

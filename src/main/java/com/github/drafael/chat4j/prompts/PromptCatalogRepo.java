@@ -1,8 +1,6 @@
 package com.github.drafael.chat4j.prompts;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import com.github.drafael.chat4j.json.JsonCodec;
 import java.nio.file.Path;
 import java.util.List;
 import lombok.NonNull;
@@ -12,15 +10,12 @@ import org.apache.commons.lang3.StringUtils;
 @Slf4j
 public class PromptCatalogRepo {
 
-    private static final TypeReference<List<PromptTemplate>> PROMPT_LIST_TYPE = new TypeReference<>() {
-    };
-
     private final PromptCatalogStore promptCatalogStore;
-    private final ObjectMapper objectMapper;
+    private final JsonCodec jsonCodec;
 
     public PromptCatalogRepo(@NonNull Path promptsFile) {
         this.promptCatalogStore = new PromptCatalogStore(promptsFile);
-        this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        this.jsonCodec = JsonCodec.standard();
     }
 
     public List<PromptTemplate> load() {
@@ -34,7 +29,7 @@ public class PromptCatalogRepo {
                 return PromptCatalogLoadResult.success(BuiltInPromptCatalog.prompts());
             }
 
-            List<PromptTemplate> prompts = objectMapper.readValue(json, PROMPT_LIST_TYPE);
+            List<PromptTemplate> prompts = List.of(jsonCodec.read(json, PromptTemplate[].class));
             PromptCatalogValidator.validateOrThrow(prompts);
             return PromptCatalogLoadResult.success(prompts);
         } catch (Exception e) {
@@ -47,7 +42,7 @@ public class PromptCatalogRepo {
     public void save(@NonNull List<PromptTemplate> prompts) {
         PromptCatalogValidator.validateOrThrow(prompts);
         try {
-            promptCatalogStore.saveCatalogJson(objectMapper.writeValueAsString(prompts));
+            promptCatalogStore.saveCatalogJson(jsonCodec.writePrettyString(prompts));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to save prompt catalog", e);
         }

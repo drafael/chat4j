@@ -3,8 +3,9 @@ package com.github.drafael.chat4j.tts.provider.system;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.github.drafael.chat4j.json.JsonCodec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,7 +21,7 @@ import static java.util.Collections.emptyList;
 
 class WindowsSapiBackend implements SystemTtsBackend {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
     private static final Duration DISCOVERY_TIMEOUT = Duration.ofSeconds(8);
     private static final String POWERSHELL_EXE = "powershell.exe";
     private static final Path POWERSHELL_RELATIVE_PATH = Path.of("System32", "WindowsPowerShell", "v1.0", POWERSHELL_EXE);
@@ -183,29 +184,37 @@ class WindowsSapiBackend implements SystemTtsBackend {
         if (StringUtils.isBlank(json)) {
             return emptyList();
         }
-        JsonNode root = OBJECT_MAPPER.readTree(json);
-        List<JsonNode> nodes = new ArrayList<>();
-        if (root.isArray()) {
-            root.forEach(nodes::add);
-        } else {
-            nodes.add(root);
+        WindowsVoice[] voices;
+        try {
+            voices = JSON_CODEC.read(json, WindowsVoice[].class);
+        } catch (Exception e) {
+            voices = new WindowsVoice[] { JSON_CODEC.read(json, WindowsVoice.class) };
         }
-        return nodes.stream()
+        return List.of(voices).stream()
                 .map(WindowsSapiBackend::voiceItem)
                 .filter(item -> item != null)
                 .toList();
     }
 
-    private static TextToSpeechCatalogItem voiceItem(JsonNode voice) {
-        String name = voice.path("Name").asText("");
+    private static TextToSpeechCatalogItem voiceItem(WindowsVoice voice) {
+        String name = StringUtils.defaultString(voice.name());
         if (StringUtils.isBlank(name)) {
             return null;
         }
-        String culture = voice.path("Culture").asText("");
-        String gender = voice.path("Gender").asText("");
-        String age = voice.path("Age").asText("");
+        String culture = StringUtils.defaultString(voice.culture());
+        String gender = StringUtils.defaultString(voice.gender());
+        String age = StringUtils.defaultString(voice.age());
         String description = StringUtils.normalizeSpace(String.join(" ", List.of(culture, gender, age)));
         return new TextToSpeechCatalogItem(name, name, description);
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record WindowsVoice(
+            @JsonProperty("Name") String name,
+            @JsonProperty("Culture") String culture,
+            @JsonProperty("Gender") String gender,
+            @JsonProperty("Age") String age
+    ) {
     }
 
     private static String voiceArgument(String voiceId) {

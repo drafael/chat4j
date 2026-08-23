@@ -89,7 +89,7 @@ class CopilotAuthResolverTest {
         Path userHome = tempDir.resolve("home");
         System.setProperty(OAUTH_CLIENT_ID_PROPERTY, "chat4j-client-id");
 
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         assertThat(subject.isOAuthClientConfigured()).isTrue();
     }
@@ -98,7 +98,7 @@ class CopilotAuthResolverTest {
     @DisplayName("Resolver reports unauthorized when no stored Chat4J token exists")
     void resolveStatus_whenNoStoredToken_returnsUnauthorized() {
         Path userHome = tempDir.resolve("home");
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         var status = subject.resolveStatus();
 
@@ -130,7 +130,7 @@ class CopilotAuthResolverTest {
                 any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
         )).thenReturn(response);
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
 
         String resolved = subject.resolveBearerTokenOrNull();
 
@@ -192,7 +192,7 @@ class CopilotAuthResolverTest {
             var subject = new CopilotAuthResolver(
                     userHome,
                     Map.of("CHAT4J_COPILOT_OAUTH_CLIENT_ID", "chat4j-client-id"),
-                    HttpClient.newHttpClient(),
+                    new BlockingHttpClientTransport(HttpClient.newHttpClient()),
                     promptActions
             );
 
@@ -268,7 +268,7 @@ class CopilotAuthResolverTest {
                 requestedAuthorizationHeader.set(request.headers().firstValue("Authorization").orElse(null));
                 return unauthorizedResponse;
             });
-            var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+            var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
 
             assertThat(subject.resolveBearerTokenOrNull()).isNull();
             assertThat(requestedUri).hasValue(
@@ -319,7 +319,7 @@ class CopilotAuthResolverTest {
             var subject = new CopilotAuthResolver(
                     tempDir.resolve("home"),
                     emptyMap(),
-                    HttpClient.newHttpClient(),
+                    new BlockingHttpClientTransport(HttpClient.newHttpClient()),
                     promptActions
             );
 
@@ -387,7 +387,7 @@ class CopilotAuthResolverTest {
         var subject = new CopilotAuthResolver(
                 tempDir.resolve("home"),
                 emptyMap(),
-                httpClient,
+                new BlockingHttpClientTransport(httpClient),
                 promptActions
         );
         var failure = new AtomicReference<Throwable>();
@@ -468,7 +468,7 @@ class CopilotAuthResolverTest {
                     ACCESS_TOKEN_ENDPOINT_PROPERTY,
                     "http://127.0.0.1:%d/token".formatted(server.getAddress().getPort())
             );
-            var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+            var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
             var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
                     "device-code",
                     "user-code",
@@ -550,7 +550,7 @@ class CopilotAuthResolverTest {
             loginExchangeCompleted.set(true);
             return loginSessionResponse;
         });
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
         var cancelled = new AtomicBoolean();
         var finalCancellationCheck = new CountDownLatch(1);
         var checksAfterExchange = new AtomicInteger();
@@ -622,7 +622,7 @@ class CopilotAuthResolverTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
-        var subject = new CopilotAuthResolver(tempDir.resolve("short-expiry-home"), emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(tempDir.resolve("short-expiry-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
 
         CopilotAuthResolver.CopilotLoginChallenge challenge = subject.beginLogin(() -> false, ignored -> true);
 
@@ -644,7 +644,7 @@ class CopilotAuthResolverTest {
                 any(HttpRequest.class),
                 org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
         )).thenReturn(pendingResponse);
-        var subject = new CopilotAuthResolver(tempDir.resolve("poll-expiry-home"), emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(tempDir.resolve("poll-expiry-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
                 "device-code",
                 "user-code",
@@ -685,7 +685,7 @@ class CopilotAuthResolverTest {
             }
             return response;
         });
-        var subject = new CopilotAuthResolver(tempDir.resolve("late-poll-home"), emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(tempDir.resolve("late-poll-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         var challenge = new CopilotAuthResolver.CopilotLoginChallenge(
                 "device-code",
                 "user-code",
@@ -733,7 +733,7 @@ class CopilotAuthResolverTest {
         var subject = new CopilotAuthResolver(
                 tempDir.resolve("diagnostic-home"),
                 emptyMap(),
-                httpClient,
+                new BlockingHttpClientTransport(httpClient),
                 mock(CopilotAuthResolver.UserPromptActions.class)
         );
         Logger logger = (Logger) LoggerFactory.getLogger(CopilotAuthResolver.class);
@@ -790,7 +790,7 @@ class CopilotAuthResolverTest {
         var releaseChallenge = new CountDownLatch(1);
         var cancelled = new AtomicBoolean();
         var loginResult = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
-        var subject = new CopilotAuthResolver(tempDir.resolve("operation-guard-home"), emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(tempDir.resolve("operation-guard-home"), emptyMap(), new BlockingHttpClientTransport(httpClient));
         Thread loginThread = Thread.startVirtualThread(() -> loginResult.set(subject.login(
                 cancelled::get,
                 ignored -> true,
@@ -869,7 +869,7 @@ class CopilotAuthResolverTest {
             releaseRefresh.await(2, TimeUnit.SECONDS);
             return response;
         });
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), httpClient);
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(httpClient));
         ReentrantLock mutationLock = authFileMutationLock(subject);
         var logoutResult = new AtomicReference<CopilotAuthResolver.CopilotAuthActionResult>();
         var logoutFinished = new CountDownLatch(1);
@@ -926,7 +926,7 @@ class CopilotAuthResolverTest {
         var subject = new CopilotAuthResolver(
                 tempDir.resolve("cancelled-logout-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         );
 
         CopilotAuthResolver.CopilotAuthActionResult result = subject.logout(() -> true);
@@ -942,7 +942,7 @@ class CopilotAuthResolverTest {
         Path tokenPath = userHome.resolve(".config/chat4j/copilot-auth.json");
         Files.createDirectories(tokenPath);
         Files.writeString(tokenPath.resolve("preserve.txt"), "not an auth file");
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CopilotAuthResolver.CopilotAuthActionResult result = subject.logout();
 
@@ -965,7 +965,7 @@ class CopilotAuthResolverTest {
                 }
                 """);
 
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         var status = subject.resolveStatus();
 
@@ -987,7 +987,7 @@ class CopilotAuthResolverTest {
                 }
                 """);
 
-        var subject = new CopilotAuthResolver(userHome, emptyMap(), HttpClient.newHttpClient());
+        var subject = new CopilotAuthResolver(userHome, emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
 
         CopilotAuthResolver.CopilotAuthActionResult result = subject.logout();
 

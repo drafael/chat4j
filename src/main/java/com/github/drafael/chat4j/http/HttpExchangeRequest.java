@@ -1,26 +1,28 @@
-package com.github.drafael.chat4j.tts.provider;
+package com.github.drafael.chat4j.http;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Map;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toUnmodifiableMap;
 
-public record TtsHttpRequest(String method, URI uri, Map<String, String> headers, byte[] body) {
-
-    public TtsHttpRequest {
+public record HttpExchangeRequest(
+        @NonNull String method,
+        @NonNull URI uri,
+        @NonNull Map<String, String> headers,
+        @NonNull HttpBody body,
+        @NonNull Duration timeout,
+        long maxResponseBytes
+) {
+    public HttpExchangeRequest {
         method = StringUtils.defaultIfBlank(method, "GET").toUpperCase();
-        headers = sanitizeHeaders(headers);
-        body = body == null ? new byte[0] : body.clone();
+        headers = sanitize(headers);
     }
 
-    @Override
-    public byte[] body() {
-        return body.clone();
-    }
-
-    private static Map<String, String> sanitizeHeaders(Map<String, String> headers) {
+    private static Map<String, String> sanitize(Map<String, String> headers) {
         if (headers == null || headers.isEmpty()) {
             return emptyMap();
         }
@@ -32,7 +34,7 @@ public record TtsHttpRequest(String method, URI uri, Map<String, String> headers
 
     @Override
     public String toString() {
-        return "TtsHttpRequest[method=%s, uri=%s, headers=<masked:%d>, body=<masked:%d>]"
-                .formatted(method, uri, headers.size(), body.length);
+        return "HttpExchangeRequest[method=%s, uri=%s, headers=<masked:%d>, body=<masked>, timeout=%s, maxResponseBytes=%d]"
+                .formatted(method, uri, headers.size(), timeout, maxResponseBytes);
     }
 }

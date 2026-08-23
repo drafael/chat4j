@@ -1,6 +1,7 @@
 package com.github.drafael.chat4j.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.chat.agent.AgentToolResultLimiter;
 import com.github.drafael.chat4j.chat.agent.McpInvocationPermit;
 import com.github.drafael.chat4j.chat.agent.ToolInvocationRequest;
@@ -55,8 +56,9 @@ import static java.util.Arrays.fill;
 
 final class McpClientSession implements AutoCloseable {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final McpJsonMapper MCP_JSON = new JacksonMcpJsonMapper(JSON);
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
+    private static final ObjectMapper SDK_MAPPER = new ObjectMapper();
+    private static final McpJsonMapper MCP_JSON = new JacksonMcpJsonMapper(SDK_MAPPER);
     private static final Duration INITIALIZE_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_TOOLS = 512;
@@ -429,7 +431,7 @@ final class McpClientSession implements AutoCloseable {
                     throw new InvalidToolResultException();
                 }
             }
-            structuredText = redactExact(JSON.writeValueAsString(structured));
+            structuredText = redactExact(JSON_CODEC.writeString(structured));
         } else if (ObjectUtils.isNotEmpty(outputSchema) && !Boolean.TRUE.equals(result.isError())) {
             throw new InvalidToolResultException();
         }
@@ -462,7 +464,7 @@ final class McpClientSession implements AutoCloseable {
     }
 
     private long jsonBytes(Object value) throws Exception {
-        return value == null ? 0 : JSON.writeValueAsBytes(value).length;
+        return value == null ? 0 : JSON_CODEC.writeBytes(value).length;
     }
 
     private void awaitCloseCompletion() {
@@ -555,7 +557,7 @@ final class McpClientSession implements AutoCloseable {
         ClassLoader required = DefaultJsonSchemaValidator.class.getClassLoader();
         try {
             thread.setContextClassLoader(required);
-            return new DefaultJsonSchemaValidator(JSON);
+            return new DefaultJsonSchemaValidator(SDK_MAPPER);
         } finally {
             thread.setContextClassLoader(original);
         }

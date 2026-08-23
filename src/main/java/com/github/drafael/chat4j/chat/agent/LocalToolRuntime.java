@@ -1,7 +1,6 @@
 package com.github.drafael.chat4j.chat.agent;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.formdev.flatlaf.util.SystemInfo;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +36,7 @@ import static java.util.stream.Collectors.joining;
 
 @Slf4j
 public final class LocalToolRuntime {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final int MAX_TOOL_OUTPUT_BYTES = AgentToolResultLimiter.MAX_BYTES;
     private static final int MAX_READ_BYTES = MAX_TOOL_OUTPUT_BYTES;
     private static final int MAX_EDIT_FILE_BYTES = 1024 * 1024;
@@ -99,8 +98,8 @@ public final class LocalToolRuntime {
             return new LinkedHashMap<>();
         }
 
-        Map<String, Object> arguments = JSON.readValue(argumentsJson, new TypeReference<>() {
-        });
+        @SuppressWarnings("unchecked")
+        Map<String, Object> arguments = JSON.read(argumentsJson, Map.class);
         return arguments == null ? new LinkedHashMap<>() : arguments;
     }
 

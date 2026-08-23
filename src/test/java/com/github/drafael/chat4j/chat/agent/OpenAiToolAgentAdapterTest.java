@@ -961,12 +961,12 @@ class OpenAiToolAgentAdapterTest {
     ) throws Exception {
         Method method = OpenAiToolAgentAdapter.class.getDeclaredMethod(
                 "validateResponse",
-                JsonNode.class,
+                Map.class,
                 ReasoningLevel.class
         );
         method.setAccessible(true);
         try {
-            return method.invoke(subject, response, reasoningLevel);
+            return method.invoke(subject, JSON.convertValue(response, Map.class), reasoningLevel);
         } catch (InvocationTargetException e) {
             if (e.getCause() instanceof Exception cause) {
                 throw cause;

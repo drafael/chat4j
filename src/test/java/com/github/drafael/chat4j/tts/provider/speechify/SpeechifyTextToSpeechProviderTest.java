@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.tts.provider.speechify;
 
+import com.github.drafael.chat4j.http.HttpBody;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
@@ -8,9 +9,9 @@ import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
-import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Base64;
@@ -45,7 +46,7 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify exposes credential and bundled model and voice defaults")
     void metadata_whenCreated_exposesSafeDefaults() {
-        var subject = provider(request -> json("{}"), emptyMap());
+        var subject = provider((request, cancellation) -> json("{}"), emptyMap());
 
         assertThat(subject.id()).isEqualTo("speechify");
         assertThat(subject.displayName()).isEqualTo("Speechify");
@@ -64,7 +65,7 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify uses CredentialResolver process and shell environment support")
     void credentials_whenSpeechifyKeyExists_makesProviderAvailable() {
-        var subject = provider(request -> json("{}"), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "shell-key"));
+        var subject = provider((request, cancellation) -> json("{}"), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "shell-key"));
 
         assertThat(subject.available()).isTrue();
         assertThat(subject.apiKey()).isEqualTo("shell-key");
@@ -81,7 +82,7 @@ class SpeechifyTextToSpeechProviderTest {
                     CredentialMutationListener.NO_OP
             );
             var subject = new SpeechifyTextToSpeechProvider(
-                    new TtsHttpClient(request -> json("{}")),
+                    new TtsHttpClient((request, cancellation) -> json("{}")),
                     credentials.resolver()
             );
 
@@ -94,8 +95,8 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify model discovery follows the official audio models contract")
     void fetchModels_whenCatalogIsValid_mapsModelsAndAuthorization() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = provider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return json("""
                     {"models":[
@@ -118,7 +119,7 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify voice discovery maps ids, display names, and concise metadata")
     void fetchVoices_whenCatalogIsValid_mapsVoices() throws Exception {
-        var subject = provider(request -> json("""
+        var subject = provider((request, cancellation) -> json("""
                 {"next_cursor":null,"has_more":false,"voices":[
                   {"id":"geffen_32","display_name":"Geffen","locale":"en-US","gender":"male","type":"shared"},
                   {"id":"clone-1","display_name":"My Voice","locale":"fr-FR","gender":"not_specified","type":"personal"},
@@ -138,7 +139,7 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Empty authoritative Speechify catalogs use bundled fallbacks")
     void fetchCatalogs_whenArraysAreEmpty_returnsBundledDefaults() throws Exception {
-        var subject = provider(request -> request.uri().getPath().endsWith("models")
+        var subject = provider((request, cancellation) -> request.uri().getPath().endsWith("models")
                 ? json("{\"models\":[]}")
                 : json("{\"voices\":[]}"), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "key"));
 
@@ -150,7 +151,7 @@ class SpeechifyTextToSpeechProviderTest {
     @MethodSource("invalidCatalogs")
     @DisplayName("Speechify rejects malformed or unusable catalog responses")
     void fetchCatalogs_whenResponseIsInvalid_throws(boolean models, String body) {
-        var subject = provider(request -> json(body), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "key"));
+        var subject = provider((request, cancellation) -> json(body), Map.of(SpeechifyTextToSpeechProvider.ENV_VAR, "key"));
 
         assertThatThrownBy(models ? subject::fetchModels : subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -160,9 +161,9 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify synthesis sends the documented request and decodes JSON Base64 MP3")
     void synthesize_whenCalled_sendsOfficialRequestAndDecodesAudio() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
         byte[] mp3 = {1, 2, 3, 4};
-        var subject = provider(request -> {
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return json("""
                     {"audio_data":"%s","audio_format":"mp3","billable_characters_count":17,
@@ -178,7 +179,7 @@ class SpeechifyTextToSpeechProviderTest {
                 .containsEntry("Authorization", "Bearer request-key")
                 .containsEntry("Content-Type", "application/json")
                 .containsEntry("Accept", "application/json");
-        SpeechifyApi.SynthesisRequest body = read(captured[0].body(), SpeechifyApi.SynthesisRequest.class);
+        SpeechifyApi.SynthesisRequest body = read(((HttpBody.Bytes) captured[0].body()).value(), SpeechifyApi.SynthesisRequest.class);
         assertThat(body).isEqualTo(new SpeechifyApi.SynthesisRequest(
                 "Hello from Chat4J",
                 "geffen_32",
@@ -193,8 +194,8 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify synthesis resolves current credentials and applies blank defaults")
     void synthesize_whenCredentialAndSelectionsAreImplicit_resolvesCredentialAndDefaults() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = provider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return json("""
                     {"audio_data":"AQ==","audio_format":"mp3"}
@@ -204,7 +205,7 @@ class SpeechifyTextToSpeechProviderTest {
 
         subject.synthesize(request);
 
-        SpeechifyApi.SynthesisRequest body = read(captured[0].body(), SpeechifyApi.SynthesisRequest.class);
+        SpeechifyApi.SynthesisRequest body = read(((HttpBody.Bytes) captured[0].body()).value(), SpeechifyApi.SynthesisRequest.class);
         assertThat(captured[0].headers()).containsEntry("Authorization", "Bearer resolved-key");
         assertThat(body.model()).isEqualTo("simba-3.0");
         assertThat(body.voiceId()).isEqualTo("geffen_32");
@@ -214,7 +215,7 @@ class SpeechifyTextToSpeechProviderTest {
     @MethodSource("invalidSpeechResponses")
     @DisplayName("Speechify synthesis rejects invalid JSON, format, Base64, and empty audio")
     void synthesize_whenResponseIsInvalid_throwsSafeError(String body) {
-        var subject = provider(request -> json(body), emptyMap());
+        var subject = provider((request, cancellation) -> json(body), emptyMap());
 
         assertThatThrownBy(() -> subject.synthesize(REQUEST, "request-key"))
                 .isInstanceOf(IllegalStateException.class)
@@ -225,7 +226,7 @@ class SpeechifyTextToSpeechProviderTest {
     @Test
     @DisplayName("Speechify HTTP errors expose only the provider's structured safe message")
     void synthesize_whenHttpFails_mapsStructuredErrorWithoutCredential() {
-        var subject = provider(request -> new TtsHttpResponse(
+        var subject = provider((request, cancellation) -> new HttpExchangeResponse(
                 429,
                 Map.of("content-type", List.of("application/json")),
                 """
@@ -240,7 +241,7 @@ class SpeechifyTextToSpeechProviderTest {
     }
 
     private SpeechifyTextToSpeechProvider provider(
-            TtsHttpTransport transport,
+            HttpTransport transport,
             Map<String, String> shellEnvironment
     ) {
         return new SpeechifyTextToSpeechProvider(
@@ -289,8 +290,8 @@ class SpeechifyTextToSpeechProviderTest {
         );
     }
 
-    private static TtsHttpResponse json(String body) {
-        return new TtsHttpResponse(
+    private static HttpExchangeResponse json(String body) {
+        return new HttpExchangeResponse(
                 200,
                 Map.of("content-type", List.of("application/json")),
                 body.getBytes(StandardCharsets.UTF_8)

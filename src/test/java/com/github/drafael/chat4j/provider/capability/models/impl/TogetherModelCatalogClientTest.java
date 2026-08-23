@@ -4,6 +4,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
@@ -19,9 +21,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -30,10 +29,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
 
 class TogetherModelCatalogClientTest {
 
@@ -134,14 +129,11 @@ class TogetherModelCatalogClientTest {
 
     @Test
     @DisplayName("Together discovery diagnostics redact the request-owned credential")
-    @SuppressWarnings({"rawtypes", "unchecked"})
     void fetchModels_whenFailureContainsCredential_redactsDiagnosticLog() throws Exception {
         String key = "secret-do-not-log";
-        HttpClient httpClient = mock(HttpClient.class);
-        doThrow(new IllegalArgumentException("failure %s".formatted(key))).when(httpClient).send(
-                any(HttpRequest.class),
-                any(HttpResponse.BodyHandler.class)
-        );
+        HttpTransport transport = (request, cancellation) -> {
+            throw new IllegalArgumentException("failure %s".formatted(key));
+        };
         Logger logger = (Logger) LoggerFactory.getLogger(TogetherModelCatalogClient.class);
         Level originalLevel = logger.getLevel();
         var appender = new ListAppender<ILoggingEvent>();
@@ -149,7 +141,7 @@ class TogetherModelCatalogClientTest {
         logger.addAppender(appender);
         logger.setLevel(Level.DEBUG);
         try {
-            var subject = new TogetherModelCatalogClient(httpClient);
+            var subject = new TogetherModelCatalogClient(transport);
 
             assertThat(subject.fetchModels(runtime(key, baseUrl()))).isEmpty();
 
@@ -166,28 +158,21 @@ class TogetherModelCatalogClientTest {
 
     @Test
     @DisplayName("Together discovery preserves interruption and bounds every request")
-    @SuppressWarnings({"rawtypes", "unchecked"})
     void fetchModels_whenInterruptedOrTimedOut_returnsEmptyWithBoundedRequest() throws Exception {
-        HttpClient httpClient = mock(HttpClient.class);
-        AtomicReference<HttpRequest> request = new AtomicReference<>();
-        doAnswer(invocation -> {
-            request.set(invocation.getArgument(0));
+        AtomicReference<HttpExchangeRequest> request = new AtomicReference<>();
+        HttpTransport timingOutTransport = (sent, cancellation) -> {
+            request.set(sent);
             throw new HttpTimeoutException("timed out");
-        }).when(httpClient).send(
-                any(HttpRequest.class),
-                any(HttpResponse.BodyHandler.class)
-        );
-        var subject = new TogetherModelCatalogClient(httpClient);
+        };
+        var subject = new TogetherModelCatalogClient(timingOutTransport);
 
         assertThat(subject.fetchModels(runtime("secret", baseUrl()))).isEmpty();
-        assertThat(request.get().timeout()).contains(Duration.ofSeconds(4));
+        assertThat(request.get().timeout()).isEqualTo(Duration.ofSeconds(4));
 
-        HttpClient interruptingClient = mock(HttpClient.class);
-        doThrow(new InterruptedException("interrupted")).when(interruptingClient).send(
-                any(HttpRequest.class),
-                any(HttpResponse.BodyHandler.class)
-        );
-        subject = new TogetherModelCatalogClient(interruptingClient);
+        HttpTransport interruptingTransport = (sent, cancellation) -> {
+            throw new InterruptedException("interrupted");
+        };
+        subject = new TogetherModelCatalogClient(interruptingTransport);
         assertThat(subject.fetchModels(runtime("secret", baseUrl()))).isEmpty();
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
         Thread.interrupted();
