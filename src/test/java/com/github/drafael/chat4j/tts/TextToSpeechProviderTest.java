@@ -13,6 +13,7 @@ import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvi
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.listenhub.ListenHubTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechProvider;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -44,7 +45,7 @@ class TextToSpeechProviderTest {
     }
 
     @Test
-    @DisplayName("Default registry includes Deepgram and ListenHub without changing HTTP provider order")
+    @DisplayName("Default registry includes all cloud TTS providers in stable network order")
     void createDefault_whenCalled_includesNewProvidersInExpectedNetworkOrder() {
         var subject = TextToSpeechProviderRegistry.createDefault(credentialResolver, emptyMap());
 
@@ -53,7 +54,8 @@ class TextToSpeechProviderTest {
                         DeepgramTextToSpeechProvider.ID,
                         GroqTextToSpeechProvider.ID,
                         ElevenLabsTextToSpeechProvider.ID,
-                        ListenHubTextToSpeechProvider.ID
+                        ListenHubTextToSpeechProvider.ID,
+                        SpeechifyTextToSpeechProvider.ID
                 );
     }
 

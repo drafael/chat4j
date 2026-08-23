@@ -7,6 +7,8 @@ import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechP
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechSettings;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechSettings;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechSettings;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechSettings;
 import java.util.Locale;
@@ -22,6 +24,7 @@ public final class TextToSpeechProviderSettingsFactory {
             case GroqTextToSpeechProvider.ID -> new GroqTextToSpeechSettings(settingsRepo);
             case ElevenLabsTextToSpeechProvider.ID -> new ElevenLabsTextToSpeechSettings(settingsRepo);
             case DeepgramTextToSpeechProvider.ID -> new DeepgramTextToSpeechSettings(settingsRepo);
+            case SpeechifyTextToSpeechProvider.ID -> new SpeechifyTextToSpeechSettings(settingsRepo);
             case SystemTextToSpeechProvider.ID -> new SystemTextToSpeechSettings(settingsRepo);
             default -> new DefaultTextToSpeechProviderSettings(settingsRepo, providerId);
         };
