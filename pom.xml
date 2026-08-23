@@ -39,7 +39,7 @@
         <h2.version>2.4.240</h2.version>
         <sqlite-jdbc.version>3.53.2.1</sqlite-jdbc.version>
         <jimfs.version>1.3.2</jimfs.version>
-        <flyway.version>13.2.0</flyway.version>
+        <flyway.version>13.3.0</flyway.version>
         <cyclonedx.maven.plugin.version>2.9.3</cyclonedx.maven.plugin.version>
         <dependency-check.maven.version>12.2.2</dependency-check.maven.version>
         <dependency-check.nvd.valid-for-hours>24</dependency-check.nvd.valid-for-hours>
