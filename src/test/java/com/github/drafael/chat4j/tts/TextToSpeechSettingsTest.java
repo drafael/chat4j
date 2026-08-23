@@ -5,6 +5,7 @@ import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
@@ -31,11 +32,11 @@ class TextToSpeechSettingsTest {
         when(credentialResolver.hasRequiredCredentials(any())).thenReturn(true);
         var registry = new TextToSpeechProviderRegistry(List.of(
                 new GroqTextToSpeechProvider(
-                        request -> new TtsHttpResponse(200, null, new byte[0]),
+                        new TtsHttpClient(request -> new TtsHttpResponse(200, null, new byte[0])),
                         credentialResolver
                 ),
                 new ElevenLabsTextToSpeechProvider(
-                        request -> new TtsHttpResponse(200, null, new byte[0]),
+                        new TtsHttpClient(request -> new TtsHttpResponse(200, null, new byte[0])),
                         credentialResolver
                 )
         ));

@@ -1,20 +1,19 @@
 package com.github.drafael.chat4j.tts.provider.speechify;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -39,8 +38,8 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL, RECOMMENDED_ENGLISH_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public SpeechifyTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
-        super(transport, credentialResolver);
+    public SpeechifyTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
+        super(httpClient, credentialResolver);
     }
 
     @Override
@@ -85,25 +84,22 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/audio/models".formatted(BASE_URL)), authHeaders(apiKey()));
-        JsonNode root = catalogRoot(response, "Speechify model catalog response was invalid.");
-        JsonNode items = root == null ? null : root.get("models");
-        if (items == null || !items.isArray()) {
+        SpeechifyApi.ModelsResponse response = getJson(
+                URI.create("%s/audio/models".formatted(BASE_URL)),
+                authHeaders(apiKey()),
+                SpeechifyApi.ModelsResponse.class,
+                "Speechify model catalog response was invalid."
+        );
+        List<SpeechifyApi.Model> items = response.models();
+        if (items == null) {
             throw new IllegalStateException("Speechify model catalog response was invalid.");
         }
 
-        List<TextToSpeechCatalogItem> models = new ArrayList<>();
-        items.forEach(model -> {
-            String id = text(model, "id");
-            String label = text(model, "name");
-            if (StringUtils.isNotBlank(id)) {
-                models.add(new TextToSpeechCatalogItem(
-                        id,
-                        StringUtils.defaultIfBlank(label, id),
-                        text(model, "description")
-                ));
-            }
-        });
+        List<TextToSpeechCatalogItem> models = items.stream()
+                .filter(Objects::nonNull)
+                .map(SpeechifyTextToSpeechProvider::modelItem)
+                .filter(Objects::nonNull)
+                .toList();
         if (!items.isEmpty() && models.isEmpty()) {
             throw new IllegalStateException("Speechify model catalog response did not contain valid models.");
         }
@@ -112,25 +108,22 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/voices".formatted(BASE_URL)), authHeaders(apiKey()));
-        JsonNode root = catalogRoot(response, "Speechify voice catalog response was invalid.");
-        JsonNode items = root == null ? null : root.get("voices");
-        if (items == null || !items.isArray()) {
+        SpeechifyApi.VoicesResponse response = getJson(
+                URI.create("%s/voices".formatted(BASE_URL)),
+                authHeaders(apiKey()),
+                SpeechifyApi.VoicesResponse.class,
+                "Speechify voice catalog response was invalid."
+        );
+        List<SpeechifyApi.Voice> items = response.voices();
+        if (items == null) {
             throw new IllegalStateException("Speechify voice catalog response was invalid.");
         }
 
-        List<TextToSpeechCatalogItem> voices = new ArrayList<>();
-        items.forEach(voice -> {
-            String id = text(voice, "id");
-            String label = text(voice, "display_name");
-            if (StringUtils.isNotBlank(id)) {
-                voices.add(new TextToSpeechCatalogItem(
-                        id,
-                        StringUtils.defaultIfBlank(label, id),
-                        voiceDescription(voice)
-                ));
-            }
-        });
+        List<TextToSpeechCatalogItem> voices = items.stream()
+                .filter(Objects::nonNull)
+                .map(SpeechifyTextToSpeechProvider::voiceItem)
+                .filter(Objects::nonNull)
+                .toList();
         if (!items.isEmpty() && voices.isEmpty()) {
             throw new IllegalStateException("Speechify voice catalog response did not contain valid voices.");
         }
@@ -144,36 +137,25 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
-        ObjectNode body = OBJECT_MAPPER.createObjectNode();
-        body.put("input", request.text());
-        body.put("voice_id", StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id()));
-        body.put("audio_format", "mp3");
-        body.put("model", StringUtils.defaultIfBlank(request.modelId(), DEFAULT_MODEL.id()));
-        TtsHttpResponse response = postJson(
+        var body = new SpeechifyApi.SynthesisRequest(
+                request.text(),
+                StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id()),
+                "mp3",
+                StringUtils.defaultIfBlank(request.modelId(), DEFAULT_MODEL.id())
+        );
+        SpeechifyApi.SynthesisResponse response = postJson(
                 URI.create("%s/audio/speech".formatted(BASE_URL)),
                 jsonHeaders(apiKey),
-                body
+                body,
+                SpeechifyApi.SynthesisResponse.class,
+                "Speechify TTS returned an invalid response."
         );
         return speechAudio(response);
     }
 
-    private JsonNode catalogRoot(TtsHttpResponse response, String invalidResponseMessage) {
-        try {
-            return jsonBody(response);
-        } catch (Exception e) {
-            throw new IllegalStateException(invalidResponseMessage);
-        }
-    }
-
-    private static TextToSpeechAudio speechAudio(TtsHttpResponse response) {
-        JsonNode root;
-        try {
-            root = OBJECT_MAPPER.readTree(response.body());
-        } catch (Exception e) {
-            throw new IllegalStateException("Speechify TTS returned an invalid response.");
-        }
-        String audioData = root == null ? "" : root.path("audio_data").asText("");
-        String format = root == null ? "" : root.path("audio_format").asText("");
+    private static TextToSpeechAudio speechAudio(SpeechifyApi.SynthesisResponse response) {
+        String audioData = response.audioData();
+        String format = response.audioFormat();
         if (StringUtils.isBlank(audioData) || !Strings.CI.equals(format, "mp3")) {
             throw new IllegalStateException("Speechify TTS returned an invalid MP3 response.");
         }
@@ -201,15 +183,35 @@ public class SpeechifyTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
         );
     }
 
-    private static String text(JsonNode node, String field) {
-        return StringUtils.normalizeSpace(node.path(field).asText(""));
+    private static TextToSpeechCatalogItem modelItem(SpeechifyApi.Model model) {
+        String id = text(model.id());
+        if (StringUtils.isBlank(id)) {
+            return null;
+        }
+        return new TextToSpeechCatalogItem(id, StringUtils.defaultIfBlank(text(model.name()), id), text(model.description()));
     }
 
-    private static String voiceDescription(JsonNode voice) {
+    private static TextToSpeechCatalogItem voiceItem(SpeechifyApi.Voice voice) {
+        String id = text(voice.id());
+        if (StringUtils.isBlank(id)) {
+            return null;
+        }
+        return new TextToSpeechCatalogItem(
+                id,
+                StringUtils.defaultIfBlank(text(voice.displayName()), id),
+                voiceDescription(voice)
+        );
+    }
+
+    private static String text(String value) {
+        return StringUtils.normalizeSpace(value);
+    }
+
+    private static String voiceDescription(SpeechifyApi.Voice voice) {
         List<String> parts = new ArrayList<>();
-        String locale = text(voice, "locale");
-        String gender = text(voice, "gender");
-        String type = text(voice, "type");
+        String locale = text(voice.locale());
+        String gender = text(voice.gender());
+        String type = text(voice.type());
         if (StringUtils.isNotBlank(locale)) {
             parts.add(locale);
         }

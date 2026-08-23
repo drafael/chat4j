@@ -1,6 +1,5 @@
 package com.github.drafael.chat4j.tts.provider.speechify;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialMutationListener;
@@ -8,6 +7,7 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.provider.support.CredentialTestSupport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
 import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
 import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
 import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
@@ -24,13 +24,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SpeechifyTextToSpeechProviderTest {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TextToSpeechRequest REQUEST = new TextToSpeechRequest(
             SpeechifyTextToSpeechProvider.ID,
             "simba-3.2",
@@ -80,7 +80,10 @@ class SpeechifyTextToSpeechProviderTest {
                     "saved-key".toCharArray(),
                     CredentialMutationListener.NO_OP
             );
-            var subject = new SpeechifyTextToSpeechProvider(request -> json("{}"), credentials.resolver());
+            var subject = new SpeechifyTextToSpeechProvider(
+                    new TtsHttpClient(request -> json("{}")),
+                    credentials.resolver()
+            );
 
             assertThat(subject.available()).isTrue();
             assertThat(subject.apiKey()).isEqualTo("saved-key");
@@ -175,12 +178,13 @@ class SpeechifyTextToSpeechProviderTest {
                 .containsEntry("Authorization", "Bearer request-key")
                 .containsEntry("Content-Type", "application/json")
                 .containsEntry("Accept", "application/json");
-        var body = OBJECT_MAPPER.readTree(captured[0].body());
-        assertThat(body).hasSize(4);
-        assertThat(body.path("input").asText()).isEqualTo("Hello from Chat4J");
-        assertThat(body.path("voice_id").asText()).isEqualTo("geffen_32");
-        assertThat(body.path("audio_format").asText()).isEqualTo("mp3");
-        assertThat(body.path("model").asText()).isEqualTo("simba-3.2");
+        SpeechifyApi.SynthesisRequest body = read(captured[0].body(), SpeechifyApi.SynthesisRequest.class);
+        assertThat(body).isEqualTo(new SpeechifyApi.SynthesisRequest(
+                "Hello from Chat4J",
+                "geffen_32",
+                "mp3",
+                "simba-3.2"
+        ));
         assertThat(audio.bytes()).containsExactly(mp3);
         assertThat(audio.contentType()).isEqualTo("audio/mpeg");
         assertThat(audio.format()).isEqualTo("mp3");
@@ -200,10 +204,10 @@ class SpeechifyTextToSpeechProviderTest {
 
         subject.synthesize(request);
 
-        var body = OBJECT_MAPPER.readTree(captured[0].body());
+        SpeechifyApi.SynthesisRequest body = read(captured[0].body(), SpeechifyApi.SynthesisRequest.class);
         assertThat(captured[0].headers()).containsEntry("Authorization", "Bearer resolved-key");
-        assertThat(body.path("model").asText()).isEqualTo("simba-3.0");
-        assertThat(body.path("voice_id").asText()).isEqualTo("geffen_32");
+        assertThat(body.model()).isEqualTo("simba-3.0");
+        assertThat(body.voiceId()).isEqualTo("geffen_32");
     }
 
     @ParameterizedTest
@@ -240,7 +244,7 @@ class SpeechifyTextToSpeechProviderTest {
             Map<String, String> shellEnvironment
     ) {
         return new SpeechifyTextToSpeechProvider(
-                transport,
+                new TtsHttpClient(transport),
                 new CredentialResolver(
                         new ApiTokenVault(StoragePaths.ofConfigHome(tempDir.resolve("credentials"))),
                         emptyMap(),
