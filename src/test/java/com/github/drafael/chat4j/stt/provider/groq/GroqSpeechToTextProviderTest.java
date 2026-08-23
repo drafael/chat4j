@@ -5,9 +5,9 @@ import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -45,7 +45,7 @@ class GroqSpeechToTextProviderTest {
     @DisplayName("Groq model HTTP failures are not authoritative")
     void fetchModels_whenResponseFails_throws() throws Exception {
         var subject = new GroqSpeechToTextProvider(new CapturingTransport(
-                new SttHttpResponse(500, emptyMap(), "down".getBytes(StandardCharsets.UTF_8))
+                new HttpExchangeResponse(500, emptyMap(), "down".getBytes(StandardCharsets.UTF_8))
         ));
 
         assertThatThrownBy(() -> subject.fetchModels(context()))
@@ -57,7 +57,7 @@ class GroqSpeechToTextProviderTest {
     @DisplayName("Groq model discovery rejects a missing data array")
     void fetchModels_whenDataArrayMissing_throws() throws Exception {
         var subject = new GroqSpeechToTextProvider(new CapturingTransport(
-                new SttHttpResponse(200, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))
+                new HttpExchangeResponse(200, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))
         ));
 
         assertThatThrownBy(() -> subject.fetchModels(context()))
@@ -69,7 +69,7 @@ class GroqSpeechToTextProviderTest {
     @DisplayName("Groq model discovery rejects entries without model ids")
     void fetchModels_whenModelIdsMissing_throws() throws Exception {
         var subject = new GroqSpeechToTextProvider(new CapturingTransport(
-                new SttHttpResponse(200, emptyMap(), "{\"data\":[{}]}".getBytes(StandardCharsets.UTF_8))
+                new HttpExchangeResponse(200, emptyMap(), "{\"data\":[{}]}".getBytes(StandardCharsets.UTF_8))
         ));
 
         assertThatThrownBy(() -> subject.fetchModels(context()))
@@ -82,7 +82,7 @@ class GroqSpeechToTextProviderTest {
     void transcribe_whenResponseSuccessful_returnsTranscript() throws Exception {
         Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
-        var transport = new CapturingTransport(new SttHttpResponse(200, emptyMap(), "{\"text\":\" hello\\nworld \"}".getBytes(StandardCharsets.UTF_8)));
+        var transport = new CapturingTransport(new HttpExchangeResponse(200, emptyMap(), "{\"text\":\" hello\\nworld \"}".getBytes(StandardCharsets.UTF_8)));
         var subject = new GroqSpeechToTextProvider(transport);
 
         var result = subject.transcribe(
@@ -101,7 +101,7 @@ class GroqSpeechToTextProviderTest {
     void transcribe_whenTextBlank_rejects() throws Exception {
         Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
-        var subject = new GroqSpeechToTextProvider(new CapturingTransport(new SttHttpResponse(200, emptyMap(), "{\"text\":\"   \"}".getBytes(StandardCharsets.UTF_8))));
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(new HttpExchangeResponse(200, emptyMap(), "{\"text\":\"   \"}".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.transcribe(new SpeechToTextRequest("groq", "whisper-large-v3-turbo", audio, 1_000, Files.size(audio)), context()))
                 .isInstanceOf(SpeechToTextException.class)
@@ -113,7 +113,7 @@ class GroqSpeechToTextProviderTest {
     void transcribe_whenUnauthorized_usesSafeError() throws Exception {
         Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
-        var subject = new GroqSpeechToTextProvider(new CapturingTransport(new SttHttpResponse(401, emptyMap(), "secret body".getBytes(StandardCharsets.UTF_8))));
+        var subject = new GroqSpeechToTextProvider(new CapturingTransport(new HttpExchangeResponse(401, emptyMap(), "secret body".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.transcribe(new SpeechToTextRequest("groq", "whisper-large-v3-turbo", audio, 1_000, Files.size(audio)), context()))
                 .isInstanceOf(SpeechToTextException.class)
@@ -145,16 +145,16 @@ class GroqSpeechToTextProviderTest {
         };
     }
 
-    private static final class CapturingTransport implements SttHttpTransport {
-        private final SttHttpResponse response;
-        private SttHttpRequest request;
+    private static final class CapturingTransport implements HttpTransport {
+        private final HttpExchangeResponse response;
+        private HttpExchangeRequest request;
 
-        private CapturingTransport(SttHttpResponse response) {
+        private CapturingTransport(HttpExchangeResponse response) {
             this.response = response;
         }
 
         @Override
-        public SttHttpResponse send(SttHttpRequest request, SpeechToTextProviderContext.CancellationToken cancellationToken) {
+        public HttpExchangeResponse send(HttpExchangeRequest request, java.util.function.BooleanSupplier cancellationToken) {
             this.request = request;
             return response;
         }

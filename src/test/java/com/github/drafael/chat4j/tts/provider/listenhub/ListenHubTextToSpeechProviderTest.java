@@ -1,14 +1,15 @@
 package com.github.drafael.chat4j.tts.provider.listenhub;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.http.HttpBody;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
@@ -21,13 +22,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ListenHubTextToSpeechProviderTest {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TextToSpeechRequest REQUEST = new TextToSpeechRequest(
             ListenHubTextToSpeechProvider.ID,
             "listenhub-tts",
@@ -42,7 +43,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub exposes its fixed model, Mia fallback, and operational chunk size")
     void metadata_whenCreated_exposesFixedSelectionsAndChunkSize() {
-        var subject = provider(request -> json("{}"), emptyMap());
+        var subject = provider((request, cancellation) -> json("{}"), emptyMap());
         var staleModel = TextToSpeechCatalogItem.of("stale-model", "Stale model");
 
         assertThat(subject.id()).isEqualTo("listenhub");
@@ -62,8 +63,8 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub discovers public and private voices from the unfiltered speaker catalog")
     void fetchVoices_whenCatalogContainsPublicAndPrivateSpeakers_mapsUsableEntries() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = provider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return json("""
                     {
@@ -104,7 +105,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("An explicitly successful empty ListenHub catalog falls back to Mia")
     void fetchVoices_whenCatalogIsEmpty_returnsBundledMia() throws Exception {
-        var subject = provider(request -> json("""
+        var subject = provider((request, cancellation) -> json("""
                 {"code":0,"message":"Success","data":{"items":[]}}
                 """), Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "catalog-key"));
 
@@ -118,7 +119,7 @@ class ListenHubTextToSpeechProviderTest {
     @DisplayName("ListenHub rejects structurally invalid voice catalog envelopes")
     void fetchVoices_whenSuccessEnvelopeIsInvalid_throws(String responseBody) {
         var subject = provider(
-                request -> json(responseBody),
+                (request, cancellation) -> json(responseBody),
                 Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "catalog-key")
         );
 
@@ -130,7 +131,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("A nonempty ListenHub catalog containing no usable voices is rejected")
     void fetchVoices_whenCatalogContainsNoUsableVoices_throws() {
-        var subject = provider(request -> json("""
+        var subject = provider((request, cancellation) -> json("""
                 {"code":0,"data":{"items":[{}, {"speakerId":"id-only"}]}}
                 """), Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "catalog-key"));
 
@@ -142,7 +143,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub catalog errors retain their application code and normalized message")
     void fetchVoices_whenApplicationCodeIsNonzero_throwsCodeAndMessage() {
-        var subject = provider(request -> json("""
+        var subject = provider((request, cancellation) -> json("""
                 {"code":29998,"message":" Rate   limit exceeded "}
                 """), Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "catalog-key"));
 
@@ -154,7 +155,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub application errors remain identifiable when no message is provided")
     void fetchVoices_whenApplicationMessageIsMissing_throwsCodeOnly() {
-        var subject = provider(request -> json("""
+        var subject = provider((request, cancellation) -> json("""
                 {"code":20001,"data":null}
                 """), Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "catalog-key"));
 
@@ -166,11 +167,11 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub synthesis sends the selected voice and fixed MP3 request shape")
     void synthesize_whenCalled_sendsExpectedRequestAndPreservesMp3Bytes() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
         byte[] mp3 = {1, 2, 3, 4};
-        var subject = provider(request -> {
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
-            return new TtsHttpResponse(
+            return new HttpExchangeResponse(
                     200,
                     Map.of("Content-Type", List.of(" AuDiO/MpEg ; codecs=mp3 ")),
                     mp3
@@ -192,13 +193,11 @@ class ListenHubTextToSpeechProviderTest {
                 .containsEntry("Authorization", "Bearer request-key")
                 .containsEntry("Content-Type", "application/json")
                 .containsEntry("Accept", "audio/mpeg");
-        var requestJson = OBJECT_MAPPER.readTree(captured[0].body());
-        assertThat(requestJson).hasSize(3);
-        assertThat(requestJson.path("input").asText()).isEqualTo("Text to read");
-        assertThat(requestJson.path("voice").asText()).isEqualTo("private-clone-1");
-        assertThat(requestJson.path("response_format").asText()).isEqualTo("mp3");
-        assertThat(requestJson.has("model")).isFalse();
-        assertThat(requestJson.has("speed")).isFalse();
+        ListenHubApi.SynthesisRequest requestBody = read(((HttpBody.Bytes) captured[0].body()).value(), ListenHubApi.SynthesisRequest.class);
+        assertThat(requestBody).isEqualTo(new ListenHubApi.SynthesisRequest("Text to read", "private-clone-1", "mp3"));
+        assertThat(new String(((HttpBody.Bytes) captured[0].body()).value(), StandardCharsets.UTF_8))
+                .doesNotContain("model")
+                .doesNotContain("speed");
         assertThat(audio.bytes()).containsExactly(mp3);
         assertThat(audio.contentType()).isEqualTo(" AuDiO/MpEg ; codecs=mp3 ");
         assertThat(audio.format()).isEqualTo("mp3");
@@ -207,8 +206,8 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("The one-argument ListenHub synthesis overload resolves the current credential")
     void synthesize_whenApiKeyIsNotProvided_resolvesCurrentCredential() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = provider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return mp3(new byte[]{1});
         }, Map.of(ListenHubTextToSpeechProvider.ENV_VAR, "resolved-key"));
@@ -221,8 +220,8 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub synthesis uses Mia when the selected voice is blank")
     void synthesize_whenVoiceIsBlank_usesMia() throws Exception {
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = provider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = provider((request, cancellation) -> {
             captured[0] = request;
             return mp3(new byte[]{1});
         }, emptyMap());
@@ -236,14 +235,14 @@ class ListenHubTextToSpeechProviderTest {
 
         subject.synthesize(request, "request-key");
 
-        assertThat(OBJECT_MAPPER.readTree(captured[0].body()).path("voice").asText())
-                .isEqualTo("travel-girl-english");
+        ListenHubApi.SynthesisRequest requestBody = read(((HttpBody.Bytes) captured[0].body()).value(), ListenHubApi.SynthesisRequest.class);
+        assertThat(requestBody.voice()).isEqualTo("travel-girl-english");
     }
 
     @Test
     @DisplayName("ListenHub synthesis errors retain their application code and message")
     void synthesize_whenJsonApplicationErrorIsReturned_throwsCodeAndMessage() {
-        var subject = provider(request -> new TtsHttpResponse(
+        var subject = provider((request, cancellation) -> new HttpExchangeResponse(
                 200,
                 emptyMap(),
                 "{\"code\":29998,\"message\":\"Rate limit exceeded\"}".getBytes(StandardCharsets.UTF_8)
@@ -257,7 +256,7 @@ class ListenHubTextToSpeechProviderTest {
     @Test
     @DisplayName("ListenHub rejects an empty synthesis body even when labeled as MP3")
     void synthesize_whenAudioBodyIsEmpty_throws() {
-        var subject = provider(request -> mp3(new byte[0]), emptyMap());
+        var subject = provider((request, cancellation) -> mp3(new byte[0]), emptyMap());
 
         assertThatThrownBy(() -> subject.synthesize(REQUEST, "request-key"))
                 .isInstanceOf(IllegalStateException.class)
@@ -272,7 +271,7 @@ class ListenHubTextToSpeechProviderTest {
                 ? emptyMap()
                 : Map.of("content-type", List.of(contentType));
         String responseBody = "application/json".equals(contentType) ? "{\"code\":0}" : "not-json";
-        var subject = provider(request -> new TtsHttpResponse(
+        var subject = provider((request, cancellation) -> new HttpExchangeResponse(
                 200,
                 headers,
                 responseBody.getBytes(StandardCharsets.UTF_8)
@@ -284,7 +283,7 @@ class ListenHubTextToSpeechProviderTest {
     }
 
     private ListenHubTextToSpeechProvider provider(
-            TtsHttpTransport transport,
+            HttpTransport transport,
             Map<String, String> shellEnvironment
     ) {
         var resolver = new CredentialResolver(
@@ -292,7 +291,7 @@ class ListenHubTextToSpeechProviderTest {
                 emptyMap(),
                 shellEnvironment
         );
-        return new ListenHubTextToSpeechProvider(transport, resolver);
+        return new ListenHubTextToSpeechProvider(new TtsHttpClient(transport), resolver);
     }
 
     private static Stream<String> invalidCatalogResponses() {
@@ -306,15 +305,15 @@ class ListenHubTextToSpeechProviderTest {
         );
     }
 
-    private static TtsHttpResponse json(String body) {
-        return new TtsHttpResponse(
+    private static HttpExchangeResponse json(String body) {
+        return new HttpExchangeResponse(
                 200,
                 Map.of("content-type", List.of("application/json")),
                 body.getBytes(StandardCharsets.UTF_8)
         );
     }
 
-    private static TtsHttpResponse mp3(byte[] body) {
-        return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/mpeg")), body);
+    private static HttpExchangeResponse mp3(byte[] body) {
+        return new HttpExchangeResponse(200, Map.of("content-type", List.of("audio/mpeg")), body);
     }
 }

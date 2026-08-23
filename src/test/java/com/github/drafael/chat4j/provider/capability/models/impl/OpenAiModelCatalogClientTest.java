@@ -1,5 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.models.impl;
 
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
@@ -291,22 +293,15 @@ class OpenAiModelCatalogClientTest {
 
             var requestedUris = new CopyOnWriteArrayList<URI>();
             var requestedAuthorizationHeaders = new CopyOnWriteArrayList<String>();
-            HttpClient httpClient = mock(HttpClient.class);
-            HttpResponse<String> unauthorizedResponse = mock(HttpResponse.class);
-            when(unauthorizedResponse.statusCode()).thenReturn(401);
-            when(httpClient.send(
-                    any(HttpRequest.class),
-                    org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()
-            )).thenAnswer(invocation -> {
-                HttpRequest request = invocation.getArgument(0);
+            HttpTransport transport = (request, cancellation) -> {
                 requestedUris.add(request.uri());
-                requestedAuthorizationHeaders.add(request.headers().firstValue("Authorization").orElse(null));
-                return unauthorizedResponse;
-            });
+                requestedAuthorizationHeaders.add(request.headers().get("Authorization"));
+                return new HttpExchangeResponse(401, java.util.Map.of(), new byte[0]);
+            };
 
             var subject = new OpenAiModelCatalogClient(
                     new CopilotModelMetadataStore(tempDir.resolve("unapproved-endpoint-metadata")),
-                    httpClient
+                    transport
             );
             ProviderDescriptor descriptor = new ProviderDescriptor(
                     "GitHub Copilot",

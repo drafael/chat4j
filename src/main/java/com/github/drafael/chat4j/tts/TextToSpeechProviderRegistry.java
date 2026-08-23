@@ -2,13 +2,15 @@ package com.github.drafael.chat4j.tts;
 
 import com.github.drafael.chat4j.persistence.catalog.SpeechCatalogKeySchema;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
-import com.github.drafael.chat4j.tts.provider.JavaNetTtsHttpTransport;
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechProvider;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpTransport;
 import com.github.drafael.chat4j.tts.provider.deepgram.DeepgramTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.elevenlabs.ElevenLabsTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.groq.GroqTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.listenhub.ListenHubTextToSpeechProvider;
+import com.github.drafael.chat4j.tts.provider.speechify.SpeechifyTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.system.SystemTextToSpeechProvider;
 import java.util.List;
 import java.util.Map;
@@ -29,13 +31,15 @@ public class TextToSpeechProviderRegistry {
             CredentialResolver credentialResolver,
             Map<String, String> subprocessEnvironment
     ) {
-        TtsHttpTransport transport = new JavaNetTtsHttpTransport();
+        HttpTransport transport = new JavaNetHttpTransport();
+        var httpClient = new TtsHttpClient(transport);
         return new TextToSpeechProviderRegistry(List.of(
                 SystemTextToSpeechProvider.createDefault(subprocessEnvironment),
-                new DeepgramTextToSpeechProvider(transport, credentialResolver),
-                new GroqTextToSpeechProvider(transport, credentialResolver),
-                new ElevenLabsTextToSpeechProvider(transport, credentialResolver),
-                new ListenHubTextToSpeechProvider(transport, credentialResolver)
+                new DeepgramTextToSpeechProvider(httpClient, credentialResolver),
+                new GroqTextToSpeechProvider(httpClient, credentialResolver),
+                new ElevenLabsTextToSpeechProvider(httpClient, credentialResolver),
+                new ListenHubTextToSpeechProvider(httpClient, credentialResolver),
+                new SpeechifyTextToSpeechProvider(httpClient, credentialResolver)
         ));
     }
 

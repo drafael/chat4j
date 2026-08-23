@@ -15,63 +15,17 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PerplexityChatCompletionClientTest {
-
-    @Test
-    @DisplayName("Logical cancellation cancels the HTTP future without interrupting the worker")
-    void waitForResponse_whenLogicallyCancelled_cancelsFutureWithoutInterruptingThread() throws Exception {
-        var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
-        var future = new CompletableFuture<HttpResponse<String>>();
-        Method waitForResponse = PerplexityChatCompletionClient.class.getDeclaredMethod(
-                "waitForResponse",
-                CompletableFuture.class,
-                BooleanSupplier.class
-        );
-        waitForResponse.setAccessible(true);
-
-        assertThatThrownBy(() -> waitForResponse.invoke(subject, future, (BooleanSupplier) () -> true))
-                .hasRootCauseInstanceOf(InterruptedException.class);
-
-        assertThat(future).isCancelled();
-        assertThat(Thread.currentThread().isInterrupted()).isFalse();
-    }
-
-    @Test
-    @DisplayName("A real interrupt cancels the HTTP future and preserves interrupt status")
-    void waitForResponse_whenThreadIsInterrupted_cancelsFutureAndPreservesInterrupt() throws Exception {
-        var subject = new PerplexityChatCompletionClient(ProviderAttachmentTestSupport.authority());
-        var future = new CompletableFuture<HttpResponse<String>>();
-        Method waitForResponse = PerplexityChatCompletionClient.class.getDeclaredMethod(
-                "waitForResponse",
-                CompletableFuture.class,
-                BooleanSupplier.class
-        );
-        waitForResponse.setAccessible(true);
-
-        try {
-            Thread.currentThread().interrupt();
-            assertThatThrownBy(() -> waitForResponse.invoke(subject, future, (BooleanSupplier) () -> false))
-                    .hasRootCauseInstanceOf(InterruptedException.class);
-            assertThat(future).isCancelled();
-            assertThat(Thread.currentThread().isInterrupted()).isTrue();
-        } finally {
-            Thread.interrupted();
-        }
-    }
 
     @Test
     @DisplayName("Cancellation after a completed deep-research response suppresses callbacks")

@@ -1,9 +1,6 @@
 package com.github.drafael.chat4j.tts.provider;
 
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.catalog.CatalogGroup;
 import com.github.drafael.chat4j.persistence.catalog.CatalogJsonStructure;
 import com.github.drafael.chat4j.persistence.catalog.CatalogPayload;
@@ -28,15 +25,7 @@ public class TextToSpeechCatalogStore {
 
     private static final int MAX_CATALOG_ITEMS = 10_000;
     private static final int MAX_CATALOG_TOKENS = 500_000;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
-            .streamReadConstraints(StreamReadConstraints.builder()
-                    .maxNestingDepth(100)
-                    .maxStringLength(64 * 1024)
-                    .maxNumberLength(1_000)
-                    .build())
-            .build());
-    private static final TypeReference<List<TextToSpeechCatalogItem>> ITEM_LIST_TYPE = new TypeReference<>() {
-    };
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
     private final CatalogSnapshotStore snapshots;
 
@@ -91,8 +80,8 @@ public class TextToSpeechCatalogStore {
     ) {
         Validate.notBlank(providerId, "providerId should not be blank");
         try {
-            String modelsJson = OBJECT_MAPPER.writeValueAsString(models);
-            String voicesJson = OBJECT_MAPPER.writeValueAsString(voices);
+            String modelsJson = JSON_CODEC.writeString(models);
+            String voicesJson = JSON_CODEC.writeString(voices);
             Validate.isTrue(parseItems(modelsJson).isPresent(), "Text to Speech models exceed structural limits");
             Validate.isTrue(parseItems(voicesJson).isPresent(), "Text to Speech voices exceed structural limits");
             return snapshots.saveIf(
@@ -187,15 +176,12 @@ public class TextToSpeechCatalogStore {
     }
 
     private Optional<List<TextToSpeechCatalogItem>> parseItems(String json) {
-        if (!CatalogJsonStructure.isBoundedArray(OBJECT_MAPPER, json, MAX_CATALOG_ITEMS, MAX_CATALOG_TOKENS)) {
-            return Optional.empty();
-        }
-        try {
-            List<TextToSpeechCatalogItem> items = OBJECT_MAPPER.readValue(json, ITEM_LIST_TYPE);
-            return Optional.ofNullable(items);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        return CatalogJsonStructure.readBoundedArray(
+                json,
+                TextToSpeechCatalogItem[].class,
+                MAX_CATALOG_ITEMS,
+                MAX_CATALOG_TOKENS
+        ).map(items -> java.util.Arrays.stream(items).toList());
     }
 
     private static TextToSpeechCatalogItem normalized(

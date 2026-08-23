@@ -1,12 +1,13 @@
 package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
+import java.util.List;
+import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 
 public final class TranscriptCallbackPayloads {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
     private TranscriptCallbackPayloads() {
     }
@@ -18,15 +19,13 @@ public final class TranscriptCallbackPayloads {
         }
 
         try {
-            JsonNode node = OBJECT_MAPPER.readTree(value);
-            if (node.has("args") && node.get("args").isArray() && !node.get("args").isEmpty()) {
-                return node.get("args").get(0).asText("");
+            Object decoded = JSON_CODEC.read(value, Object.class);
+            Object args = decoded instanceof Map<?, ?> object ? object.get("args") : decoded;
+            if (args instanceof List<?> values && !values.isEmpty()) {
+                return scalarText(values.getFirst());
             }
-            if (node.isArray() && !node.isEmpty()) {
-                return node.get(0).asText("");
-            }
-            if (node.isTextual() || node.isNumber() || node.isBoolean()) {
-                return node.asText("");
+            if (isScalar(args)) {
+                return scalarText(args);
             }
         } catch (Exception ignored) {
             // Fall back to legacy raw string handling.
@@ -42,7 +41,7 @@ public final class TranscriptCallbackPayloads {
         }
 
         try {
-            return transcriptAction(OBJECT_MAPPER.readTree(value), 0);
+            return transcriptAction(JSON_CODEC.read(value, Object.class), 0);
         } catch (Exception ignored) {
             // Ignore malformed callback payloads.
         }
@@ -50,22 +49,45 @@ public final class TranscriptCallbackPayloads {
         return null;
     }
 
-    private static TranscriptAction transcriptAction(JsonNode node, int depth) throws Exception {
-        if (node == null || depth > 2) {
+    private static TranscriptAction transcriptAction(Object decoded, int depth) {
+        if (decoded == null || depth > 2) {
             return null;
         }
-        JsonNode args = node.has("args") && node.get("args").isArray() ? node.get("args") : node;
-        if (args.isArray() && args.size() >= 2) {
-            String text = args.size() >= 3 ? args.get(2).asText("") : "";
-            return new TranscriptAction(args.get(0).asText(""), args.get(1).asInt(-1), text);
+        Object args = decoded instanceof Map<?, ?> object && object.get("args") instanceof List<?> values ? values : decoded;
+        if (args instanceof List<?> values && values.size() >= 2) {
+            String text = values.size() >= 3 ? scalarText(values.get(2)) : "";
+            return new TranscriptAction(scalarText(values.get(0)), integerValue(values.get(1)), text);
         }
-        if (args.isArray() && args.size() == 1) {
-            return transcriptAction(args.get(0), depth + 1);
+        if (args instanceof List<?> values && values.size() == 1) {
+            return transcriptAction(values.getFirst(), depth + 1);
         }
-        if (node.isTextual() && StringUtils.isNotBlank(node.asText())) {
-            return transcriptAction(OBJECT_MAPPER.readTree(node.asText()), depth + 1);
+        if (decoded instanceof String nested && StringUtils.isNotBlank(nested)) {
+            try {
+                return transcriptAction(JSON_CODEC.read(nested, Object.class), depth + 1);
+            } catch (Exception ignored) {
+                return null;
+            }
         }
         return null;
+    }
+
+    private static boolean isScalar(Object value) {
+        return value instanceof String || value instanceof Number || value instanceof Boolean;
+    }
+
+    private static String scalarText(Object value) {
+        return isScalar(value) ? String.valueOf(value) : "";
+    }
+
+    private static int integerValue(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.parseInt(scalarText(value));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     public record TranscriptAction(String action, int messageIndex, String text) {

@@ -70,7 +70,7 @@ class MistralConversationsWebSearchClientTest {
         URI endpoint = startServer(200, successfulFixture(), capturedBody, capturedAuthorization);
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
         var tokens = new StringBuilder();
@@ -156,7 +156,7 @@ class MistralConversationsWebSearchClientTest {
     void streamCompletion_whenSystemMessageAppearsAfterUserInput_failsBeforeTransport() {
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 URI.create("http://127.0.0.1:1/v1/conversations")
         );
 
@@ -201,7 +201,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -239,7 +239,7 @@ class MistralConversationsWebSearchClientTest {
         URI endpoint = URI.create("http://127.0.0.1:%d/v1/conversations".formatted(server.getAddress().getPort()));
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
         var failure = new AtomicReference<Throwable>();
@@ -269,7 +269,7 @@ class MistralConversationsWebSearchClientTest {
         URI endpoint = startServer(200, successfulFixture(), new AtomicReference<>(), new AtomicReference<>());
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
         var cancelled = new AtomicBoolean();
@@ -321,7 +321,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
         var cancelled = new AtomicBoolean();
@@ -376,7 +376,7 @@ class MistralConversationsWebSearchClientTest {
         URI endpoint = URI.create("http://127.0.0.1:%d/v1/conversations".formatted(server.getAddress().getPort()));
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
         var cancelled = new AtomicBoolean();
@@ -435,7 +435,7 @@ class MistralConversationsWebSearchClientTest {
                 .sendAsync(any(), any(HttpResponse.BodyHandler.class));
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                httpClient,
+                new MistralSseTransport(httpClient),
                 URI.create("https://api.mistral.ai/v1/conversations")
         );
         var cancelled = new AtomicBoolean();
@@ -484,7 +484,7 @@ class MistralConversationsWebSearchClientTest {
                 .sendAsync(any(), any(HttpResponse.BodyHandler.class));
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                httpClient,
+                new MistralSseTransport(httpClient),
                 URI.create("https://api.mistral.ai/v1/conversations")
         );
         var cleared = new AtomicBoolean();
@@ -528,7 +528,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -546,7 +546,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -573,7 +573,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -593,7 +593,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -613,7 +613,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -635,7 +635,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -655,7 +655,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -676,7 +676,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -696,7 +696,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -716,7 +716,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 
@@ -736,7 +736,7 @@ class MistralConversationsWebSearchClientTest {
         );
         var subject = new MistralConversationsWebSearchClient(
                 attachmentSupport,
-                HttpClient.newHttpClient(),
+                new MistralSseTransport(HttpClient.newHttpClient()),
                 endpoint
         );
 

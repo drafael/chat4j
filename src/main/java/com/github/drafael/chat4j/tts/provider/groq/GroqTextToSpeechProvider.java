@@ -5,19 +5,16 @@ import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
-
-import static java.util.stream.StreamSupport.stream;
 
 public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
@@ -47,8 +44,8 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
     );
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = Stream.concat(ENGLISH_VOICES.stream(), ARABIC_VOICES.stream()).toList();
 
-    public GroqTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
-        super(transport, credentialResolver);
+    public GroqTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
+        super(httpClient, credentialResolver);
     }
 
     @Override
@@ -108,23 +105,25 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
     @Override
     public List<TextToSpeechCatalogItem> fetchModels() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/models".formatted(BASE_URL)), authHeaders());
-        List<TextToSpeechCatalogItem> models = new ArrayList<>();
-        JsonNode root = jsonBody(response);
-        JsonNode data = root == null ? null : root.path("data");
-        if (data == null || !data.isArray()) {
+        GroqApi.ModelsResponse response = getJson(
+                URI.create("%s/models".formatted(BASE_URL)),
+                authHeaders(),
+                GroqApi.ModelsResponse.class,
+                "Groq model catalog response was invalid."
+        );
+        List<GroqApi.Model> data = response.data();
+        if (data == null) {
             throw new IllegalStateException("Groq model catalog response was invalid.");
         }
-        if (!data.isEmpty() && stream(data.spliterator(), false)
-                .noneMatch(model -> StringUtils.isNotBlank(model.path("id").asText("")))) {
+        if (!data.isEmpty() && data.stream().noneMatch(model -> model != null && StringUtils.isNotBlank(model.id()))) {
             throw new IllegalStateException("Groq model catalog response did not contain valid model IDs.");
         }
-        data.forEach(model -> {
-            String id = model.path("id").asText("");
-            if (isCurrentSpeechModel(id)) {
-                models.add(TextToSpeechCatalogItem.of(id, id));
-            }
-        });
+        List<TextToSpeechCatalogItem> models = data.stream()
+                .filter(Objects::nonNull)
+                .map(GroqApi.Model::id)
+                .filter(this::isCurrentSpeechModel)
+                .map(id -> TextToSpeechCatalogItem.of(id, id))
+                .toList();
         return nonEmptyOrBundled(models, BUNDLED_MODELS);
     }
 
@@ -149,13 +148,14 @@ public class GroqTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
-        ObjectNode body = OBJECT_MAPPER.createObjectNode();
         String modelId = normalizeModelId(request.modelId());
-        body.put("model", modelId);
-        body.put("voice", normalizeVoiceId(modelId, request.voiceId()));
-        body.put("input", request.text());
-        body.put("response_format", StringUtils.defaultIfBlank(request.responseFormat(), "wav"));
-        TtsHttpResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(apiKey), body);
+        var body = new GroqApi.SynthesisRequest(
+                modelId,
+                normalizeVoiceId(modelId, request.voiceId()),
+                request.text(),
+                StringUtils.defaultIfBlank(request.responseFormat(), "wav")
+        );
+        HttpExchangeResponse response = postJson(URI.create("%s/audio/speech".formatted(BASE_URL)), jsonHeaders(apiKey), body);
         return audioBody(response, "wav");
     }
 

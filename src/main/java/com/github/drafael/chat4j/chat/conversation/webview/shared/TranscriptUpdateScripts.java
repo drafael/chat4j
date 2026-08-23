@@ -1,11 +1,11 @@
 package com.github.drafael.chat4j.chat.conversation.webview.shared;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.json.JsonCodec;
 import org.apache.commons.lang3.StringUtils;
 
 public final class TranscriptUpdateScripts {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
     private TranscriptUpdateScripts() {
     }
@@ -125,7 +125,7 @@ public final class TranscriptUpdateScripts {
 
     private static String jsonString(String value) {
         try {
-            return OBJECT_MAPPER.writeValueAsString(StringUtils.defaultString(value));
+            return JSON_CODEC.writeString(StringUtils.defaultString(value));
         } catch (Exception e) {
             return "\"\"";
         }

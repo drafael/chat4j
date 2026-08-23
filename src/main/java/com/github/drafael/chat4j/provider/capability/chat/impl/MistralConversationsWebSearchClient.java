@@ -1,9 +1,6 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
 import com.github.drafael.chat4j.provider.api.Role;
@@ -26,17 +23,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.IntStream;
 import java.util.function.BooleanSupplier;
@@ -46,28 +36,24 @@ import static java.util.stream.Collectors.joining;
 
 public class MistralConversationsWebSearchClient implements ChatCompletionClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final int MAX_ERROR_BODY_BYTES = 8_192;
 
     private final ProviderAttachmentSupport attachmentSupport;
-    private final HttpClient httpClient;
+    private final MistralSseTransport transport;
     private final URI endpointOverride;
 
     public MistralConversationsWebSearchClient(@NonNull ProviderAttachmentSupport attachmentSupport) {
-        this(
-                attachmentSupport,
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build(),
-                null
-        );
+        this(attachmentSupport, new MistralSseTransport(), null);
     }
 
     MistralConversationsWebSearchClient(
             @NonNull ProviderAttachmentSupport attachmentSupport,
-            @NonNull HttpClient httpClient,
+            @NonNull MistralSseTransport transport,
             URI endpointOverride
     ) {
         this.attachmentSupport = attachmentSupport;
-        this.httpClient = httpClient;
+        this.transport = transport;
         this.endpointOverride = endpointOverride;
     }
 
@@ -113,23 +99,28 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
                 AttachmentProjectionPlan.textOnly(),
                 isCancelled
         );
-        ObjectNode requestBody = requestBody(runtime.selectedModel(), projectionPlan, reasoningLevel);
+        MistralConversationsApi.Request requestBody = requestBody(
+                runtime.selectedModel(),
+                projectionPlan,
+                reasoningLevel
+        );
         URI endpoint = endpointOverride == null
                 ? MistralNativeWebSearchSupport.conversationsUri(runtime.baseUrl())
                         .orElseThrow(() -> new IllegalArgumentException(
                                 "Mistral native Web Search requires the official API endpoint."
                         ))
                 : endpointOverride;
-        HttpRequest request = HttpRequest.newBuilder(endpoint)
-                .header("Authorization", "Bearer %s".formatted(runtime.apiKey()))
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(requestBody)))
-                .build();
+        Map<String, String> headers = Map.of(
+                "Authorization", "Bearer %s".formatted(runtime.apiKey()),
+                "Content-Type", "application/json",
+                "Accept", "text/event-stream"
+        );
 
         streamResponse(
                 runtime,
-                request,
+                endpoint,
+                headers,
+                JSON.writeBytes(requestBody),
                 reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel,
                 onToken,
                 onThinkingToken,
@@ -140,15 +131,11 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
         );
     }
 
-    private ObjectNode requestBody(
+    private MistralConversationsApi.Request requestBody(
             String model,
             AttachmentProjectionPlan projectionPlan,
             ReasoningLevel reasoningLevel
     ) {
-        ObjectNode body = JSON.createObjectNode();
-        body.put("model", model);
-        body.put("stream", true);
-        body.put("store", false);
         List<ProjectedMessage> messages = projectionPlan.messages();
         int firstInputIndex = IntStream.range(0, messages.size())
                 .filter(index -> messages.get(index).role() != Role.SYSTEM)
@@ -162,11 +149,10 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             );
         }
 
-        ArrayNode inputs = body.putArray("inputs");
-        inputMessages.stream()
+        List<MistralConversationsApi.Input> inputs = inputMessages.stream()
                 .map(this::toInput)
-                .filter(input -> StringUtils.isNotBlank(input.path("content").asText()))
-                .forEach(inputs::add);
+                .filter(input -> StringUtils.isNotBlank(input.content()))
+                .toList();
         if (inputs.isEmpty()) {
             throw new IllegalArgumentException("Mistral native Web Search requires usable message text.");
         }
@@ -175,20 +161,23 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
                 .map(this::projectedText)
                 .filter(StringUtils::isNotBlank)
                 .collect(joining("\n\n"));
-        if (StringUtils.isNotBlank(instructions)) {
-            body.put("instructions", instructions);
-        }
-        body.putArray("tools").addObject().put("type", "web_search");
         ReasoningLevel level = reasoningLevel == null ? ReasoningLevel.OFF : reasoningLevel;
-        body.putObject("completion_args").put("reasoning_effort", reasoningEffort(level));
-        return body;
+        return new MistralConversationsApi.Request(
+                model,
+                true,
+                false,
+                inputs,
+                StringUtils.isBlank(instructions) ? null : instructions,
+                List.of(new MistralConversationsApi.Tool("web_search")),
+                new MistralConversationsApi.CompletionArgs(reasoningEffort(level))
+        );
     }
 
-    private ObjectNode toInput(ProjectedMessage message) {
-        ObjectNode input = JSON.createObjectNode();
-        input.put("role", message.role() == Role.USER ? "user" : "assistant");
-        input.put("content", projectedText(message));
-        return input;
+    private MistralConversationsApi.Input toInput(ProjectedMessage message) {
+        return new MistralConversationsApi.Input(
+                message.role() == Role.USER ? "user" : "assistant",
+                projectedText(message)
+        );
     }
 
     private String projectedText(ProjectedMessage message) {
@@ -204,7 +193,9 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
 
     private void streamResponse(
             ProviderRuntime runtime,
-            HttpRequest request,
+            URI endpoint,
+            Map<String, String> headers,
+            byte[] requestBody,
             ReasoningLevel reasoningLevel,
             Consumer<String> onToken,
             Consumer<String> onThinkingToken,
@@ -213,106 +204,53 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             Consumer<AutoCloseable> registerActiveStream,
             Runnable clearActiveStream
     ) throws Exception {
-        CompletableFuture<HttpResponse<InputStream>> responseFuture = httpClient.sendAsync(
-                request,
-                HttpResponse.BodyHandlers.ofInputStream()
-        );
-        try {
-            registerActiveStream.accept(() -> cancelResponse(responseFuture));
-        } catch (RuntimeException | Error e) {
-            cancelResponse(responseFuture);
+        try (MistralSseTransport.Call call = transport.open(endpoint, headers, requestBody)) {
             try {
-                clearActiveStream.run();
-            } catch (RuntimeException | Error clearFailure) {
-                e.addSuppressed(clearFailure);
-            }
-            throw e;
-        }
-        try {
-            HttpResponse<InputStream> response = awaitResponse(responseFuture, isCancelled);
-            if (response == null) {
-                return;
-            }
-            try (InputStream responseBody = response.body()) {
-                if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw ProviderExceptionMapper.map(
-                            new IOException("Mistral Conversations request failed with HTTP %d: %s".formatted(
-                                    response.statusCode(),
-                                    readErrorMessage(responseBody)
-                            )),
-                            runtime.apiKey()
-                    );
+                registerActiveStream.accept(call);
+            } catch (RuntimeException | Error e) {
+                call.close();
+                try {
+                    clearActiveStream.run();
+                } catch (RuntimeException | Error clearFailure) {
+                    e.addSuppressed(clearFailure);
                 }
-                parseEvents(
-                        responseBody,
-                        reasoningLevel,
-                        onToken,
-                        onThinkingToken,
-                        onCitation,
-                        isCancelled
-                );
-            }
-        } catch (CancellationException e) {
-            if (!shouldStop(isCancelled)) {
                 throw e;
             }
-        } catch (IOException e) {
-            if (!shouldStop(isCancelled)) {
-                throw ProviderExceptionMapper.map(e, runtime.apiKey());
-            }
-        } finally {
-            clearActiveStream.run();
-        }
-    }
-
-    private HttpResponse<InputStream> awaitResponse(
-            CompletableFuture<HttpResponse<InputStream>> responseFuture,
-            BooleanSupplier isCancelled
-    ) throws Exception {
-        if (shouldStop(isCancelled)) {
-            cancelResponse(responseFuture);
-            return null;
-        }
-        try {
-            while (true) {
-                if (shouldStop(isCancelled)) {
-                    cancelResponse(responseFuture);
-                    return null;
+            try {
+                MistralSseTransport.Response response = call.await(isCancelled);
+                if (response == null) {
+                    return;
                 }
-                try {
-                    HttpResponse<InputStream> response = responseFuture.get(100, TimeUnit.MILLISECONDS);
-                    if (shouldStop(isCancelled)) {
-                        response.body().close();
-                        return null;
+                try (response) {
+                    if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                        throw ProviderExceptionMapper.map(
+                                new IOException("Mistral Conversations request failed with HTTP %d: %s".formatted(
+                                        response.statusCode(),
+                                        readErrorMessage(response.body())
+                                )),
+                                runtime.apiKey()
+                        );
                     }
-                    return response;
-                } catch (TimeoutException ignored) {
-                    // Recheck cooperative cancellation while the request is in flight.
+                    parseEvents(
+                            response.body(),
+                            reasoningLevel,
+                            onToken,
+                            onThinkingToken,
+                            onCitation,
+                            isCancelled
+                    );
                 }
+            } catch (CancellationException e) {
+                if (!shouldStop(isCancelled)) {
+                    throw e;
+                }
+            } catch (IOException e) {
+                if (!shouldStop(isCancelled)) {
+                    throw ProviderExceptionMapper.map(e, runtime.apiKey());
+                }
+            } finally {
+                clearActiveStream.run();
             }
-        } catch (InterruptedException e) {
-            cancelResponse(responseFuture);
-            Thread.currentThread().interrupt();
-            return null;
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof Exception exception) {
-                throw exception;
-            }
-            throw new IOException("Mistral Conversations request failed", cause);
-        }
-    }
-
-    private void cancelResponse(CompletableFuture<HttpResponse<InputStream>> responseFuture) {
-        if (responseFuture.cancel(true) || !responseFuture.isDone() || responseFuture.isCompletedExceptionally()) {
-            return;
-        }
-        try {
-            HttpResponse<InputStream> response = responseFuture.getNow(null);
-            if (response != null) {
-                response.body().close();
-            }
-        } catch (IOException | RuntimeException ignored) {
         }
     }
 
@@ -396,20 +334,19 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             return true;
         }
 
-        JsonNode event;
+        MistralConversationsApi.Event event;
         try {
-            event = JSON.readTree(payload);
+            event = JSON.read(payload, MistralConversationsApi.Event.class);
         } catch (Exception e) {
             throw new IOException("Mistral Conversations returned malformed SSE data.", e);
         }
-        if (!event.isObject()) {
+        if (event == null || StringUtils.isBlank(event.type())) {
             throw new IOException("Mistral Conversations returned malformed SSE data.");
         }
-        String type = event.path("type").asText("");
-        return switch (type) {
+        return switch (event.type()) {
             case "message.output.delta" -> {
                 handleContent(
-                        event.get("content"),
+                        event.content(),
                         reasoningLevel,
                         citations,
                         onToken,
@@ -423,8 +360,8 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             case "conversation.response.done" -> true;
             case "conversation.response.error" -> throw new IOException(
                     "Mistral Conversations error %s: %s".formatted(
-                            StringUtils.defaultIfBlank(event.path("code").asText(""), "unknown"),
-                            StringUtils.defaultIfBlank(event.path("message").asText(""), "Request failed")
+                            StringUtils.defaultIfBlank(event.code(), "unknown"),
+                            StringUtils.defaultIfBlank(event.message(), "Request failed")
                     )
             );
             default -> false;
@@ -432,7 +369,7 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
     }
 
     private void handleContent(
-            JsonNode content,
+            MistralConversationsApi.Content content,
             ReasoningLevel reasoningLevel,
             CitationAccumulator citations,
             Consumer<String> onToken,
@@ -441,11 +378,13 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             AtomicBoolean emittedAnswer,
             BooleanSupplier isCancelled
     ) {
-        if (content == null || content.isNull() || shouldStop(isCancelled)) {
+        if (content == null || shouldStop(isCancelled)) {
             return;
         }
-        if (content.isArray()) {
-            content.forEach(chunk -> handleContent(
+        switch (content) {
+            case MistralConversationsApi.TextValue text ->
+                    emitAnswer(text.value(), emittedAnswer, onToken, isCancelled);
+            case MistralConversationsApi.Chunks chunks -> chunks.values().forEach(chunk -> handleContent(
                     chunk,
                     reasoningLevel,
                     citations,
@@ -455,22 +394,16 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
                     emittedAnswer,
                     isCancelled
             ));
-            return;
-        }
-        if (content.isTextual()) {
-            emitAnswer(content.asText(), emittedAnswer, onToken, isCancelled);
-            return;
-        }
-
-        switch (content.path("type").asText()) {
-            case "text" -> emitAnswer(content.path("text").asText(), emittedAnswer, onToken, isCancelled);
-            case "tool_reference" -> emitCitation(content, citations, onToken, onCitation, isCancelled);
-            case "thinking" -> {
+            case MistralConversationsApi.Text text ->
+                    emitAnswer(text.value(), emittedAnswer, onToken, isCancelled);
+            case MistralConversationsApi.ToolReference reference ->
+                    emitCitation(reference, citations, onToken, onCitation, isCancelled);
+            case MistralConversationsApi.Thinking thinking -> {
                 if (reasoningLevel.enabled()) {
-                    emitThinking(content.path("thinking"), onThinkingToken, isCancelled);
+                    emitThinking(thinking.value(), onThinkingToken, isCancelled);
                 }
             }
-            default -> {
+            case MistralConversationsApi.Unknown ignored -> {
             }
         }
     }
@@ -488,35 +421,34 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
     }
 
     private void emitThinking(
-            JsonNode thinking,
+            MistralConversationsApi.Content thinking,
             Consumer<String> onThinkingToken,
             BooleanSupplier isCancelled
     ) {
         if (thinking == null || shouldStop(isCancelled)) {
             return;
         }
-        if (thinking.isArray()) {
-            thinking.forEach(chunk -> emitThinking(chunk, onThinkingToken, isCancelled));
-            return;
-        }
-        if (thinking.isTextual()) {
-            emit(thinking.asText(), onThinkingToken, isCancelled);
-        } else if ("text".equals(thinking.path("type").asText())) {
-            emit(thinking.path("text").asText(), onThinkingToken, isCancelled);
+        switch (thinking) {
+            case MistralConversationsApi.TextValue text -> emit(text.value(), onThinkingToken, isCancelled);
+            case MistralConversationsApi.Chunks chunks ->
+                    chunks.values().forEach(chunk -> emitThinking(chunk, onThinkingToken, isCancelled));
+            case MistralConversationsApi.Text text -> emit(text.value(), onThinkingToken, isCancelled);
+            default -> {
+            }
         }
     }
 
     private void emitCitation(
-            JsonNode content,
+            MistralConversationsApi.ToolReference content,
             CitationAccumulator citations,
             Consumer<String> onToken,
             Consumer<CitationRef> onCitation,
             BooleanSupplier isCancelled
     ) {
         UrlCitationMapper.fromUrl(
-                content.path("title").asText(),
-                content.path("url").asText(),
-                content.path("description").asText()
+                content.title(),
+                content.url(),
+                content.description()
         ).ifPresent(mapped -> {
             var newCitation = citations.addNew(mapped);
             CitationRef citation = newCitation.orElseGet(() -> citations.add(mapped));
@@ -542,10 +474,12 @@ public class MistralConversationsWebSearchClient implements ChatCompletionClient
             return "empty error response";
         }
         try {
-            JsonNode root = JSON.readTree(body);
-            String message = root == null ? "" : root.path("message").asText("");
-            return StringUtils.defaultIfBlank(message, "unrecognized error response");
-        } catch (IOException e) {
+            MistralConversationsApi.ErrorResponse response = JSON.read(
+                    body,
+                    MistralConversationsApi.ErrorResponse.class
+            );
+            return StringUtils.defaultIfBlank(response.message(), "unrecognized error response");
+        } catch (Exception e) {
             return "unparseable error response";
         }
     }

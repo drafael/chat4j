@@ -1,19 +1,45 @@
 package com.github.drafael.chat4j.persistence.catalog;
 
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.Optional;
 import lombok.NonNull;
 import org.apache.commons.lang3.Validate;
 
 /** Validates bounded JSON array structure before domain objects are retained. */
 public final class CatalogJsonStructure {
 
+    private static final ObjectMapper BOUNDED_MAPPER = new ObjectMapper(JsonFactory.builder()
+            .streamReadConstraints(StreamReadConstraints.builder()
+                    .maxNestingDepth(100)
+                    .maxStringLength(64 * 1024)
+                    .maxNumberLength(1_000)
+                    .build())
+            .build());
+
     private CatalogJsonStructure() {
     }
 
-    public static boolean isBoundedArray(@NonNull ObjectMapper objectMapper, String json, int maxItems, int maxTokens) {
+    public static boolean isBoundedArray(String json, int maxItems, int maxTokens) {
+        return isBoundedArray(BOUNDED_MAPPER, json, maxItems, maxTokens);
+    }
+
+    public static <T> Optional<T> readBoundedArray(String json, @NonNull Class<T> arrayType, int maxItems, int maxTokens) {
+        if (!isBoundedArray(json, maxItems, maxTokens)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(BOUNDED_MAPPER.readValue(json, arrayType));
+        } catch (IOException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static boolean isBoundedArray(ObjectMapper objectMapper, String json, int maxItems, int maxTokens) {
         Validate.notNull(json, "json should not be null");
         Validate.isTrue(maxItems >= 0, "maxItems should not be negative");
         Validate.isTrue(maxTokens > 0, "maxTokens should be positive");

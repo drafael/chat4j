@@ -39,8 +39,13 @@ public record SpeechToTextProviderContext(
                 );
     }
 
-    public interface CancellationToken {
+    public interface CancellationToken extends java.util.function.BooleanSupplier {
         boolean cancelled();
+
+        @Override
+        default boolean getAsBoolean() {
+            return cancelled();
+        }
 
         static CancellationToken never() {
             return () -> false;

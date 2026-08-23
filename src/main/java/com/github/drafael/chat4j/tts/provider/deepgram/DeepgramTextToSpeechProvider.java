@@ -1,23 +1,24 @@
 package com.github.drafael.chat4j.tts.provider.deepgram;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+
+import static java.util.stream.Collectors.joining;
 
 public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvider {
 
@@ -41,8 +42,8 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public DeepgramTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
-        super(transport, credentialResolver);
+    public DeepgramTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
+        super(httpClient, credentialResolver);
     }
 
     @Override
@@ -150,9 +151,8 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
         String modelId = normalizeVoiceModelId(StringUtils.defaultIfBlank(request.voiceId(), request.modelId()));
-        ObjectNode body = OBJECT_MAPPER.createObjectNode();
-        body.put("text", request.text());
-        TtsHttpResponse response = postJson(
+        var body = new DeepgramApi.SynthesisRequest(request.text());
+        HttpExchangeResponse response = postJson(
                 URI.create("%s/speak?model=%s&encoding=linear16&container=none&sample_rate=%d".formatted(BASE_URL, modelId, SAMPLE_RATE)),
                 jsonHeaders(apiKey),
                 body
@@ -161,19 +161,21 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
     }
 
     private List<TextToSpeechCatalogItem> fetchVoiceModels() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/models".formatted(BASE_URL)), authHeaders());
-        List<TextToSpeechCatalogItem> voiceModels = new ArrayList<>();
-        JsonNode root = jsonBody(response);
-        JsonNode ttsModels = root == null ? null : root.path("tts");
-        if (ttsModels == null || !ttsModels.isArray()) {
+        DeepgramApi.ModelsResponse response = getJson(
+                URI.create("%s/models".formatted(BASE_URL)),
+                authHeaders(),
+                DeepgramApi.ModelsResponse.class,
+                "Deepgram model catalog response was invalid."
+        );
+        List<DeepgramApi.Model> ttsModels = response.tts();
+        if (ttsModels == null) {
             throw new IllegalStateException("Deepgram model catalog response was invalid.");
         }
-        ttsModels.forEach(model -> {
-            String id = voiceModelId(model);
-            if (StringUtils.isNotBlank(id)) {
-                voiceModels.add(new TextToSpeechCatalogItem(id, voiceLabel(id, model), voiceDescription(model)));
-            }
-        });
+        List<TextToSpeechCatalogItem> voiceModels = ttsModels.stream()
+                .filter(Objects::nonNull)
+                .map(DeepgramTextToSpeechProvider::voiceItem)
+                .filter(Objects::nonNull)
+                .toList();
         if (!ttsModels.isEmpty() && voiceModels.isEmpty()) {
             throw new IllegalStateException("Deepgram model catalog response did not contain valid TTS voices.");
         }
@@ -192,7 +194,7 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         );
     }
 
-    private static byte[] wavBytes(TtsHttpResponse response) {
+    private static byte[] wavBytes(HttpExchangeResponse response) {
         String contentType = StringUtils.defaultString(response.firstHeader("content-type")).toLowerCase(Locale.ROOT);
         if (!Strings.CS.startsWith(contentType, "audio/l16")) {
             throw new IllegalStateException("Deepgram TTS returned an unexpected audio content type.");
@@ -240,12 +242,17 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         bytes[offset + 1] = (byte) ((value >>> 8) & 0xFF);
     }
 
-    private static String voiceModelId(JsonNode model) {
-        String canonicalName = StringUtils.trimToEmpty(model.path("canonical_name").asText(""));
+    private static TextToSpeechCatalogItem voiceItem(DeepgramApi.Model model) {
+        String id = voiceModelId(model);
+        return StringUtils.isBlank(id) ? null : new TextToSpeechCatalogItem(id, voiceLabel(id, model), voiceDescription(model));
+    }
+
+    private static String voiceModelId(DeepgramApi.Model model) {
+        String canonicalName = StringUtils.trimToEmpty(model.canonicalName());
         if (isDeepgramTtsVoiceModelId(canonicalName)) {
             return canonicalName.toLowerCase(Locale.ROOT);
         }
-        String name = StringUtils.trimToEmpty(model.path("name").asText(""));
+        String name = StringUtils.trimToEmpty(model.name());
         return isDeepgramTtsVoiceModelId(name) ? name.toLowerCase(Locale.ROOT) : "";
     }
 
@@ -301,8 +308,8 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         return "%s %s".formatted(StringUtils.capitalize(parts[0]), parts[1]);
     }
 
-    private static String voiceLabel(String id, JsonNode model) {
-        String name = StringUtils.trimToEmpty(model.path("name").asText(""));
+    private static String voiceLabel(String id, DeepgramApi.Model model) {
+        String name = StringUtils.trimToEmpty(model.name());
         if (StringUtils.isNotBlank(name) && !isDeepgramTtsVoiceModelId(name)) {
             return name;
         }
@@ -310,18 +317,14 @@ public class DeepgramTextToSpeechProvider extends AbstractHttpTextToSpeechProvid
         return parts.length >= 3 ? parts[2] : id;
     }
 
-    private static String voiceDescription(JsonNode model) {
-        JsonNode tags = model.path("metadata").path("tags");
-        if (!tags.isArray()) {
+    private static String voiceDescription(DeepgramApi.Model model) {
+        List<String> tags = model.metadata() == null ? null : model.metadata().tags();
+        if (tags == null) {
             return "";
         }
-        List<String> descriptions = new ArrayList<>();
-        tags.forEach(tag -> {
-            String value = StringUtils.normalizeSpace(tag.asText(""));
-            if (StringUtils.isNotBlank(value)) {
-                descriptions.add(value);
-            }
-        });
-        return String.join(", ", descriptions);
+        return tags.stream()
+                .map(StringUtils::normalizeSpace)
+                .filter(StringUtils::isNotBlank)
+                .collect(joining(", "));
     }
 }

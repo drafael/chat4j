@@ -1,18 +1,17 @@
 package com.github.drafael.chat4j.tts.provider.listenhub;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.audio.TextToSpeechAudio;
 import com.github.drafael.chat4j.tts.provider.AbstractHttpTextToSpeechProvider;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
-import com.github.drafael.chat4j.tts.provider.TtsHttpTransport;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 
@@ -27,8 +26,8 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
     private static final List<TextToSpeechCatalogItem> BUNDLED_MODELS = List.of(DEFAULT_MODEL);
     private static final List<TextToSpeechCatalogItem> BUNDLED_VOICES = List.of(DEFAULT_VOICE);
 
-    public ListenHubTextToSpeechProvider(TtsHttpTransport transport, CredentialResolver credentialResolver) {
-        super(transport, credentialResolver);
+    public ListenHubTextToSpeechProvider(@NonNull TtsHttpClient httpClient, @NonNull CredentialResolver credentialResolver) {
+        super(httpClient, credentialResolver);
     }
 
     @Override
@@ -83,24 +82,23 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public List<TextToSpeechCatalogItem> fetchVoices() throws Exception {
-        TtsHttpResponse response = get(URI.create("%s/speakers/list".formatted(BASE_URL)), authHeaders(apiKey()));
-        JsonNode root = jsonBody(response);
-        requireApplicationSuccess(root, "ListenHub voice catalog response was invalid.");
-        JsonNode items = root.path("data").get("items");
-        if (items == null || !items.isArray()) {
+        ListenHubApi.Response response = getJson(
+                URI.create("%s/speakers/list".formatted(BASE_URL)),
+                authHeaders(apiKey()),
+                ListenHubApi.Response.class,
+                "ListenHub voice catalog response was invalid."
+        );
+        requireApplicationSuccess(response, "ListenHub voice catalog response was invalid.");
+        List<ListenHubApi.Voice> items = response.data() == null ? null : response.data().items();
+        if (items == null) {
             throw new IllegalStateException("ListenHub voice catalog response was invalid.");
         }
 
-        List<TextToSpeechCatalogItem> voices = new ArrayList<>();
-        items.forEach(item -> {
-            String id = StringUtils.trimToEmpty(item.path("speakerId").asText(""));
-            String label = StringUtils.trimToEmpty(item.path("name").asText(""));
-            if (StringUtils.isBlank(id) || StringUtils.isBlank(label)) {
-                return;
-            }
-            String description = StringUtils.normalizeSpace(item.path("profile").path("description").asText(""));
-            voices.add(new TextToSpeechCatalogItem(id, label, description));
-        });
+        List<TextToSpeechCatalogItem> voices = items.stream()
+                .filter(Objects::nonNull)
+                .map(ListenHubTextToSpeechProvider::voiceItem)
+                .filter(Objects::nonNull)
+                .toList();
         if (!items.isEmpty() && voices.isEmpty()) {
             throw new IllegalStateException("ListenHub voice catalog response did not contain valid voices.");
         }
@@ -114,11 +112,12 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
 
     @Override
     public TextToSpeechAudio synthesize(TextToSpeechRequest request, String apiKey) throws Exception {
-        ObjectNode body = OBJECT_MAPPER.createObjectNode();
-        body.put("input", request.text());
-        body.put("voice", StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id()));
-        body.put("response_format", "mp3");
-        TtsHttpResponse response = postJson(
+        var body = new ListenHubApi.SynthesisRequest(
+                request.text(),
+                StringUtils.defaultIfBlank(request.voiceId(), DEFAULT_VOICE.id()),
+                "mp3"
+        );
+        HttpExchangeResponse response = postJson(
                 URI.create("%s/tts".formatted(BASE_URL)),
                 jsonHeaders(apiKey),
                 body
@@ -138,7 +137,7 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
         );
     }
 
-    private static TextToSpeechAudio mp3Audio(TtsHttpResponse response) {
+    private TextToSpeechAudio mp3Audio(HttpExchangeResponse response) {
         byte[] bytes = response.body();
         if (bytes.length == 0) {
             throw new IllegalStateException("ListenHub TTS returned an empty audio response.");
@@ -152,36 +151,38 @@ public class ListenHubTextToSpeechProvider extends AbstractHttpTextToSpeechProvi
         throw new IllegalStateException("ListenHub TTS returned an unexpected response.");
     }
 
-    private static void requireApplicationSuccess(JsonNode root, String invalidResponseMessage) {
-        Integer code = applicationCode(root);
+    private static TextToSpeechCatalogItem voiceItem(ListenHubApi.Voice voice) {
+        String id = StringUtils.trimToEmpty(voice.speakerId());
+        String label = StringUtils.trimToEmpty(voice.name());
+        if (StringUtils.isBlank(id) || StringUtils.isBlank(label)) {
+            return null;
+        }
+        String description = voice.profile() == null
+                ? ""
+                : StringUtils.normalizeSpace(voice.profile().description());
+        return new TextToSpeechCatalogItem(id, label, description);
+    }
+
+    private static void requireApplicationSuccess(ListenHubApi.Response response, String invalidResponseMessage) {
+        Integer code = response == null ? null : response.code();
         if (code == null) {
             throw new IllegalStateException(invalidResponseMessage);
         }
         if (code != 0) {
-            throw applicationFailure(root, code);
+            throw applicationFailure(response, code);
         }
     }
 
-    private static void throwApplicationErrorIfPresent(byte[] body) {
-        JsonNode root;
-        try {
-            root = OBJECT_MAPPER.readTree(body);
-        } catch (Exception e) {
-            return;
-        }
-        Integer code = applicationCode(root);
-        if (code != null && code != 0) {
-            throw applicationFailure(root, code);
-        }
+    private void throwApplicationErrorIfPresent(byte[] body) {
+        tryJson(body, ListenHubApi.Response.class)
+                .filter(response -> response.code() != null && response.code() != 0)
+                .ifPresent(response -> {
+                    throw applicationFailure(response, response.code());
+                });
     }
 
-    private static Integer applicationCode(JsonNode root) {
-        JsonNode code = root == null ? null : root.get("code");
-        return code != null && code.isIntegralNumber() && code.canConvertToInt() ? code.intValue() : null;
-    }
-
-    private static IllegalStateException applicationFailure(JsonNode root, int code) {
-        String message = StringUtils.normalizeSpace(root.path("message").asText(""));
+    private static IllegalStateException applicationFailure(ListenHubApi.Response response, int code) {
+        String message = StringUtils.normalizeSpace(response.message());
         String suffix = StringUtils.isBlank(message) ? "" : ": %s".formatted(message);
         return new IllegalStateException("ListenHub request failed (code %d)%s".formatted(code, suffix));
     }

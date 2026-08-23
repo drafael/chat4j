@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
+import com.github.drafael.chat4j.http.JavaNetHttpTransport;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
@@ -71,7 +72,7 @@ class GoogleAiGenerateContentClientTest {
         var authority = ProviderAttachmentTestSupport.authority();
         var subject = new GoogleAiGenerateContentClient(
                 failingFallbackClient(),
-                httpClient,
+                new JavaNetHttpTransport(httpClient),
                 authority,
                 mock(GeneratedImageAttachmentWriter.class)
         );
@@ -114,7 +115,7 @@ class GoogleAiGenerateContentClientTest {
         var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new GoogleAiGenerateContentClient(
                 failingFallbackClient(),
-                httpClient,
+                new JavaNetHttpTransport(httpClient),
                 attachmentAuthority,
                 mock(GeneratedImageAttachmentWriter.class)
         );
@@ -178,7 +179,7 @@ class GoogleAiGenerateContentClientTest {
             var imageWriter = new GeneratedImageAttachmentWriter(attachmentAuthority);
             var subject = new GoogleAiGenerateContentClient(
                     new OpenAiChatCompletionClient(attachmentAuthority),
-                    HttpClient.newHttpClient(),
+                    new JavaNetHttpTransport(HttpClient.newHttpClient()),
                     attachmentAuthority,
                     imageWriter
             );
@@ -239,7 +240,7 @@ class GoogleAiGenerateContentClientTest {
         var attachmentAuthority = new ProviderAttachmentSupport(attachmentRoot);
         var subject = new GoogleAiGenerateContentClient(
                 new OpenAiChatCompletionClient(attachmentAuthority),
-                HttpClient.newHttpClient(),
+                new JavaNetHttpTransport(HttpClient.newHttpClient()),
                 attachmentAuthority,
                 new GeneratedImageAttachmentWriter(attachmentAuthority)
         );
@@ -275,7 +276,7 @@ class GoogleAiGenerateContentClientTest {
         var imageWriter = new GeneratedImageAttachmentWriter(attachmentAuthority);
         var subject = new GoogleAiGenerateContentClient(
                 new OpenAiChatCompletionClient(attachmentAuthority),
-                HttpClient.newHttpClient(),
+                new JavaNetHttpTransport(HttpClient.newHttpClient()),
                 attachmentAuthority,
                 imageWriter
         );
@@ -335,7 +336,7 @@ class GoogleAiGenerateContentClientTest {
             var attachmentAuthority = ProviderAttachmentTestSupport.authority();
             var subject = new GoogleAiGenerateContentClient(
                     new OpenAiChatCompletionClient(attachmentAuthority),
-                    HttpClient.newHttpClient(),
+                    new JavaNetHttpTransport(HttpClient.newHttpClient()),
                     attachmentAuthority,
                     mock(GeneratedImageAttachmentWriter.class)
             );
@@ -374,7 +375,7 @@ class GoogleAiGenerateContentClientTest {
         var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new GoogleAiGenerateContentClient(
                 new OpenAiChatCompletionClient(attachmentAuthority),
-                HttpClient.newHttpClient(),
+                new JavaNetHttpTransport(HttpClient.newHttpClient()),
                 attachmentAuthority,
                 mock(GeneratedImageAttachmentWriter.class)
         );
@@ -395,7 +396,7 @@ class GoogleAiGenerateContentClientTest {
         var attachmentAuthority = ProviderAttachmentTestSupport.authority();
         var subject = new GoogleAiGenerateContentClient(
                 new OpenAiChatCompletionClient(attachmentAuthority),
-                HttpClient.newHttpClient(),
+                new JavaNetHttpTransport(HttpClient.newHttpClient()),
                 attachmentAuthority,
                 mock(GeneratedImageAttachmentWriter.class)
         );
@@ -439,7 +440,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(ProviderAttachmentTestSupport.authority()), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(new OpenAiChatCompletionClient(ProviderAttachmentTestSupport.authority()), new JavaNetHttpTransport(HttpClient.newHttpClient()), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
             List<String> tokens = new ArrayList<>();
             List<CitationRef> citations = new ArrayList<>();
 
@@ -487,7 +488,7 @@ class GoogleAiGenerateContentClientTest {
     void streamCompletion_whenGoogleModelUsesLatestAlias_failsBeforeTransport() {
         var subject = new GoogleAiGenerateContentClient(
                 failingFallbackClient(),
-                HttpClient.newHttpClient(),
+                new JavaNetHttpTransport(HttpClient.newHttpClient()),
                 ProviderAttachmentTestSupport.authority(),
                 mock(GeneratedImageAttachmentWriter.class)
         );
@@ -534,7 +535,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), new JavaNetHttpTransport(HttpClient.newHttpClient()), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
 
             assertThatThrownBy(() -> subject.streamCompletion(
                     runtime("http://localhost:%d/v1beta/openai".formatted(server.getAddress().getPort()), "gemini-2.5-flash"),
@@ -583,7 +584,7 @@ class GoogleAiGenerateContentClientTest {
         });
         server.start();
         try {
-            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), HttpClient.newHttpClient(), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
+            var subject = new GoogleAiGenerateContentClient(failingFallbackClient(), new JavaNetHttpTransport(HttpClient.newHttpClient()), ProviderAttachmentTestSupport.authority(), mock(GeneratedImageAttachmentWriter.class));
             List<String> thinkingTokens = new ArrayList<>();
 
             assertThatThrownBy(() -> subject.streamCompletion(
@@ -627,7 +628,7 @@ class GoogleAiGenerateContentClientTest {
             var attachmentAuthority = ProviderAttachmentTestSupport.authority();
             var subject = new GoogleAiGenerateContentClient(
                     failingFallbackClient(),
-                    HttpClient.newHttpClient(),
+                    new JavaNetHttpTransport(HttpClient.newHttpClient()),
                     attachmentAuthority,
                     mock(GeneratedImageAttachmentWriter.class)
             );

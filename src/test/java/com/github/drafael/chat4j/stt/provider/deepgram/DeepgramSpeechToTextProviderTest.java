@@ -5,9 +5,9 @@ import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextCatalogItem;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextProviderContext;
 import com.github.drafael.chat4j.stt.provider.SpeechToTextRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpRequest;
-import com.github.drafael.chat4j.stt.provider.SttHttpResponse;
-import com.github.drafael.chat4j.stt.provider.SttHttpTransport;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -115,7 +115,7 @@ class DeepgramSpeechToTextProviderTest {
     @Test
     @DisplayName("Deepgram model fetch throws on failed remote catalog with credentials")
     void fetchModels_whenCatalogRequestFails_throws() {
-        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new SttHttpResponse(500, emptyMap(), "down".getBytes(StandardCharsets.UTF_8))));
+        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new HttpExchangeResponse(500, emptyMap(), "down".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.fetchModels(context(credentials(true))))
                 .isInstanceOf(SpeechToTextException.class)
@@ -217,7 +217,7 @@ class DeepgramSpeechToTextProviderTest {
     void transcribe_whenHttpError_usesSafeError() throws Exception {
         Path audio = tempDir.resolve("recording.wav");
         Files.writeString(audio, "RIFF-test");
-        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new SttHttpResponse(422, emptyMap(), "{\"err_msg\":\"bad test-key input\"}".getBytes(StandardCharsets.UTF_8))));
+        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new HttpExchangeResponse(422, emptyMap(), "{\"err_msg\":\"bad test-key input\"}".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.transcribe(new SpeechToTextRequest("deepgram", "nova-3", audio, 1_000, Files.size(audio)), context(credentials(true))))
                 .isInstanceOf(SpeechToTextException.class)
@@ -269,15 +269,15 @@ class DeepgramSpeechToTextProviderTest {
     }
 
     private void assertTranscriptionError(Path audio, int statusCode, String message) {
-        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new SttHttpResponse(statusCode, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))));
+        var subject = new DeepgramSpeechToTextProvider(new CapturingTransport(new HttpExchangeResponse(statusCode, emptyMap(), "{}".getBytes(StandardCharsets.UTF_8))));
 
         assertThatThrownBy(() -> subject.transcribe(new SpeechToTextRequest("deepgram", "nova-3", audio, 1_000, Files.size(audio)), context(credentials(true))))
                 .isInstanceOf(SpeechToTextException.class)
                 .hasMessage(message);
     }
 
-    private static SttHttpResponse success(String body) {
-        return new SttHttpResponse(200, emptyMap(), body.getBytes(StandardCharsets.UTF_8));
+    private static HttpExchangeResponse success(String body) {
+        return new HttpExchangeResponse(200, emptyMap(), body.getBytes(StandardCharsets.UTF_8));
     }
 
     private SpeechToTextProviderContext context(CredentialSource credentialSource) throws Exception {
@@ -303,23 +303,21 @@ class DeepgramSpeechToTextProviderTest {
         };
     }
 
-    private String bodyText(SttHttpRequest request) throws Exception {
-        var subscriber = new BodySubscriber();
-        request.bodyPublisher().subscribe(subscriber);
-        return subscriber.body();
+    private String bodyText(HttpExchangeRequest request) throws Exception {
+        return new String(com.github.drafael.chat4j.http.HttpBodyTestSupport.bytes(request.body()), StandardCharsets.UTF_8);
     }
 
-    private static final class CapturingTransport implements SttHttpTransport {
-        private final SttHttpResponse response;
-        private SttHttpRequest request;
-        private SpeechToTextProviderContext.CancellationToken cancellationToken;
+    private static final class CapturingTransport implements HttpTransport {
+        private final HttpExchangeResponse response;
+        private HttpExchangeRequest request;
+        private java.util.function.BooleanSupplier cancellationToken;
 
-        private CapturingTransport(SttHttpResponse response) {
+        private CapturingTransport(HttpExchangeResponse response) {
             this.response = response;
         }
 
         @Override
-        public SttHttpResponse send(SttHttpRequest request, SpeechToTextProviderContext.CancellationToken cancellationToken) {
+        public HttpExchangeResponse send(HttpExchangeRequest request, java.util.function.BooleanSupplier cancellationToken) {
             this.request = request;
             this.cancellationToken = cancellationToken;
             return response;

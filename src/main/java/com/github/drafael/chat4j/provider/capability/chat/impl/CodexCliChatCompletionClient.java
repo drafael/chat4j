@@ -1,8 +1,7 @@
 package com.github.drafael.chat4j.provider.capability.chat.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.drafael.chat4j.chat.agent.AgentSystemPromptBuilder;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.persistence.SecureFileStore;
 import com.github.drafael.chat4j.provider.api.Message;
 import com.github.drafael.chat4j.provider.api.ReasoningLevel;
@@ -63,7 +62,7 @@ import static java.util.stream.Collectors.joining;
 @Slf4j
 public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonCodec JSON = JsonCodec.standard();
     private static final int INITIALIZE_REQUEST_ID = 1;
     private static final int THREAD_START_REQUEST_ID = 2;
     private static final int TURN_START_REQUEST_ID = 3;
@@ -594,11 +593,8 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                 .filter(StringUtils::isNotBlank)
                 .forEach(line -> {
                     try {
-                        JsonNode event = JSON.readTree(line);
-                        JsonNode item = event.path("item");
-                        if (item.isMissingNode()) {
-                            item = event.path("params").path("item");
-                        }
+                        CodexCliApi.Message event = JSON.read(line, CodexCliApi.Message.class);
+                        CodexCliApi.Item item = event.eventItem();
                         emitWebSearchQueries(
                                 item,
                                 emittedQueries,
@@ -615,14 +611,14 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                                 },
                                 isCancelled
                         );
-                    } catch (IOException ignored) {
+                    } catch (RuntimeException ignored) {
                         // Codex may include non-JSON diagnostics in the merged output stream.
                     }
                 });
     }
 
     private void emitWebSearchQueries(
-            JsonNode item,
+            CodexCliApi.Item item,
             Set<String> emittedQueries,
             Consumer<String> onWebSearchQuery,
             Runnable beforeEmit,
@@ -632,16 +628,15 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             return;
         }
         emitSearchQueryValue(
-                item.path("query").asText(""),
+                item.query(),
                 emittedQueries,
                 onWebSearchQuery,
                 beforeEmit,
                 isCancelled
         );
-        emitSearchQuery(item.path("action"), emittedQueries, onWebSearchQuery, beforeEmit, isCancelled);
-        JsonNode actions = item.path("actions");
-        if (actions.isArray()) {
-            actions.forEach(action -> emitSearchQuery(
+        emitSearchQuery(item.action(), emittedQueries, onWebSearchQuery, beforeEmit, isCancelled);
+        if (item.actions() != null) {
+            item.actions().forEach(action -> emitSearchQuery(
                     action,
                     emittedQueries,
                     onWebSearchQuery,
@@ -652,27 +647,29 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     }
 
     private void emitSearchQuery(
-            JsonNode action,
+            CodexCliApi.Action action,
             Set<String> emittedQueries,
             Consumer<String> onWebSearchQuery,
             Runnable beforeEmit,
             BooleanSupplier isCancelled
     ) {
-        String actionType = action.path("type").asText("");
+        if (action == null) {
+            return;
+        }
+        String actionType = StringUtils.defaultString(action.type());
         if (!("search".equals(actionType) || "search_query".equals(actionType)) || shouldStop(isCancelled)) {
             return;
         }
         emitSearchQueryValue(
-                action.path("query").asText(""),
+                action.query(),
                 emittedQueries,
                 onWebSearchQuery,
                 beforeEmit,
                 isCancelled
         );
-        JsonNode queries = action.path("queries");
-        if (queries.isArray()) {
-            queries.forEach(query -> emitSearchQueryValue(
-                    query.asText(""),
+        if (action.queries() != null) {
+            action.queries().forEach(query -> emitSearchQueryValue(
+                    query,
                     emittedQueries,
                     onWebSearchQuery,
                     beforeEmit,
@@ -699,7 +696,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     }
 
     private void emitWebSearchSources(
-            JsonNode item,
+            CodexCliApi.Item item,
             Set<String> emittedSourceUrls,
             Consumer<WebSearchSource> onWebSearchSource,
             Runnable beforeEmit,
@@ -708,11 +705,9 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         if (!isWebSearchItem(item) || shouldStop(isCancelled)) {
             return;
         }
-        JsonNode action = item.path("action");
-        emitOpenPageSource(action, emittedSourceUrls, onWebSearchSource, beforeEmit, isCancelled);
-        JsonNode actions = item.path("actions");
-        if (actions.isArray()) {
-            actions.forEach(candidate -> emitOpenPageSource(
+        emitOpenPageSource(item.action(), emittedSourceUrls, onWebSearchSource, beforeEmit, isCancelled);
+        if (item.actions() != null) {
+            item.actions().forEach(candidate -> emitOpenPageSource(
                     candidate,
                     emittedSourceUrls,
                     onWebSearchSource,
@@ -722,23 +717,29 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private boolean isWebSearchItem(JsonNode item) {
-        String type = item.path("type").asText("");
+    private boolean isWebSearchItem(CodexCliApi.Item item) {
+        if (item == null) {
+            return false;
+        }
+        String type = StringUtils.defaultString(item.type());
         return "webSearch".equals(type) || "web_search".equals(type);
     }
 
     private void emitOpenPageSource(
-            JsonNode action,
+            CodexCliApi.Action action,
             Set<String> emittedSourceUrls,
             Consumer<WebSearchSource> onWebSearchSource,
             Runnable beforeEmit,
             BooleanSupplier isCancelled
     ) {
-        String actionType = action.path("type").asText("");
+        if (action == null) {
+            return;
+        }
+        String actionType = StringUtils.defaultString(action.type());
         if (!("openPage".equals(actionType) || "open_page".equals(actionType)) || shouldStop(isCancelled)) {
             return;
         }
-        WebSearchSourceUrlNormalizer.normalize(action.path("url").asText(null)).ifPresent(normalized -> {
+        WebSearchSourceUrlNormalizer.normalize(action.url()).ifPresent(normalized -> {
             if (emittedSourceUrls.add(normalized.key()) && !shouldStop(isCancelled)) {
                 beforeEmit.run();
                 onWebSearchSource.accept(new WebSearchSource(normalized.host(), normalized.displayUrl()));
@@ -751,7 +752,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                                  BooleanSupplier isCancelled
     ) throws Exception {
         while (true) {
-            JsonNode message = nextMessage(reader, process, isCancelled);
+            CodexCliApi.Message message = nextMessage(reader, process, isCancelled);
             if (message == null) {
                 if (shouldStop(isCancelled)) {
                     return null;
@@ -761,12 +762,14 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
             ensureNoRpcError(message);
 
-            int id = message.path("id").asInt(-1);
+            int id = message.id() == null ? -1 : message.id();
             if (id != THREAD_START_REQUEST_ID) {
                 continue;
             }
 
-            String threadId = message.path("result").path("thread").path("id").asText("").trim();
+            String threadId = message.result() == null || message.result().thread() == null
+                    ? ""
+                    : StringUtils.trimToEmpty(message.result().thread().id());
             if (!threadId.isBlank()) {
                 return threadId;
             }
@@ -789,7 +792,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         Set<String> emittedSourceUrls = new LinkedHashSet<>();
         var emittedAssistantText = new AtomicBoolean();
         while (true) {
-            JsonNode message = nextMessage(reader, process, isCancelled);
+            CodexCliApi.Message message = nextMessage(reader, process, isCancelled);
             if (message == null) {
                 if (shouldStop(isCancelled)) {
                     return;
@@ -799,9 +802,9 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
 
             ensureNoRpcError(message);
 
-            String method = message.path("method").asText("");
+            String method = StringUtils.defaultString(message.method());
             if ("item/agentMessage/delta".equals(method)) {
-                String delta = message.path("params").path("delta").asText("");
+                String delta = message.params() == null ? "" : StringUtils.defaultString(message.params().delta());
                 if (!delta.isEmpty()) {
                     if (shouldStop(isCancelled)) {
                         return;
@@ -816,7 +819,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             }
 
             if ("item/reasoning/summaryTextDelta".equals(method)) {
-                String delta = message.path("params").path("delta").asText("");
+                String delta = message.params() == null ? "" : StringUtils.defaultString(message.params().delta());
                 if (!delta.isEmpty()) {
                     if (shouldStop(isCancelled)) {
                         return;
@@ -830,7 +833,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             }
 
             if ("item/started".equals(method) || "item/completed".equals(method)) {
-                JsonNode item = message.path("params").path("item");
+                CodexCliApi.Item item = message.params() == null ? null : message.params().item();
                 emitWebSearchQueries(
                         item,
                         emittedQueries,
@@ -858,43 +861,47 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             }
 
             if ("turn/completed".equals(method)) {
-                JsonNode turn = message.path("params").path("turn");
-                String status = turn.path("status").asText("");
+                CodexCliApi.Turn turn = message.params() == null ? null : message.params().turn();
+                String status = turn == null ? "" : StringUtils.defaultString(turn.status());
                 if ("completed".equals(status)) {
                     if (emittedAssistantText.get()) {
                         return;
                     }
                     throw new IllegalStateException("codex app-server completed without assistant output");
                 }
-                String error = turn.path("error").path("message").asText("");
+                String error = turn == null || turn.error() == null
+                        ? ""
+                        : StringUtils.defaultString(turn.error().message());
                 String detail = StringUtils.isBlank(error) ? StringUtils.defaultIfBlank(status, "unknown status") : error;
                 throw new IllegalStateException("codex app-server turn did not complete: %s".formatted(detail));
             }
 
             if ("error".equals(method)) {
-                String error = message.path("params").path("error").path("message").asText("Unknown error");
+                String error = message.params() == null || message.params().error() == null
+                        ? "Unknown error"
+                        : StringUtils.defaultIfBlank(message.params().error().message(), "Unknown error");
                 throw new IllegalStateException("codex app-server error: %s".formatted(error));
             }
 
-            int id = message.path("id").asInt(-1);
-            if (id == TURN_START_REQUEST_ID && message.path("result").isMissingNode()) {
+            int id = message.id() == null ? -1 : message.id();
+            if (id == TURN_START_REQUEST_ID && message.result() == null) {
                 throw new IllegalStateException("codex app-server turn/start failed");
             }
         }
     }
 
     private void emitCompletedAgentMessage(
-            JsonNode item,
+            CodexCliApi.Item item,
             Consumer<String> onToken,
             BooleanSupplier isCancelled,
             AtomicBoolean emittedOutput,
             AtomicBoolean emittedAssistantText
     ) {
-        String type = item.path("type").asText("");
+        String type = item == null ? "" : StringUtils.defaultString(item.type());
         if (!("agentMessage".equals(type) || "agent_message".equals(type)) || emittedAssistantText.get()) {
             return;
         }
-        String text = item.path("text").asText("");
+        String text = StringUtils.defaultString(item.text());
         if (!text.isBlank() && !shouldStop(isCancelled)) {
             emittedOutput.set(true);
             emittedAssistantText.set(true);
@@ -902,7 +909,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private JsonNode nextMessage(BufferedReader reader,
+    private CodexCliApi.Message nextMessage(BufferedReader reader,
                                  Process process,
                                  BooleanSupplier isCancelled
     ) throws Exception {
@@ -931,8 +938,8 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
                         break;
                     }
                     try {
-                        return JSON.readTree(line);
-                    } catch (IOException e) {
+                        return JSON.read(line, CodexCliApi.Message.class);
+                    } catch (RuntimeException e) {
                         throw new IllegalStateException("codex app-server returned malformed JSON");
                     }
                 } catch (TimeoutException e) {
@@ -960,12 +967,12 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
         }
     }
 
-    private void ensureNoRpcError(JsonNode message) {
-        if (!message.has("error") || message.path("error").isNull()) {
+    private void ensureNoRpcError(CodexCliApi.Message message) {
+        if (message.error() == null) {
             return;
         }
 
-        String error = message.path("error").path("message").asText("Unknown error");
+        String error = StringUtils.defaultIfBlank(message.error().message(), "Unknown error");
         throw new IllegalStateException("codex app-server RPC error: %s".formatted(error));
     }
 
@@ -1030,7 +1037,7 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     }
 
     private void sendJson(BufferedWriter writer, Map<String, Object> payload) throws IOException {
-        writer.write(JSON.writeValueAsString(payload));
+        writer.write(JSON.writeString(payload));
         writer.newLine();
         writer.flush();
     }
@@ -1058,13 +1065,13 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
     private String codexAuthDocument(String credential) throws IOException {
         String accountId = chatGptAccountId(credential).orElse(null);
         if (accountId == null) {
-            return JSON.writeValueAsString(Map.of(
+            return JSON.writeString(Map.of(
                     "auth_mode", "apikey",
                     "OPENAI_API_KEY", credential
             ));
         }
 
-        return JSON.writeValueAsString(Map.of(
+        return JSON.writeString(Map.of(
                 "auth_mode", "chatgpt",
                 "tokens", Map.of(
                         "access_token", credential,
@@ -1082,18 +1089,16 @@ public class CodexCliChatCompletionClient implements ChatCompletionClient {
             return Optional.empty();
         }
         try {
-            JsonNode claims = JSON.readTree(Base64.getUrlDecoder().decode(parts[1]));
-            String accountId = claims.path("https://api.openai.com/auth")
-                    .path("chatgpt_account_id")
-                    .asText("");
-            if (StringUtils.isBlank(accountId)) {
-                accountId = claims.path("https://api.openai.com/auth.chatgpt_account_id").asText("");
-            }
+            CodexCliApi.JwtClaims claims = JSON.read(
+                    Base64.getUrlDecoder().decode(parts[1]),
+                    CodexCliApi.JwtClaims.class
+            );
+            String accountId = claims.chatGptAccountId();
             if (StringUtils.isBlank(accountId)) {
                 throw new IllegalStateException("OpenAI Codex OAuth credential is missing its ChatGPT account identifier");
             }
             return Optional.of(accountId.trim());
-        } catch (IllegalArgumentException | IOException e) {
+        } catch (IllegalArgumentException e) {
             throw new IllegalStateException("OpenAI Codex OAuth credential is malformed", e);
         }
     }

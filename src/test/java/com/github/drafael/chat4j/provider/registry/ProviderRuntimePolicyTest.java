@@ -1,5 +1,6 @@
 package com.github.drafael.chat4j.provider.registry;
 
+import com.github.drafael.chat4j.provider.support.BlockingHttpClientTransport;
 import com.github.drafael.chat4j.provider.api.AuthType;
 import com.github.drafael.chat4j.provider.api.ProviderCapabilities;
 import com.github.drafael.chat4j.provider.api.ProviderDescriptor;
@@ -47,7 +48,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -67,7 +68,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -89,7 +90,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("slow-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -113,7 +114,7 @@ class ProviderRuntimePolicyTest {
         CodexAuthResolver resolver = new CodexAuthResolver(
                 tempDir.resolve("codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthResolver.CodexAuthStatus resolveStatus() {
@@ -133,7 +134,7 @@ class ProviderRuntimePolicyTest {
         CodexAuthResolver resolver = new CodexAuthResolver(
                 tempDir.resolve("codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthResolver.CodexAuthStatus resolveStatus() {
@@ -158,7 +159,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("warm-cache-copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -202,7 +203,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -231,7 +232,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -281,7 +282,7 @@ class ProviderRuntimePolicyTest {
         CopilotAuthResolver resolver = new CopilotAuthResolver(
                 tempDir.resolve("copilot-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CopilotAuthResolver.CopilotAuthStatus resolveStatus() {
@@ -331,7 +332,7 @@ class ProviderRuntimePolicyTest {
         CodexAuthResolver codexResolver = new CodexAuthResolver(
                 tempDir.resolve("codex-home"),
                 emptyMap(),
-                HttpClient.newHttpClient()
+                new BlockingHttpClientTransport(HttpClient.newHttpClient())
         ) {
             @Override
             public CodexAuthResolver.CodexAuthStatus resolveStatus() {
@@ -416,11 +417,11 @@ class ProviderRuntimePolicyTest {
     }
 
     private CopilotAuthResolver copilotResolver() {
-        return new CopilotAuthResolver(tempDir.resolve("default-copilot-home"), emptyMap(), HttpClient.newHttpClient());
+        return new CopilotAuthResolver(tempDir.resolve("default-copilot-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
     }
 
     private CodexAuthResolver codexResolver() {
-        return new CodexAuthResolver(tempDir.resolve("default-codex-home"), emptyMap(), HttpClient.newHttpClient());
+        return new CodexAuthResolver(tempDir.resolve("default-codex-home"), emptyMap(), new BlockingHttpClientTransport(HttpClient.newHttpClient()));
     }
 
     private ProviderDefinition copilotAuthProvider(String name) {

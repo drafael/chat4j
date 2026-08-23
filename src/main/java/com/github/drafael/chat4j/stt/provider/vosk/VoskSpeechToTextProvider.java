@@ -1,7 +1,7 @@
 package com.github.drafael.chat4j.stt.provider.vosk;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.github.drafael.chat4j.json.JsonCodec;
 import com.github.drafael.chat4j.stt.error.SpeechToTextException;
 import com.github.drafael.chat4j.stt.provider.CredentialSource;
 import com.github.drafael.chat4j.stt.provider.LocalSpeechToTextModelReference;
@@ -27,7 +27,7 @@ import static java.util.Collections.emptyList;
 public class VoskSpeechToTextProvider implements SpeechToTextProvider {
 
     public static final String ID = "vosk";
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final JsonCodec JSON_CODEC = JsonCodec.standard();
 
     @Override
     public String id() {
@@ -184,13 +184,13 @@ public class VoskSpeechToTextProvider implements SpeechToTextProvider {
     }
 
     private void appendTranscript(StringBuilder transcript, String json) throws Exception {
-        JsonNode node;
+        VoskResponse response;
         try {
-            node = OBJECT_MAPPER.readTree(json);
+            response = JSON_CODEC.read(json, VoskResponse.class);
         } catch (Exception e) {
             throw new SpeechToTextException("Vosk transcription response was invalid.", e);
         }
-        String text = StringUtils.trimToEmpty(node.path("text").asText(""));
+        String text = StringUtils.trimToEmpty(response.text());
         if (StringUtils.isNotBlank(text)) {
             if (!transcript.isEmpty()) {
                 transcript.append(' ');
@@ -227,5 +227,9 @@ public class VoskSpeechToTextProvider implements SpeechToTextProvider {
             stream.close();
         } catch (Exception ignored) {
         }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record VoskResponse(String text) {
     }
 }

@@ -1,13 +1,15 @@
 package com.github.drafael.chat4j.tts.provider.deepgram;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.drafael.chat4j.http.HttpBody;
 import com.github.drafael.chat4j.persistence.StoragePaths;
 import com.github.drafael.chat4j.provider.support.ApiTokenVault;
 import com.github.drafael.chat4j.provider.support.CredentialResolver;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechCatalogItem;
 import com.github.drafael.chat4j.tts.provider.TextToSpeechRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpRequest;
-import com.github.drafael.chat4j.tts.provider.TtsHttpResponse;
+import com.github.drafael.chat4j.tts.provider.TtsHttpClient;
+import com.github.drafael.chat4j.http.HttpExchangeRequest;
+import com.github.drafael.chat4j.http.HttpExchangeResponse;
+import com.github.drafael.chat4j.http.HttpTransport;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -18,13 +20,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static com.github.drafael.chat4j.tts.provider.TtsJsonTestSupport.read;
 import static java.util.Collections.emptyMap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DeepgramTextToSpeechProviderTest {
-
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     @TempDir
     Path tempDir;
@@ -39,7 +40,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram exposes a model family and a default voice as separate selections")
     void metadata_whenCreated_separatesModelAndVoiceSelections() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
 
         assertThat(subject.defaultModel().id()).isEqualTo("aura-2");
         assertThat(subject.defaultVoice().id()).isEqualTo("aura-2-thalia-en");
@@ -51,10 +52,10 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram uses documented Aura voice model as the model query parameter")
     void synthesize_whenCalled_sendsVoiceModelToSpeakEndpoint() throws Exception {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = new DeepgramTextToSpeechProvider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = deepgramProvider((request, cancellation) -> {
             captured[0] = request;
-            return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2, 3, 4});
+            return new HttpExchangeResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2, 3, 4});
         }, credentialResolver);
 
         var audio = subject.synthesize(new TextToSpeechRequest(
@@ -73,7 +74,8 @@ class DeepgramTextToSpeechProviderTest {
         assertThat(queryParameter(captured[0], "sample_rate")).isEqualTo("24000");
         assertThat(captured[0].headers().get("Authorization")).startsWith("Token ");
         assertThat(captured[0].headers()).containsEntry("Accept", "audio/l16");
-        assertThat(OBJECT_MAPPER.readTree(captured[0].body()).path("text").asText()).isEqualTo("hello");
+        DeepgramApi.SynthesisRequest body = read(((HttpBody.Bytes) captured[0].body()).value(), DeepgramApi.SynthesisRequest.class);
+        assertThat(body.text()).isEqualTo("hello");
         assertThat(audio.contentType()).isEqualTo("audio/wav");
         assertThat(audio.format()).isEqualTo("wav");
         assertThat(new String(audio.bytes(), 0, 4, StandardCharsets.US_ASCII)).isEqualTo("RIFF");
@@ -85,10 +87,10 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram synthesis uses the request-owned API key")
     void synthesize_whenRequestApiKeyIsProvided_usesProvidedCredential() throws Exception {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "live-key"));
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = new DeepgramTextToSpeechProvider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = deepgramProvider((request, cancellation) -> {
             captured[0] = request;
-            return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
+            return new HttpExchangeResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
         }, credentialResolver);
         var request = new TextToSpeechRequest(
                 DeepgramTextToSpeechProvider.ID,
@@ -106,7 +108,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram read aloud uses short chunks for fast first audio")
     void maxInputCharacters_whenAsked_usesResponsiveReadAloudChunkSize() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
 
         assertThat(subject.maxInputCharacters()).isEqualTo(140);
     }
@@ -115,7 +117,7 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram catalog discovery exposes model families separately from voices")
     void fetchModels_whenModelsEndpointReturnsTtsItems_returnsModelFamilies() throws Exception {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("""
+        var subject = deepgramProvider((request, cancellation) -> json("""
                 {
                   "stt": [{"canonical_name":"nova-3-general"}],
                   "tts": [
@@ -136,7 +138,7 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram catalog discovery reads canonical TTS voice model ids as voices")
     void fetchVoices_whenModelsEndpointReturnsTtsItems_usesCanonicalVoiceModelIds() throws Exception {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("""
+        var subject = deepgramProvider((request, cancellation) -> json("""
                 {
                   "stt": [{"canonical_name":"nova-3-general"}],
                   "tts": [
@@ -157,7 +159,7 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram model discovery rejects a missing TTS array")
     void fetchModels_whenTtsArrayMissing_throws() {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchModels)
                 .isInstanceOf(IllegalStateException.class)
@@ -168,7 +170,7 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram voice discovery rejects a missing TTS array")
     void fetchVoices_whenTtsArrayMissing_throws() {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -179,7 +181,7 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram voice discovery rejects entries without canonical ids")
     void fetchVoices_whenCanonicalIdsMissing_throws() {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{\"tts\":[{}]}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{\"tts\":[{}]}"), credentialResolver);
 
         assertThatThrownBy(subject::fetchVoices)
                 .isInstanceOf(IllegalStateException.class)
@@ -189,7 +191,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram voice list follows the selected model family")
     void voicesForModel_whenMultipleAuraFamiliesExist_filtersByFamily() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
         List<TextToSpeechCatalogItem> voices = List.of(
                 TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"),
                 TextToSpeechCatalogItem.of("aura-3-luna-en", "luna")
@@ -203,7 +205,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram normalizes legacy saved voice-model model selections to the model family")
     void normalizeModelSelection_whenSavedModelContainsVoiceModel_returnsModelFamily() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
 
         TextToSpeechCatalogItem model = subject.normalizeModelSelection(TextToSpeechCatalogItem.of("aura-2-thalia-en", "thalia"));
 
@@ -214,7 +216,7 @@ class DeepgramTextToSpeechProviderTest {
     @Test
     @DisplayName("Deepgram does not copy the default voice description onto other saved voices")
     void normalizeVoiceSelection_whenSavedVoiceUsesFallbackDescription_clearsMisleadingDescription() {
-        var subject = new DeepgramTextToSpeechProvider(request -> json("{}"), credentialResolver);
+        var subject = deepgramProvider((request, cancellation) -> json("{}"), credentialResolver);
         var savedVoice = new TextToSpeechCatalogItem(
                 "aura-2-zeus-en",
                 "zeus",
@@ -231,10 +233,10 @@ class DeepgramTextToSpeechProviderTest {
     @DisplayName("Deepgram falls back to its documented default voice model for invalid selections")
     void synthesize_whenSelectionIsInvalid_usesDefaultVoiceModel() throws Exception {
         credentialResolver = resolver(Map.of(DeepgramTextToSpeechProvider.ENV_VAR, "test-key"));
-        TtsHttpRequest[] captured = new TtsHttpRequest[1];
-        var subject = new DeepgramTextToSpeechProvider(request -> {
+        HttpExchangeRequest[] captured = new HttpExchangeRequest[1];
+        var subject = deepgramProvider((request, cancellation) -> {
             captured[0] = request;
-            return new TtsHttpResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
+            return new HttpExchangeResponse(200, Map.of("content-type", List.of("audio/l16;rate=24000")), new byte[]{1, 2});
         }, credentialResolver);
 
         subject.synthesize(new TextToSpeechRequest(DeepgramTextToSpeechProvider.ID, "aura-2", "aura-2--en", "hello", "mp3"));
@@ -242,6 +244,13 @@ class DeepgramTextToSpeechProviderTest {
         assertThat(queryParameter(captured[0], "model")).isEqualTo("aura-2-thalia-en");
     }
 
+
+    private DeepgramTextToSpeechProvider deepgramProvider(
+            HttpTransport transport,
+            CredentialResolver resolver
+    ) {
+        return new DeepgramTextToSpeechProvider(new TtsHttpClient(transport), resolver);
+    }
 
     private CredentialResolver resolver(Map<String, String> shellEnvironment) {
         return new CredentialResolver(
@@ -251,15 +260,15 @@ class DeepgramTextToSpeechProviderTest {
         );
     }
 
-    private static TtsHttpResponse json(String body) {
-        return new TtsHttpResponse(
+    private static HttpExchangeResponse json(String body) {
+        return new HttpExchangeResponse(
                 200,
                 Map.of("content-type", List.of("application/json")),
                 body.getBytes(StandardCharsets.UTF_8)
         );
     }
 
-    private static String queryParameter(TtsHttpRequest request, String name) {
+    private static String queryParameter(HttpExchangeRequest request, String name) {
         return List.of(request.uri().getRawQuery().split("&")).stream()
                 .map(parameter -> parameter.split("=", 2))
                 .filter(parts -> parts.length == 2)

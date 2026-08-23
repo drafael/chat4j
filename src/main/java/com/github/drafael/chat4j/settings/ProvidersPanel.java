@@ -1,7 +1,5 @@
 package com.github.drafael.chat4j.settings;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.formdev.flatlaf.extras.FlatSVGIcon;
 import com.github.drafael.chat4j.persistence.settings.SettingsRepository;
 import com.github.drafael.chat4j.provider.api.AuthType;
@@ -19,10 +17,6 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.net.URI;
 import java.net.URL;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.time.Duration;
 import java.time.Instant;
@@ -54,10 +48,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 @Slf4j
 public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendingSettingsSaveParticipant {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+    private static final OpenRouterUsageClient OPEN_ROUTER_USAGE_CLIENT = new OpenRouterUsageClient();
     private static final NumberFormat USD_FORMAT = NumberFormat.getCurrencyInstance(Locale.US);
     private static final DateTimeFormatter DIAGNOSTICS_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -1686,7 +1677,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         long requestGeneration = openRouterUsageGeneration.incrementAndGet();
 
         Thread.startVirtualThread(() -> {
-            OpenRouterUsageSnapshot snapshot = fetchOpenRouterUsage(info);
+            OpenRouterUsageClient.Snapshot snapshot = fetchOpenRouterUsage(info);
             SwingUtilities.invokeLater(() -> {
                 if (removed || openRouterUsageGeneration.get() != requestGeneration) {
                     return;
@@ -1707,73 +1698,9 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         });
     }
 
-    private OpenRouterUsageSnapshot fetchOpenRouterUsage(ProviderInfo info) {
-        try {
-            String apiKey = credentialResolver.resolveApiKey(info.envVar(), null);
-            if (StringUtils.isBlank(apiKey)) {
-                return OpenRouterUsageSnapshot.error("OPENROUTER_API_KEY not set");
-            }
-
-            JsonNode keyData = requestOpenRouterData("https://openrouter.ai/api/v1/key", apiKey);
-            double limit = asDouble(keyData, "limit");
-            double usage = asDouble(keyData, "usage");
-            double remainingFromUsage = (!Double.isNaN(limit) && !Double.isNaN(usage))
-                    ? Math.max(0, limit - usage)
-                    : Double.NaN;
-
-            double limitRemainingField = asDouble(keyData, "limit_remaining");
-            double remaining = !Double.isNaN(remainingFromUsage) ? remainingFromUsage : limitRemainingField;
-
-            int usedPercent;
-            if (!Double.isNaN(limit) && limit > 0 && !Double.isNaN(usage)) {
-                usedPercent = clampPercent((int) Math.round((usage / limit) * 100d));
-            } else if (!Double.isNaN(limit) && limit > 0 && !Double.isNaN(remaining)) {
-                usedPercent = clampPercent((int) Math.round((1d - (remaining / limit)) * 100d));
-            } else {
-                usedPercent = -1;
-            }
-
-            String limitReset = asText(keyData, "limit_reset");
-            String note = StringUtils.isBlank(limitReset) ? null : "Resets %s".formatted(limitReset);
-
-            Double balance = null;
-            try {
-                JsonNode creditsData = requestOpenRouterData("https://openrouter.ai/api/v1/credits", apiKey);
-                double totalCredits = asDouble(creditsData, "total_credits");
-                double totalUsage = asDouble(creditsData, "total_usage");
-                if (!Double.isNaN(totalCredits) && !Double.isNaN(totalUsage)) {
-                    balance = Math.max(0, totalCredits - totalUsage);
-                }
-            } catch (Exception e) {
-                String creditsError = firstLine(e.getMessage());
-                note = note == null ? "Balance unavailable: %s".formatted(creditsError) : "%s • Balance unavailable".formatted(note);
-            }
-
-            return OpenRouterUsageSnapshot.success(balance, limit, remaining, usedPercent, note);
-        } catch (Exception e) {
-            return OpenRouterUsageSnapshot.error(firstLine(e.getMessage()));
-        }
-    }
-
-    private JsonNode requestOpenRouterData(String url, String apiKey) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(6))
-                .header("Authorization", "Bearer %s".formatted(apiKey))
-                .GET()
-                .build();
-
-        HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("HTTP %d from %s".formatted(response.statusCode(), url));
-        }
-
-        JsonNode root = JSON.readTree(response.body());
-        JsonNode data = root.path("data");
-        if (data.isMissingNode() || data.isNull()) {
-            throw new IllegalStateException("Missing data object in response from %s".formatted(url));
-        }
-        return data;
+    private OpenRouterUsageClient.Snapshot fetchOpenRouterUsage(ProviderInfo info) {
+        String apiKey = credentialResolver.resolveApiKey(info.envVar(), null);
+        return OPEN_ROUTER_USAGE_CLIENT.fetch(apiKey);
     }
 
     private void clearOpenRouterUsage(OpenRouterUsageComponents components) {
@@ -1787,7 +1714,7 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
     }
 
     private void applyOpenRouterUsage(
-        OpenRouterUsageSnapshot snapshot,
+        OpenRouterUsageClient.Snapshot snapshot,
         JLabel summaryLabel,
         JProgressBar usageBar,
         JLabel usedLabel,
@@ -1833,18 +1760,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
         String note = snapshot.note();
         noteLabel.setForeground(warningForeground());
         noteLabel.setText(StringUtils.isBlank(note) ? "" : note);
-    }
-
-    private double asDouble(JsonNode node, String fieldName) {
-        return node.hasNonNull(fieldName) ? node.path(fieldName).asDouble(Double.NaN) : Double.NaN;
-    }
-
-    private String asText(JsonNode node, String fieldName) {
-        return node.hasNonNull(fieldName) ? node.path(fieldName).asText("") : null;
-    }
-
-    private int clampPercent(int value) {
-        return Math.max(0, Math.min(100, value));
     }
 
     private String formatUsd(double value) {
@@ -2018,31 +1933,6 @@ public class ProvidersPanel extends AbstractSettingsPanel implements AsyncPendin
             JLabel limitLabel,
             JLabel noteLabel
     ) {
-    }
-
-    private record OpenRouterUsageSnapshot(
-        Double balance,
-        double limit,
-        double remaining,
-        int usedPercent,
-        String note,
-        String errorMessage,
-        long updatedAtEpochMs
-    ) {
-
-        private static OpenRouterUsageSnapshot success(
-            Double balance,
-            double limit,
-            double remaining,
-            int usedPercent,
-            String note
-        ) {
-            return new OpenRouterUsageSnapshot(balance, limit, remaining, usedPercent, note, null, System.currentTimeMillis());
-        }
-
-        private static OpenRouterUsageSnapshot error(String errorMessage) {
-            return new OpenRouterUsageSnapshot(null, Double.NaN, Double.NaN, -1, null, errorMessage, System.currentTimeMillis());
-        }
     }
 
     private record LocalProviderHelp(String instruction, String docsUrl) {
