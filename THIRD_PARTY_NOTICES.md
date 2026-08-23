@@ -122,7 +122,7 @@ WebKit is open source software with portions licensed under LGPL and BSD license
 
 Chat4J uses GraalJS Community to server-render KaTeX and Highlight.js HTML before the transcript is handed to a browser-backed conversation view. This keeps math and syntax highlighting reliable across System WebView and JCEF.
 
-## OpenHTMLtoPDF 1.1.70
+## OpenHTMLtoPDF 1.1.73
 
 - Project: https://github.com/openhtmltopdf/openhtmltopdf
 - Maven coordinates:
